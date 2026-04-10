@@ -1,0 +1,50 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools">
+
+    <uses-permission android:name="android.permission.INTERNET" />
+
+    <application
+        android:name=".KSafeApplication"
+        android:allowBackup="true"
+        android:icon="@drawable/ic_ksafe"
+        android:label="@string/app_name"
+        android:roundIcon="@drawable/ic_ksafe"
+        android:supportsRtl="true"
+        android:theme="@style/Theme.AppCompat">
+
+        <activity
+            android:name=".activity.MainActivity"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity>
+
+        <!-- Transparent activity launched from the SystemNotification "Cancel" button.
+             Cancels the active emergency countdown without opening any UI. -->
+        <activity
+            android:name=".activity.CancelEmergencyActivity"
+            android:exported="true"
+            android:noHistory="true"
+            android:theme="@android:style/Theme.NoDisplay" />
+
+        <service
+            android:name=".extension.KSafeExtension"
+            android:exported="true"
+            tools:ignore="ExportedService">
+            <intent-filter>
+                <action android:name="io.hammerhead.karooext.KAROO_EXTENSION" />
+            </intent-filter>
+            <meta-data
+                android:name="io.hammerhead.karooext.EXTENSION_INFO"
+                android:resource="@xml/extension_info" />
+        </service>
+
+        <meta-data
+            android:name="io.hammerhead.karooext.MANIFEST_URL"
+            android:value="https://github.com/lockevod/Karoo-KSafe/releases/latest/download/manifest.json" />
+    </application>
+
+</manifest>

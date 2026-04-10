@@ -1,0 +1,82 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">KSafe</string>
+    <string name="extension_name">KSafe</string>
+
+    <!-- BonusAction labels -->
+    <string name="action_cancel_emergency">KSafe: Cancel Emergency</string>
+
+    <!-- DataType labels -->
+    <string name="sos_datatype_name">KSafe SOS</string>
+    <string name="sos_datatype_desc">Emergency SOS button. Tap to trigger a 30-second countdown before alerting your emergency contacts.</string>
+    <string name="timer_datatype_name">KSafe Check-in</string>
+    <string name="timer_datatype_desc">Check-in timer. Tap to reset. If timer expires without check-in, your contacts will be alerted.</string>
+
+    <!-- UI tabs -->
+    <string name="tab_contacts">Contacts</string>
+    <string name="tab_provider">Provider</string>
+    <string name="tab_settings">Settings</string>
+
+    <!-- Contacts screen -->
+    <string name="contacts_title">Emergency Contacts</string>
+    <string name="contact_name_hint">Contact name</string>
+    <string name="contact_phone_hint">Phone number (with country code)</string>
+    <string name="contact_email_hint">Email address (optional)</string>
+    <string name="add_contact">Add Contact</string>
+    <string name="remove_contact">Remove</string>
+    <string name="contacts_max_info">Up to 3 emergency contacts</string>
+
+    <!-- Provider screen -->
+    <string name="provider_title">Message Provider</string>
+    <string name="provider_callmebot">CallMeBot (WhatsApp)</string>
+    <string name="provider_whapi">Whapi (WhatsApp)</string>
+    <string name="api_key_hint">API Key</string>
+    <string name="pushover_app_token_hint">App Token</string>
+    <string name="pushover_user_key_hint">User Key</string>
+    <string name="save">Save</string>
+    <string name="test_send">Test Send</string>
+    <string name="test_send_ok">Test message sent!</string>
+    <string name="test_send_error">Error sending test message</string>
+
+    <!-- Settings screen -->
+    <string name="settings_title">Safety Settings</string>
+    <string name="countdown_seconds_label">Countdown before alert (seconds)</string>
+    <string name="emergency_message_label">Emergency message</string>
+    <string name="emergency_message_hint">Use {location} for GPS link and {reason} for cause</string>
+    <string name="default_emergency_message">EMERGENCY: Possible incident detected. Location: {location} (Reason: {reason})</string>
+    <string name="crash_detection_label">Automatic crash detection</string>
+    <string name="crash_sensitivity_label">Crash detection sensitivity</string>
+    <string name="sensitivity_low">Low</string>
+    <string name="sensitivity_medium">Medium</string>
+    <string name="sensitivity_high">High</string>
+    <string name="speed_drop_label">Detect prolonged stop during ride</string>
+    <string name="speed_drop_minutes_label">Minutes stopped before alert</string>
+    <string name="checkin_timer_label">Check-in timer</string>
+    <string name="checkin_interval_label">Check-in interval (minutes)</string>
+    <string name="active_label">Extension active</string>
+    <string name="karoo_live_label">Karoo Live tracking on ride start</string>
+    <string name="karoo_live_hint">When enabled, sends a message to your contacts when the ride starts. Requires a Karoo Live key — if no key is set, nothing is sent.</string>
+    <string name="karoo_live_key_label">Karoo Live key</string>
+    <string name="karoo_live_supporting">Only the key part — e.g. from https://dashboard.hammerhead.io/live/3738Ag enter 3738Ag</string>
+    <string name="karoo_live_message_label">Ride start message</string>
+    <string name="karoo_live_message_hint">Use {livetrack} for the tracking link. Also use {livetrack} in your emergency message to include it in alerts.</string>
+
+    <!-- Alerts and notifications -->
+    <string name="sos_countdown_alert">SOS in %1$ds — Tap field to cancel (%2$s)</string>
+    <string name="alert_sent">Emergency alert sent to your contacts!</string>
+    <string name="alert_cancelled">Emergency alert cancelled.</string>
+    <string name="checkin_warning">Check-in required in %1$d min — Tap timer field!</string>
+    <string name="location_unavailable">Location unavailable</string>
+
+    <!-- SOS field states -->
+    <string name="sos_safe">SAFE</string>
+    <string name="sos_countdown">SOS\n%1$ds</string>
+    <string name="sos_alerting">ALERT!</string>
+    <string name="sos_tap_cancel">Tap to\ncancel</string>
+    <string name="sos_tap_sos">Tap for\nSOS</string>
+
+    <!-- Timer field states -->
+    <string name="timer_off">Check-in\nOFF</string>
+    <string name="timer_checkin">CHECK\nIN!</string>
+    <string name="timer_ok">Tap to\ncheck in</string>
+</resources>

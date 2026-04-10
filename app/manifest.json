@@ -1,0 +1,11 @@
+{
+  "label": "KSafe",
+  "packageName": "com.enderthor.kSafe",
+  "latestApkUrl": "https://github.com/lockevod/Karoo-KSafe/releases/latest/download/ksafe.apk",
+  "iconUrl": "https://github.com/lockevod/Karoo-KSafe/releases/latest/download/ksage.png",
+  "latestVersion": "0.1.0",
+  "latestVersionCode": 202604091,
+  "developer": "github.com/lockevod",
+  "description": "This extension for Karoo allows detect crashes, accidents. It's a beta version, please be careful with this extension",
+  "releaseNotes": "First version. Please be careful with this extension"
+}
