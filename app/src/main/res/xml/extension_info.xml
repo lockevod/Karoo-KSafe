@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="utf-8"?>
+<ExtensionInfo
+    displayName="@string/extension_name"
+    icon="@drawable/ic_ksafe"
+    id="ksafe"
+    scansDevices="false">
+    <BonusAction
+        actionId="cancel-emergency"
+        displayName="@string/action_cancel_emergency" />
+    <DataType
+        description="@string/sos_datatype_desc"
+        displayName="@string/sos_datatype_name"
+        graphical="true"
+        icon="@drawable/ic_ksafe"
+        typeId="sos-field" />
+    <DataType
+        description="@string/timer_datatype_desc"
+        displayName="@string/timer_datatype_name"
+        graphical="true"
+        icon="@drawable/ic_ksafe"
+        typeId="timer-field" />
+</ExtensionInfo>
