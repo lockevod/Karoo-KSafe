@@ -23,7 +23,6 @@ import androidx.glance.text.Text
 import androidx.glance.text.TextAlign
 import androidx.glance.text.TextStyle
 import com.enderthor.kSafe.data.CHECKIN_WARNING_THRESHOLD_MINUTES
-import com.enderthor.kSafe.data.EmergencyState
 import com.enderthor.kSafe.data.EmergencyStatus
 import com.enderthor.kSafe.extension.managers.EmergencyManager
 import io.hammerhead.karooext.KarooSystemService
@@ -39,9 +38,7 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.awaitCancellation
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.delay
-import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.withTimeoutOrNull
 import timber.log.Timber
 
 // ─── Color constants ──────────────────────────────────────────────────────────
@@ -111,49 +108,30 @@ class SafetyTimerDataType(
             awaitCancellation()
         }
 
+        // Simple polling loop — reads state every second and re-renders.
+        // No flow subscriptions, no race conditions. Max 1s lag after any state change.
         val viewJob = scope.launch {
             try {
-                // Single loop — no separate ticker job, no cancelAndJoin races.
-                // During countdown: re-renders every second OR immediately on state change.
-                // During checkin: re-renders every minute OR immediately on state change.
-                // On any other state: waits for a state change before re-rendering.
-                var lastRenderedState: EmergencyState? = null
                 while (true) {
                     val state = EmergencyManager.uiState.value
-
                     when {
-                        state.status == EmergencyStatus.COUNTDOWN -> {
-                            val remaining = state.countdownRemaining()
-                            emitter.updateView(renderCancelEmergency(context, config, remaining).remoteViews)
-                            lastRenderedState = state
-                            withTimeoutOrNull(1_000L) {
-                                EmergencyManager.uiState.first { it != state }
-                            }
-                        }
-                        !state.checkinEnabled -> {
-                            if (state != lastRenderedState) {
-                                emitter.updateView(renderDisabled(context, config).remoteViews)
-                                lastRenderedState = state
-                            }
-                            EmergencyManager.uiState.first { it != state }
-                        }
-                        else -> {
-                            // checkinEnabled = true, status = IDLE
-                            val remaining = state.checkinRemainingMinutes()
-                            emitter.updateView(renderTimer(context, config, remaining).remoteViews)
-                            lastRenderedState = state
-                            // Re-render every minute OR immediately on state change
-                            withTimeoutOrNull(60_000L) {
-                                EmergencyManager.uiState.first { it != state }
-                            }
-                        }
+                        state.status == EmergencyStatus.COUNTDOWN ->
+                            emitter.updateView(
+                                renderCancelEmergency(context, config, state.countdownRemaining()).remoteViews
+                            )
+                        !state.checkinEnabled ->
+                            emitter.updateView(renderDisabled(context, config).remoteViews)
+                        else ->
+                            emitter.updateView(
+                                renderTimer(context, config, state.checkinRemainingMinutes()).remoteViews
+                            )
                     }
+                    delay(1_000L)
                 }
             } catch (e: CancellationException) {
                 // normal
             } catch (e: Exception) {
                 Timber.e(e, "SafetyTimerDataType error: ${e.message}")
-                emitter.updateView(renderDisabled(context, config).remoteViews)
             }
         }
 
