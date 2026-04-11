@@ -29,7 +29,7 @@ import kotlin.math.sqrt
  * at low speed or when GPS/speed data isn't streaming yet.
  */
 class CrashDetectionManager(
-    private val context: Context,
+    context: Context,
     private val scope: CoroutineScope,
     private val onCrashDetected: () -> Unit
 ) : SensorEventListener {
@@ -45,11 +45,12 @@ class CrashDetectionManager(
     // These thresholds are tuned for a handlebar-mounted device (more exposed than a phone).
     // The SILENCE_CHECK is the primary differentiator between a jump and a real crash.
 
-    /** Impact magnitude thresholds: total acceleration vector (gravity ~9.8 included) */
+    /** Impact magnitude thresholds for preset levels: total acceleration vector (gravity ~9.8 included) */
     private val impactThresholds = mapOf(
         CrashSensitivity.LOW    to 55f,  // ~5.5g — hard impacts; MTB/gravel friendly
         CrashSensitivity.MEDIUM to 45f,  // ~4.5g — balanced road + MTB
         CrashSensitivity.HIGH   to 35f   // ~3.5g — road bike, more sensitive
+        // CUSTOM → reads config.customCrashThreshold at runtime
     )
 
     private val GRAVITY = 9.81f
@@ -150,7 +151,10 @@ class CrashDetectionManager(
     private fun processAccelerometer(event: SensorEvent) {
         val x = event.values[0]; val y = event.values[1]; val z = event.values[2]
         val magnitude = sqrt(x*x + y*y + z*z)   // Float overload — no Double conversion
-        val threshold = impactThresholds[config.crashSensitivity] ?: 28f
+        val threshold = if (config.crashSensitivity == CrashSensitivity.CUSTOM)
+            config.customCrashThreshold.toFloat().coerceIn(20f, 70f)
+        else
+            impactThresholds[config.crashSensitivity] ?: 45f
         val now = System.currentTimeMillis()
 
         // Periodic debug logging so you can see values in logcat

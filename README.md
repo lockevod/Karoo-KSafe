@@ -195,21 +195,41 @@ A jump or drop in MTB generates a high impact spike but is immediately followed 
 
 ### Sensitivity levels
 
-| Level | Threshold | Approx. | Best for |
-|-------|-----------|---------|----------|
-| Low | 55 m/s² | ~5.5g | MTB, gravel, rough terrain |
-| Medium | 45 m/s² | ~4.5g | Road + MTB, balanced (default) |
-| High | 35 m/s² | ~3.5g | Road cycling, smoother terrain |
+| Level | Threshold | Approx. | Recommended min. speed | Best for |
+|-------|-----------|---------|------------------------|----------|
+| Low | 55 m/s² | ~5.5g | **3 km/h** | MTB, gravel, technical terrain — crashes can happen at very low speeds |
+| Medium | 45 m/s² | ~4.5g | **5 km/h** | Road + MTB, balanced (default) |
+| High | 35 m/s² | ~3.5g | **10 km/h** | Road cycling on smooth surfaces |
+| Custom | 20–70 m/s² | 2–7g | You decide | Any use case — slide to your preferred threshold |
 
 Normal hard braking and bumps produce ~1.5g (14.7 m/s²), well below all thresholds. Thresholds are based on cycling crash detection literature (IEEE accident detection studies and probabilistic crash classification research).
 
-Set **minimum speed** to `0` for testing at rest. For real rides, `10 km/h` or higher is recommended to avoid false alarms at stops.
+#### Minimum speed and MTB
+
+The minimum speed threshold filters out crashes detected while stationary (e.g. picking up the bike, putting it in a car). For MTB it should be set low — **3 km/h or even 0** — because:
+
+- Technical climbs (*trialeras*) are ridden at walking pace or slower.
+- Jump approach sections may have low speed before the jump.
+- A crash on a steep technical section can happen below 4 km/h.
+
+For road cycling, 10 km/h is a sensible default since road crashes at standstill are extremely rare. Selecting a sensitivity level automatically applies the recommended minimum speed, but you can always adjust it manually.
+
+#### Custom sensitivity
+
+The **Custom** level lets you set the exact impact threshold using a slider (20–70 m/s²). Use this if the preset levels don't match your riding style — for example, an aggressive enduro rider may want something between Low and Medium, or a triathlete on a very smooth course may want to go below High.
+
+- **Lower value** (towards 20 m/s²) = more sensitive, triggers on lighter impacts.
+- **Higher value** (towards 70 m/s²) = less sensitive, requires a harder impact.
 
 ## Testing
 
-Use the **"Simulate Crash"** button in the Settings tab to test the full emergency flow without a real ride. This triggers the countdown and, if not cancelled, will send real alerts to your contacts — so make sure your contacts know you are testing, or cancel before the countdown ends.
+Use the **"Simulate Crash"** button in the Settings tab to test the full emergency flow without a real ride. This triggers the countdown and, if not cancelled, will send a real emergency alert — so cancel before the countdown ends, or make sure whoever receives the alert knows you are testing.
 
 Use the **"Test Send"** button in the Provider tab to verify that your messaging provider is correctly configured without triggering a full emergency.
+
+Use the **"Test ride start notification"** button in the Settings tab to verify that the Karoo Live notification is correctly configured and will reach your device.
+
+All test buttons work without an active ride.
 
 ## Backup and Restore
 

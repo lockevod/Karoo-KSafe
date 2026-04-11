@@ -15,6 +15,7 @@ import androidx.compose.material3.FilterChip
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.Slider
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -49,9 +50,10 @@ fun SettingsScreen(vm: MainViewModel) {
     var emergencyMessage   by remember(config.emergencyMessage)            { mutableStateOf(config.emergencyMessage) }
     var countdownSeconds   by remember(config.countdownSeconds)            { mutableStateOf(config.countdownSeconds.toString()) }
 
-    var crashEnabled       by remember(config.crashDetectionEnabled)       { mutableStateOf(config.crashDetectionEnabled) }
-    var crashSensitivity   by remember(config.crashSensitivity)            { mutableStateOf(config.crashSensitivity) }
-    var minSpeedForCrash   by remember(config.minSpeedForCrashKmh)         { mutableStateOf(config.minSpeedForCrashKmh.toString()) }
+    var crashEnabled         by remember(config.crashDetectionEnabled)     { mutableStateOf(config.crashDetectionEnabled) }
+    var crashSensitivity     by remember(config.crashSensitivity)          { mutableStateOf(config.crashSensitivity) }
+    var minSpeedForCrash     by remember(config.minSpeedForCrashKmh)       { mutableStateOf(config.minSpeedForCrashKmh.toString()) }
+    var customThreshold      by remember(config.customCrashThreshold)      { mutableStateOf(config.customCrashThreshold) }
 
     var speedDropEnabled   by remember(config.speedDropDetectionEnabled)   { mutableStateOf(config.speedDropDetectionEnabled) }
     var speedDropMinutes   by remember(config.speedDropMinutes)            { mutableStateOf(config.speedDropMinutes.toString()) }
@@ -79,7 +81,7 @@ fun SettingsScreen(vm: MainViewModel) {
     // Auto-save: runs whenever any setting changes, with a short debounce for text fields
     LaunchedEffect(
         isActive, emergencyMessage, countdownSeconds,
-        crashEnabled, crashSensitivity, minSpeedForCrash,
+        crashEnabled, crashSensitivity, minSpeedForCrash, customThreshold,
         speedDropEnabled, speedDropMinutes,
         checkinEnabled, checkinInterval,
         karooLiveEnabled, karooLiveKey, karooLiveStartMessage
@@ -92,7 +94,8 @@ fun SettingsScreen(vm: MainViewModel) {
                 countdownSeconds        = countdownSeconds.toIntOrNull() ?: 30,
                 crashDetectionEnabled   = crashEnabled,
                 crashSensitivity        = crashSensitivity,
-                minSpeedForCrashKmh     = minSpeedForCrash.toIntOrNull() ?: 10,
+                customCrashThreshold    = customThreshold,
+                minSpeedForCrashKmh     = minSpeedForCrash.toIntOrNull() ?: 5,
                 speedDropDetectionEnabled = speedDropEnabled,
                 speedDropMinutes        = speedDropMinutes.toIntOrNull() ?: 5,
                 checkinEnabled          = checkinEnabled,
@@ -210,41 +213,110 @@ fun SettingsScreen(vm: MainViewModel) {
                 text = stringResource(R.string.crash_sensitivity_label),
                 style = MaterialTheme.typography.bodyMedium
             )
+            // First row: Low / Medium / High
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                CrashSensitivity.entries.forEach { s ->
+                listOf(CrashSensitivity.LOW, CrashSensitivity.MEDIUM, CrashSensitivity.HIGH).forEach { s ->
                     FilterChip(
                         selected = crashSensitivity == s,
-                        onClick = { crashSensitivity = s },
+                        onClick = {
+                            crashSensitivity = s
+                            minSpeedForCrash = when (s) {
+                                CrashSensitivity.LOW    -> "3"
+                                CrashSensitivity.MEDIUM -> "5"
+                                CrashSensitivity.HIGH   -> "10"
+                                CrashSensitivity.CUSTOM -> minSpeedForCrash
+                            }
+                        },
                         label = {
                             Text(
                                 when (s) {
                                     CrashSensitivity.LOW    -> stringResource(R.string.sensitivity_low)
                                     CrashSensitivity.MEDIUM -> stringResource(R.string.sensitivity_medium)
                                     CrashSensitivity.HIGH   -> stringResource(R.string.sensitivity_high)
+                                    CrashSensitivity.CUSTOM -> ""
                                 }
                             )
                         }
                     )
                 }
             }
+            // Second row: Custom (full width)
+            FilterChip(
+                selected = crashSensitivity == CrashSensitivity.CUSTOM,
+                onClick = {
+                    crashSensitivity = CrashSensitivity.CUSTOM
+                },
+                modifier = Modifier.fillMaxWidth(),
+                label = { Text(stringResource(R.string.sensitivity_custom)) }
+            )
 
+            // Description for selected level
             Text(
                 text = when (crashSensitivity) {
                     CrashSensitivity.LOW    -> stringResource(R.string.sensitivity_low_desc)
                     CrashSensitivity.MEDIUM -> stringResource(R.string.sensitivity_medium_desc)
                     CrashSensitivity.HIGH   -> stringResource(R.string.sensitivity_high_desc)
+                    CrashSensitivity.CUSTOM -> stringResource(R.string.sensitivity_custom_desc)
                 },
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
 
+            // Custom threshold slider
+            if (crashSensitivity == CrashSensitivity.CUSTOM) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        text = stringResource(R.string.sensitivity_custom_threshold, customThreshold),
+                        style = MaterialTheme.typography.bodySmall
+                    )
+                    Text(
+                        text = when {
+                            customThreshold <= 35 -> "≈ High"
+                            customThreshold <= 50 -> "≈ Medium"
+                            else                  -> "≈ Low"
+                        },
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+                Slider(
+                    value = customThreshold.toFloat(),
+                    onValueChange = { customThreshold = it.toInt() },
+                    valueRange = 20f..70f,
+                    steps = 49,   // 1 m/s² steps between 20 and 70
+                    modifier = Modifier.fillMaxWidth()
+                )
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween
+                ) {
+                    Text("20 m/s² (very sensitive)", style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    Text("70 m/s² (hard impacts only)", style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+            }
+
             OutlinedTextField(
                 value = minSpeedForCrash,
                 onValueChange = { if (it.all { c -> c.isDigit() }) minSpeedForCrash = it },
-                label = { Text("Min. speed to detect crash (km/h, 0 = always)") },
+                label = { Text(stringResource(R.string.min_speed_label)) },
                 modifier = Modifier.fillMaxWidth(),
                 singleLine = true,
-                supportingText = { Text("0 = detect at any speed (for testing). Recommended: 10") }
+                supportingText = {
+                    Text(
+                        when (crashSensitivity) {
+                            CrashSensitivity.LOW    -> stringResource(R.string.min_speed_hint_low)
+                            CrashSensitivity.MEDIUM -> stringResource(R.string.min_speed_hint_medium)
+                            CrashSensitivity.HIGH   -> stringResource(R.string.min_speed_hint_high)
+                            CrashSensitivity.CUSTOM -> stringResource(R.string.min_speed_hint_custom)
+                        }
+                    )
+                }
             )
         }
 
