@@ -27,6 +27,7 @@
     <string name="simplepush_key_hint">Channel Key</string>
     <string name="simplepush_description">Free push via SimplePush (10 msg/month). Install the app, get your key — no account needed.</string>
     <string name="save">Save</string>
+    <string name="section_safety">Safety configuration</string>
     <string name="backup_export">Export</string>
     <string name="backup_import">Import</string>
     <string name="test_send">Test Send</string>

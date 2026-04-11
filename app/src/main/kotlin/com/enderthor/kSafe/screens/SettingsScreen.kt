@@ -11,6 +11,8 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.Card
+import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
@@ -163,37 +165,62 @@ fun SettingsScreen(vm: MainViewModel) {
             Switch(checked = isActive, onCheckedChange = { isActive = it })
         }
 
-        // Karoo Live — right after active toggle so the ride-start feature is grouped with it
-        SettingRow(label = stringResource(R.string.karoo_live_label)) {
-            Switch(checked = karooLiveEnabled, onCheckedChange = { karooLiveEnabled = it })
+        // ── Karoo Live ────────────────────────────────────────────────────────
+        Card(
+            modifier = Modifier.fillMaxWidth(),
+            colors = CardDefaults.cardColors(
+                containerColor = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.35f)
+            )
+        ) {
+            Column(
+                modifier = Modifier.padding(12.dp),
+                verticalArrangement = Arrangement.spacedBy(10.dp)
+            ) {
+                Text(
+                    text = "Karoo Live",
+                    style = MaterialTheme.typography.titleSmall,
+                    fontWeight = FontWeight.Bold,
+                    color = MaterialTheme.colorScheme.primary
+                )
+                SettingRow(label = stringResource(R.string.karoo_live_label)) {
+                    Switch(checked = karooLiveEnabled, onCheckedChange = { karooLiveEnabled = it })
+                }
+                if (karooLiveEnabled) {
+                    Text(
+                        text = stringResource(R.string.karoo_live_hint),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    OutlinedTextField(
+                        value = karooLiveKey,
+                        onValueChange = { karooLiveKey = it },
+                        label = { Text(stringResource(R.string.karoo_live_key_label)) },
+                        placeholder = { Text("e.g. 3738Ag") },
+                        modifier = Modifier.fillMaxWidth(),
+                        singleLine = true,
+                        supportingText = { Text(stringResource(R.string.karoo_live_supporting)) }
+                    )
+                    OutlinedTextField(
+                        value = karooLiveStartMessage,
+                        onValueChange = { karooLiveStartMessage = it },
+                        label = { Text(stringResource(R.string.karoo_live_message_label)) },
+                        modifier = Modifier.fillMaxWidth(),
+                        minLines = 2,
+                        supportingText = { Text(stringResource(R.string.karoo_live_message_hint)) }
+                    )
+                }
+            }
         }
-
-        if (karooLiveEnabled) {
-            Text(
-                text = stringResource(R.string.karoo_live_hint),
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant
-            )
-            OutlinedTextField(
-                value = karooLiveKey,
-                onValueChange = { karooLiveKey = it },
-                label = { Text(stringResource(R.string.karoo_live_key_label)) },
-                placeholder = { Text("e.g. 3738Ag") },
-                modifier = Modifier.fillMaxWidth(),
-                singleLine = true,
-                supportingText = { Text(stringResource(R.string.karoo_live_supporting)) }
-            )
-            OutlinedTextField(
-                value = karooLiveStartMessage,
-                onValueChange = { karooLiveStartMessage = it },
-                label = { Text(stringResource(R.string.karoo_live_message_label)) },
-                modifier = Modifier.fillMaxWidth(),
-                minLines = 2,
-                supportingText = { Text(stringResource(R.string.karoo_live_message_hint)) }
-            )
-        }
+        // ─────────────────────────────────────────────────────────────────────
 
         HorizontalDivider()
+
+        Text(
+            text = stringResource(R.string.section_safety),
+            style = MaterialTheme.typography.titleSmall,
+            fontWeight = FontWeight.Bold,
+            color = MaterialTheme.colorScheme.onSurfaceVariant
+        )
 
         // Emergency message
         OutlinedTextField(
