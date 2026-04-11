@@ -53,6 +53,18 @@ class CrashDetectionManager(
         // CUSTOM → reads config.customCrashThreshold at runtime
     )
 
+    /**
+     * Impact window per sensitivity level: max time from impact to confirm crash.
+     * MTB/LOW needs more time — bike can slide or tumble down a slope before settling.
+     * Road/HIGH crashes are cleaner and settle faster.
+     */
+    private val impactWindowMs = mapOf(
+        CrashSensitivity.LOW    to 25_000L,  // MTB: bike may keep rolling after a hard crash
+        CrashSensitivity.MEDIUM to 20_000L,  // gravel/mixed
+        CrashSensitivity.HIGH   to 15_000L,  // road bike: crashes settle quickly
+        CrashSensitivity.CUSTOM to 20_000L   // reasonable default for custom
+    )
+
     private val GRAVITY = 9.81f
 
     // Stillness check: how close to gravity (~9.8 m/s²) the accel must stay
@@ -63,7 +75,6 @@ class CrashDetectionManager(
     private val GYRO_STILL_MAX   = 1.0f   // rad/s — device is not rotating (≈ 57°/s)
     private val GYRO_MOVING_MAX  = 3.0f   // rad/s — device is clearly still moving/riding
 
-    private val IMPACT_WINDOW_MS    = 12_000L  // max time from impact to confirm crash
     private val SILENCE_DURATION_MS =  4_500L  // must be still for 4.5s (literature uses 5s)
     private val LOG_INTERVAL_MS     =  2_000L  // log magnitude every 2s for debugging
 
@@ -177,6 +188,7 @@ class CrashDetectionManager(
             CrashState.IMPACT -> {
                 val timeSince = now - impactTime
                 val deviation = abs(magnitude - GRAVITY)
+                val windowMs  = impactWindowMs[config.crashSensitivity] ?: 20_000L
 
                 when {
                     // Device settling (accel near gravity AND gyro calming down) → begin silence check
@@ -186,8 +198,8 @@ class CrashDetectionManager(
                         Timber.d(">>> SILENCE_CHECK started (deviation=%.2f gyro=%.2f)".format(deviation, lastGyroMag))
                     }
                     // Timeout: never settled after impact → false alarm (MTB jump that continued riding)
-                    timeSince > IMPACT_WINDOW_MS -> {
-                        Timber.d("Impact window timeout → false alarm, resetting")
+                    timeSince > windowMs -> {
+                        Timber.d("Impact window timeout (${windowMs}ms) → false alarm, resetting")
                         resetState()
                     }
                 }
@@ -196,15 +208,26 @@ class CrashDetectionManager(
             CrashState.SILENCE_CHECK -> {
                 val deviation = abs(magnitude - GRAVITY)
                 val silenceDuration = now - silenceStartTime
+                val timeSinceImpact = now - impactTime
+                val windowMs = impactWindowMs[config.crashSensitivity] ?: 20_000L
 
-                // Device moved significantly (riding again) or rotating (still moving) → false alarm
+                // Device moved significantly (riding again) or rotating (still moving)
                 val accelMoving = deviation > SILENCE_DEVIATION_MAX * 1.5f
                 val gyroMoving  = lastGyroMag > GYRO_MOVING_MAX
 
                 when {
                     accelMoving || gyroMoving -> {
-                        Timber.d("Movement during silence (deviation=%.2f gyro=%.2f) → false alarm".format(deviation, lastGyroMag))
-                        resetState()
+                        if (timeSinceImpact < windowMs) {
+                            // Slight movement (bike sliding/rolling after crash) — go back to
+                            // IMPACT state and wait for the device to settle again rather than
+                            // resetting completely to MONITORING (which would discard the crash).
+                            state = CrashState.IMPACT
+                            Timber.d("Brief movement during silence (dev=%.2f gyro=%.2f) → back to IMPACT, waiting to settle".format(deviation, lastGyroMag))
+                        } else {
+                            // Impact window expired with too much movement → genuine false alarm
+                            Timber.d("Sustained movement during silence → false alarm, resetting".format())
+                            resetState()
+                        }
                     }
                     // Both accel AND gyro confirm stillness for required duration → CRASH CONFIRMED
                     silenceDuration >= SILENCE_DURATION_MS && lastGyroMag < GYRO_STILL_MAX -> {

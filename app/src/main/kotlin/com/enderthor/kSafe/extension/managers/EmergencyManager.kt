@@ -52,31 +52,35 @@ class EmergencyManager(
         startCountdown(reason, config)
     }
 
-    fun cancelEmergency(config: KSafeConfig? = null) {
+    suspend fun cancelEmergency(config: KSafeConfig? = null) {
         if (currentStatus != EmergencyStatus.COUNTDOWN) return
         countdownJob?.cancel()
         currentStatus = EmergencyStatus.IDLE
 
-        scope.launch {
-            // If check-in was enabled, restart the timer immediately so the field
-            // shows the full interval again instead of "Timer OFF"
-            if (config?.checkinEnabled == true) {
-                startCheckinTimer(config)
-            } else {
-                configManager.saveEmergencyState(EmergencyState())
-            }
-            karooSystem.dispatch(
-                InRideAlert(
-                    id = "ksafe-cancel",
-                    icon = R.drawable.ic_ksafe,
-                    title = context.getString(R.string.app_name),
-                    detail = "Cancelled",
-                    autoDismissMs = 3000L,
-                    backgroundColor = R.color.alert_green,
-                    textColor = R.color.alert_text_white
-                )
-            )
+        // Save IDLE state immediately (not via scope.launch) so DataType flows
+        // emit the new state right away and fields reset to their default view.
+        if (config?.checkinEnabled == true) {
+            // startCheckinJobs saves state at the start of checkinJob — the save
+            // happens inside the job so it won't race with the IDLE save above.
+            // We need the IDLE state immediately, so save it first, then let the
+            // checkin job overwrite with its checkin state right after.
+            configManager.saveEmergencyState(EmergencyState())
+            startCheckinJobs(config)
+        } else {
+            configManager.saveEmergencyState(EmergencyState())
         }
+
+        karooSystem.dispatch(
+            InRideAlert(
+                id = "ksafe-cancel",
+                icon = R.drawable.ic_ksafe,
+                title = context.getString(R.string.app_name),
+                detail = "Cancelled",
+                autoDismissMs = 3000L,
+                backgroundColor = R.color.alert_green,
+                textColor = R.color.alert_text_white
+            )
+        )
         Timber.d("Emergency cancelled by user")
     }
 
@@ -84,16 +88,15 @@ class EmergencyManager(
         if (!config.checkinEnabled) return
         checkinJob?.cancel()
         checkinWarningJob?.cancel()
+        val startTime = System.currentTimeMillis()
+        startCheckinJobs(config, startTime)
+        Timber.d("Check-in timer started: ${config.checkinIntervalMinutes}min")
+    }
 
-        scope.launch {
-            configManager.saveEmergencyState(
-                EmergencyState(
-                    checkinEnabled = true,
-                    checkinStartTime = System.currentTimeMillis(),
-                    checkinIntervalMinutes = config.checkinIntervalMinutes
-                )
-            )
-        }
+    /** Schedules checkin warning + expiry jobs; saves state at the start of the job. */
+    private fun startCheckinJobs(config: KSafeConfig, startTime: Long = System.currentTimeMillis()) {
+        checkinJob?.cancel()
+        checkinWarningJob?.cancel()
 
         val intervalMs = config.checkinIntervalMinutes * 60_000L
 
@@ -120,14 +123,19 @@ class EmergencyManager(
         }
 
         checkinJob = scope.launch {
+            configManager.saveEmergencyState(
+                EmergencyState(
+                    checkinEnabled = true,
+                    checkinStartTime = startTime,
+                    checkinIntervalMinutes = config.checkinIntervalMinutes
+                )
+            )
             delay(intervalMs)
             if (currentStatus == EmergencyStatus.IDLE) {
                 Timber.d("Check-in timer expired!")
                 triggerEmergency(EmergencyReason.CHECKIN_EXPIRED, config)
             }
         }
-
-        Timber.d("Check-in timer started: ${config.checkinIntervalMinutes}min")
     }
 
     fun resetCheckinTimer(config: KSafeConfig) {
@@ -158,7 +166,9 @@ class EmergencyManager(
         currentStatus = EmergencyStatus.COUNTDOWN
         val startTime = System.currentTimeMillis()
 
-        scope.launch {
+        // State save is inside countdownJob so that cancelling the job before the
+        // save runs avoids a race where a stale COUNTDOWN overwrites a fresh IDLE state.
+        countdownJob = scope.launch {
             configManager.saveEmergencyState(
                 EmergencyState(
                     status = EmergencyStatus.COUNTDOWN,
@@ -169,9 +179,6 @@ class EmergencyManager(
                     checkinIntervalMinutes = config.checkinIntervalMinutes
                 )
             )
-        }
-
-        countdownJob = scope.launch {
             karooSystem.dispatch(TurnScreenOn)
             karooSystem.dispatch(BEEP_LONG)
 
