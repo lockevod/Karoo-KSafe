@@ -92,7 +92,9 @@ Open the KSafe app on your Karoo to configure it.
 
 ### Provider Tab
 
-Select the messaging provider and enter your credentials. All configuration (API keys, tokens, and phone number for CallMeBot) is done here. KSafe supports:
+Select which provider will be used to send alerts. You can configure credentials for all three providers — they are saved independently and switching between them does not erase anything. Only the **selected (active) provider** will be used when an alert is triggered.
+
+KSafe supports:
 
 #### SimplePush (free up to 10 messages/month — easiest setup)
 
