@@ -6,7 +6,12 @@
 
 KSafe is a free, open-source safety extension for Karoo GPS devices. It monitors your ride and automatically alerts your emergency contacts if something goes wrong — crash detected, no check-in, or speed suddenly drops — and allows you to manually trigger an SOS from your ride screen.
 
-Compatible with Karoo 2 and Karoo 3 running Karoo OS version 1.527 and later.
+Beyond emergency alerts, KSafe can also notify your contacts when you **start a ride**, including a real-time Karoo Live tracking link. This is a better alternative to the default email notification that Karoo already offers: KSafe sends it via WhatsApp or push notification, directly to your contacts' phones, so they can follow your ride from the very first moment.
+
+Compatible with Karoo 3 running Karoo OS version 1.527 and later.
+
+> [!IMPORTANT]
+> KSafe uses your **phone's internet connection** (via the Hammerhead Companion app) to send messages. Without an active connection between your Karoo and your phone, no alerts or notifications will be sent. Make sure your Karoo is paired and connected to the companion app before riding.
 
 <a href="https://www.buymeacoffee.com/enderthor" target="_blank"><img src="https://cdn.buymeacoffee.com/buttons/default-orange.png" alt="Buy Me A Coffee" height="41" width="174"></a>
 
@@ -20,23 +25,16 @@ Compatible with Karoo 2 and Karoo 3 running Karoo OS version 1.527 and later.
 - **Location included**: Your GPS coordinates are automatically included in the alert message as a Google Maps link.
 - **Multiple contacts**: Configure multiple emergency contacts.
 - **Multiple messaging providers**: WhatsApp via CallMeBot (free), Whapi, push notification via Pushover, or free push via SimplePush.
+- **Ride start notification**: Optionally sends a message to your contacts when you start a ride, including a Karoo Live real-time tracking link — a better alternative to Karoo's built-in email notification.
 - **Two data fields**: SOS field and Safety Timer field — add either or both to your ride profile.
 
 ## Requirements
 
-- Karoo 2 or Karoo 3 with Karoo OS version 1.527 or later.
-- Internet connection (via companion app on Karoo 3, or direct data on Karoo 2) to send alerts.
+- Karoo 3 with Karoo OS version 1.527 or later.
+- Phone paired and connected via the **Hammerhead Companion app** (required for internet access to send alerts).
 - At least one configured messaging provider.
 
 ## Installation
-
-### For Karoo 2:
-
-1. Download the APK from the [releases section](https://github.com/lockevod/Karoo-KSafe/releases/latest/download/ksafe.apk).
-2. Prepare your Karoo for sideloading by following [DC Rainmaker's step-by-step guide](https://www.dcrainmaker.com/2021/02/how-to-sideload-android-apps-on-your-hammerhead-karoo-1-karoo-2.html).
-3. Install the app with the command `adb install ksafe.apk`.
-
-### For Karoo 3 (v > 1.527):
 
 1. Open the APK download link on your mobile: `https://github.com/lockevod/Karoo-KSafe/releases/latest/download/ksafe.apk`
 2. Share the file with the Hammerhead Companion app.
