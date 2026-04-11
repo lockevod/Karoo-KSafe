@@ -15,7 +15,7 @@ const val KAROO_LIVE_BASE_URL = "https://dashboard.hammerhead.io/live/"
 
 // ─── Enums ────────────────────────────────────────────────────────────────────
 
-enum class ProviderType { CALLMEBOT, WHAPI, PUSHOVER }
+enum class ProviderType { CALLMEBOT, WHAPI, PUSHOVER, SIMPLEPUSH }
 
 enum class CrashSensitivity {
     LOW,    // Requires stronger impact (fewer false positives)
@@ -107,6 +107,7 @@ val defaultSenderConfigs = listOf(
     SenderConfig(ProviderType.CALLMEBOT, ""),
     SenderConfig(ProviderType.WHAPI, ""),
     SenderConfig(ProviderType.PUSHOVER, "", ""),
+    SenderConfig(ProviderType.SIMPLEPUSH, ""),
 )
 
 val defaultSenderConfigJson: String = Json.encodeToString(defaultSenderConfigs)

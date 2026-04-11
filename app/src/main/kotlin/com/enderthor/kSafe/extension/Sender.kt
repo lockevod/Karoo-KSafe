@@ -1,5 +1,6 @@
 package com.enderthor.kSafe.extension
 
+import android.net.Uri
 import com.enderthor.kSafe.data.ProviderType
 import com.enderthor.kSafe.extension.managers.ConfigurationManager
 import io.hammerhead.karooext.KarooSystemService
@@ -27,7 +28,8 @@ class Sender(
     }
 
     /** Returns true if this provider does not require a phone number (sends via account key). */
-    fun isAccountBased(provider: ProviderType) = provider == ProviderType.PUSHOVER
+    fun isAccountBased(provider: ProviderType) =
+        provider == ProviderType.PUSHOVER || provider == ProviderType.SIMPLEPUSH
 
     // ─── Retry logic ──────────────────────────────────────────────────────────
 
@@ -77,7 +79,7 @@ class Sender(
 
         return when (provider) {
             ProviderType.CALLMEBOT -> {
-                val encodedMsg = java.net.URLEncoder.encode(message, "UTF-8")
+                val encodedMsg = Uri.encode(message)
                 val url = "https://api.callmebot.com/whatsapp.php?phone=${phone.trim()}&text=$encodedMsg&apikey=${config.apiKey}"
                 val response = karooSystem.httpRequest("GET", url)
                 val body = response.body?.toString(Charsets.UTF_8) ?: ""
@@ -105,11 +107,9 @@ class Sender(
 
             ProviderType.PUSHOVER -> {
                 // Pushover ignores `phone` — uses the stored user key
-                val configs = configManager.loadSenderConfigFlow().first()
-                val cfg = configs.find { it.provider == ProviderType.PUSHOVER } ?: return false
                 val jsonBody = buildJsonObject {
-                    put("token", cfg.apiKey)    // app token
-                    put("user", cfg.userKey)    // user/group key
+                    put("token", config.apiKey)    // app token
+                    put("user", config.userKey)    // user/group key
                     put("title", "KSafe Emergency")
                     put("message", message)
                     put("priority", 1)          // high priority — bypasses quiet hours
@@ -122,6 +122,19 @@ class Sender(
                 val body = response.body?.toString(Charsets.UTF_8) ?: ""
                 val ok = response.statusCode in 200..299 && body.contains("\"status\":1")
                 if (!ok) Timber.e("Pushover error ${response.statusCode}: $body")
+                ok
+            }
+
+            ProviderType.SIMPLEPUSH -> {
+                // SimplePush ignores `phone` — sends to the key's registered devices
+                if (config.apiKey.isBlank()) return false
+                val encodedTitle = Uri.encode("KSafe Emergency")
+                val encodedMsg   = Uri.encode(message)
+                val url = "https://api.simplepush.io/send/${config.apiKey.trim()}/$encodedTitle/$encodedMsg"
+                val response = karooSystem.httpRequest("GET", url)
+                val body = response.body?.toString(Charsets.UTF_8) ?: ""
+                val ok = response.statusCode in 200..299 && body.contains("\"status\":\"OK\"")
+                if (!ok) Timber.e("SimplePush error ${response.statusCode}: $body")
                 ok
             }
         }

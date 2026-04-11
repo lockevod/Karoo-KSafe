@@ -4,7 +4,7 @@
 > This app is currently in early stage and its main features might not work at all. If you want to test it and encounter issues, please report them in the GitHub issues, ideally with adb logs attached.
 > This extension can send emergency alerts to your contacts. Please test it carefully before relying on it in real situations.
 
-KSafe is a free, open-source safety extension for Karoo GPS devices, inspired by Saifely. It monitors your ride and automatically alerts your emergency contacts if something goes wrong — crash detected, no check-in, or speed suddenly drops — and allows you to manually trigger an SOS from your ride screen.
+KSafe is a free, open-source safety extension for Karoo GPS devices. It monitors your ride and automatically alerts your emergency contacts if something goes wrong — crash detected, no check-in, or speed suddenly drops — and allows you to manually trigger an SOS from your ride screen.
 
 Compatible with Karoo 2 and Karoo 3 running Karoo OS version 1.527 and later.
 
@@ -19,7 +19,7 @@ Compatible with Karoo 2 and Karoo 3 running Karoo OS version 1.527 and later.
 - **Emergency countdown with cancel**: All triggers start a configurable countdown (default 30s) so you can cancel false alarms before alerts are sent.
 - **Location included**: Your GPS coordinates are automatically included in the alert message as a Google Maps link.
 - **Multiple contacts**: Configure multiple emergency contacts.
-- **Multiple messaging providers**: WhatsApp via CallMeBot (free), Whapi, or push notification via Pushover.
+- **Multiple messaging providers**: WhatsApp via CallMeBot (free), Whapi, push notification via Pushover, or free push via SimplePush.
 - **Two data fields**: SOS field and Safety Timer field — add either or both to your ride profile.
 
 ## Requirements
@@ -99,11 +99,32 @@ Add your emergency contacts:
 - **Name**: Contact name.
 - **Phone**: Phone number in E.164 format (e.g. `+34675123123`). Required for CallMeBot and Whapi.
 
-You can add multiple contacts. For Pushover, a phone number is not required — alerts are sent to your registered Pushover devices.
+You can add multiple contacts. For Pushover and SimplePush, a phone number is not required — alerts are sent to your registered devices.
 
 ### Provider Tab
 
 Select the messaging provider and enter your credentials. KSafe supports:
+
+#### SimplePush (free up to 10 messages/month — easiest setup)
+
+SimplePush is the simplest option: no account, no registration, just install the app and paste one key. The free tier allows **10 messages per month**, which may be enough if you only use it for occasional emergency alerts. If you ride frequently or have multiple contacts, consider Pushover or CallMeBot instead.
+
+**Step 1 — Install SimplePush and get your key**
+
+1. Install the **SimplePush** app on the phone that will receive alerts:
+   - [Android](https://play.google.com/store/apps/details?id=io.github.norbipeti.simplepush)
+   - [iOS](https://apps.apple.com/app/simplepush/id1448718895)
+2. Open the app — your **Channel Key** is displayed on the main screen (e.g. `HuxRj4`). Copy it.
+
+**Step 2 — Configure KSafe**
+
+1. In the **Provider** tab, select **SimplePush**.
+2. Enter the **Channel Key** from the app.
+3. Tap **Test Send** — you should receive a push notification immediately.
+
+> No phone number is needed in the Contacts tab when using SimplePush. The free tier covers **10 messages/month**. Check [simplepush.io](https://simplepush.io) for paid plans if you need more.
+
+---
 
 #### WhatsApp via CallMeBot (free and easy)
 
@@ -141,7 +162,8 @@ Whapi configuration can be a litte complicated, if you want to use a easy option
 #### Pushover (recommended for reliability)
 
 Pushover delivers push notifications instantly to any phone or tablet. It works independently of WhatsApp — the emergency contact only needs the free Pushover app installed. Each user sets up their own independent account.
-Pushover has a one-time purchase cost (~$5) after a 30-day free trial. KSafe doesn't have any kind of payment, it's complete free and open-source. The payment to pushover is only if you want use these service (you can use callmebot and it's free)
+
+Pushover is **free to try for 30 days**. After that, a **one-time payment of ~$5** is required to continue using it without restrictions (unlimited messages, emergency priority alerts, no monthly limits). This payment goes directly to Pushover — KSafe itself is always free and open-source. If you prefer a free alternative with no payment, use CallMeBot (WhatsApp) or SimplePush (push, 10 msg/month).
 
 **
 **Step 1 — Create a Pushover account**
@@ -169,7 +191,7 @@ Each person who uses KSafe needs to create their own Pushover application (it is
 3. Enter your **User Key** in the second field.
 4. Tap **Test Send** — you should receive a push notification on your phone immediately.
 
-> Pushover has a one-time purchase cost (~$5) after a 30-day free trial. Notifications are delivered even in silent/do-not-disturb mode when sent at high priority (which KSafe uses for emergencies).
+> Notifications are delivered even in silent/do-not-disturb mode when sent at high priority (which KSafe uses for emergencies).
 
 ## How It Works
 
@@ -220,7 +242,7 @@ Use the **"Test Send"** button in the Provider tab to verify that your messaging
 
 - KSafe does not collect or transmit any personal data beyond what is strictly necessary to send your emergency alerts (location and the message you configure).
 - All configuration is stored locally on your Karoo device.
-- When you use a third-party provider (CallMeBot, Whapi, Pushover), your phone number and message content can be shared with that provider. Please read and accept their terms and privacy policies before using KSafe.
+- When you use a third-party provider (CallMeBot, Whapi, Pushover, SimplePush), your phone number and message content can be shared with that provider. Please read and accept their terms and privacy policies before using KSafe.
 - KSafe has no relationship or partnership with any of these providers.
 - KSafe has no warranties. If you do not agree with this, please do not use it.
 
