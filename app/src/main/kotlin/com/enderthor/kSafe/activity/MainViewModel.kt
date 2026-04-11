@@ -38,10 +38,17 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     // ─── Provider helpers ─────────────────────────────────────────────────────
 
-    fun updateSenderConfig(provider: ProviderType, apiKey: String, userKey: String = "", phoneNumber: String = "") {
+    fun updateSenderConfig(
+        provider: ProviderType,
+        apiKey: String,
+        userKey: String = "",
+        userKey2: String = "",
+        userKey3: String = "",
+        phoneNumber: String = ""
+    ) {
         val updated = senderConfigs.value.toMutableList()
         val idx = updated.indexOfFirst { it.provider == provider }
-        val newConfig = SenderConfig(provider, apiKey, userKey, phoneNumber)
+        val newConfig = SenderConfig(provider, apiKey, userKey, userKey2, userKey3, phoneNumber)
         if (idx >= 0) updated[idx] = newConfig else updated.add(newConfig)
         saveSenderConfigs(updated)
     }

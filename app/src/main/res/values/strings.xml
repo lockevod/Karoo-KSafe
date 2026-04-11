@@ -22,7 +22,9 @@
     <string name="callmebot_phone_hint">Recipient phone (with country code, e.g. +34612345678)</string>
     <string name="callmebot_description">WhatsApp via CallMeBot. Free — the recipient must activate their API key first.</string>
     <string name="pushover_app_token_hint">App Token</string>
-    <string name="pushover_user_key_hint">User Key</string>
+    <string name="pushover_user_key_hint">User Key (recipient 1)</string>
+    <string name="pushover_user_key2_hint">User Key — recipient 2 (optional)</string>
+    <string name="pushover_user_key3_hint">User Key — recipient 3 (optional)</string>
     <string name="pushover_description">Push notification via Pushover. Free 30-day trial, then ~$5 one-time. Enter your app token and user key.</string>
     <string name="simplepush_key_hint">Channel Key</string>
     <string name="simplepush_description">Free push via SimplePush (10 msg/month). Install the app, get your key — no account needed.</string>

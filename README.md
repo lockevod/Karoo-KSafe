@@ -146,13 +146,24 @@ Pushover delivers push notifications instantly to any phone or tablet. It works 
 
 Pushover is **free to try for 30 days**. After that, a **one-time payment of ~$5** is required to continue using it without restrictions (unlimited messages, emergency priority alerts, no monthly limits). This payment goes directly to Pushover — KSafe itself is always free and open-source. If you prefer a free alternative with no payment, use CallMeBot (WhatsApp) or SimplePush (push, 10 msg/month).
 
-**Step 1 — Create a Pushover account**
+Pushover requires **two separate keys** — this is a common point of confusion:
+
+| Key | What it is | Where to find it |
+|-----|-----------|-----------------|
+| **App Token** | Identifies the *application* sending the alert (KSafe) | Created once at pushover.net/apps/build |
+| **User Key** | Identifies the *device/account* that will receive the alert | Shown at the top of each recipient's Pushover dashboard |
+
+Both are mandatory. Without the App Token, Pushover doesn't know which app is sending. Without the User Key, it doesn't know where to deliver the notification.
+
+KSafe supports **up to 3 User Keys** — one per field in the Provider tab. Each key belongs to a different person or device. The App Token is shared: you only create it once and use it for all recipients.
+
+**Step 1 — Create a Pushover account and get your User Key**
 
 1. Go to [pushover.net](https://pushover.net/) and create a free account.
-2. Install the **Pushover** app on the phone that will receive alerts (your emergency contact's phone or your own).
-3. Log in — your **User Key** is shown at the top of the dashboard. Copy it.
+2. Install the **Pushover** app on the phone that will receive alerts (your emergency contact's phone or your own) and log in.
+3. Open [pushover.net](https://pushover.net/) in a browser — your **User Key** is shown at the top of the dashboard (e.g. `uQiRzpo4DXghDmr9QzzfQu`). Copy it. This key identifies the device/account that will receive the notifications.
 
-**Step 2 — Create a Pushover application**
+**Step 2 — Create a Pushover application and get your App Token**
 
 Each person who uses KSafe needs to create their own Pushover application (it is free and takes 1 minute):
 
@@ -162,14 +173,15 @@ Each person who uses KSafe needs to create their own Pushover application (it is
    - **Type**: Application
    - **Description**: optional
    - **URL**: optional
-3. Click **Create Application**. You will get an **App Token** (a string like `azGDORePK8gMaC0QOYAMyEEuzJnyUi`). Copy it.
+3. Click **Create Application**. You will get an **App Token** (e.g. `azGDORePK8gMaC0QOYAMyEEuzJnyUi`). Copy it. This key identifies KSafe as the sender.
 
 **Step 3 — Configure KSafe**
 
 1. In the **Provider** tab, select **Pushover**.
-2. Enter your **App Token** in the first field.
-3. Enter your **User Key** in the second field.
-4. Tap **Test Send** — you should receive a push notification on your phone immediately.
+2. Enter your **App Token** in the first field (the application key from Step 2).
+3. Enter the **User Key** of the first recipient in the second field (from Step 1).
+4. Optionally enter a second and third User Key if you want to alert multiple people. Each recipient needs their own Pushover account and User Key — but they all share the same App Token you created in Step 2.
+5. Tap **Test Send** — all configured recipients should receive a push notification immediately.
 
 > Notifications are delivered even in silent/do-not-disturb mode when sent at high priority (which KSafe uses for emergencies).
 

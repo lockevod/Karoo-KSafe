@@ -87,22 +87,28 @@ class Sender(
 
             ProviderType.PUSHOVER -> {
                 if (config.apiKey.isBlank() || config.userKey.isBlank()) return false
-                val jsonBody = buildJsonObject {
-                    put("token", config.apiKey)     // app token
-                    put("user", config.userKey)     // user/group key
-                    put("title", "KSafe Emergency")
-                    put("message", message)
-                    put("priority", 1)              // high priority — bypasses quiet hours
-                }.toString()
-                val response = karooSystem.httpRequest(
-                    "POST", "https://api.pushover.net/1/messages.json",
-                    mapOf("Content-Type" to "application/json"),
-                    jsonBody.toByteArray()
-                )
-                val body = response.body?.toString(Charsets.UTF_8) ?: ""
-                val ok = response.statusCode in 200..299 && body.contains("\"status\":1")
-                if (!ok) Timber.e("Pushover error ${response.statusCode}: $body")
-                ok
+                val userKeys = listOf(config.userKey, config.userKey2, config.userKey3)
+                    .filter { it.isNotBlank() }
+                var anyOk = false
+                for (key in userKeys) {
+                    val jsonBody = buildJsonObject {
+                        put("token", config.apiKey)
+                        put("user", key)
+                        put("title", "KSafe Emergency")
+                        put("message", message)
+                        put("priority", 1)          // high priority — bypasses quiet hours
+                    }.toString()
+                    val response = karooSystem.httpRequest(
+                        "POST", "https://api.pushover.net/1/messages.json",
+                        mapOf("Content-Type" to "application/json"),
+                        jsonBody.toByteArray()
+                    )
+                    val body = response.body?.toString(Charsets.UTF_8) ?: ""
+                    val ok = response.statusCode in 200..299 && body.contains("\"status\":1")
+                    if (ok) anyOk = true
+                    else Timber.e("Pushover error (userKey=$key) ${response.statusCode}: $body")
+                }
+                anyOk
             }
 
             ProviderType.SIMPLEPUSH -> {
