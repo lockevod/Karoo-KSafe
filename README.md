@@ -151,7 +151,7 @@ Pushover requires **two separate keys** — this is a common point of confusion:
 | Key | What it is | Where to find it |
 |-----|-----------|-----------------|
 | **App Token** | Identifies the *application* sending the alert (KSafe) | Created once at pushover.net/apps/build |
-| **User Key** | Identifies the *device/account* that will receive the alert | Shown at the top of each recipient's Pushover dashboard |
+| **User Key** | Identifies the *device/account* that will receive the alert | Found in the Pushover app on each recipient's phone → Settings |
 
 Both are mandatory. Without the App Token, Pushover doesn't know which app is sending. Without the User Key, it doesn't know where to deliver the notification.
 
@@ -161,7 +161,7 @@ KSafe supports **up to 3 User Keys** — one per field in the Provider tab. Each
 
 1. Go to [pushover.net](https://pushover.net/) and create a free account.
 2. Install the **Pushover** app on the phone that will receive alerts (your emergency contact's phone or your own) and log in.
-3. Open [pushover.net](https://pushover.net/) in a browser — your **User Key** is shown at the top of the dashboard (e.g. `uQiRzpo4DXghDmr9QzzfQu`). Copy it. This key identifies the device/account that will receive the notifications.
+3. Open the **Pushover app** on that phone → go to **Settings** — the **User Key** is shown there (e.g. `uQiRzpo4DXghDmr9QzzfQu`). Copy it. This key is tied to that specific device/account and is needed so KSafe knows where to deliver the notification.
 
 **Step 2 — Create a Pushover application and get your App Token**
 
