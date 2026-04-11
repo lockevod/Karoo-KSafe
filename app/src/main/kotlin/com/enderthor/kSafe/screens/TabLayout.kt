@@ -21,7 +21,6 @@ import com.enderthor.kSafe.activity.MainViewModel
 @Composable
 fun TabLayout(vm: MainViewModel = viewModel()) {
     val tabs = listOf(
-        stringResource(R.string.tab_contacts),
         stringResource(R.string.tab_provider),
         stringResource(R.string.tab_settings),
     )
@@ -46,9 +45,8 @@ fun TabLayout(vm: MainViewModel = viewModel()) {
         }
 
         when (selectedTab) {
-            0 -> ContactsScreen(vm)
-            1 -> ProviderScreen(vm)
-            2 -> SettingsScreen(vm)
+            0 -> ProviderScreen(vm)
+            1 -> SettingsScreen(vm)
         }
     }
 }

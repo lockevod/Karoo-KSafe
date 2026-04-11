@@ -15,7 +15,7 @@ const val KAROO_LIVE_BASE_URL = "https://dashboard.hammerhead.io/live/"
 
 // ─── Enums ────────────────────────────────────────────────────────────────────
 
-enum class ProviderType { CALLMEBOT, WHAPI, PUSHOVER, SIMPLEPUSH }
+enum class ProviderType { CALLMEBOT, PUSHOVER, SIMPLEPUSH }
 
 enum class CrashSensitivity {
     LOW,    // Requires stronger impact (fewer false positives)
@@ -34,20 +34,8 @@ enum class EmergencyReason(val label: String) {
 // ─── Config models ────────────────────────────────────────────────────────────
 
 @Serializable
-data class EmergencyContact(
-    val name: String = "",
-    val phone: String = "",
-    val email: String = ""
-) {
-    val hasPhone: Boolean get() = phone.isNotBlank()
-    val hasEmail: Boolean get() = email.isNotBlank()
-    val isValid: Boolean get() = name.isNotBlank() && (hasPhone || hasEmail)
-}
-
-@Serializable
 data class KSafeConfig(
     val isActive: Boolean = true,
-    val contacts: List<EmergencyContact> = emptyList(),
     val emergencyMessage: String = "EMERGENCY: Possible incident detected. Location: {location} (Reason: {reason}) {livetrack}",
     val karooLiveKey: String = "",
     val karooLiveEnabled: Boolean = false,
@@ -70,7 +58,8 @@ data class KSafeConfig(
 data class SenderConfig(
     val provider: ProviderType = ProviderType.CALLMEBOT,
     val apiKey: String = "",
-    val userKey: String = "",   // Pushover: user/group key (apiKey = app token)
+    val userKey: String = "",       // Pushover: user/group key (apiKey = app token)
+    val phoneNumber: String = "",   // CallMeBot: recipient WhatsApp number (with country code)
 )
 
 // ─── Emergency state (shared between extension and DataTypes via DataStore) ───
@@ -101,13 +90,21 @@ data class EmergencyState(
     }
 }
 
+// ─── Backup ───────────────────────────────────────────────────────────────────
+
+/** Full configuration snapshot used for export/import. */
+@Serializable
+data class KSafeBackup(
+    val config: KSafeConfig,
+    val senderConfigs: List<SenderConfig>,
+)
+
 // ─── Defaults ─────────────────────────────────────────────────────────────────
 
 val defaultSenderConfigs = listOf(
-    SenderConfig(ProviderType.CALLMEBOT, ""),
-    SenderConfig(ProviderType.WHAPI, ""),
-    SenderConfig(ProviderType.PUSHOVER, "", ""),
-    SenderConfig(ProviderType.SIMPLEPUSH, ""),
+    SenderConfig(ProviderType.CALLMEBOT),
+    SenderConfig(ProviderType.PUSHOVER),
+    SenderConfig(ProviderType.SIMPLEPUSH),
 )
 
 val defaultSenderConfigJson: String = Json.encodeToString(defaultSenderConfigs)

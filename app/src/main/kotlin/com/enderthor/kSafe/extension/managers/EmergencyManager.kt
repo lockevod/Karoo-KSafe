@@ -221,16 +221,13 @@ class EmergencyManager(
             .replace("{livetrack}", liveTrackLink)
             .trim()
 
-        Timber.d("Sending emergency alerts to ${config.contacts.size} contacts")
+        Timber.d("Sending emergency alert via ${config.activeProvider}")
 
-        config.contacts.filter { it.isValid }.forEach { contact ->
-            scope.launch {
-                try {
-                    if (contact.hasPhone || sender.isAccountBased(config.activeProvider))
-                        sender.sendToPhone(contact.phone, message, config.activeProvider)
-                } catch (e: Exception) {
-                    Timber.e(e, "Error sending alert to ${contact.name}")
-                }
+        scope.launch {
+            try {
+                sender.sendAlert(message, config.activeProvider)
+            } catch (e: Exception) {
+                Timber.e(e, "Error sending emergency alert")
             }
         }
 

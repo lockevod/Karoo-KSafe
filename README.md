@@ -23,8 +23,7 @@ Compatible with Karoo 3 running Karoo OS version 1.527 and later.
 - **Speed drop detection**: Detects when your speed drops suddenly and remains low for a configurable time window.
 - **Emergency countdown with cancel**: All triggers start a configurable countdown (default 30s) so you can cancel false alarms before alerts are sent.
 - **Location included**: Your GPS coordinates are automatically included in the alert message as a Google Maps link.
-- **Multiple contacts**: Configure multiple emergency contacts.
-- **Multiple messaging providers**: WhatsApp via CallMeBot (free), Whapi, push notification via Pushover, or free push via SimplePush.
+- **Multiple messaging providers**: WhatsApp via CallMeBot (free), push notification via Pushover, or free push via SimplePush.
 - **Ride start notification**: Optionally sends a message to your contacts when you start a ride, including a Karoo Live real-time tracking link — a better alternative to Karoo's built-in email notification.
 - **Two data fields**: SOS field and Safety Timer field — add either or both to your ride profile.
 
@@ -91,17 +90,9 @@ Open the KSafe app on your Karoo to configure it.
 - **Speed drop detection**: Enable/disable detection of sudden prolonged speed drops. Configure the time window (minutes) with no speed before triggering.
 - **Check-in timer**: Enable/disable periodic check-ins. Configure the interval in minutes (default: 120 min). A warning beep and alert appear 10 minutes before the timer expires.
 
-### Contacts Tab
-
-Add your emergency contacts:
-- **Name**: Contact name.
-- **Phone**: Phone number in E.164 format (e.g. `+34675123123`). Required for CallMeBot and Whapi.
-
-You can add multiple contacts. For Pushover and SimplePush, a phone number is not required — alerts are sent to your registered devices.
-
 ### Provider Tab
 
-Select the messaging provider and enter your credentials. KSafe supports:
+Select the messaging provider and enter your credentials. All configuration (API keys, tokens, and phone number for CallMeBot) is done here. KSafe supports:
 
 #### SimplePush (free up to 10 messages/month — easiest setup)
 
@@ -142,19 +133,11 @@ CallMeBot lets you send WhatsApp messages for free using a simple API. **Importa
 
 **Step 2 — Configure KSafe**
 
-1. In the **Contacts** tab, add your emergency contact's phone number (with country code, e.g. `+34675123123`).
-2. In the **Provider** tab, select **CallMeBot**.
-3. Enter the API key received in Step 1.
+1. In the **Provider** tab, select **CallMeBot**.
+2. Enter the **recipient's phone number** (with country code, e.g. `+34675123123`) in the phone field.
+3. Enter the **API key** received in Step 1.
 4. Tap **Test Send** — your contact should receive a WhatsApp message within seconds.
 
----
-
-#### WhatsApp via Whapi (advanced)
-
-1. Register at [Whapi.io](https://whapi.io/). They offer a sandbox (free, ~1000 messages/month) but require linking a real phone number. Read their terms carefully before using.
-2. Select **Whapi** in KSafe and enter your API key.
-3. Use the **Test Send** button to verify it works.
-Whapi configuration can be a litte complicated, if you want to use a easy option use callmebot or pushover.
 ---
 
 #### Pushover (recommended for reliability)
@@ -163,7 +146,6 @@ Pushover delivers push notifications instantly to any phone or tablet. It works 
 
 Pushover is **free to try for 30 days**. After that, a **one-time payment of ~$5** is required to continue using it without restrictions (unlimited messages, emergency priority alerts, no monthly limits). This payment goes directly to Pushover — KSafe itself is always free and open-source. If you prefer a free alternative with no payment, use CallMeBot (WhatsApp) or SimplePush (push, 10 msg/month).
 
-**
 **Step 1 — Create a Pushover account**
 
 1. Go to [pushover.net](https://pushover.net/) and create a free account.
@@ -196,7 +178,7 @@ Each person who uses KSafe needs to create their own Pushover application (it is
 1. KSafe runs in the background while you ride.
 2. When a trigger occurs (crash detected, check-in expired, speed drop, or manual SOS tap), a countdown starts with audible beeps and a screen alert.
 3. During the countdown, you can cancel by tapping the **SOS field** or the **Safety Timer field**.
-4. If the countdown completes without cancellation, KSafe obtains your current GPS location and sends the configured emergency message to all your contacts.
+4. If the countdown completes without cancellation, KSafe obtains your current GPS location and sends the configured emergency message via the configured provider.
 5. After sending, the extension returns to idle state and normal monitoring resumes.
 
 ## Crash Detection

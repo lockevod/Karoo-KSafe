@@ -21,19 +21,15 @@ class Sender(
     private val delaySeconds = listOf(60, 120, 180)
     private val cycleDelayMinutes = listOf(5, 10)
 
-    // ─── Entry points ─────────────────────────────────────────────────────────
+    // ─── Entry point ──────────────────────────────────────────────────────────
 
-    suspend fun sendToPhone(phoneNumber: String, message: String, provider: ProviderType): Boolean {
-        return sendWithRetry(phoneNumber, message, provider)
-    }
-
-    /** Returns true if this provider does not require a phone number (sends via account key). */
-    fun isAccountBased(provider: ProviderType) =
-        provider == ProviderType.PUSHOVER || provider == ProviderType.SIMPLEPUSH
+    /** Sends [message] via [provider]. All credentials and phone are read from stored config. */
+    suspend fun sendAlert(message: String, provider: ProviderType): Boolean =
+        sendWithRetry(message, provider)
 
     // ─── Retry logic ──────────────────────────────────────────────────────────
 
-    private suspend fun sendWithRetry(phone: String, message: String, provider: ProviderType): Boolean {
+    private suspend fun sendWithRetry(message: String, provider: ProviderType): Boolean {
         var totalAttempts = 0
         var currentCycle = 0
 
@@ -47,7 +43,7 @@ class Sender(
                         delay(waitSeconds * 1000L)
                     }
                     val result = withTimeoutOrNull(30_000L) {
-                        attemptSendMessage(phone, message, provider)
+                        attemptSend(message, provider)
                     } == true
 
                     if (result) {
@@ -73,14 +69,15 @@ class Sender(
 
     // ─── Provider implementations ─────────────────────────────────────────────
 
-    private suspend fun attemptSendMessage(phone: String, message: String, provider: ProviderType): Boolean {
+    private suspend fun attemptSend(message: String, provider: ProviderType): Boolean {
         val configs = configManager.loadSenderConfigFlow().first()
         val config = configs.find { it.provider == provider } ?: return false
 
         return when (provider) {
             ProviderType.CALLMEBOT -> {
+                if (config.phoneNumber.isBlank() || config.apiKey.isBlank()) return false
                 val encodedMsg = Uri.encode(message)
-                val url = "https://api.callmebot.com/whatsapp.php?phone=${phone.trim()}&text=$encodedMsg&apikey=${config.apiKey}"
+                val url = "https://api.callmebot.com/whatsapp.php?phone=${config.phoneNumber.trim()}&text=$encodedMsg&apikey=${config.apiKey}"
                 val response = karooSystem.httpRequest("GET", url)
                 val body = response.body?.toString(Charsets.UTF_8) ?: ""
                 val ok = response.statusCode in 200..299 && !body.contains("ERROR")
@@ -88,31 +85,14 @@ class Sender(
                 ok
             }
 
-            ProviderType.WHAPI -> {
-                val formattedPhone = phone.trim().removePrefix("+").filter { it.isDigit() || it == '-' }
-                val jsonBody = buildJsonObject {
-                    put("to", formattedPhone)
-                    put("body", message)
-                }.toString()
-                val headers = mapOf(
-                    "Content-Type" to "application/json",
-                    "Authorization" to "Bearer ${config.apiKey}"
-                )
-                val response = karooSystem.httpRequest("POST", "https://gate.whapi.cloud/messages/text", headers, jsonBody.toByteArray())
-                val body = response.body?.toString(Charsets.UTF_8) ?: ""
-                val ok = response.statusCode in 200..299 || body.contains("message_id")
-                if (!ok) Timber.e("Whapi error ${response.statusCode}: $body")
-                ok
-            }
-
             ProviderType.PUSHOVER -> {
-                // Pushover ignores `phone` — uses the stored user key
+                if (config.apiKey.isBlank() || config.userKey.isBlank()) return false
                 val jsonBody = buildJsonObject {
-                    put("token", config.apiKey)    // app token
-                    put("user", config.userKey)    // user/group key
+                    put("token", config.apiKey)     // app token
+                    put("user", config.userKey)     // user/group key
                     put("title", "KSafe Emergency")
                     put("message", message)
-                    put("priority", 1)          // high priority — bypasses quiet hours
+                    put("priority", 1)              // high priority — bypasses quiet hours
                 }.toString()
                 val response = karooSystem.httpRequest(
                     "POST", "https://api.pushover.net/1/messages.json",
@@ -126,7 +106,6 @@ class Sender(
             }
 
             ProviderType.SIMPLEPUSH -> {
-                // SimplePush ignores `phone` — sends to the key's registered devices
                 if (config.apiKey.isBlank()) return false
                 val encodedTitle = Uri.encode("KSafe Emergency")
                 val encodedMsg   = Uri.encode(message)

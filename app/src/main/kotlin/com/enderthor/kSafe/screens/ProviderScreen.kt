@@ -15,6 +15,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -22,6 +23,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
@@ -29,6 +31,7 @@ import com.enderthor.kSafe.R
 import com.enderthor.kSafe.activity.MainViewModel
 import com.enderthor.kSafe.data.ProviderType
 import com.enderthor.kSafe.extension.KSafeExtension
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
 @Composable
@@ -46,7 +49,17 @@ fun ProviderScreen(vm: MainViewModel) {
     var userKey by remember(activeProvider, activeSender) {
         mutableStateOf(activeSender?.userKey ?: "")
     }
+    var phoneNumber by remember(activeProvider, activeSender) {
+        mutableStateOf(activeSender?.phoneNumber ?: "")
+    }
     var testStatus by remember { mutableStateOf("") }
+    var testIsError by remember { mutableStateOf(false) }
+
+    // Auto-save with debounce whenever credential fields change
+    LaunchedEffect(apiKey, userKey, phoneNumber) {
+        delay(700)
+        vm.updateSenderConfig(activeProvider, apiKey, userKey, phoneNumber)
+    }
 
     Column(
         modifier = Modifier
@@ -61,57 +74,75 @@ fun ProviderScreen(vm: MainViewModel) {
             fontWeight = FontWeight.Bold
         )
 
-        // Provider selector chips
+        // Provider selector chips — CallMeBot + Pushover in first row, SimplePush full-width below
+        val onProviderClick = { provider: ProviderType ->
+            vm.setActiveProvider(provider)
+            val s = senderConfigs.find { it.provider == provider }
+            apiKey = s?.apiKey ?: ""
+            userKey = s?.userKey ?: ""
+            phoneNumber = s?.phoneNumber ?: ""
+            testStatus = ""
+        }
         Row(
             modifier = Modifier.fillMaxWidth(),
             horizontalArrangement = Arrangement.spacedBy(8.dp)
         ) {
-            ProviderType.entries.forEach { provider ->
+            listOf(ProviderType.CALLMEBOT, ProviderType.PUSHOVER).forEach { provider ->
                 FilterChip(
                     selected = activeProvider == provider,
-                    onClick = {
-                        vm.setActiveProvider(provider)
-                        val s = senderConfigs.find { it.provider == provider }
-                        apiKey = s?.apiKey ?: ""
-                    },
+                    onClick = { onProviderClick(provider) },
                     label = {
                         Text(
-                            text = when (provider) {
-                                ProviderType.CALLMEBOT -> "CallMeBot"
-                                ProviderType.WHAPI -> "Whapi"
-                                ProviderType.PUSHOVER -> "Pushover"
-                                ProviderType.SIMPLEPUSH -> "SimplePush"
-                            },
+                            text = if (provider == ProviderType.CALLMEBOT) "CallMeBot" else "Pushover",
                             style = MaterialTheme.typography.labelSmall
                         )
                     }
                 )
             }
         }
+        FilterChip(
+            selected = activeProvider == ProviderType.SIMPLEPUSH,
+            onClick = { onProviderClick(ProviderType.SIMPLEPUSH) },
+            modifier = Modifier.fillMaxWidth(),
+            label = {
+                Text("SimplePush", style = MaterialTheme.typography.labelSmall)
+            }
+        )
 
         Spacer(Modifier.height(4.dp))
 
         // Provider description
         Text(
             text = when (activeProvider) {
-                ProviderType.CALLMEBOT -> "WhatsApp via CallMeBot. Free API key at callmebot.com."
-                ProviderType.WHAPI -> "WhatsApp via Whapi Cloud. Requires a paid plan at whapi.cloud."
-                ProviderType.PUSHOVER -> "Push notification via Pushover. Free 30-day trial, then ~\$5 one-time. Enter your app token and user key."
+                ProviderType.CALLMEBOT  -> stringResource(R.string.callmebot_description)
+                ProviderType.PUSHOVER   -> stringResource(R.string.pushover_description)
                 ProviderType.SIMPLEPUSH -> stringResource(R.string.simplepush_description)
             },
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant
         )
 
+        // CallMeBot: recipient phone number
+        if (activeProvider == ProviderType.CALLMEBOT) {
+            OutlinedTextField(
+                value = phoneNumber,
+                onValueChange = { phoneNumber = it },
+                label = { Text(stringResource(R.string.callmebot_phone_hint)) },
+                modifier = Modifier.fillMaxWidth(),
+                singleLine = true
+            )
+        }
+
+        // API key / app token / channel key
         OutlinedTextField(
             value = apiKey,
             onValueChange = { apiKey = it },
             label = {
                 Text(
                     when (activeProvider) {
-                        ProviderType.PUSHOVER    -> stringResource(R.string.pushover_app_token_hint)
-                        ProviderType.SIMPLEPUSH  -> stringResource(R.string.simplepush_key_hint)
-                        else                     -> stringResource(R.string.api_key_hint)
+                        ProviderType.PUSHOVER   -> stringResource(R.string.pushover_app_token_hint)
+                        ProviderType.SIMPLEPUSH -> stringResource(R.string.simplepush_key_hint)
+                        else                    -> stringResource(R.string.api_key_hint)
                     }
                 )
             },
@@ -119,6 +150,7 @@ fun ProviderScreen(vm: MainViewModel) {
             singleLine = true
         )
 
+        // Pushover user/group key
         if (activeProvider == ProviderType.PUSHOVER) {
             OutlinedTextField(
                 value = userKey,
@@ -129,34 +161,28 @@ fun ProviderScreen(vm: MainViewModel) {
             )
         }
 
+        // Test send
         Button(
             onClick = {
-                vm.updateSenderApiKey(activeProvider, apiKey, userKey)
-            },
-            modifier = Modifier.fillMaxWidth()
-        ) {
-            Text(stringResource(R.string.save))
-        }
-
-        // Test send — sends a test message to the first configured contact
-        Button(
-            onClick = {
-                val firstContact = config.contacts.firstOrNull()
-                if (firstContact == null) {
-                    testStatus = "No contacts configured"
-                    return@Button
-                }
-                testStatus = "Sending..."
+                testStatus = "Sending…"
+                testIsError = false
                 coroutineScope.launch {
                     val ext = KSafeExtension.getInstance()
                     if (ext == null) {
-                        testStatus = "Extension not running (open a ride first)"
+                        testStatus = "Extension not connected — wait a moment and try again."
+                        testIsError = true
                         return@launch
                     }
-                    // Save current API key before sending
-                    vm.updateSenderApiKey(activeProvider, apiKey, userKey)
-                    ext.sendTestMessage(firstContact, activeProvider)
-                    testStatus = "Test sent to ${firstContact.name}! Check your phone."
+                    // Flush any pending auto-save before testing
+                    vm.updateSenderConfig(activeProvider, apiKey, userKey, phoneNumber)
+                    val ok = ext.sendTestMessage(activeProvider)
+                    if (ok) {
+                        testStatus = "Test sent successfully! Check your device."
+                        testIsError = false
+                    } else {
+                        testStatus = "Send failed — check your API key / token and try again."
+                        testIsError = true
+                    }
                 }
             },
             modifier = Modifier.fillMaxWidth()
@@ -168,10 +194,7 @@ fun ProviderScreen(vm: MainViewModel) {
             Text(
                 text = testStatus,
                 style = MaterialTheme.typography.bodySmall,
-                color = if (testStatus.contains("Error") || testStatus.contains("not running") || testStatus.contains("No contacts"))
-                    androidx.compose.ui.graphics.Color.Red
-                else
-                    MaterialTheme.colorScheme.primary
+                color = if (testIsError) Color(0xFFB71C1C) else Color(0xFF2E7D32)
             )
         }
     }
