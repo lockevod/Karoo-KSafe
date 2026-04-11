@@ -21,11 +21,111 @@ class Sender(
     private val delaySeconds = listOf(60, 120, 180)
     private val cycleDelayMinutes = listOf(5, 10)
 
-    // ─── Entry point ──────────────────────────────────────────────────────────
+    // ─── Entry points ─────────────────────────────────────────────────────────
 
     /** Sends [message] via [provider]. All credentials and phone are read from stored config. */
     suspend fun sendAlert(message: String, provider: ProviderType): Boolean =
         sendWithRetry(message, provider)
+
+    /**
+     * Single-attempt send for configuration tests.
+     * Returns a human-readable result string — never retries.
+     */
+    suspend fun testSend(provider: ProviderType): String {
+        val configs = configManager.loadSenderConfigFlow().first()
+        val config  = configs.find { it.provider == provider }
+            ?: return "Provider not configured."
+
+        return try {
+            when (provider) {
+                ProviderType.CALLMEBOT -> {
+                    if (config.phoneNumber.isBlank()) return "Missing phone number."
+                    if (config.apiKey.isBlank())      return "Missing API key."
+                    val url = "https://api.callmebot.com/whatsapp.php" +
+                        "?phone=${config.phoneNumber.trim()}" +
+                        "&text=${Uri.encode("KSafe test — alerts are configured correctly.")}" +
+                        "&apikey=${config.apiKey}"
+                    val response = withTimeoutOrNull(15_000L) { karooSystem.httpRequest("GET", url) }
+                        ?: return "No response — check your internet connection."
+                    val body = response.body?.toString(Charsets.UTF_8) ?: ""
+                    when {
+                        response.statusCode in 200..299 && !body.contains("ERROR") ->
+                            "Test sent! Check your WhatsApp."
+                        body.contains("not authorized", ignoreCase = true) ||
+                        body.contains("apikey", ignoreCase = true) ->
+                            "Invalid API key — re-check it in CallMeBot."
+                        else -> "Error ${response.statusCode}: ${body.take(120)}"
+                    }
+                }
+
+                ProviderType.PUSHOVER -> {
+                    if (config.apiKey.isBlank())  return "Missing App Token."
+                    if (config.userKey.isBlank())  return "Missing User Key."
+                    val userKeys = listOf(config.userKey, config.userKey2, config.userKey3)
+                        .filter { it.isNotBlank() }
+                    val results = mutableListOf<String>()
+                    for ((i, key) in userKeys.withIndex()) {
+                        val label = "Recipient ${i + 1}"
+                        val jsonBody = buildJsonObject {
+                            put("token",   config.apiKey)
+                            put("user",    key)
+                            put("title",   "KSafe Test")
+                            put("message", "KSafe test — alerts are configured correctly.")
+                            put("priority", 1)
+                        }.toString()
+                        val response = withTimeoutOrNull(15_000L) {
+                            karooSystem.httpRequest(
+                                "POST", "https://api.pushover.net/1/messages.json",
+                                mapOf("Content-Type" to "application/json"),
+                                jsonBody.toByteArray()
+                            )
+                        }
+                        if (response == null) {
+                            results.add("$label: no response — check connection.")
+                        } else {
+                            val body = response.body?.toString(Charsets.UTF_8) ?: ""
+                            when {
+                                response.statusCode in 200..299 && body.contains("\"status\":1") ->
+                                    results.add("$label: sent ✓")
+                                response.statusCode == 429 ->
+                                    results.add("$label: rate limited — try again later.")
+                                else -> {
+                                    // Extract first error from Pushover's {"errors":["..."]} array
+                                    val pushoverMsg = body
+                                        .substringAfter("\"errors\":[\"", "")
+                                        .substringBefore("\"", "")
+                                        .trim()
+                                    val detail = if (pushoverMsg.isNotBlank()) pushoverMsg
+                                                 else "HTTP ${response.statusCode}"
+                                    results.add("$label: $detail")
+                                }
+                            }
+                        }
+                    }
+                    results.joinToString("\n")
+                }
+
+                ProviderType.SIMPLEPUSH -> {
+                    if (config.apiKey.isBlank()) return "Missing Channel Key."
+                    val url = "https://api.simplepush.io/send/${config.apiKey.trim()}" +
+                        "/${Uri.encode("KSafe Test")}" +
+                        "/${Uri.encode("KSafe test — alerts are configured correctly.")}"
+                    val response = withTimeoutOrNull(15_000L) { karooSystem.httpRequest("GET", url) }
+                        ?: return "No response — check your internet connection."
+                    val body = response.body?.toString(Charsets.UTF_8) ?: ""
+                    when {
+                        response.statusCode in 200..299 && body.contains("\"status\":\"OK\"") ->
+                            "Test sent! Check your SimplePush app."
+                        response.statusCode == 404 ->
+                            "Channel key not found — verify it in the SimplePush app."
+                        else -> "Error ${response.statusCode}: ${body.take(120)}"
+                    }
+                }
+            }
+        } catch (e: Exception) {
+            "Unexpected error: ${e.message}"
+        }
+    }
 
     // ─── Retry logic ──────────────────────────────────────────────────────────
 

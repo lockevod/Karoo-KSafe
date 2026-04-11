@@ -175,22 +175,24 @@ class KSafeExtension : KarooExtension("ksafe", BuildConfig.VERSION_NAME), Corout
      * Called from SettingsScreen to test the full emergency flow without a real ride.
      * Returns a message to display in the UI.
      */
-    fun simulateCrash(): String {
+    suspend fun simulateCrash(): String {
         if (!activeConfig.isActive) return "Extension is disabled — enable it in Settings first."
-        Timber.d("Simulated crash triggered from app")
-        emergencyManager.triggerEmergency(EmergencyReason.CRASH_DETECTED, activeConfig)
-        return "Countdown started! Cancel it from your Karoo screen or wait for it to complete."
+        Timber.d("Simulated crash test: sending alert directly (no countdown)")
+        val config = activeConfig
+        val message = emergencyManager.buildMessage(config, EmergencyReason.CRASH_DETECTED)
+        val ok = sender.sendAlert(message, config.activeProvider)
+        return if (ok) "Test alert sent successfully! Check your device."
+               else "Send failed — check your provider configuration."
     }
 
     /**
      * Called from ProviderScreen to verify messaging provider is correctly configured.
-     * Returns true if the message was sent successfully.
+     * Returns a human-readable result string (success or specific error).
      * Works regardless of ride state — this is a configuration test.
      */
-    suspend fun sendTestMessage(provider: ProviderType): Boolean {
-        val message = "KSafe test message — your emergency alerts are configured correctly."
+    suspend fun sendTestMessage(provider: ProviderType): String {
         Timber.d("Sending test message via $provider")
-        return sender.sendAlert(message, provider)
+        return sender.testSend(provider)
     }
 
     /**
