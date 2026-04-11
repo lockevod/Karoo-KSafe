@@ -37,6 +37,7 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.awaitCancellation
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import timber.log.Timber
 
@@ -104,23 +105,31 @@ class SOSDataType(
             awaitCancellation()
         }
 
-        // Simple polling loop — reads state every second and re-renders unconditionally.
-        // No flow subscriptions, no race conditions. State is always current within 1s.
+        // Hybrid loop:
+        //   IDLE/ALERTING → reactivo: suspende sin consumir CPU hasta que cambia el estado.
+        //   COUNTDOWN     → polling cada 1s para mostrar la cuenta atrás.
         val viewJob = scope.launch {
             try {
                 while (true) {
                     val state = EmergencyManager.uiState.value
                     when (state.status) {
-                        EmergencyStatus.IDLE ->
+                        EmergencyStatus.IDLE -> {
                             emitter.updateView(renderSafe(context, config).remoteViews)
-                        EmergencyStatus.COUNTDOWN ->
+                            // Espera sin coste hasta que arranque un countdown o alerta
+                            EmergencyManager.uiState.first { it.status != EmergencyStatus.IDLE }
+                        }
+                        EmergencyStatus.COUNTDOWN -> {
                             emitter.updateView(
                                 renderCountdown(context, config, state.countdownRemaining(), state.reason).remoteViews
                             )
-                        EmergencyStatus.ALERTING ->
+                            delay(1_000L)   // Polling activo solo durante la cuenta atrás
+                        }
+                        EmergencyStatus.ALERTING -> {
                             emitter.updateView(renderAlerting(context, config).remoteViews)
+                            // Espera sin coste hasta que el estado vuelva a IDLE
+                            EmergencyManager.uiState.first { it.status != EmergencyStatus.ALERTING }
+                        }
                     }
-                    delay(1_000L)
                 }
             } catch (e: CancellationException) {
                 // normal cancellation
