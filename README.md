@@ -209,14 +209,35 @@ A jump or drop in MTB generates a high impact spike but is immediately followed 
 
 ### Sensitivity levels
 
-| Level | Threshold | Approx. | Recommended min. speed | Best for |
-|-------|-----------|---------|------------------------|----------|
-| Low | 55 m/s² | ~5.5g | **3 km/h** | MTB, gravel, technical terrain — crashes can happen at very low speeds |
-| Medium | 45 m/s² | ~4.5g | **5 km/h** | Road + MTB, balanced (default) |
-| High | 35 m/s² | ~3.5g | **10 km/h** | Road cycling on smooth surfaces |
-| Custom | 20–70 m/s² | 2–7g | You decide | Any use case — slide to your preferred threshold |
+| Level | Threshold | Approx. | Impact window | Min. speed | Best for |
+|-------|-----------|---------|---------------|------------|----------|
+| Low | 55 m/s² | ~5.5g | **25 s** | **3 km/h** | MTB, gravel, technical terrain |
+| Medium | 45 m/s² | ~4.5g | **20 s** | **5 km/h** | Road + MTB, balanced (default) |
+| High | 35 m/s² | ~3.5g | **15 s** | **10 km/h** | Road cycling on smooth surfaces |
+| Custom | 20–70 m/s² | 2–7g | **20 s** | You decide | Any use case |
 
 Normal hard braking and bumps produce ~1.5g (14.7 m/s²), well below all thresholds. Thresholds are based on cycling crash detection literature (IEEE accident detection studies and probabilistic crash classification research).
+
+**Impact window**: after a detected impact, KSafe waits up to this long for the device to come to rest. A longer window allows the bike to slide or tumble down a slope after the crash before confirming. If brief movement is detected during the stillness check (e.g. the bike rolls a little), KSafe goes back to watching — it does not discard the crash unless movement is sustained for the full window.
+
+### Real-world scenarios
+
+These are the most common situations you will encounter and how the algorithm handles each one:
+
+| Scenario | Result | Why |
+|----------|--------|-----|
+| Hard crash on a descent, bike slides for a few seconds | ✅ Detected | Impact spike → brief movement tolerated → bike settles → 4.5 s stillness confirmed |
+| Hard crash, bike stops immediately | ✅ Detected | Impact spike → quick stillness → confirmed |
+| Crash on a technical climb at 3 km/h | ✅ Detected (Low sensitivity) | Low threshold + low min. speed — designed for this |
+| MTB jump landing, continue riding immediately | ✅ No false alarm | Impact → movement never stops → window expires → reset |
+| MTB jump landing, stop to rest briefly | ✅ No false alarm (probably) | Impact → you are moving while braking → stillness after braking is brief if you shift position; also the threshold at Low (5.5g) is rarely exceeded by clean landings |
+| MTB jump landing, stop perfectly still for 5+ seconds | ⚠️ Possible false alarm | Impact + clean stillness → algorithm may confirm crash; **the countdown is your safety net** — tap SOS field or assigned button to cancel |
+| Hard landing on a jump, stop to watch others | ⚠️ Possible false alarm | Same as above — **cancel with the countdown if it starts** |
+| Riding over rough rocky terrain | ✅ No false alarm | Multiple small bumps below threshold; no single sustained spike + stillness pattern |
+| Dropping bike carelessly while stopped | ✅ No false alarm | Min. speed check: you are stationary so impact is ignored |
+| Riding on cobblestones or very rough road | ✅ No false alarm (Low/Medium) | Sustained vibration never reaches stillness check |
+
+**Key principle**: the algorithm requires two things together — a large sudden impact AND prolonged stillness afterwards. Either one alone is not enough. The countdown (default 30 s) is the last line of defence against false positives: if a detection happens while you are fine, just tap the SOS field or the cancel button.
 
 #### Minimum speed and MTB
 
@@ -237,13 +258,15 @@ The **Custom** level lets you set the exact impact threshold using a slider (20�
 
 ## Testing
 
-Use the **"Simulate Crash"** button in the Settings tab to test the full emergency flow without a real ride. This triggers the countdown and, if not cancelled, will send a real emergency alert — so cancel before the countdown ends, or make sure whoever receives the alert knows you are testing.
+KSafe provides three test buttons, all of which work **without an active ride**:
 
-Use the **"Test Send"** button in the Provider tab to verify that your messaging provider is correctly configured without triggering a full emergency.
+| Button | Where | What it does |
+|--------|-------|--------------|
+| **Test Send** | Provider tab | Sends a test message via the active provider. Shows a specific error (invalid key, missing credentials, no connection…) if something is wrong. |
+| **Simulate Crash** | Settings tab | Sends your emergency message immediately — no countdown, no waiting. Use this to verify the full message (location, livetrack link) reaches your contact correctly. |
+| **Test ride start notification** | Settings tab | Sends the ride-start message with the Karoo Live link. Only works if Karoo Live is enabled and a key is configured. |
 
-Use the **"Test ride start notification"** button in the Settings tab to verify that the Karoo Live notification is correctly configured and will reach your device.
-
-All test buttons work without an active ride.
+> **Simulate Crash** sends a real alert to your configured contact. Let them know you are testing, or use **Test Send** instead if you only want to verify connectivity.
 
 ## Backup and Restore
 
