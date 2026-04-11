@@ -38,7 +38,9 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.awaitCancellation
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withTimeoutOrNull
 import timber.log.Timber
 
 // ─── Color constants ──────────────────────────────────────────────────────────
@@ -108,25 +110,36 @@ class SafetyTimerDataType(
             awaitCancellation()
         }
 
-        // Simple polling loop — reads state every second and re-renders.
-        // No flow subscriptions, no race conditions. Max 1s lag after any state change.
+        // Hybrid loop:
+        //   COUNTDOWN   → polling cada 1s (cuenta atrás visible).
+        //   Timer OFF   → reactivo: suspende sin coste hasta que cambia el estado.
+        //   Check-in    → reactivo con timeout de 30s para refrescar los minutos restantes.
         val viewJob = scope.launch {
             try {
                 while (true) {
                     val state = EmergencyManager.uiState.value
                     when {
-                        state.status == EmergencyStatus.COUNTDOWN ->
+                        state.status == EmergencyStatus.COUNTDOWN -> {
                             emitter.updateView(
                                 renderCancelEmergency(context, config, state.countdownRemaining()).remoteViews
                             )
-                        !state.checkinEnabled ->
+                            delay(1_000L)
+                        }
+                        !state.checkinEnabled -> {
                             emitter.updateView(renderDisabled(context, config).remoteViews)
-                        else ->
+                            // Espera sin coste hasta que se active el check-in o un countdown
+                            EmergencyManager.uiState.first { it != state }
+                        }
+                        else -> {
+                            // Check-in activo: refresca cada 30s o inmediatamente si cambia el estado
                             emitter.updateView(
                                 renderTimer(context, config, state.checkinRemainingMinutes()).remoteViews
                             )
+                            withTimeoutOrNull(30_000L) {
+                                EmergencyManager.uiState.first { it != state }
+                            }
+                        }
                     }
-                    delay(1_000L)
                 }
             } catch (e: CancellationException) {
                 // normal
