@@ -80,6 +80,7 @@ fun ProviderScreen(vm: MainViewModel) {
                                 ProviderType.CALLMEBOT -> "CallMeBot"
                                 ProviderType.WHAPI -> "Whapi"
                                 ProviderType.PUSHOVER -> "Pushover"
+                                ProviderType.SIMPLEPUSH -> "SimplePush"
                             },
                             style = MaterialTheme.typography.labelSmall
                         )
@@ -95,7 +96,8 @@ fun ProviderScreen(vm: MainViewModel) {
             text = when (activeProvider) {
                 ProviderType.CALLMEBOT -> "WhatsApp via CallMeBot. Free API key at callmebot.com."
                 ProviderType.WHAPI -> "WhatsApp via Whapi Cloud. Requires a paid plan at whapi.cloud."
-                ProviderType.PUSHOVER -> "Push notification via Pushover. Enter your app token and user key."
+                ProviderType.PUSHOVER -> "Push notification via Pushover. Free 30-day trial, then ~\$5 one-time. Enter your app token and user key."
+                ProviderType.SIMPLEPUSH -> stringResource(R.string.simplepush_description)
             },
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant
@@ -106,10 +108,11 @@ fun ProviderScreen(vm: MainViewModel) {
             onValueChange = { apiKey = it },
             label = {
                 Text(
-                    if (activeProvider == ProviderType.PUSHOVER)
-                        stringResource(R.string.pushover_app_token_hint)
-                    else
-                        stringResource(R.string.api_key_hint)
+                    when (activeProvider) {
+                        ProviderType.PUSHOVER    -> stringResource(R.string.pushover_app_token_hint)
+                        ProviderType.SIMPLEPUSH  -> stringResource(R.string.simplepush_key_hint)
+                        else                     -> stringResource(R.string.api_key_hint)
+                    }
                 )
             },
             modifier = Modifier.fillMaxWidth(),
