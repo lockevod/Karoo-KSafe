@@ -193,14 +193,9 @@ fun ProviderScreen(vm: MainViewModel) {
                     }
                     // Flush any pending auto-save before testing
                     vm.updateSenderConfig(activeProvider, apiKey, userKey, userKey2, userKey3, phoneNumber)
-                    val ok = ext.sendTestMessage(activeProvider)
-                    if (ok) {
-                        testStatus = "Test sent successfully! Check your device."
-                        testIsError = false
-                    } else {
-                        testStatus = "Send failed — check your API key / token and try again."
-                        testIsError = true
-                    }
+                    val result = ext.sendTestMessage(activeProvider)
+                    testStatus  = result
+                    testIsError = !result.contains("✓") && !result.contains("sent!", ignoreCase = true)
                 }
             },
             modifier = Modifier.fillMaxWidth()

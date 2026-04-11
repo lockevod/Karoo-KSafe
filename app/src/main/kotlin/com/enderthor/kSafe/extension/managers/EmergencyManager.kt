@@ -202,12 +202,14 @@ class EmergencyManager(
         }
     }
 
-    private suspend fun sendAlerts(config: KSafeConfig, reason: EmergencyReason) {
-        currentStatus = EmergencyStatus.ALERTING
-        configManager.saveEmergencyState(
-            EmergencyState(status = EmergencyStatus.ALERTING, reason = reason.label)
-        )
+    // ─── Message builder ──────────────────────────────────────────────────────
 
+    /**
+     * Builds the outgoing emergency message by substituting all placeholders.
+     * The livetrack link is appended automatically if a key is configured,
+     * even when {livetrack} is not present in the template.
+     */
+    fun buildMessage(config: KSafeConfig, reason: EmergencyReason): String {
         val locationLink = locationManager.getLocationLink()
             ?: context.getString(R.string.location_unavailable)
 
@@ -215,11 +217,27 @@ class EmergencyManager(
             com.enderthor.kSafe.data.KAROO_LIVE_BASE_URL + config.karooLiveKey.trim()
         else ""
 
-        val message = config.emergencyMessage
+        var message = config.emergencyMessage
             .replace("{location}", locationLink)
             .replace("{reason}", reason.label)
             .replace("{livetrack}", liveTrackLink)
             .trim()
+
+        // Always append livetrack link if key is set and it's not already in the message
+        if (liveTrackLink.isNotBlank() && !message.contains(liveTrackLink)) {
+            message = "$message $liveTrackLink"
+        }
+
+        return message
+    }
+
+    private suspend fun sendAlerts(config: KSafeConfig, reason: EmergencyReason) {
+        currentStatus = EmergencyStatus.ALERTING
+        configManager.saveEmergencyState(
+            EmergencyState(status = EmergencyStatus.ALERTING, reason = reason.label)
+        )
+
+        val message = buildMessage(config, reason)
 
         Timber.d("Sending emergency alert via ${config.activeProvider}")
 

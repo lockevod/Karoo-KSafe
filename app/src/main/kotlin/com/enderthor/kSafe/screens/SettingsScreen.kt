@@ -393,23 +393,27 @@ fun SettingsScreen(vm: MainViewModel) {
             )
         }
 
-        // Simulate crash — triggers the full emergency countdown flow
+        // Simulate crash — sends the emergency message directly (no countdown)
         Button(
             onClick = {
-                val ext = KSafeExtension.getInstance()
-                if (ext == null) {
-                    simulateStatus = "Extension not connected — wait a moment and try again."
-                    simulateIsError = true
-                } else {
-                    val msg = ext.simulateCrash()
-                    simulateStatus = msg
-                    simulateIsError = msg.startsWith("Extension is disabled")
+                simulateStatus = "Sending…"
+                simulateIsError = false
+                coroutineScope.launch {
+                    val ext = KSafeExtension.getInstance()
+                    if (ext == null) {
+                        simulateStatus = "Extension not connected — wait a moment and try again."
+                        simulateIsError = true
+                    } else {
+                        val msg = ext.simulateCrash()
+                        simulateStatus = msg
+                        simulateIsError = !msg.startsWith("Test alert sent")
+                    }
                 }
             },
             modifier = Modifier.fillMaxWidth(),
             colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFB71C1C))
         ) {
-            Text("Simulate Crash (test countdown)")
+            Text("Simulate Crash (send alert now)")
         }
 
         if (simulateStatus.isNotEmpty()) {
