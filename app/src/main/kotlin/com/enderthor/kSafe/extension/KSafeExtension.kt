@@ -2,6 +2,7 @@ package com.enderthor.kSafe.extension
 
 import com.enderthor.kSafe.BuildConfig
 import com.enderthor.kSafe.data.EmergencyReason
+import com.enderthor.kSafe.data.EmergencyStatus
 import com.enderthor.kSafe.data.KSafeConfig
 import com.enderthor.kSafe.data.ProviderType
 import com.enderthor.kSafe.datatype.SafetyTimerDataType
@@ -17,7 +18,6 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.flow.distinctUntilChanged
-import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.launch
 import timber.log.Timber
@@ -164,7 +164,7 @@ class KSafeExtension : KarooExtension("ksafe", BuildConfig.VERSION_NAME), Corout
         Timber.d("Karoo Live: sending ride start notification")
         launch {
             try {
-                sender.sendAlert(message, config.activeProvider)
+                sender.sendInfo(message, config.activeProvider)
             } catch (e: Exception) {
                 Timber.e(e, "Karoo Live: error sending ride start notification")
             }
@@ -207,7 +207,7 @@ class KSafeExtension : KarooExtension("ksafe", BuildConfig.VERSION_NAME), Corout
         val liveLink = com.enderthor.kSafe.data.KAROO_LIVE_BASE_URL + config.karooLiveKey.trim()
         val message = config.karooLiveStartMessage.replace("{livetrack}", liveLink)
         Timber.d("Sending test ride start notification via ${config.activeProvider}")
-        val ok = sender.sendAlert(message, config.activeProvider)
+        val ok = sender.sendInfo(message, config.activeProvider)
         return if (ok) "Ride start message sent successfully! Check your device."
                else "Send failed — check your provider configuration."
     }
@@ -216,14 +216,16 @@ class KSafeExtension : KarooExtension("ksafe", BuildConfig.VERSION_NAME), Corout
 
     fun handleSOSTap() {
         if (!activeConfig.isActive) return
+        // Use in-memory currentStatus — reading DataStore here can race with
+        // the async COUNTDOWN save inside countdownJob, causing cancels to be
+        // misidentified as new triggers.
         launch {
-            val state = configManager.loadEmergencyStateFlow().first()
-            when (state.status) {
-                com.enderthor.kSafe.data.EmergencyStatus.IDLE ->
+            when (emergencyManager.currentStatus) {
+                EmergencyStatus.IDLE ->
                     emergencyManager.triggerEmergency(EmergencyReason.MANUAL_SOS, activeConfig)
-                com.enderthor.kSafe.data.EmergencyStatus.COUNTDOWN ->
+                EmergencyStatus.COUNTDOWN ->
                     emergencyManager.cancelEmergency(activeConfig)
-                com.enderthor.kSafe.data.EmergencyStatus.ALERTING -> { /* ignore tap while alerting */ }
+                EmergencyStatus.ALERTING -> { /* ignore tap while alerting */ }
             }
         }
     }
@@ -231,15 +233,13 @@ class KSafeExtension : KarooExtension("ksafe", BuildConfig.VERSION_NAME), Corout
     fun handleCheckinTap() {
         if (!activeConfig.isActive) return
         launch {
-            val state = configManager.loadEmergencyStateFlow().first()
-            when (state.status) {
-                // If countdown is active, tapping timer field also cancels it
-                com.enderthor.kSafe.data.EmergencyStatus.COUNTDOWN -> {
+            when (emergencyManager.currentStatus) {
+                EmergencyStatus.COUNTDOWN -> {
                     Timber.d("Emergency cancelled via Timer field tap")
                     emergencyManager.cancelEmergency(activeConfig)
                 }
-                // Otherwise normal check-in behaviour
-                else -> {
+                EmergencyStatus.ALERTING -> { /* ignore tap while alerting */ }
+                EmergencyStatus.IDLE -> {
                     if (activeConfig.checkinEnabled) {
                         emergencyManager.resetCheckinTimer(activeConfig)
                         Timber.d("Check-in performed by user tap")

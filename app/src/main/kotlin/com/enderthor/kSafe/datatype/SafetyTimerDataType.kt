@@ -24,7 +24,7 @@ import androidx.glance.text.TextAlign
 import androidx.glance.text.TextStyle
 import com.enderthor.kSafe.data.CHECKIN_WARNING_THRESHOLD_MINUTES
 import com.enderthor.kSafe.data.EmergencyStatus
-import com.enderthor.kSafe.extension.managers.ConfigurationManager
+import com.enderthor.kSafe.extension.managers.EmergencyManager
 import io.hammerhead.karooext.KarooSystemService
 import io.hammerhead.karooext.extension.DataTypeImpl
 import io.hammerhead.karooext.internal.ViewEmitter
@@ -37,6 +37,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.awaitCancellation
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import timber.log.Timber
@@ -97,7 +98,6 @@ class SafetyTimerDataType(
 ) : DataTypeImpl("ksafe", datatype) {
 
     private val glance = GlanceRemoteViews()
-    private val configManager by lazy { ConfigurationManager(context) }
 
     override fun startView(context: Context, config: ViewConfig, emitter: ViewEmitter) {
         val scopeJob = Job()
@@ -113,8 +113,11 @@ class SafetyTimerDataType(
         val viewJob = scope.launch {
             var tickerJob: Job? = null
             try {
-                configManager.loadEmergencyStateFlow().collect { state ->
-                    tickerJob?.cancel()
+                EmergencyManager.uiState.collect { state ->
+                    // Wait for the ticker to fully stop before rendering the new state.
+                    // Without join(), the ticker can win a race and overwrite the reset
+                    // view with the last countdown value on another Default dispatcher thread.
+                    tickerJob?.cancelAndJoin()
                     tickerJob = null
 
                     // During any emergency countdown show cancel option
@@ -135,7 +138,7 @@ class SafetyTimerDataType(
                         return@collect
                     }
 
-                    // Initial render
+                    // Initial render after ticker stopped
                     emitter.updateView(renderTimer(context, config, state.checkinRemainingMinutes()).remoteViews)
 
                     // Refresh every minute — no need to update more often than check-in resolution

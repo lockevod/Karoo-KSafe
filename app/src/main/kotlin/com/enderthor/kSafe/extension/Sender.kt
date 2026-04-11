@@ -23,9 +23,13 @@ class Sender(
 
     // ─── Entry points ─────────────────────────────────────────────────────────
 
-    /** Sends [message] via [provider]. All credentials and phone are read from stored config. */
+    /** Sends an emergency [message] via [provider] (high priority, retries on failure). */
     suspend fun sendAlert(message: String, provider: ProviderType): Boolean =
-        sendWithRetry(message, provider)
+        sendWithRetry(message, provider, isEmergency = true)
+
+    /** Sends an informational [message] via [provider] (normal priority, single attempt). */
+    suspend fun sendInfo(message: String, provider: ProviderType): Boolean =
+        attemptSend(message, provider, isEmergency = false)
 
     /**
      * Single-attempt send for configuration tests.
@@ -129,7 +133,7 @@ class Sender(
 
     // ─── Retry logic ──────────────────────────────────────────────────────────
 
-    private suspend fun sendWithRetry(message: String, provider: ProviderType): Boolean {
+    private suspend fun sendWithRetry(message: String, provider: ProviderType, isEmergency: Boolean): Boolean {
         var totalAttempts = 0
         var currentCycle = 0
 
@@ -143,7 +147,7 @@ class Sender(
                         delay(waitSeconds * 1000L)
                     }
                     val result = withTimeoutOrNull(30_000L) {
-                        attemptSend(message, provider)
+                        attemptSend(message, provider, isEmergency)
                     } == true
 
                     if (result) {
@@ -169,7 +173,7 @@ class Sender(
 
     // ─── Provider implementations ─────────────────────────────────────────────
 
-    private suspend fun attemptSend(message: String, provider: ProviderType): Boolean {
+    private suspend fun attemptSend(message: String, provider: ProviderType, isEmergency: Boolean): Boolean {
         val configs = configManager.loadSenderConfigFlow().first()
         val config = configs.find { it.provider == provider } ?: return false
 
@@ -194,9 +198,11 @@ class Sender(
                     val jsonBody = buildJsonObject {
                         put("token", config.apiKey)
                         put("user", key)
-                        put("title", "KSafe Emergency")
+                        put("title", if (isEmergency) "KSafe Emergency" else "KSafe")
                         put("message", message)
-                        put("priority", 1)          // high priority — bypasses quiet hours
+                        // Emergency: priority 1 (high, bypasses quiet hours)
+                        // Info: priority 0 (normal)
+                        put("priority", if (isEmergency) 1 else 0)
                     }.toString()
                     val response = karooSystem.httpRequest(
                         "POST", "https://api.pushover.net/1/messages.json",
@@ -213,7 +219,8 @@ class Sender(
 
             ProviderType.SIMPLEPUSH -> {
                 if (config.apiKey.isBlank()) return false
-                val encodedTitle = Uri.encode("KSafe Emergency")
+                val title = if (isEmergency) "KSafe Emergency" else "KSafe"
+                val encodedTitle = Uri.encode(title)
                 val encodedMsg   = Uri.encode(message)
                 val url = "https://api.simplepush.io/send/${config.apiKey.trim()}/$encodedTitle/$encodedMsg"
                 val response = karooSystem.httpRequest("GET", url)

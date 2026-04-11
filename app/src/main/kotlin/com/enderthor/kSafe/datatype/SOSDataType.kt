@@ -23,7 +23,7 @@ import androidx.glance.text.Text
 import androidx.glance.text.TextAlign
 import androidx.glance.text.TextStyle
 import com.enderthor.kSafe.data.EmergencyStatus
-import com.enderthor.kSafe.extension.managers.ConfigurationManager
+import com.enderthor.kSafe.extension.managers.EmergencyManager
 import io.hammerhead.karooext.KarooSystemService
 import io.hammerhead.karooext.extension.DataTypeImpl
 import io.hammerhead.karooext.internal.ViewEmitter
@@ -36,6 +36,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.awaitCancellation
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import timber.log.Timber
@@ -93,7 +94,6 @@ class SOSDataType(
 ) : DataTypeImpl("ksafe", datatype) {
 
     private val glance = GlanceRemoteViews()
-    private val configManager by lazy { ConfigurationManager(context) }
 
     override fun startView(context: Context, config: ViewConfig, emitter: ViewEmitter) {
         val scopeJob = Job()
@@ -109,14 +109,16 @@ class SOSDataType(
         val viewJob = scope.launch {
             var tickerJob: Job? = null
             try {
-                configManager.loadEmergencyStateFlow().collect { state ->
-                    tickerJob?.cancel()
+                EmergencyManager.uiState.collect { state ->
+                    // Wait for the ticker to fully stop before rendering the new state.
+                    // Without join(), the ticker can win a race and overwrite SAFE with
+                    // the last countdown value on a different Default dispatcher thread.
+                    tickerJob?.cancelAndJoin()
                     tickerJob = null
 
                     when (state.status) {
-                        EmergencyStatus.IDLE -> {
+                        EmergencyStatus.IDLE ->
                             emitter.updateView(renderSafe(context, config).remoteViews)
-                        }
                         EmergencyStatus.COUNTDOWN -> {
                             tickerJob = scope.launch {
                                 while (true) {
@@ -129,9 +131,8 @@ class SOSDataType(
                                 }
                             }
                         }
-                        EmergencyStatus.ALERTING -> {
+                        EmergencyStatus.ALERTING ->
                             emitter.updateView(renderAlerting(context, config).remoteViews)
-                        }
                     }
                 }
             } catch (e: CancellationException) {
