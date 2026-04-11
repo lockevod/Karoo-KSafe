@@ -23,6 +23,7 @@ import androidx.glance.text.Text
 import androidx.glance.text.TextAlign
 import androidx.glance.text.TextStyle
 import com.enderthor.kSafe.data.CHECKIN_WARNING_THRESHOLD_MINUTES
+import com.enderthor.kSafe.data.EmergencyState
 import com.enderthor.kSafe.data.EmergencyStatus
 import com.enderthor.kSafe.extension.managers.EmergencyManager
 import io.hammerhead.karooext.KarooSystemService
@@ -37,9 +38,10 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.awaitCancellation
 import kotlinx.coroutines.cancel
-import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withTimeoutOrNull
 import timber.log.Timber
 
 // ─── Color constants ──────────────────────────────────────────────────────────
@@ -101,7 +103,6 @@ class SafetyTimerDataType(
 
     override fun startView(context: Context, config: ViewConfig, emitter: ViewEmitter) {
         val scopeJob = Job()
-        // Dispatchers.Default: computation work (Glance composition), not blocking I/O
         val scope = CoroutineScope(Dispatchers.Default + scopeJob)
 
         val configJob = scope.launch {
@@ -111,43 +112,40 @@ class SafetyTimerDataType(
         }
 
         val viewJob = scope.launch {
-            var tickerJob: Job? = null
             try {
-                EmergencyManager.uiState.collect { state ->
-                    // Wait for the ticker to fully stop before rendering the new state.
-                    // Without join(), the ticker can win a race and overwrite the reset
-                    // view with the last countdown value on another Default dispatcher thread.
-                    tickerJob?.cancelAndJoin()
-                    tickerJob = null
+                // Single loop — no separate ticker job, no cancelAndJoin races.
+                // During countdown: re-renders every second OR immediately on state change.
+                // During checkin: re-renders every minute OR immediately on state change.
+                // On any other state: waits for a state change before re-rendering.
+                var lastRenderedState: EmergencyState? = null
+                while (true) {
+                    val state = EmergencyManager.uiState.value
 
-                    // During any emergency countdown show cancel option
-                    if (state.status == EmergencyStatus.COUNTDOWN) {
-                        tickerJob = scope.launch {
-                            while (true) {
-                                val remaining = state.countdownRemaining()
-                                emitter.updateView(renderCancelEmergency(context, config, remaining).remoteViews)
-                                if (remaining <= 0) break
-                                delay(1_000L)
+                    when {
+                        state.status == EmergencyStatus.COUNTDOWN -> {
+                            val remaining = state.countdownRemaining()
+                            emitter.updateView(renderCancelEmergency(context, config, remaining).remoteViews)
+                            lastRenderedState = state
+                            withTimeoutOrNull(1_000L) {
+                                EmergencyManager.uiState.first { it != state }
                             }
                         }
-                        return@collect
-                    }
-
-                    if (!state.checkinEnabled) {
-                        emitter.updateView(renderDisabled(context, config).remoteViews)
-                        return@collect
-                    }
-
-                    // Initial render after ticker stopped
-                    emitter.updateView(renderTimer(context, config, state.checkinRemainingMinutes()).remoteViews)
-
-                    // Refresh every minute — no need to update more often than check-in resolution
-                    tickerJob = scope.launch {
-                        while (true) {
-                            delay(60_000L)
+                        !state.checkinEnabled -> {
+                            if (state != lastRenderedState) {
+                                emitter.updateView(renderDisabled(context, config).remoteViews)
+                                lastRenderedState = state
+                            }
+                            EmergencyManager.uiState.first { it != state }
+                        }
+                        else -> {
+                            // checkinEnabled = true, status = IDLE
                             val remaining = state.checkinRemainingMinutes()
                             emitter.updateView(renderTimer(context, config, remaining).remoteViews)
-                            if (remaining <= 0) break
+                            lastRenderedState = state
+                            // Re-render every minute OR immediately on state change
+                            withTimeoutOrNull(60_000L) {
+                                EmergencyManager.uiState.first { it != state }
+                            }
                         }
                     }
                 }
@@ -156,8 +154,6 @@ class SafetyTimerDataType(
             } catch (e: Exception) {
                 Timber.e(e, "SafetyTimerDataType error: ${e.message}")
                 emitter.updateView(renderDisabled(context, config).remoteViews)
-            } finally {
-                tickerJob?.cancel()
             }
         }
 
