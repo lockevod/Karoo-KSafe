@@ -211,6 +211,42 @@ Use the **"Simulate Crash"** button in the Settings tab to test the full emergen
 
 Use the **"Test Send"** button in the Provider tab to verify that your messaging provider is correctly configured without triggering a full emergency.
 
+## Backup and Restore
+
+KSafe lets you export and restore your entire configuration (API keys, tokens, messages, all settings) from the **Settings tab**, at the bottom of the screen.
+
+### Exporting your configuration
+
+Tap **Export** — KSafe writes your configuration to:
+
+```
+/sdcard/Android/data/com.enderthor.kSafe/files/ksafe_export.json
+```
+
+You can retrieve this file with ADB:
+
+```bash
+adb pull /sdcard/Android/data/com.enderthor.kSafe/files/ksafe_export.json
+```
+
+### Restoring a configuration
+
+To import a configuration, place the file at this exact path **with this exact name**:
+
+```
+/sdcard/Android/data/com.enderthor.kSafe/files/ksafe_import.json
+```
+
+You can push it with ADB:
+
+```bash
+adb push ksafe_export.json /sdcard/Android/data/com.enderthor.kSafe/files/ksafe_import.json
+```
+
+Then tap **Import** in the Settings tab. KSafe will read `ksafe_import.json` and apply the configuration immediately.
+
+> The export and import files have intentionally different names so there is no risk of accidentally overwriting a backup you just made.
+
 ## Known Issues
 
 - Alerts will not be sent if the Karoo has no internet connection at the time of the emergency.
