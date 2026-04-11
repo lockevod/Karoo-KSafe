@@ -428,16 +428,30 @@ fun SettingsScreen(vm: MainViewModel) {
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant
         )
+
+        if (backupStatus.isNotEmpty()) {
+            Text(
+                text = backupStatus,
+                style = MaterialTheme.typography.bodySmall,
+                color = if (backupIsError) Color(0xFFB71C1C) else Color(0xFF2E7D32)
+            )
+        }
+
         Row(
             modifier = Modifier.fillMaxWidth(),
             horizontalArrangement = Arrangement.spacedBy(8.dp)
         ) {
             Button(
                 onClick = {
+                    backupStatus = "Exporting…"
+                    backupIsError = false
                     coroutineScope.launch {
                         try {
                             val json = vm.exportToJson()
-                            withContext(Dispatchers.IO) { exportFile.writeText(json) }
+                            withContext(Dispatchers.IO) {
+                                exportFile.parentFile?.mkdirs()
+                                exportFile.writeText(json)
+                            }
                             backupStatus = "Exported to ksafe_export.json"
                             backupIsError = false
                         } catch (e: Exception) {
@@ -451,9 +465,12 @@ fun SettingsScreen(vm: MainViewModel) {
 
             Button(
                 onClick = {
+                    backupStatus = "Importing…"
+                    backupIsError = false
                     coroutineScope.launch {
                         try {
-                            if (!importFile.exists()) {
+                            val exists = withContext(Dispatchers.IO) { importFile.exists() }
+                            if (!exists) {
                                 backupStatus = "ksafe_import.json not found. See README."
                                 backupIsError = true
                                 return@launch
@@ -470,14 +487,6 @@ fun SettingsScreen(vm: MainViewModel) {
                 },
                 modifier = Modifier.weight(1f)
             ) { Text(stringResource(R.string.backup_import)) }
-        }
-
-        if (backupStatus.isNotEmpty()) {
-            Text(
-                text = backupStatus,
-                style = MaterialTheme.typography.bodySmall,
-                color = if (backupIsError) Color(0xFFB71C1C) else Color(0xFF2E7D32)
-            )
         }
     }
 }

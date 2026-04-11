@@ -60,7 +60,9 @@ data class KSafeConfig(
 data class SenderConfig(
     val provider: ProviderType = ProviderType.CALLMEBOT,
     val apiKey: String = "",
-    val userKey: String = "",       // Pushover: user/group key (apiKey = app token)
+    val userKey: String = "",       // Pushover: primary user key (apiKey = app token)
+    val userKey2: String = "",      // Pushover: second user key (optional)
+    val userKey3: String = "",      // Pushover: third user key (optional)
     val phoneNumber: String = "",   // CallMeBot: recipient WhatsApp number (with country code)
 )
 

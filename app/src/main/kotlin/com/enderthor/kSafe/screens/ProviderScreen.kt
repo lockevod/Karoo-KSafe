@@ -43,22 +43,18 @@ fun ProviderScreen(vm: MainViewModel) {
     val activeSender = senderConfigs.find { it.provider == activeProvider }
     val coroutineScope = rememberCoroutineScope()
 
-    var apiKey by remember(activeProvider, activeSender) {
-        mutableStateOf(activeSender?.apiKey ?: "")
-    }
-    var userKey by remember(activeProvider, activeSender) {
-        mutableStateOf(activeSender?.userKey ?: "")
-    }
-    var phoneNumber by remember(activeProvider, activeSender) {
-        mutableStateOf(activeSender?.phoneNumber ?: "")
-    }
-    var testStatus by remember { mutableStateOf("") }
+    var apiKey      by remember(activeProvider, activeSender) { mutableStateOf(activeSender?.apiKey      ?: "") }
+    var userKey     by remember(activeProvider, activeSender) { mutableStateOf(activeSender?.userKey     ?: "") }
+    var userKey2    by remember(activeProvider, activeSender) { mutableStateOf(activeSender?.userKey2    ?: "") }
+    var userKey3    by remember(activeProvider, activeSender) { mutableStateOf(activeSender?.userKey3    ?: "") }
+    var phoneNumber by remember(activeProvider, activeSender) { mutableStateOf(activeSender?.phoneNumber ?: "") }
+    var testStatus  by remember { mutableStateOf("") }
     var testIsError by remember { mutableStateOf(false) }
 
     // Auto-save with debounce whenever credential fields change
-    LaunchedEffect(apiKey, userKey, phoneNumber) {
+    LaunchedEffect(apiKey, userKey, userKey2, userKey3, phoneNumber) {
         delay(700)
-        vm.updateSenderConfig(activeProvider, apiKey, userKey, phoneNumber)
+        vm.updateSenderConfig(activeProvider, apiKey, userKey, userKey2, userKey3, phoneNumber)
     }
 
     Column(
@@ -78,10 +74,12 @@ fun ProviderScreen(vm: MainViewModel) {
         val onProviderClick = { provider: ProviderType ->
             vm.setActiveProvider(provider)
             val s = senderConfigs.find { it.provider == provider }
-            apiKey = s?.apiKey ?: ""
-            userKey = s?.userKey ?: ""
+            apiKey      = s?.apiKey      ?: ""
+            userKey     = s?.userKey     ?: ""
+            userKey2    = s?.userKey2    ?: ""
+            userKey3    = s?.userKey3    ?: ""
             phoneNumber = s?.phoneNumber ?: ""
-            testStatus = ""
+            testStatus  = ""
         }
         Row(
             modifier = Modifier.fillMaxWidth(),
@@ -150,12 +148,26 @@ fun ProviderScreen(vm: MainViewModel) {
             singleLine = true
         )
 
-        // Pushover user/group key
+        // Pushover user keys (up to 3 recipients)
         if (activeProvider == ProviderType.PUSHOVER) {
             OutlinedTextField(
                 value = userKey,
                 onValueChange = { userKey = it },
                 label = { Text(stringResource(R.string.pushover_user_key_hint)) },
+                modifier = Modifier.fillMaxWidth(),
+                singleLine = true
+            )
+            OutlinedTextField(
+                value = userKey2,
+                onValueChange = { userKey2 = it },
+                label = { Text(stringResource(R.string.pushover_user_key2_hint)) },
+                modifier = Modifier.fillMaxWidth(),
+                singleLine = true
+            )
+            OutlinedTextField(
+                value = userKey3,
+                onValueChange = { userKey3 = it },
+                label = { Text(stringResource(R.string.pushover_user_key3_hint)) },
                 modifier = Modifier.fillMaxWidth(),
                 singleLine = true
             )
@@ -174,7 +186,7 @@ fun ProviderScreen(vm: MainViewModel) {
                         return@launch
                     }
                     // Flush any pending auto-save before testing
-                    vm.updateSenderConfig(activeProvider, apiKey, userKey, phoneNumber)
+                    vm.updateSenderConfig(activeProvider, apiKey, userKey, userKey2, userKey3, phoneNumber)
                     val ok = ext.sendTestMessage(activeProvider)
                     if (ok) {
                         testStatus = "Test sent successfully! Check your device."
