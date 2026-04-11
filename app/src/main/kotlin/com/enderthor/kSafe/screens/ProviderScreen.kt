@@ -109,6 +109,12 @@ fun ProviderScreen(vm: MainViewModel) {
 
         Spacer(Modifier.height(4.dp))
 
+        Text(
+            text = stringResource(R.string.provider_active_hint),
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.primary
+        )
+
         // Provider description
         Text(
             text = when (activeProvider) {
