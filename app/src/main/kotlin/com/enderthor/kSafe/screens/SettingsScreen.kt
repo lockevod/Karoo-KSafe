@@ -7,8 +7,6 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
-import androidx.activity.compose.rememberLauncherForActivityResult
-import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
@@ -74,50 +72,9 @@ fun SettingsScreen(vm: MainViewModel) {
     val coroutineScope = rememberCoroutineScope()
     val context = LocalContext.current
 
-    // Export: user picks where to save the .json file
-    val exportLauncher = rememberLauncherForActivityResult(
-        ActivityResultContracts.CreateDocument("application/json")
-    ) { uri ->
-        if (uri == null) return@rememberLauncherForActivityResult
-        coroutineScope.launch {
-            try {
-                val json = vm.exportToJson()
-                withContext(Dispatchers.IO) {
-                    context.contentResolver.openOutputStream(uri)?.use { it.write(json.toByteArray()) }
-                }
-                backupStatus = "Configuration exported successfully."
-                backupIsError = false
-            } catch (e: Exception) {
-                backupStatus = "Export failed: ${e.message}"
-                backupIsError = true
-            }
-        }
-    }
-
-    // Import: user picks a previously exported .json file
-    val importLauncher = rememberLauncherForActivityResult(
-        ActivityResultContracts.OpenDocument()
-    ) { uri ->
-        if (uri == null) return@rememberLauncherForActivityResult
-        coroutineScope.launch {
-            try {
-                val json = withContext(Dispatchers.IO) {
-                    context.contentResolver.openInputStream(uri)?.use { it.readBytes().toString(Charsets.UTF_8) }
-                } ?: throw IllegalStateException("Could not read file")
-                val ok = vm.importFromJson(json)
-                if (ok) {
-                    backupStatus = "Configuration imported successfully."
-                    backupIsError = false
-                } else {
-                    backupStatus = "Import failed — invalid file format."
-                    backupIsError = true
-                }
-            } catch (e: Exception) {
-                backupStatus = "Import failed: ${e.message}"
-                backupIsError = true
-            }
-        }
-    }
+    // Separate files for export and import — no permissions needed (app-specific external storage)
+    val exportFile = java.io.File(context.getExternalFilesDir(null), "ksafe_export.json")
+    val importFile = java.io.File(context.getExternalFilesDir(null), "ksafe_import.json")
 
     // Auto-save: runs whenever any setting changes, with a short debounce for text fields
     LaunchedEffect(
@@ -384,17 +341,51 @@ fun SettingsScreen(vm: MainViewModel) {
         HorizontalDivider()
 
         // Backup / Restore
+        Text(
+            text = "Export → ksafe_export.json  |  Import ← ksafe_import.json",
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant
+        )
         Row(
             modifier = Modifier.fillMaxWidth(),
             horizontalArrangement = Arrangement.spacedBy(8.dp)
         ) {
             Button(
-                onClick = { exportLauncher.launch("ksafe_backup.json") },
+                onClick = {
+                    coroutineScope.launch {
+                        try {
+                            val json = vm.exportToJson()
+                            withContext(Dispatchers.IO) { exportFile.writeText(json) }
+                            backupStatus = "Exported to ksafe_export.json"
+                            backupIsError = false
+                        } catch (e: Exception) {
+                            backupStatus = "Export failed: ${e.message}"
+                            backupIsError = true
+                        }
+                    }
+                },
                 modifier = Modifier.weight(1f)
             ) { Text(stringResource(R.string.backup_export)) }
 
             Button(
-                onClick = { importLauncher.launch(arrayOf("application/json", "text/plain", "*/*")) },
+                onClick = {
+                    coroutineScope.launch {
+                        try {
+                            if (!importFile.exists()) {
+                                backupStatus = "ksafe_import.json not found. See README."
+                                backupIsError = true
+                                return@launch
+                            }
+                            val json = withContext(Dispatchers.IO) { importFile.readText() }
+                            val ok = vm.importFromJson(json)
+                            backupStatus = if (ok) "Imported successfully." else "Import failed — invalid file."
+                            backupIsError = !ok
+                        } catch (e: Exception) {
+                            backupStatus = "Import failed: ${e.message}"
+                            backupIsError = true
+                        }
+                    }
+                },
                 modifier = Modifier.weight(1f)
             ) { Text(stringResource(R.string.backup_import)) }
         }
