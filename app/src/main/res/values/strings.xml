@@ -45,6 +45,9 @@
     <string name="sensitivity_low">Low</string>
     <string name="sensitivity_medium">Medium</string>
     <string name="sensitivity_high">High</string>
+    <string name="sensitivity_low_desc">Best for MTB and gravel. Requires a strong impact to trigger — reduces false positives from jumps, drops and rough terrain.</string>
+    <string name="sensitivity_medium_desc">Balanced for road and mixed terrain. Detects most real crashes while tolerating occasional hard landings. Recommended default.</string>
+    <string name="sensitivity_high_desc">Best for road cycling on smooth surfaces. Triggers on lighter impacts — may produce false positives on rough roads or MTB trails.</string>
     <string name="speed_drop_label">Detect prolonged stop during ride</string>
     <string name="speed_drop_minutes_label">Minutes stopped before alert</string>
     <string name="checkin_timer_label">Check-in timer</string>

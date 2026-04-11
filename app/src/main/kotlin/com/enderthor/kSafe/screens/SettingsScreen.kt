@@ -228,6 +228,16 @@ fun SettingsScreen(vm: MainViewModel) {
                 }
             }
 
+            Text(
+                text = when (crashSensitivity) {
+                    CrashSensitivity.LOW    -> stringResource(R.string.sensitivity_low_desc)
+                    CrashSensitivity.MEDIUM -> stringResource(R.string.sensitivity_medium_desc)
+                    CrashSensitivity.HIGH   -> stringResource(R.string.sensitivity_high_desc)
+                },
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+
             OutlinedTextField(
                 value = minSpeedForCrash,
                 onValueChange = { if (it.all { c -> c.isDigit() }) minSpeedForCrash = it },
