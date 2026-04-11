@@ -1,7 +1,6 @@
 package com.enderthor.kSafe.extension
 
 import com.enderthor.kSafe.BuildConfig
-import com.enderthor.kSafe.data.EmergencyContact
 import com.enderthor.kSafe.data.EmergencyReason
 import com.enderthor.kSafe.data.KSafeConfig
 import com.enderthor.kSafe.data.ProviderType
@@ -164,32 +163,51 @@ class KSafeExtension : KarooExtension("ksafe", BuildConfig.VERSION_NAME), Corout
 
         Timber.d("Karoo Live: sending ride start notification")
         launch {
-            config.contacts.filter { it.isValid }.forEach { contact ->
-                try {
-                    if (contact.hasPhone || sender.isAccountBased(config.activeProvider))
-                        sender.sendToPhone(contact.phone, message, config.activeProvider)
-                } catch (e: Exception) {
-                    Timber.e(e, "Karoo Live: error sending ride start to ${contact.name}")
-                }
+            try {
+                sender.sendAlert(message, config.activeProvider)
+            } catch (e: Exception) {
+                Timber.e(e, "Karoo Live: error sending ride start notification")
             }
         }
     }
 
-    /** Called from SettingsScreen to test the full emergency flow without a real ride. */
-    fun simulateCrash() {
-        if (!activeConfig.isActive) return
+    /**
+     * Called from SettingsScreen to test the full emergency flow without a real ride.
+     * Returns a message to display in the UI.
+     */
+    fun simulateCrash(): String {
+        if (!activeConfig.isActive) return "Extension is disabled — enable it in Settings first."
         Timber.d("Simulated crash triggered from app")
         emergencyManager.triggerEmergency(EmergencyReason.CRASH_DETECTED, activeConfig)
+        return "Countdown started! Cancel it from your Karoo screen or wait for it to complete."
     }
 
-    /** Called from ProviderScreen to verify messaging provider is correctly configured. */
-    fun sendTestMessage(contact: EmergencyContact, provider: ProviderType) {
-        launch {
-            val message = "KSafe test message — your emergency alerts are configured correctly."
-            Timber.d("Sending test message to ${contact.name} via $provider")
-            if (contact.hasPhone || sender.isAccountBased(provider))
-                sender.sendToPhone(contact.phone, message, provider)
-        }
+    /**
+     * Called from ProviderScreen to verify messaging provider is correctly configured.
+     * Returns true if the message was sent successfully.
+     * Works regardless of ride state — this is a configuration test.
+     */
+    suspend fun sendTestMessage(provider: ProviderType): Boolean {
+        val message = "KSafe test message — your emergency alerts are configured correctly."
+        Timber.d("Sending test message via $provider")
+        return sender.sendAlert(message, provider)
+    }
+
+    /**
+     * Called from SettingsScreen to test the ride-start notification.
+     * Returns a result message to display in the UI.
+     * Works regardless of ride state — this is a configuration test.
+     */
+    suspend fun sendTestRideStart(): String {
+        val config = activeConfig
+        if (!config.karooLiveEnabled) return "Karoo Live is disabled — enable it in Settings first."
+        if (config.karooLiveKey.isBlank()) return "No Karoo Live key configured."
+        val liveLink = com.enderthor.kSafe.data.KAROO_LIVE_BASE_URL + config.karooLiveKey.trim()
+        val message = config.karooLiveStartMessage.replace("{livetrack}", liveLink)
+        Timber.d("Sending test ride start notification via ${config.activeProvider}")
+        val ok = sender.sendAlert(message, config.activeProvider)
+        return if (ok) "Ride start message sent successfully! Check your device."
+               else "Send failed — check your provider configuration."
     }
 
     // ─── Actions called from DataType callbacks ───────────────────────────────

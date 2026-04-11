@@ -13,29 +13,22 @@
     <string name="timer_datatype_desc">Check-in timer. Tap to reset. If timer expires without check-in, your contacts will be alerted.</string>
 
     <!-- UI tabs -->
-    <string name="tab_contacts">Contacts</string>
     <string name="tab_provider">Provider</string>
     <string name="tab_settings">Settings</string>
 
-    <!-- Contacts screen -->
-    <string name="contacts_title">Emergency Contacts</string>
-    <string name="contact_name_hint">Contact name</string>
-    <string name="contact_phone_hint">Phone number (with country code)</string>
-    <string name="contact_email_hint">Email address (optional)</string>
-    <string name="add_contact">Add Contact</string>
-    <string name="remove_contact">Remove</string>
-    <string name="contacts_max_info">Up to 3 emergency contacts</string>
-
     <!-- Provider screen -->
     <string name="provider_title">Message Provider</string>
-    <string name="provider_callmebot">CallMeBot (WhatsApp)</string>
-    <string name="provider_whapi">Whapi (WhatsApp)</string>
     <string name="api_key_hint">API Key</string>
+    <string name="callmebot_phone_hint">Recipient phone (with country code, e.g. +34612345678)</string>
+    <string name="callmebot_description">WhatsApp via CallMeBot. Free — the recipient must activate their API key first.</string>
     <string name="pushover_app_token_hint">App Token</string>
     <string name="pushover_user_key_hint">User Key</string>
+    <string name="pushover_description">Push notification via Pushover. Free 30-day trial, then ~$5 one-time. Enter your app token and user key.</string>
     <string name="simplepush_key_hint">Channel Key</string>
-    <string name="simplepush_description">Free push notification via SimplePush. Install the app, get your key — no account needed.</string>
+    <string name="simplepush_description">Free push via SimplePush (10 msg/month). Install the app, get your key — no account needed.</string>
     <string name="save">Save</string>
+    <string name="backup_export">Export</string>
+    <string name="backup_import">Import</string>
     <string name="test_send">Test Send</string>
     <string name="test_send_ok">Test message sent!</string>
     <string name="test_send_error">Error sending test message</string>

@@ -3,15 +3,18 @@ package com.enderthor.kSafe.activity
 import android.app.Application
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
-import com.enderthor.kSafe.data.EmergencyContact
+import com.enderthor.kSafe.data.KSafeBackup
 import com.enderthor.kSafe.data.KSafeConfig
 import com.enderthor.kSafe.data.ProviderType
 import com.enderthor.kSafe.data.SenderConfig
+import com.enderthor.kSafe.extension.jsonWithUnknownKeys
 import com.enderthor.kSafe.extension.managers.ConfigurationManager
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
+import kotlinx.serialization.encodeToString
+import kotlinx.serialization.json.Json
 
 class MainViewModel(application: Application) : AndroidViewModel(application) {
 
@@ -33,35 +36,38 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         viewModelScope.launch { configManager.saveSenderConfigs(configs) }
     }
 
-    // ─── Contact helpers ──────────────────────────────────────────────────────
-
-    fun addContact(contact: EmergencyContact) {
-        val current = config.value
-        if (current.contacts.size >= 3) return
-        saveConfig(current.copy(contacts = current.contacts + contact))
-    }
-
-    fun removeContact(index: Int) {
-        val current = config.value
-        saveConfig(current.copy(contacts = current.contacts.toMutableList().also { it.removeAt(index) }))
-    }
-
-    fun updateContact(index: Int, contact: EmergencyContact) {
-        val current = config.value
-        saveConfig(current.copy(contacts = current.contacts.toMutableList().also { it[index] = contact }))
-    }
-
     // ─── Provider helpers ─────────────────────────────────────────────────────
 
-    fun updateSenderApiKey(provider: ProviderType, apiKey: String, userKey: String = "") {
+    fun updateSenderConfig(provider: ProviderType, apiKey: String, userKey: String = "", phoneNumber: String = "") {
         val updated = senderConfigs.value.toMutableList()
         val idx = updated.indexOfFirst { it.provider == provider }
-        val newConfig = SenderConfig(provider, apiKey, userKey)
+        val newConfig = SenderConfig(provider, apiKey, userKey, phoneNumber)
         if (idx >= 0) updated[idx] = newConfig else updated.add(newConfig)
         saveSenderConfigs(updated)
     }
 
     fun setActiveProvider(provider: ProviderType) {
         saveConfig(config.value.copy(activeProvider = provider))
+    }
+
+    // ─── Backup / Restore ─────────────────────────────────────────────────────
+
+    /** Serializes current config + sender configs to a JSON string ready to export. */
+    fun exportToJson(): String =
+        Json.encodeToString(KSafeBackup(config.value, senderConfigs.value))
+
+    /**
+     * Parses [json] and overwrites stored config + sender configs.
+     * Returns true on success, false if the JSON is invalid.
+     */
+    fun importFromJson(json: String): Boolean {
+        return try {
+            val backup = jsonWithUnknownKeys.decodeFromString<KSafeBackup>(json)
+            saveConfig(backup.config)
+            saveSenderConfigs(backup.senderConfigs)
+            true
+        } catch (e: Exception) {
+            false
+        }
     }
 }
