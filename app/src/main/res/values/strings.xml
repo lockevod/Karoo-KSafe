@@ -45,9 +45,17 @@
     <string name="sensitivity_low">Low</string>
     <string name="sensitivity_medium">Medium</string>
     <string name="sensitivity_high">High</string>
+    <string name="sensitivity_custom">Custom</string>
     <string name="sensitivity_low_desc">Best for MTB and gravel. Requires a strong impact to trigger — reduces false positives from jumps, drops and rough terrain.</string>
     <string name="sensitivity_medium_desc">Balanced for road and mixed terrain. Detects most real crashes while tolerating occasional hard landings. Recommended default.</string>
     <string name="sensitivity_high_desc">Best for road cycling on smooth surfaces. Triggers on lighter impacts — may produce false positives on rough roads or MTB trails.</string>
+    <string name="sensitivity_custom_desc">Set your own impact threshold. Higher value = harder impact required (fewer false positives). Lower value = more sensitive detection.</string>
+    <string name="sensitivity_custom_threshold">Threshold: %1$d m/s²</string>
+    <string name="min_speed_label">Min. speed to detect crash (km/h, 0 = always)</string>
+    <string name="min_speed_hint_low">MTB/gravel: recommended 3 km/h — crashes can happen at very low speeds on technical terrain. Set to 0 for testing.</string>
+    <string name="min_speed_hint_medium">Road + MTB: recommended 5 km/h — filters stationary false positives. Set to 0 for testing.</string>
+    <string name="min_speed_hint_high">Road: recommended 10 km/h — road crashes rarely happen at low speeds. Set to 0 for testing.</string>
+    <string name="min_speed_hint_custom">Set based on your riding style. Use 0 for testing at any speed.</string>
     <string name="speed_drop_label">Detect prolonged stop during ride</string>
     <string name="speed_drop_minutes_label">Minutes stopped before alert</string>
     <string name="checkin_timer_label">Check-in timer</string>

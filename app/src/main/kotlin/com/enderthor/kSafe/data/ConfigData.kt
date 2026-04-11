@@ -20,7 +20,8 @@ enum class ProviderType { CALLMEBOT, PUSHOVER, SIMPLEPUSH }
 enum class CrashSensitivity {
     LOW,    // Requires stronger impact (fewer false positives)
     MEDIUM, // Balanced
-    HIGH    // Detects lighter impacts (more sensitive)
+    HIGH,   // Detects lighter impacts (more sensitive)
+    CUSTOM  // User-defined threshold
 }
 
 enum class EmergencyStatus { IDLE, COUNTDOWN, ALERTING }
@@ -45,7 +46,8 @@ data class KSafeConfig(
     // Crash detection
     val crashDetectionEnabled: Boolean = true,
     val crashSensitivity: CrashSensitivity = CrashSensitivity.MEDIUM,
-    val minSpeedForCrashKmh: Int = 10,  // 0 = always detect (useful for testing)
+    val minSpeedForCrashKmh: Int = 5,   // 0 = always detect (useful for testing)
+    val customCrashThreshold: Int = 45, // m/s² — only used when crashSensitivity = CUSTOM (range 20–70)
     // Speed-drop detection
     val speedDropDetectionEnabled: Boolean = false,
     val speedDropMinutes: Int = DEFAULT_SPEED_DROP_MINUTES,
