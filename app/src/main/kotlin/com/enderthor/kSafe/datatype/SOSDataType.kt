@@ -22,7 +22,6 @@ import androidx.glance.text.FontWeight
 import androidx.glance.text.Text
 import androidx.glance.text.TextAlign
 import androidx.glance.text.TextStyle
-import com.enderthor.kSafe.data.EmergencyState
 import com.enderthor.kSafe.data.EmergencyStatus
 import com.enderthor.kSafe.extension.managers.EmergencyManager
 import io.hammerhead.karooext.KarooSystemService
@@ -39,8 +38,6 @@ import kotlinx.coroutines.awaitCancellation
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.flow.first
-import kotlinx.coroutines.withTimeoutOrNull
 import timber.log.Timber
 
 // ─── Color constants — created once, reused on every render ──────────────────
@@ -107,48 +104,28 @@ class SOSDataType(
             awaitCancellation()
         }
 
+        // Simple polling loop — reads state every second and re-renders unconditionally.
+        // No flow subscriptions, no race conditions. State is always current within 1s.
         val viewJob = scope.launch {
             try {
-                // Single loop — renders every second during countdown, waits on state
-                // change otherwise. No separate ticker job, no cancelAndJoin races.
-                var lastRenderedState: EmergencyState? = null
                 while (true) {
                     val state = EmergencyManager.uiState.value
-
                     when (state.status) {
-                        EmergencyStatus.IDLE -> {
-                            if (state != lastRenderedState) {
-                                emitter.updateView(renderSafe(context, config).remoteViews)
-                                lastRenderedState = state
-                            }
-                            // Wait for any state change before re-checking
-                            EmergencyManager.uiState.first { it != state }
-                        }
-                        EmergencyStatus.COUNTDOWN -> {
-                            val remaining = state.countdownRemaining()
+                        EmergencyStatus.IDLE ->
+                            emitter.updateView(renderSafe(context, config).remoteViews)
+                        EmergencyStatus.COUNTDOWN ->
                             emitter.updateView(
-                                renderCountdown(context, config, remaining, state.reason).remoteViews
+                                renderCountdown(context, config, state.countdownRemaining(), state.reason).remoteViews
                             )
-                            lastRenderedState = state
-                            // Re-render every second OR immediately if state changes
-                            withTimeoutOrNull(1_000L) {
-                                EmergencyManager.uiState.first { it != state }
-                            }
-                        }
-                        EmergencyStatus.ALERTING -> {
-                            if (state != lastRenderedState) {
-                                emitter.updateView(renderAlerting(context, config).remoteViews)
-                                lastRenderedState = state
-                            }
-                            EmergencyManager.uiState.first { it != state }
-                        }
+                        EmergencyStatus.ALERTING ->
+                            emitter.updateView(renderAlerting(context, config).remoteViews)
                     }
+                    delay(1_000L)
                 }
             } catch (e: CancellationException) {
                 // normal cancellation
             } catch (e: Exception) {
                 Timber.e(e, "SOSDataType error: ${e.message}")
-                emitter.updateView(renderSafe(context, config).remoteViews)
             }
         }
 
