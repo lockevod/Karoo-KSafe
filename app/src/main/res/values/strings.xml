@@ -85,6 +85,11 @@
     <string name="sos_tap_cancel">Tap to\ncancel</string>
     <string name="sos_tap_sos">Tap for\nSOS</string>
 
+    <!-- Overlay permission warning -->
+    <string name="overlay_permission_title">⚠ Overlay permission required</string>
+    <string name="overlay_permission_body">KSafe needs \"Draw over other apps\" permission to show the SOS cancel overlay on top of the ride screen. Without it, you won\'t see the cancel button during an emergency countdown.</string>
+    <string name="overlay_permission_button">Enable now</string>
+
     <!-- Timer field states -->
     <string name="timer_off">Check-in\nOFF</string>
     <string name="timer_checkin">CHECK\nIN!</string>

@@ -8,8 +8,8 @@ import com.enderthor.kSafe.data.EmergencyStatus
 import com.enderthor.kSafe.data.KSafeConfig
 import com.enderthor.kSafe.extension.Sender
 import io.hammerhead.karooext.KarooSystemService
-import io.hammerhead.karooext.models.InRideAlert
 import io.hammerhead.karooext.models.PlayBeepPattern
+import io.hammerhead.karooext.models.SystemNotification
 import io.hammerhead.karooext.models.TurnScreenOn
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
@@ -39,11 +39,16 @@ class EmergencyManager(
     private val scope: CoroutineScope
 ) {
     companion object {
+        private const val SOS_CANCEL_NOTIFICATION_ID = "ksafe-sos-cancel"
+        private const val CANCEL_ACTION_INTENT = "com.enderthor.kSafe.CANCEL_EMERGENCY"
+
         /** In-memory state flow — updated synchronously on every state change.
          *  DataTypes collect from this instead of DataStore to avoid write latency. */
         val uiState: StateFlow<EmergencyState> get() = _uiState
         private val _uiState = MutableStateFlow(EmergencyState())
     }
+
+    private val sosOverlay = SosOverlayManager(context)
 
     private var countdownJob: Job? = null
     private var checkinJob: Job? = null
@@ -66,6 +71,7 @@ class EmergencyManager(
         if (currentStatus != EmergencyStatus.COUNTDOWN) return
         countdownJob?.cancel()
         currentStatus = EmergencyStatus.IDLE
+        sosOverlay.removeOverlay()
 
         // Update UI state synchronously — DataTypes react immediately, no DataStore wait.
         _uiState.value = EmergencyState()
@@ -78,17 +84,6 @@ class EmergencyManager(
             configManager.saveEmergencyState(EmergencyState())
         }
 
-        karooSystem.dispatch(
-            InRideAlert(
-                id = "ksafe-cancel",
-                icon = R.drawable.ic_ksafe,
-                title = context.getString(R.string.app_name),
-                detail = "Cancelled",
-                autoDismissMs = 3000L,
-                backgroundColor = R.color.alert_green,
-                textColor = R.color.alert_text_white
-            )
-        )
         Timber.d("Emergency cancelled by user")
     }
 
@@ -123,14 +118,10 @@ class EmergencyManager(
                     karooSystem.dispatch(TurnScreenOn)
                     karooSystem.dispatch(BEEP_LONG)
                     karooSystem.dispatch(
-                        InRideAlert(
+                        SystemNotification(
                             id = "ksafe-checkin-warn",
-                            icon = R.drawable.ic_ksafe,
-                            title = context.getString(R.string.app_name),
-                            detail = "Check-in in 10 min",
-                            autoDismissMs = 8000L,
-                            backgroundColor = R.color.alert_yellow,
-                            textColor = R.color.alert_text_white
+                            message = "Check-in in 10 min",
+                            header = context.getString(R.string.app_name),
                         )
                     )
                 }
@@ -173,6 +164,7 @@ class EmergencyManager(
         checkinJob?.cancel()
         checkinWarningJob?.cancel()
         currentStatus = EmergencyStatus.IDLE
+        sosOverlay.removeOverlay()
         _uiState.value = EmergencyState()
         scope.launch { configManager.saveEmergencyState(EmergencyState()) }
     }
@@ -194,8 +186,6 @@ class EmergencyManager(
         )
         _uiState.value = countdownState
 
-        // State save is inside countdownJob so that cancelling the job before the
-        // save runs avoids a race where a stale COUNTDOWN overwrites a fresh IDLE state.
         countdownJob = scope.launch {
             configManager.saveEmergencyState(countdownState)
             karooSystem.dispatch(TurnScreenOn)
@@ -204,21 +194,14 @@ class EmergencyManager(
             val totalSeconds = config.countdownSeconds
 
             for (remaining in totalSeconds downTo 1) {
+                // Show/update the overlay every second — injected directly into the
+                // Karoo ride Activity view hierarchy (ki2 approach, no special permissions).
+                sosOverlay.showOrUpdate(reason, remaining) {
+                    scope.launch { cancelEmergency(config) }
+                }
+
                 if (remaining % 5 == 0 || remaining <= 10) {
-                    // TurnScreenOn only at start (already dispatched above) and last 10s
-                    // InRideAlert itself wakes the screen — avoid redundant wake calls mid-countdown
                     if (remaining <= 10) karooSystem.dispatch(TurnScreenOn)
-                    karooSystem.dispatch(
-                        InRideAlert(
-                            id = "ksafe-sos",
-                            icon = R.drawable.ic_ksafe,
-                            title = "SOS: ${remaining}s — ${reason.label}",
-                            detail = "Field / button to cancel",
-                            autoDismissMs = 6_000L,
-                            backgroundColor = R.color.alert_red,
-                            textColor = R.color.alert_text_white
-                        )
-                    )
                     if (remaining <= 5) karooSystem.dispatch(BEEP_URGENT)
                 }
                 delay(1_000L)
@@ -259,6 +242,7 @@ class EmergencyManager(
 
     private suspend fun sendAlerts(config: KSafeConfig, reason: EmergencyReason) {
         currentStatus = EmergencyStatus.ALERTING
+        sosOverlay.removeOverlay()
         val alertingState = EmergencyState(status = EmergencyStatus.ALERTING, reason = reason.label)
         _uiState.value = alertingState
         configManager.saveEmergencyState(alertingState)
@@ -277,17 +261,6 @@ class EmergencyManager(
 
         karooSystem.dispatch(TurnScreenOn)
         karooSystem.dispatch(BEEP_LONG)
-        karooSystem.dispatch(
-            InRideAlert(
-                id = "ksafe-sent",
-                icon = R.drawable.ic_ksafe,
-                title = context.getString(R.string.app_name),
-                detail = "Alert sent!",
-                autoDismissMs = 15_000L,
-                backgroundColor = R.color.alert_red,
-                textColor = R.color.alert_text_white
-            )
-        )
 
         delay(5_000L)
         currentStatus = EmergencyStatus.IDLE
