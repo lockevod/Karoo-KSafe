@@ -3,6 +3,8 @@
     xmlns:tools="http://schemas.android.com/tools">
 
     <uses-permission android:name="android.permission.INTERNET" />
+    <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
 
     <application
         android:name=".KSafeApplication"
@@ -22,8 +24,7 @@
             </intent-filter>
         </activity>
 
-        <!-- Transparent activity launched from the SystemNotification "Cancel" button.
-             Cancels the active emergency countdown without opening any UI. -->
+        <!-- Transparent activity used as fallback cancel mechanism (BonusAction, future deep links). -->
         <activity
             android:name=".activity.CancelEmergencyActivity"
             android:exported="true"

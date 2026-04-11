@@ -3,9 +3,9 @@
   "packageName": "com.enderthor.kSafe",
   "latestApkUrl": "https://github.com/lockevod/Karoo-KSafe/releases/latest/download/ksafe.apk",
   "iconUrl": "https://github.com/lockevod/Karoo-KSafe/releases/latest/download/ksage.png",
-  "latestVersion": "0.1.0",
-  "latestVersionCode": 202604091,
+  "latestVersion": "0.2.0",
+  "latestVersionCode": 202604092,
   "developer": "github.com/lockevod",
-  "description": "This extension for Karoo allows detect crashes, accidents. Auto send link when starts your. It's a beta version, please be careful with this extension",
-  "releaseNotes": "First version. Please be careful with this extension"
+  "description": "Karoo safety extension: detects crashes/accidents and can auto-send your live link when a ride starts. Beta version, use with care.",
+  "releaseNotes": "Improve cancel emergency countdown, add ride start notification."
 }
