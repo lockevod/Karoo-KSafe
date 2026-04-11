@@ -14,6 +14,8 @@ import io.hammerhead.karooext.models.TurnScreenOn
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.launch
 import timber.log.Timber
 
@@ -36,10 +38,18 @@ class EmergencyManager(
     private val sender: Sender,
     private val scope: CoroutineScope
 ) {
+    companion object {
+        /** In-memory state flow — updated synchronously on every state change.
+         *  DataTypes collect from this instead of DataStore to avoid write latency. */
+        val uiState: StateFlow<EmergencyState> get() = _uiState
+        private val _uiState = MutableStateFlow(EmergencyState())
+    }
+
     private var countdownJob: Job? = null
     private var checkinJob: Job? = null
     private var checkinWarningJob: Job? = null
-    private var currentStatus = EmergencyStatus.IDLE
+    var currentStatus = EmergencyStatus.IDLE
+        private set
 
     // ─── Public API ───────────────────────────────────────────────────────────
 
@@ -57,13 +67,11 @@ class EmergencyManager(
         countdownJob?.cancel()
         currentStatus = EmergencyStatus.IDLE
 
-        // Save IDLE state immediately (not via scope.launch) so DataType flows
-        // emit the new state right away and fields reset to their default view.
+        // Update UI state synchronously — DataTypes react immediately, no DataStore wait.
+        _uiState.value = EmergencyState()
+
+        // Persist to DataStore (async is fine here — UI already updated above).
         if (config?.checkinEnabled == true) {
-            // startCheckinJobs saves state at the start of checkinJob — the save
-            // happens inside the job so it won't race with the IDLE save above.
-            // We need the IDLE state immediately, so save it first, then let the
-            // checkin job overwrite with its checkin state right after.
             configManager.saveEmergencyState(EmergencyState())
             startCheckinJobs(config)
         } else {
@@ -99,6 +107,13 @@ class EmergencyManager(
         checkinWarningJob?.cancel()
 
         val intervalMs = config.checkinIntervalMinutes * 60_000L
+
+        // Update UI state synchronously so TimerDataType sees the checkin state immediately.
+        _uiState.value = EmergencyState(
+            checkinEnabled = true,
+            checkinStartTime = startTime,
+            checkinIntervalMinutes = config.checkinIntervalMinutes
+        )
 
         checkinWarningJob = scope.launch {
             val warningMs = intervalMs - (10 * 60_000L)
@@ -149,6 +164,7 @@ class EmergencyManager(
     fun stopCheckinTimer() {
         checkinJob?.cancel()
         checkinWarningJob?.cancel()
+        _uiState.value = EmergencyState()
         scope.launch { configManager.saveEmergencyState(EmergencyState()) }
     }
 
@@ -157,6 +173,7 @@ class EmergencyManager(
         checkinJob?.cancel()
         checkinWarningJob?.cancel()
         currentStatus = EmergencyStatus.IDLE
+        _uiState.value = EmergencyState()
         scope.launch { configManager.saveEmergencyState(EmergencyState()) }
     }
 
@@ -166,19 +183,21 @@ class EmergencyManager(
         currentStatus = EmergencyStatus.COUNTDOWN
         val startTime = System.currentTimeMillis()
 
+        // Update UI state synchronously so DataTypes react immediately (no DataStore latency).
+        val countdownState = EmergencyState(
+            status = EmergencyStatus.COUNTDOWN,
+            reason = reason.label,
+            countdownStartTime = startTime,
+            countdownDurationSeconds = config.countdownSeconds,
+            checkinEnabled = config.checkinEnabled,
+            checkinIntervalMinutes = config.checkinIntervalMinutes
+        )
+        _uiState.value = countdownState
+
         // State save is inside countdownJob so that cancelling the job before the
         // save runs avoids a race where a stale COUNTDOWN overwrites a fresh IDLE state.
         countdownJob = scope.launch {
-            configManager.saveEmergencyState(
-                EmergencyState(
-                    status = EmergencyStatus.COUNTDOWN,
-                    reason = reason.label,
-                    countdownStartTime = startTime,
-                    countdownDurationSeconds = config.countdownSeconds,
-                    checkinEnabled = config.checkinEnabled,
-                    checkinIntervalMinutes = config.checkinIntervalMinutes
-                )
-            )
+            configManager.saveEmergencyState(countdownState)
             karooSystem.dispatch(TurnScreenOn)
             karooSystem.dispatch(BEEP_LONG)
 
@@ -240,9 +259,9 @@ class EmergencyManager(
 
     private suspend fun sendAlerts(config: KSafeConfig, reason: EmergencyReason) {
         currentStatus = EmergencyStatus.ALERTING
-        configManager.saveEmergencyState(
-            EmergencyState(status = EmergencyStatus.ALERTING, reason = reason.label)
-        )
+        val alertingState = EmergencyState(status = EmergencyStatus.ALERTING, reason = reason.label)
+        _uiState.value = alertingState
+        configManager.saveEmergencyState(alertingState)
 
         val message = buildMessage(config, reason)
 
@@ -272,6 +291,7 @@ class EmergencyManager(
 
         delay(5_000L)
         currentStatus = EmergencyStatus.IDLE
+        _uiState.value = EmergencyState()
         configManager.saveEmergencyState(EmergencyState())
     }
 }

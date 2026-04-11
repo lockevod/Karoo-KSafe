@@ -75,6 +75,9 @@ class ConfigurationManager(private val context: Context) {
     }
 
     fun loadEmergencyStateFlow(): Flow<EmergencyState> {
+        // No distinctUntilChanged — emergency state changes are infrequent and
+        // missing an IDLE emission (e.g. due to a concurrent DataStore write) would
+        // leave the data fields stuck showing the last countdown value.
         return context.dataStore.data.map { prefs ->
             try {
                 jsonWithUnknownKeys.decodeFromString<EmergencyState>(
@@ -84,6 +87,6 @@ class ConfigurationManager(private val context: Context) {
                 Timber.e(e, "Failed to read EmergencyState")
                 EmergencyState()
             }
-        }.distinctUntilChanged()
+        }
     }
 }
