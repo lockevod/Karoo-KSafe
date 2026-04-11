@@ -21,7 +21,7 @@ Compatible with Karoo 3 running Karoo OS version 1.527 and later.
 - **Manual SOS**: Tap the SOS data field to trigger an emergency alert manually.
 - **Check-in timer**: Set a periodic check-in interval. If you don't tap "OK" before the timer expires, an alert is sent automatically.
 - **Speed drop detection**: Detects when your speed drops suddenly and remains low for a configurable time window.
-- **Emergency countdown with cancel**: All triggers start a configurable countdown (default 30s) so you can cancel false alarms before alerts are sent (field tap, hardware action, or Control Center notification).
+- **Emergency countdown with cancel**: All triggers start a configurable countdown (default 30s) so you can cancel false alarms before alerts are sent. A **red overlay with a Cancel button** appears on top of the ride screen — visible from any screen, no matter which data field is active.
 - **Location included**: Your GPS coordinates are automatically included in the alert message as a Google Maps link.
 - **Multiple messaging providers**: WhatsApp via CallMeBot (free), push notification via Pushover, or free push via SimplePush.
 - **Ride start notification**: Optionally sends a message to your contacts when you start a ride, including a Karoo Live real-time tracking link — a better alternative to Karoo's built-in email notification.
@@ -60,19 +60,26 @@ If you miss it or need to grant it later:
 > [!NOTE]
 > Without this permission, the SOS cancel overlay will not appear during a countdown. You can still cancel by tapping the SOS or Safety Timer data field, or using a configured hardware action button.
 
-## Cancel Emergency Button (recommended)
+## Cancel Emergency — overlay button (primary method)
 
-KSafe registers a **"KSafe: Cancel Emergency"** action that you can assign to a compatible hardware controller button (Karoo/remote). This is a reliable way to cancel a countdown because it works regardless of which data fields you have visible on screen.
+When an emergency countdown starts, KSafe displays a **red overlay** on top of the current screen with a large **CANCEL** button. This works regardless of which data field or screen is visible — you don't need to navigate anywhere. Just tap CANCEL.
+
+> [!IMPORTANT]
+> The overlay requires the **"Draw over other apps"** permission. Grant it the first time you open the app, or tap **"Enable now"** in the warning banner inside the app. Without this permission the overlay will not appear.
+
+## Cancel Emergency — hardware button (optional)
+
+KSafe registers a **"KSafe: Cancel Emergency"** action that you can assign to a compatible hardware controller button. This is an alternative cancel method that also works from any screen.
 
 > [!NOTE]
-> `BonusAction` availability depends on your controller hardware/firmware. In practice this is commonly used with compatible remotes (for example SRAM AXS controls). If your controller does not expose extension bonus actions, use the Control Center cancel notification or data field tap.
+> `BonusAction` availability depends on your controller hardware/firmware. It is commonly used with compatible remotes (e.g. SRAM AXS controls). If your controller does not expose extension bonus actions, this option will not appear in the button assignment screen — use the overlay button or the data field tap instead.
 
 To configure it:
 1. Go to Karoo **Settings → Controller** (or your ANT+ remote settings).
 2. Find the button you want to assign the action to.
 3. Select **KSafe: Cancel Emergency** from the action list.
 
-Once configured, pressing that button during an active emergency countdown will cancel it immediately.
+Once configured, pressing that button during an active countdown will cancel it immediately.
 
 ## Data Fields
 
@@ -91,6 +98,9 @@ KSafe provides two custom data fields you can add to your ride profiles:
 - Shows **Timer OFF** when check-in is disabled.
 
 Add one or both fields to your Karoo ride profile from the profile editor.
+
+> [!TIP]
+> The data fields are a secondary cancel method. The **primary method** is the red overlay button that appears automatically on top of any screen when a countdown starts.
 
 ## Configuration
 
@@ -212,8 +222,8 @@ Each person who uses KSafe needs to create their own Pushover application (it is
 ## How It Works
 
 1. KSafe runs in the background while you ride.
-2. When a trigger occurs (crash detected, check-in expired, speed drop, or manual SOS tap), a countdown starts with audible beeps and a **red SOS overlay** appears on top of the current screen with a large **CANCEL** button visible from any screen on the device.
-3. During the countdown, you can cancel by tapping the **CANCEL button on the overlay**, tapping the **SOS field**, the **Safety Timer field**, or the configured **KSafe: Cancel Emergency** hardware action.
+2. When a trigger occurs (crash detected, check-in expired, speed drop, or manual SOS tap), a countdown starts with audible beeps and a **red SOS overlay** appears immediately on top of whatever screen is currently visible, with a large **CANCEL** button.
+3. During the countdown, you can cancel by tapping the **CANCEL button on the overlay** (primary), tapping the **SOS field**, the **Safety Timer field**, or the configured **KSafe: Cancel Emergency** hardware action button.
 4. If the countdown completes without cancellation, KSafe obtains your current GPS location and sends the configured emergency message via the configured provider.
 5. After sending, the extension returns to idle state and normal monitoring resumes.
 
