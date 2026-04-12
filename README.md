@@ -471,6 +471,27 @@ Typing long tokens (Pushover App Token, Telegram Bot Token, etc.) on the Karoo t
 - Each messaging provider has its own rate limits and free tier restrictions. Check provider documentation.
 - By default, the extension only monitors during an active ride (Recording state). Crash detection remains active when the ride is paused. Use the **"Monitor crash when not riding"** options in Settings to enable monitoring outside of a recorded ride.
 
+## Disclaimer
+
+KSafe is designed to **improve your safety** while cycling, but it is **not a substitute for professional emergency services** and cannot guarantee that an alert will be sent in every situation.
+
+There are many conditions under which KSafe may fail to detect an incident or deliver an alert, including but not limited to:
+
+- **No phone connectivity** — the Karoo must be paired and connected to the Hammerhead Companion app. If the phone is out of range, turned off, has no internet access, or the companion app is not running, no alert will be sent.
+- **Phone not carried** — if you ride without your phone, no alerts can be sent.
+- **Undetected crash** — crash detection is based on accelerometer and gyroscope thresholds. Some crashes may not generate a detectable impact pattern, and some non-crash events may trigger a false alert.
+- **GPS unavailable** — if the device has no GPS fix, the location included in the alert will be unavailable.
+- **Provider outages** — third-party messaging services (Telegram, ntfy, CallMeBot, Pushover) may be unavailable due to outages outside of KSafe's control.
+- **Misconfiguration** — incorrect API keys, tokens, or phone numbers will prevent alerts from being delivered.
+- **Device failure** — if the Karoo device loses power, crashes, or malfunctions, no alerts will be sent.
+
+**KSafe is provided "as is", without warranty of any kind, express or implied.** The developer (lockevod) accepts no responsibility or liability for any harm, injury, loss, or damage arising from the use or inability to use this application, including cases where an emergency alert was not sent or not received.
+
+**By installing and using KSafe you accept full responsibility for your own safety.** If you do not agree with these terms, do not use this application.
+
+> [!WARNING]
+> KSafe is a safety aid, not a safety guarantee. Always carry your phone, ensure it is connected to the Karoo, and let someone know your planned route — regardless of whether KSafe is active.
+
 ## Privacy
 
 - KSafe does not collect or transmit any personal data beyond what is strictly necessary to send your emergency alerts (location and the message you configure).
