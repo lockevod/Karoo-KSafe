@@ -6,8 +6,7 @@ import timber.log.Timber
 class KSafeApplication : Application() {
     override fun onCreate() {
         super.onCreate()
-        val debug = false
-        if (BuildConfig.DEBUG || debug) {
+        if (BuildConfig.DEBUG) {
             Timber.plant(Timber.DebugTree())
         }
     }

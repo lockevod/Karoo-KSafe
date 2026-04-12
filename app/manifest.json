@@ -7,5 +7,5 @@
   "latestVersionCode": 202604101,
   "developer": "github.com/lockevod",
   "description": "Karoo safety extension: crash detection, manual SOS, check-in timer. Sends alerts via WhatsApp (CallMeBot), Telegram, Pushover or SimplePush. Beta version, use with care.",
-  "releaseNotes": "Add Telegram support. Add crash monitoring outside of ride. Improve SOS cancel overlay."
+  "releaseNotes": "Add Telegram support. Add crash monitoring outside of ride. Improve SOS cancel overlay. Improve performance"
 }
