@@ -89,6 +89,7 @@ fun ProviderScreen(vm: MainViewModel) {
                 FilterChip(
                     selected = activeProvider == provider,
                     onClick = { onProviderClick(provider) },
+                    modifier = Modifier.weight(1f),
                     label = {
                         Text(
                             text = if (provider == ProviderType.CALLMEBOT) "CallMeBot" else "Pushover",
@@ -109,7 +110,7 @@ fun ProviderScreen(vm: MainViewModel) {
                     modifier = Modifier.weight(1f),
                     label = {
                         Text(
-                            text = if (provider == ProviderType.NTFY) "ntfy" else "Telegram",
+                            text = if (provider == ProviderType.NTFY) "Ntfy" else "Telegram",
                             style = MaterialTheme.typography.labelSmall
                         )
                     }

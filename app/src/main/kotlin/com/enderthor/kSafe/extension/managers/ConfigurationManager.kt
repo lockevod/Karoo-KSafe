@@ -35,9 +35,10 @@ class ConfigurationManager(private val context: Context) {
     fun loadConfigFlow(): Flow<KSafeConfig> {
         return context.dataStore.data.map { prefs ->
             try {
-                jsonWithUnknownKeys.decodeFromString<List<KSafeConfig>>(
-                    prefs[configKey] ?: defaultKSafeConfigJson
-                ).firstOrNull() ?: KSafeConfig()
+                val raw = (prefs[configKey] ?: defaultKSafeConfigJson)
+                    .replace("\"SIMPLEPUSH\"", "\"NTFY\"") // migration: SIMPLEPUSH renamed to NTFY
+                jsonWithUnknownKeys.decodeFromString<List<KSafeConfig>>(raw)
+                    .firstOrNull() ?: KSafeConfig()
             } catch (e: Throwable) {
                 Timber.e(e, "Failed to read KSafeConfig")
                 KSafeConfig()
@@ -56,9 +57,9 @@ class ConfigurationManager(private val context: Context) {
     fun loadSenderConfigFlow(): Flow<List<SenderConfig>> {
         return context.dataStore.data.map { prefs ->
             try {
-                jsonWithUnknownKeys.decodeFromString<List<SenderConfig>>(
-                    prefs[senderConfigKey] ?: defaultSenderConfigJson
-                )
+                val raw = (prefs[senderConfigKey] ?: defaultSenderConfigJson)
+                    .replace("\"SIMPLEPUSH\"", "\"NTFY\"") // migration: SIMPLEPUSH renamed to NTFY
+                jsonWithUnknownKeys.decodeFromString<List<SenderConfig>>(raw)
             } catch (e: Throwable) {
                 Timber.e(e, "Failed to read SenderConfig")
                 emptyList()
