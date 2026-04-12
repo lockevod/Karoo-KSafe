@@ -125,6 +125,50 @@ class Sender(
                         else -> "Error ${response.statusCode}: ${body.take(120)}"
                     }
                 }
+
+                ProviderType.TELEGRAM -> {
+                    if (config.apiKey.isBlank()) return "Missing Bot Token."
+                    if (config.userKey.isBlank()) return "Missing Chat ID."
+                    val chatIds = listOf(config.userKey, config.userKey2, config.userKey3)
+                        .filter { it.isNotBlank() }
+                    val results = mutableListOf<String>()
+                    for ((i, chatId) in chatIds.withIndex()) {
+                        val label = "Chat ${i + 1}"
+                        val jsonBody = buildJsonObject {
+                            put("chat_id", chatId.trim())
+                            put("text", "KSafe test — alerts are configured correctly.")
+                        }.toString()
+                        val response = withTimeoutOrNull(15_000L) {
+                            karooSystem.httpRequest(
+                                "POST",
+                                "https://api.telegram.org/bot${config.apiKey.trim()}/sendMessage",
+                                mapOf("Content-Type" to "application/json"),
+                                jsonBody.toByteArray()
+                            )
+                        }
+                        if (response == null) {
+                            results.add("$label: no response — check connection.")
+                        } else {
+                            val body = response.body?.toString(Charsets.UTF_8) ?: ""
+                            when {
+                                response.statusCode in 200..299 && body.contains("\"ok\":true") ->
+                                    results.add("$label: sent ✓")
+                                response.statusCode == 401 ->
+                                    results.add("$label: invalid Bot Token.")
+                                response.statusCode == 400 && body.contains("chat not found", ignoreCase = true) ->
+                                    results.add("$label: Chat ID not found — make sure the bot is added to the chat.")
+                                else -> {
+                                    val desc = body
+                                        .substringAfter("\"description\":\"", "")
+                                        .substringBefore("\"", "")
+                                        .trim()
+                                    results.add("$label: ${desc.ifBlank { "HTTP ${response.statusCode}" }}")
+                                }
+                            }
+                        }
+                    }
+                    results.joinToString("\n")
+                }
             }
         } catch (e: Exception) {
             "Unexpected error: ${e.message}"
@@ -228,6 +272,30 @@ class Sender(
                 val ok = response.statusCode in 200..299 && body.contains("\"status\":\"OK\"")
                 if (!ok) Timber.e("SimplePush error ${response.statusCode}: $body")
                 ok
+            }
+
+            ProviderType.TELEGRAM -> {
+                if (config.apiKey.isBlank() || config.userKey.isBlank()) return false
+                val chatIds = listOf(config.userKey, config.userKey2, config.userKey3)
+                    .filter { it.isNotBlank() }
+                var anyOk = false
+                for (chatId in chatIds) {
+                    val jsonBody = buildJsonObject {
+                        put("chat_id", chatId.trim())
+                        put("text", message)
+                    }.toString()
+                    val response = karooSystem.httpRequest(
+                        "POST",
+                        "https://api.telegram.org/bot${config.apiKey.trim()}/sendMessage",
+                        mapOf("Content-Type" to "application/json"),
+                        jsonBody.toByteArray()
+                    )
+                    val body = response.body?.toString(Charsets.UTF_8) ?: ""
+                    val ok = response.statusCode in 200..299 && body.contains("\"ok\":true")
+                    if (ok) anyOk = true
+                    else Timber.e("Telegram error (chatId=$chatId) ${response.statusCode}: $body")
+                }
+                anyOk
             }
         }
     }

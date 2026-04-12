@@ -29,6 +29,11 @@
     <string name="pushover_description">Push notification via Pushover. Free 30-day trial, then ~$5 one-time. Enter your app token and user key.</string>
     <string name="simplepush_key_hint">Channel Key</string>
     <string name="simplepush_description">Free push via SimplePush (10 msg/month). Install the app, get your key — no account needed.</string>
+    <string name="telegram_bot_token_hint">Bot Token</string>
+    <string name="telegram_chat_id_hint">Chat ID (recipient 1)</string>
+    <string name="telegram_chat_id2_hint">Chat ID — recipient 2 (optional)</string>
+    <string name="telegram_chat_id3_hint">Chat ID — recipient 3 (optional)</string>
+    <string name="telegram_description">Free Telegram messages via a bot. Create a bot with @BotFather, get the token, and enter your Chat ID.</string>
     <string name="save">Save</string>
     <string name="section_safety">Safety configuration</string>
     <string name="backup_export">Export</string>
