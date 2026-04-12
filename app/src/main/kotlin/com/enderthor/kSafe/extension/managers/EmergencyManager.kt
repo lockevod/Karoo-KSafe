@@ -39,8 +39,6 @@ class EmergencyManager(
     private val scope: CoroutineScope
 ) {
     companion object {
-        private const val SOS_CANCEL_NOTIFICATION_ID = "ksafe-sos-cancel"
-        private const val CANCEL_ACTION_INTENT = "com.enderthor.kSafe.CANCEL_EMERGENCY"
 
         /** In-memory state flow — updated synchronously on every state change.
          *  DataTypes collect from this instead of DataStore to avoid write latency. */
@@ -218,8 +216,8 @@ class EmergencyManager(
      * The livetrack link is appended automatically if a key is configured,
      * even when {livetrack} is not present in the template.
      */
-    fun buildMessage(config: KSafeConfig, reason: EmergencyReason): String {
-        val locationLink = locationManager.getLocationLink()
+    suspend fun buildMessage(config: KSafeConfig, reason: EmergencyReason): String {
+        val locationLink = locationManager.getFreshLocationLink()
             ?: context.getString(R.string.location_unavailable)
 
         val liveTrackLink = if (config.karooLiveKey.isNotBlank())

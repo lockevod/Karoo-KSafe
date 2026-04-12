@@ -1,4 +1,5 @@
 # ─── App entry points declared in AndroidManifest ────────────────────────────
+-keep class com.enderthor.kSafe.KSafeApplication { *; }
 -keep class com.enderthor.kSafe.extension.KSafeExtension { *; }
 -keep class com.enderthor.kSafe.activity.MainActivity { *; }
 -keep class com.enderthor.kSafe.activity.CancelEmergencyActivity { *; }
@@ -7,6 +8,15 @@
 
 # ─── Glance ActionCallbacks (referenced by class name via actionRunCallback) ──
 -keep class * extends androidx.glance.appwidget.action.ActionCallback { *; }
+
+# ─── Timber — strip VERBOSE/DEBUG/INFO calls entirely in release ──────────────
+# R8 removes the call AND its arguments (including string construction) from
+# bytecode. WARN and ERROR are kept — they reach the release tree in Application.
+-assumenosideeffects class timber.log.Timber {
+    public static *** v(...);
+    public static *** d(...);
+    public static *** i(...);
+}
 
 # ─── Kotlinx Serialization ────────────────────────────────────────────────────
 -keepattributes *Annotation*, InnerClasses
