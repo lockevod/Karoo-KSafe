@@ -3,10 +3,13 @@ package com.enderthor.kSafe.activity
 import android.app.Application
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
-import com.enderthor.kSafe.data.KSafeBackup
 import com.enderthor.kSafe.data.KSafeConfig
+import com.enderthor.kSafe.data.KSafeBackupExport
 import com.enderthor.kSafe.data.ProviderType
 import com.enderthor.kSafe.data.SenderConfig
+import com.enderthor.kSafe.data.defaultSenderConfigs
+import com.enderthor.kSafe.data.toBackupExport
+import com.enderthor.kSafe.data.toSenderConfigs
 import com.enderthor.kSafe.extension.jsonForExport
 import com.enderthor.kSafe.extension.jsonWithUnknownKeys
 import com.enderthor.kSafe.extension.managers.ConfigurationManager
@@ -15,6 +18,8 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import kotlinx.serialization.encodeToString
+import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.decodeFromJsonElement
 import timber.log.Timber
 
 class MainViewModel(application: Application) : AndroidViewModel(application) {
@@ -62,25 +67,47 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     /**
      * Serializes current config + sender configs to a pretty-printed JSON string.
-     * [jsonForExport] uses encodeDefaults = true so that ALL fields appear in the
-     * output — including those that match their default value — making the file a
-     * complete, self-documented template that can be edited and re-imported.
+     * Each provider has its own typed block containing only its relevant fields,
+     * making the file a clean, self-documented template for manual editing.
      */
     fun exportToJson(): String =
-        jsonForExport.encodeToString(KSafeBackup(config.value, senderConfigs.value))
+        jsonForExport.encodeToString(senderConfigs.value.toBackupExport(config.value))
 
     /**
      * Parses [json] and overwrites stored config + sender configs.
-     * Tolerant import:
+     *
+     * Tolerant import — handles two formats transparently:
+     *  1. New per-provider format: `{ "config":{…}, "callmebot":{…}, "pushover":{…}, … }`
+     *  2. Legacy flat format:      `{ "config":{…}, "senderConfigs":[…] }`
+     *
+     * In both cases:
      *  - Extra/unknown keys are silently ignored (forward-compat with future fields).
-     *  - Missing sections use app defaults (backward-compat with older exports).
+     *  - Missing sections fall back to app defaults (backward-compat with older exports).
+     *
      * Returns true on success, false if the JSON is structurally invalid.
      */
     fun importFromJson(json: String): Boolean {
         return try {
-            val backup = jsonWithUnknownKeys.decodeFromString<KSafeBackup>(json)
-            saveConfig(backup.config)
-            saveSenderConfigs(backup.senderConfigs)
+            val root = jsonWithUnknownKeys.parseToJsonElement(json) as? JsonObject
+                ?: return false
+
+            val config = root["config"]?.let {
+                jsonWithUnknownKeys.decodeFromJsonElement<KSafeConfig>(it)
+            } ?: KSafeConfig()
+
+            val senderConfigs = if ("senderConfigs" in root) {
+                // Legacy format: flat List<SenderConfig>
+                root["senderConfigs"]?.let {
+                    jsonWithUnknownKeys.decodeFromJsonElement<List<SenderConfig>>(it)
+                } ?: defaultSenderConfigs
+            } else {
+                // New per-provider format
+                jsonWithUnknownKeys.decodeFromJsonElement<KSafeBackupExport>(root)
+                    .toSenderConfigs()
+            }
+
+            saveConfig(config)
+            saveSenderConfigs(senderConfigs)
             true
         } catch (e: Exception) {
             Timber.e(e, "Failed to import config from JSON")

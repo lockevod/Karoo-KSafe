@@ -99,18 +99,96 @@ data class EmergencyState(
 
 // ─── Backup ───────────────────────────────────────────────────────────────────
 
+// ── Per-provider export configs ──────────────────────────────────────────────
+// Each class only contains the fields that the provider actually uses,
+// with human-readable names so the exported file works as a clear template.
+
+/** CallMeBot (WhatsApp) — needs an API key + the recipient's WhatsApp phone number. */
+@Serializable
+data class CallMeBotConfig(
+    val apiKey: String = "",       // API key obtained from callmebot.com
+    val phoneNumber: String = "",  // Recipient WhatsApp number with country code (e.g. +34612345678)
+)
+
+/** Pushover — app token (from pushover.net) + up to 3 recipient user/group keys. */
+@Serializable
+data class PushoverConfig(
+    val appToken: String = "",     // Application token from pushover.net
+    val userKey: String = "",      // Primary recipient user/group key
+    val userKey2: String = "",     // Optional: second recipient user/group key
+    val userKey3: String = "",     // Optional: third recipient user/group key
+)
+
+/** SimplePush — only needs the channel key from the SimplePush app. */
+@Serializable
+data class SimplePushConfig(
+    val channelKey: String = "",   // Channel key shown in the SimplePush app
+)
+
+/** Telegram — bot token (from @BotFather) + up to 3 chat/channel/group IDs. */
+@Serializable
+data class TelegramConfig(
+    val botToken: String = "",     // Bot token from @BotFather
+    val chatId: String = "",       // Primary chat / channel / group ID
+    val chatId2: String = "",      // Optional: second chat ID
+    val chatId3: String = "",      // Optional: third chat ID
+)
+
 /**
  * Full configuration snapshot used for export/import.
  *
- * Both fields have defaults so that a partial JSON file (e.g. a template that
- * only contains [config] or only [senderConfigs]) can be imported without errors.
- * Missing sections fall back to the app defaults.
+ * Each messaging provider has its own typed block with only the fields it actually
+ * uses, so the exported file is a clean, self-documented template.
+ *
+ * Import is forward/backward compatible:
+ *  - Missing fields within each block fall back to empty string (app default).
+ *  - Unknown fields are silently ignored (see [jsonWithUnknownKeys]).
+ *  - Old exports that used a flat [senderConfigs] list are handled transparently
+ *    in the import logic (see MainViewModel.importFromJson).
  */
 @Serializable
-data class KSafeBackup(
+data class KSafeBackupExport(
     val config: KSafeConfig = KSafeConfig(),
-    val senderConfigs: List<SenderConfig> = defaultSenderConfigs,
+    val callmebot: CallMeBotConfig = CallMeBotConfig(),
+    val pushover: PushoverConfig = PushoverConfig(),
+    val simplepush: SimplePushConfig = SimplePushConfig(),
+    val telegram: TelegramConfig = TelegramConfig(),
 )
+
+/** Converts this export snapshot back to the flat [SenderConfig] list used internally. */
+fun KSafeBackupExport.toSenderConfigs(): List<SenderConfig> = listOf(
+    SenderConfig(ProviderType.CALLMEBOT,
+        apiKey = callmebot.apiKey,
+        phoneNumber = callmebot.phoneNumber),
+    SenderConfig(ProviderType.PUSHOVER,
+        apiKey = pushover.appToken,
+        userKey = pushover.userKey,
+        userKey2 = pushover.userKey2,
+        userKey3 = pushover.userKey3),
+    SenderConfig(ProviderType.SIMPLEPUSH,
+        apiKey = simplepush.channelKey),
+    SenderConfig(ProviderType.TELEGRAM,
+        apiKey = telegram.botToken,
+        userKey = telegram.chatId,
+        userKey2 = telegram.chatId2,
+        userKey3 = telegram.chatId3),
+)
+
+/** Builds a [KSafeBackupExport] from the current [config] and flat sender config list. */
+fun List<SenderConfig>.toBackupExport(config: KSafeConfig): KSafeBackupExport {
+    fun find(p: ProviderType) = firstOrNull { it.provider == p } ?: SenderConfig(p)
+    val cmb = find(ProviderType.CALLMEBOT)
+    val po  = find(ProviderType.PUSHOVER)
+    val sp  = find(ProviderType.SIMPLEPUSH)
+    val tg  = find(ProviderType.TELEGRAM)
+    return KSafeBackupExport(
+        config     = config,
+        callmebot  = CallMeBotConfig(apiKey = cmb.apiKey, phoneNumber = cmb.phoneNumber),
+        pushover   = PushoverConfig(appToken = po.apiKey, userKey = po.userKey, userKey2 = po.userKey2, userKey3 = po.userKey3),
+        simplepush = SimplePushConfig(channelKey = sp.apiKey),
+        telegram   = TelegramConfig(botToken = tg.apiKey, chatId = tg.userKey, chatId2 = tg.userKey2, chatId3 = tg.userKey3),
+    )
+}
 
 // ─── Defaults ─────────────────────────────────────────────────────────────────
 
