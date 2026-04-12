@@ -44,9 +44,8 @@ fun ProviderScreen(vm: MainViewModel) {
     val coroutineScope = rememberCoroutineScope()
 
     // `fieldsProvider` tracks which provider the current field values belong to.
-    // It is updated synchronously with the fields in onProviderClick so the
-    // auto-save LaunchedEffect always writes to the correct provider, even if the
-    // DataStore-backed `activeProvider` hasn't propagated yet.
+    // It is updated synchronously in onProviderClick so the auto-save LaunchedEffect
+    // always writes to the correct provider, even if DataStore hasn't propagated yet.
     var fieldsProvider by remember { mutableStateOf(activeProvider) }
     var apiKey      by remember { mutableStateOf(activeSender?.apiKey      ?: "") }
     var userKey     by remember { mutableStateOf(activeSender?.userKey     ?: "") }
@@ -56,7 +55,22 @@ fun ProviderScreen(vm: MainViewModel) {
     var testStatus  by remember { mutableStateOf("") }
     var testIsError by remember { mutableStateOf(false) }
 
-    // Auto-save with debounce — always uses fieldsProvider (in sync with the fields)
+    // Refresh fields when the active sender changes in DataStore (e.g. after an import
+    // or config push from another screen). The `fieldsProvider` guard prevents overwriting
+    // fields mid-switch, when activeProvider and fieldsProvider temporarily diverge.
+    LaunchedEffect(activeSender) {
+        activeSender?.let { sender ->
+            if (sender.provider == fieldsProvider) {
+                if (sender.apiKey      != apiKey)      apiKey      = sender.apiKey
+                if (sender.userKey     != userKey)     userKey     = sender.userKey
+                if (sender.userKey2    != userKey2)    userKey2    = sender.userKey2
+                if (sender.userKey3    != userKey3)    userKey3    = sender.userKey3
+                if (sender.phoneNumber != phoneNumber) phoneNumber = sender.phoneNumber
+            }
+        }
+    }
+
+    // Auto-save with debounce — uses fieldsProvider (always in sync with the fields)
     LaunchedEffect(apiKey, userKey, userKey2, userKey3, phoneNumber) {
         delay(700)
         vm.updateSenderConfig(fieldsProvider, apiKey, userKey, userKey2, userKey3, phoneNumber)
