@@ -6,7 +6,7 @@
 
 KSafe is a free, open-source safety extension for Karoo GPS devices. It monitors your ride and automatically alerts your emergency contacts if something goes wrong — crash detected, no check-in, or speed suddenly drops — and allows you to manually trigger an SOS from your ride screen.
 
-Beyond emergency alerts, KSafe can also notify your contacts when you **start a ride**, including a real-time Karoo Live tracking link. This is a better alternative to the default email notification that Karoo already offers: KSafe sends it via WhatsApp or push notification, directly to your contacts' phones, so they can follow your ride from the very first moment.
+Beyond emergency alerts, KSafe can also notify your contacts when you **start a ride**, including a real-time Karoo Live tracking link. This is a better alternative to the default email notification that Karoo already offers: KSafe sends it via WhatsApp, Telegram, or push notification, directly to your contacts' phones, so they can follow your ride from the very first moment.
 
 Compatible with Karoo 3 running Karoo OS version 1.527 and later.
 
@@ -126,9 +126,16 @@ Open the KSafe app on your Karoo to configure it.
 
 ### Provider Tab
 
-Select which provider will be used to send alerts. You can configure credentials for all three providers — they are saved independently and switching between them does not erase anything. Only the **selected (active) provider** will be used when an alert is triggered.
+Select which provider will be used to send alerts. You can configure credentials for all four providers — they are saved independently and switching between them does not erase anything. Only the **selected (active) provider** will be used when an alert is triggered.
 
-KSafe supports:
+KSafe supports **four providers**:
+
+| Provider | Cost | Best for |
+|----------|------|----------|
+| **Telegram** | Free, unlimited | Best free option — no limits, no account needed beyond a bot |
+| **SimplePush** | Free (10 msg/month) | Quickest setup — install app, paste key |
+| **CallMeBot (WhatsApp)** | Free | Recipients already use WhatsApp |
+| **Pushover** | Free trial, ~$5 one-time | Most reliable push notifications |
 
 #### SimplePush (free up to 10 messages/month — easiest setup)
 
@@ -382,13 +389,13 @@ Then tap **Import** in the Settings tab. KSafe will read `ksafe_import.json` and
 - Alerts will not be sent if the Karoo has no internet connection at the time of the emergency.
 - Crash detection may produce false positives on very rough surfaces. Increase the minimum speed threshold or use Low sensitivity if this happens.
 - Each messaging provider has its own rate limits and free tier restrictions. Check provider documentation.
-- The extension only monitors during an active ride (Recording state). It stops when the ride is idle. Crash detection remains active when the ride is paused.
+- By default, the extension only monitors during an active ride (Recording state). Crash detection remains active when the ride is paused. Use the **"Monitor crash when not riding"** options in Settings to enable monitoring outside of a recorded ride.
 
 ## Privacy
 
 - KSafe does not collect or transmit any personal data beyond what is strictly necessary to send your emergency alerts (location and the message you configure).
 - All configuration is stored locally on your Karoo device.
-- When you use a third-party provider (CallMeBot, Whapi, Pushover, SimplePush), your phone number and message content can be shared with that provider. Please read and accept their terms and privacy policies before using KSafe.
+- When you use a third-party provider (CallMeBot, Pushover, SimplePush, Telegram), your message content and identifiers (phone number, chat ID, user key…) can be shared with that provider. Please read and accept their terms and privacy policies before using KSafe.
 - KSafe has no relationship or partnership with any of these providers.
 - KSafe has no warranties. If you do not agree with this, please do not use it.
 
@@ -396,7 +403,7 @@ Then tap **Import** in the Settings tab. KSafe will read `ksafe_import.json` and
 
 - Developed by EnderThor.
 - Uses the Karoo Extensions Framework by Hammerhead.
-- Can Use CallMeBot and Whapi for WhatsApp message delivery, and Pushover for push notifications. These services are their own rules and agreements. KSafe hasn't any relation with them.
+- Can use CallMeBot for WhatsApp message delivery, Pushover for push notifications, SimplePush for free push notifications, and Telegram Bot API for Telegram messages. These services have their own rules and agreements. KSafe has no relationship with any of them.
 - Thanks to Hammerhead for the Karoo device and extensions API.
 
 ## Useful Links
