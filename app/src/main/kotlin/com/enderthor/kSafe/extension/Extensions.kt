@@ -16,6 +16,17 @@ import kotlinx.serialization.json.Json
 
 val jsonWithUnknownKeys = Json { ignoreUnknownKeys = true }
 
+/** Json instance for exporting config files.
+ *  - [encodeDefaults] = true  → ALL fields appear in the output, even those with default values,
+ *    so the exported file serves as a complete, self-documented template.
+ *  - [prettyPrint] = true     → human-readable formatting for easy manual editing.
+ */
+val jsonForExport = Json {
+    ignoreUnknownKeys = true
+    encodeDefaults = true
+    prettyPrint = true
+}
+
 fun KarooSystemService.streamDataFlow(dataTypeId: String): Flow<StreamState> = callbackFlow {
     val listenerId = addConsumer<OnStreamState>(
         params = OnStreamState.StartStreaming(dataTypeId),

@@ -7,6 +7,7 @@ import com.enderthor.kSafe.data.KSafeBackup
 import com.enderthor.kSafe.data.KSafeConfig
 import com.enderthor.kSafe.data.ProviderType
 import com.enderthor.kSafe.data.SenderConfig
+import com.enderthor.kSafe.extension.jsonForExport
 import com.enderthor.kSafe.extension.jsonWithUnknownKeys
 import com.enderthor.kSafe.extension.managers.ConfigurationManager
 import kotlinx.coroutines.flow.SharingStarted
@@ -14,7 +15,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import kotlinx.serialization.encodeToString
-import kotlinx.serialization.json.Json
+import timber.log.Timber
 
 class MainViewModel(application: Application) : AndroidViewModel(application) {
 
@@ -59,13 +60,21 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     // ─── Backup / Restore ─────────────────────────────────────────────────────
 
-    /** Serializes current config + sender configs to a JSON string ready to export. */
+    /**
+     * Serializes current config + sender configs to a pretty-printed JSON string.
+     * [jsonForExport] uses encodeDefaults = true so that ALL fields appear in the
+     * output — including those that match their default value — making the file a
+     * complete, self-documented template that can be edited and re-imported.
+     */
     fun exportToJson(): String =
-        Json.encodeToString(KSafeBackup(config.value, senderConfigs.value))
+        jsonForExport.encodeToString(KSafeBackup(config.value, senderConfigs.value))
 
     /**
      * Parses [json] and overwrites stored config + sender configs.
-     * Returns true on success, false if the JSON is invalid.
+     * Tolerant import:
+     *  - Extra/unknown keys are silently ignored (forward-compat with future fields).
+     *  - Missing sections use app defaults (backward-compat with older exports).
+     * Returns true on success, false if the JSON is structurally invalid.
      */
     fun importFromJson(json: String): Boolean {
         return try {
@@ -74,6 +83,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             saveSenderConfigs(backup.senderConfigs)
             true
         } catch (e: Exception) {
+            Timber.e(e, "Failed to import config from JSON")
             false
         }
     }
