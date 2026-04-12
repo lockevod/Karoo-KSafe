@@ -109,20 +109,25 @@ class Sender(
                     results.joinToString("\n")
                 }
 
-                ProviderType.SIMPLEPUSH -> {
-                    if (config.apiKey.isBlank()) return "Missing Channel Key."
-                    val url = "https://api.simplepush.io/send/${config.apiKey.trim()}" +
-                        "/${Uri.encode("KSafe Test")}" +
-                        "/${Uri.encode("KSafe test — alerts are configured correctly.")}"
-                    val response = withTimeoutOrNull(15_000L) { karooSystem.httpRequest("GET", url) }
-                        ?: return "No response — check your internet connection."
-                    val body = response.body?.toString(Charsets.UTF_8) ?: ""
+                ProviderType.NTFY -> {
+                    if (config.apiKey.isBlank()) return "Missing Topic."
+                    val response = withTimeoutOrNull(15_000L) {
+                        karooSystem.httpRequest(
+                            "POST",
+                            "https://ntfy.sh/${config.apiKey.trim()}",
+                            mapOf(
+                                "Content-Type" to "text/plain",
+                                "Title" to "KSafe Test",
+                            ),
+                            "KSafe test — alerts are configured correctly.".toByteArray()
+                        )
+                    } ?: return "No response — check your internet connection."
                     when {
-                        response.statusCode in 200..299 && body.contains("\"status\":\"OK\"") ->
-                            "Test sent! Check your SimplePush app."
-                        response.statusCode == 404 ->
-                            "Channel key not found — verify it in the SimplePush app."
-                        else -> "Error ${response.statusCode}: ${body.take(120)}"
+                        response.statusCode in 200..299 ->
+                            "Test sent! Open the ntfy app and check your topic."
+                        response.statusCode == 403 ->
+                            "Access denied — the topic may be protected or reserved."
+                        else -> "Error ${response.statusCode}: ${response.body?.toString(Charsets.UTF_8)?.take(120) ?: ""}"
                     }
                 }
 
@@ -261,16 +266,22 @@ class Sender(
                 anyOk
             }
 
-            ProviderType.SIMPLEPUSH -> {
+            ProviderType.NTFY -> {
                 if (config.apiKey.isBlank()) return false
-                val title = if (isEmergency) "KSafe Emergency" else "KSafe"
-                val encodedTitle = Uri.encode(title)
-                val encodedMsg   = Uri.encode(message)
-                val url = "https://api.simplepush.io/send/${config.apiKey.trim()}/$encodedTitle/$encodedMsg"
-                val response = karooSystem.httpRequest("GET", url)
-                val body = response.body?.toString(Charsets.UTF_8) ?: ""
-                val ok = response.statusCode in 200..299 && body.contains("\"status\":\"OK\"")
-                if (!ok) Timber.e("SimplePush error ${response.statusCode}: $body")
+                val title    = if (isEmergency) "KSafe Emergency" else "KSafe"
+                val priority = if (isEmergency) "urgent" else "default"
+                val response = karooSystem.httpRequest(
+                    "POST",
+                    "https://ntfy.sh/${config.apiKey.trim()}",
+                    mapOf(
+                        "Content-Type" to "text/plain",
+                        "Title"        to title,
+                        "Priority"     to priority,
+                    ),
+                    message.toByteArray()
+                )
+                val ok = response.statusCode in 200..299
+                if (!ok) Timber.e("ntfy error ${response.statusCode}: ${response.body?.toString(Charsets.UTF_8)}")
                 ok
             }
 

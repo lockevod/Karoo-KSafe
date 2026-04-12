@@ -70,7 +70,7 @@ fun ProviderScreen(vm: MainViewModel) {
             fontWeight = FontWeight.Bold
         )
 
-        // Provider selector chips — CallMeBot + Pushover in first row, SimplePush + Telegram below
+        // Provider selector chips — CallMeBot + Pushover in first row, ntfy + Telegram below
         val onProviderClick = { provider: ProviderType ->
             vm.setActiveProvider(provider)
             val s = senderConfigs.find { it.provider == provider }
@@ -102,14 +102,14 @@ fun ProviderScreen(vm: MainViewModel) {
             modifier = Modifier.fillMaxWidth(),
             horizontalArrangement = Arrangement.spacedBy(8.dp)
         ) {
-            listOf(ProviderType.SIMPLEPUSH, ProviderType.TELEGRAM).forEach { provider ->
+            listOf(ProviderType.NTFY, ProviderType.TELEGRAM).forEach { provider ->
                 FilterChip(
                     selected = activeProvider == provider,
                     onClick = { onProviderClick(provider) },
                     modifier = Modifier.weight(1f),
                     label = {
                         Text(
-                            text = if (provider == ProviderType.SIMPLEPUSH) "SimplePush" else "Telegram",
+                            text = if (provider == ProviderType.NTFY) "ntfy" else "Telegram",
                             style = MaterialTheme.typography.labelSmall
                         )
                     }
@@ -130,7 +130,7 @@ fun ProviderScreen(vm: MainViewModel) {
             text = when (activeProvider) {
                 ProviderType.CALLMEBOT  -> stringResource(R.string.callmebot_description)
                 ProviderType.PUSHOVER   -> stringResource(R.string.pushover_description)
-                ProviderType.SIMPLEPUSH -> stringResource(R.string.simplepush_description)
+                ProviderType.NTFY       -> stringResource(R.string.ntfy_description)
                 ProviderType.TELEGRAM   -> stringResource(R.string.telegram_description)
             },
             style = MaterialTheme.typography.bodySmall,
@@ -156,7 +156,7 @@ fun ProviderScreen(vm: MainViewModel) {
                 Text(
                     when (activeProvider) {
                         ProviderType.PUSHOVER   -> stringResource(R.string.pushover_app_token_hint)
-                        ProviderType.SIMPLEPUSH -> stringResource(R.string.simplepush_key_hint)
+                        ProviderType.NTFY       -> stringResource(R.string.ntfy_topic_hint)
                         ProviderType.TELEGRAM   -> stringResource(R.string.telegram_bot_token_hint)
                         else                    -> stringResource(R.string.api_key_hint)
                     }
@@ -217,6 +217,14 @@ fun ProviderScreen(vm: MainViewModel) {
         }
 
         // Test send
+        if (testStatus.isNotEmpty()) {
+            Text(
+                text = testStatus,
+                style = MaterialTheme.typography.bodySmall,
+                color = if (testIsError) Color(0xFFB71C1C) else Color(0xFF2E7D32)
+            )
+        }
+
         Button(
             onClick = {
                 testStatus = "Sending…"
@@ -238,14 +246,6 @@ fun ProviderScreen(vm: MainViewModel) {
             modifier = Modifier.fillMaxWidth()
         ) {
             Text(stringResource(R.string.test_send))
-        }
-
-        if (testStatus.isNotEmpty()) {
-            Text(
-                text = testStatus,
-                style = MaterialTheme.typography.bodySmall,
-                color = if (testIsError) Color(0xFFB71C1C) else Color(0xFF2E7D32)
-            )
         }
     }
 }
