@@ -60,19 +60,30 @@ If you miss it or need to grant it later:
 > [!NOTE]
 > Without this permission, the SOS cancel overlay will not appear during a countdown. You can still cancel by tapping the SOS or Safety Timer data field, or using a configured hardware action button.
 
-## Cancel Emergency — overlay button (primary method)
+## Cancelling an Emergency
 
-When an emergency countdown starts, KSafe displays a **red overlay** on top of the current screen with a large **CANCEL** button. This works regardless of which data field or screen is visible — you don't need to navigate anywhere. Just tap CANCEL.
+When a countdown is active you have **three ways** to cancel it:
+
+### 1 — Overlay button (primary, recommended)
+
+KSafe displays a **red overlay** on top of whatever screen is currently visible with a large **CANCEL** button. This works from **any screen** — you don't need to navigate anywhere. Just tap CANCEL.
 
 > [!IMPORTANT]
-> The overlay requires the **"Draw over other apps"** permission. Grant it the first time you open the app, or tap **"Enable now"** in the warning banner inside the app. Without this permission the overlay will not appear.
+> The overlay requires the **"Draw over other apps"** permission. Grant it the first time you open the app, or tap **"Enable now"** in the warning banner inside the app. Without this permission the overlay will not appear and you will need to use one of the methods below.
 
-## Cancel Emergency — hardware button (optional)
+### 2 — Data fields (SOS or Safety Timer)
 
-KSafe registers a **"KSafe: Cancel Emergency"** action that you can assign to a compatible hardware controller button. This is an alternative cancel method that also works from any screen.
+Both the **SOS field** and the **Safety Timer field** show a CANCEL button with the remaining countdown seconds during an active emergency. Tapping either field cancels immediately.
 
 > [!NOTE]
-> `BonusAction` availability depends on your controller hardware/firmware. It is commonly used with compatible remotes (e.g. SRAM AXS controls). If your controller does not expose extension bonus actions, this option will not appear in the button assignment screen — use the overlay button or the data field tap instead.
+> This method requires navigating to a ride screen that contains one of those fields. If neither field is visible at the moment of the countdown, you will need to swipe to the right screen before you can tap. For this reason it is recommended to keep the SOS or Timer field on your primary ride screen, or rely on the overlay (method 1) which is always visible.
+
+### 3 — Hardware button via BonusAction (optional)
+
+KSafe registers a **"KSafe: Cancel Emergency"** action that you can assign to a compatible hardware controller button. This works from **any screen**, with no need to look at the display.
+
+> [!NOTE]
+> `BonusAction` availability depends on your controller hardware/firmware. It is commonly used with compatible remotes (e.g. SRAM AXS controls). If your controller does not expose extension bonus actions, this option will not appear in the button assignment screen.
 
 To configure it:
 1. Go to Karoo **Settings → Controller** (or your ANT+ remote settings).
@@ -100,7 +111,7 @@ KSafe provides two custom data fields you can add to your ride profiles:
 Add one or both fields to your Karoo ride profile from the profile editor.
 
 > [!TIP]
-> The data fields are a secondary cancel method. The **primary method** is the red overlay button that appears automatically on top of any screen when a countdown starts.
+> Tapping a data field is one of three ways to cancel an emergency countdown. See the [Cancelling an Emergency](#cancelling-an-emergency) section for all three methods and their trade-offs.
 
 ## Configuration
 
@@ -268,7 +279,7 @@ Each person who uses KSafe needs to create their own Pushover application (it is
 
 1. KSafe runs in the background while you ride.
 2. When a trigger occurs (crash detected, check-in expired, speed drop, or manual SOS tap), a countdown starts with audible beeps and a **red SOS overlay** appears immediately on top of whatever screen is currently visible, with a large **CANCEL** button.
-3. During the countdown, you can cancel by tapping the **CANCEL button on the overlay** (primary), tapping the **SOS field**, the **Safety Timer field**, or the configured **KSafe: Cancel Emergency** hardware action button.
+3. During the countdown, you can cancel by: tapping the **CANCEL button on the overlay** (works from any screen), tapping the **SOS field** or **Safety Timer field** (requires navigating to the screen with the field), or pressing the configured **KSafe: Cancel Emergency** hardware button (works from any screen).
 4. If the countdown completes without cancellation, KSafe obtains your current GPS location and sends the configured emergency message via the configured provider.
 5. After sending, the extension returns to idle state and normal monitoring resumes.
 
