@@ -99,11 +99,17 @@ data class EmergencyState(
 
 // ─── Backup ───────────────────────────────────────────────────────────────────
 
-/** Full configuration snapshot used for export/import. */
+/**
+ * Full configuration snapshot used for export/import.
+ *
+ * Both fields have defaults so that a partial JSON file (e.g. a template that
+ * only contains [config] or only [senderConfigs]) can be imported without errors.
+ * Missing sections fall back to the app defaults.
+ */
 @Serializable
 data class KSafeBackup(
-    val config: KSafeConfig,
-    val senderConfigs: List<SenderConfig>,
+    val config: KSafeConfig = KSafeConfig(),
+    val senderConfigs: List<SenderConfig> = defaultSenderConfigs,
 )
 
 // ─── Defaults ─────────────────────────────────────────────────────────────────
