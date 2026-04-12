@@ -13,8 +13,6 @@ Compatible with Karoo 3 running Karoo OS version 1.527 and later.
 > [!IMPORTANT]
 > KSafe uses your **phone's internet connection** (via the Hammerhead Companion app) to send messages. Without an active connection between your Karoo and your phone, no alerts or notifications will be sent. Make sure your Karoo is paired and connected to the companion app before riding.
 
-<a href="https://www.buymeacoffee.com/enderthor" target="_blank"><img src="https://cdn.buymeacoffee.com/buttons/default-orange.png" alt="Buy Me A Coffee" height="41" width="174"></a>
-
 ## Features
 
 - **Crash detection**: Uses the Karoo's accelerometer and gyroscope to detect sudden impacts automatically.
