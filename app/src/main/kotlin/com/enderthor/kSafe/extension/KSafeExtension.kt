@@ -37,6 +37,7 @@ class KSafeExtension : KarooExtension("ksafe", BuildConfig.VERSION_NAME), Corout
     private lateinit var sender: Sender
 
     private var activeConfig = KSafeConfig()
+    private var currentRideState: RideState? = null
 
     companion object {
         private var instance: KSafeExtension? = null
@@ -87,7 +88,11 @@ class KSafeExtension : KarooExtension("ksafe", BuildConfig.VERSION_NAME), Corout
             configManager.loadConfigFlow().collect { config ->
                 activeConfig = config
                 crashManager.updateConfig(config)
-                Timber.d("Config updated: active=${config.isActive}, crash=${config.crashDetectionEnabled}")
+                // Re-evaluate crash monitoring if idle (ride start/pause is handled by handleRideState)
+                if (currentRideState is RideState.Idle) {
+                    applyIdleMonitoring(config)
+                }
+                Timber.d("Config updated: active=${config.isActive}, crash=${config.crashDetectionEnabled}, outsideRide=${config.crashMonitorOutsideRide}, anySpeed=${config.crashMonitorOutsideRideAnySpeed}")
             }
         }
 
@@ -112,6 +117,7 @@ class KSafeExtension : KarooExtension("ksafe", BuildConfig.VERSION_NAME), Corout
     }
 
     private fun handleRideState(state: RideState) {
+        currentRideState = state
         Timber.d("Ride state: $state")
         when (state) {
             is RideState.Recording -> {
@@ -126,9 +132,34 @@ class KSafeExtension : KarooExtension("ksafe", BuildConfig.VERSION_NAME), Corout
                 emergencyManager.stopCheckinTimer()
             }
             is RideState.Idle -> {
-                crashManager.stop()
                 emergencyManager.stopAll()
+                applyIdleMonitoring(activeConfig)
             }
+        }
+    }
+
+    /**
+     * Starts or stops crash monitoring when the ride is not active (Idle state),
+     * based on the two "monitor outside ride" options in config.
+     */
+    private fun applyIdleMonitoring(config: KSafeConfig) {
+        if (config.isActive && config.crashDetectionEnabled) {
+            when {
+                config.crashMonitorOutsideRideAnySpeed -> {
+                    // Override speed threshold to 0 — detect at any speed (more false positives)
+                    crashManager.start(config.copy(minSpeedForCrashKmh = 0))
+                    Timber.d("Idle crash monitoring STARTED (any speed)")
+                }
+                config.crashMonitorOutsideRide -> {
+                    crashManager.start(config)
+                    Timber.d("Idle crash monitoring STARTED (min speed=${config.minSpeedForCrashKmh} km/h)")
+                }
+                else -> {
+                    crashManager.stop()
+                }
+            }
+        } else {
+            crashManager.stop()
         }
     }
 

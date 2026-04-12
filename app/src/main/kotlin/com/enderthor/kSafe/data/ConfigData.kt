@@ -48,6 +48,9 @@ data class KSafeConfig(
     val crashSensitivity: CrashSensitivity = CrashSensitivity.MEDIUM,
     val minSpeedForCrashKmh: Int = 5,   // 0 = always detect (useful for testing)
     val customCrashThreshold: Int = 45, // m/s² — only used when crashSensitivity = CUSTOM (range 20–70)
+    // Monitor crash even when no ride is active
+    val crashMonitorOutsideRide: Boolean = false,         // uses configured minSpeedForCrashKmh
+    val crashMonitorOutsideRideAnySpeed: Boolean = false, // forces minSpeed = 0 — ⚠ more false positives
     // Speed-drop detection
     val speedDropDetectionEnabled: Boolean = false,
     val speedDropMinutes: Int = DEFAULT_SPEED_DROP_MINUTES,

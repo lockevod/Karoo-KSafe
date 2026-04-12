@@ -119,6 +119,8 @@ Open the KSafe app on your Karoo to configure it.
 - The `{livetrack}` placeholder also works in your emergency message — if a key is set, emergency alerts will include the tracking link too.
 - **Countdown seconds**: How long the cancellation countdown lasts before alerts are sent (default: 30s).
 - **Crash detection**: Enable/disable automatic crash detection via sensors. Configure sensitivity (Low / Medium / High) and minimum speed threshold (0 = detect at any speed; recommended: 10 km/h for real rides).
+- **Monitor crash when not riding**: Keeps crash detection active even when no ride is recording, using the minimum speed you have configured. Useful if you want protection on a quick spin or warm-up without starting a recording.
+- **Monitor crash when not riding — any speed**: Same as above but ignores the minimum speed threshold, detecting crashes even while completely stationary. ⚠ This setting can produce **more false positives** (e.g., picking up or dropping the device may trigger an alert). Use with caution.
 - **Speed drop detection**: Enable/disable detection of sudden prolonged speed drops. Configure the time window (minutes) with no speed before triggering.
 - **Check-in timer**: Enable/disable periodic check-ins. Configure the interval in minutes (default: 120 min). A warning beep and alert appear 10 minutes before the timer expires.
 
