@@ -188,7 +188,7 @@ CallMeBot lets you send WhatsApp messages for free using a simple API. **Importa
 **Step 2 — Configure KSafe**
 
 1. In the **Provider** tab, select **CallMeBot**.
-2. Enter the **recipient's phone number** (with country code, e.g. `+34675123123`) in the phone field.
+2. Enter the **recipient's phone number** with the international prefix but **without the `+` sign** (e.g. `34675123123`) in the phone field.
 3. Enter the **API key** received in Step 1.
 4. Tap **Test Send** — your contact should receive a WhatsApp message within seconds.
 
@@ -210,9 +210,10 @@ Telegram lets you send messages for free through a bot you create yourself. Ther
 The Chat ID tells the bot where to deliver the message. You can send alerts to a **personal chat**, a **group**, or a **channel**.
 
 For a **personal chat** (easiest):
-1. Search for your new bot in Telegram and tap **Start**.
-2. Go to `https://api.telegram.org/bot<BOT_TOKEN>/getUpdates` in a browser (replace `<BOT_TOKEN>` with bot token).
-3. Send any message to the bot, then refresh the page — look for `"chat":{"id":XXXXXXX}`. That number is your **Chat ID**.
+1. Search for your new bot in Telegram and tap **Start** (`/start`).
+2. **Send any message to the bot** (e.g. `hello`) — this is required so the bot has an update to return.
+3. Go to `https://api.telegram.org/bot<BOT_TOKEN>/getUpdates` in a browser (replace `<BOT_TOKEN>` with your bot token).
+4. Look for `"chat":{"id":XXXXXXX}` in the response — that number is your **Chat ID**.
 
 For a **group** or **channel**:
 1. Add the bot to the group/channel as an administrator.
@@ -411,7 +412,7 @@ Typing long tokens (Pushover App Token, Telegram Bot Token, etc.) on the Karoo t
    | Provider block | Field | Description |
    |----------------|-------|-------------|
    | `callmebot` | `apiKey` | API key obtained from callmebot.com |
-   | `callmebot` | `phoneNumber` | Recipient WhatsApp number with country code (e.g. `+34612345678`) |
+   | `callmebot` | `phoneNumber` | Recipient WhatsApp number with international prefix, no `+` (e.g. `34612345678`) |
    | `pushover` | `appToken` | Application token from pushover.net |
    | `pushover` | `userKey` / `userKey2` / `userKey3` | Up to 3 recipient user/group keys |
    | `simplepush` | `channelKey` | Channel key shown in the SimplePush app |
@@ -424,7 +425,7 @@ Typing long tokens (Pushover App Token, Telegram Bot Token, etc.) on the Karoo t
      "config": { ...all settings fields... },
      "callmebot": {
        "apiKey": "1234567",
-       "phoneNumber": "+34612345678"
+       "phoneNumber": "34612345678"
      },
      "pushover": {
        "appToken": "azGDORePK8gMaC0QOYAMyEEuzJnyUi",
