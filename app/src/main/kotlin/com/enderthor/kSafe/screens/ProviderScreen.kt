@@ -70,7 +70,7 @@ fun ProviderScreen(vm: MainViewModel) {
             fontWeight = FontWeight.Bold
         )
 
-        // Provider selector chips — CallMeBot + Pushover in first row, SimplePush full-width below
+        // Provider selector chips — CallMeBot + Pushover in first row, SimplePush + Telegram below
         val onProviderClick = { provider: ProviderType ->
             vm.setActiveProvider(provider)
             val s = senderConfigs.find { it.provider == provider }
@@ -98,14 +98,24 @@ fun ProviderScreen(vm: MainViewModel) {
                 )
             }
         }
-        FilterChip(
-            selected = activeProvider == ProviderType.SIMPLEPUSH,
-            onClick = { onProviderClick(ProviderType.SIMPLEPUSH) },
+        Row(
             modifier = Modifier.fillMaxWidth(),
-            label = {
-                Text("SimplePush", style = MaterialTheme.typography.labelSmall)
+            horizontalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            listOf(ProviderType.SIMPLEPUSH, ProviderType.TELEGRAM).forEach { provider ->
+                FilterChip(
+                    selected = activeProvider == provider,
+                    onClick = { onProviderClick(provider) },
+                    modifier = Modifier.weight(1f),
+                    label = {
+                        Text(
+                            text = if (provider == ProviderType.SIMPLEPUSH) "SimplePush" else "Telegram",
+                            style = MaterialTheme.typography.labelSmall
+                        )
+                    }
+                )
             }
-        )
+        }
 
         Spacer(Modifier.height(4.dp))
 
@@ -121,6 +131,7 @@ fun ProviderScreen(vm: MainViewModel) {
                 ProviderType.CALLMEBOT  -> stringResource(R.string.callmebot_description)
                 ProviderType.PUSHOVER   -> stringResource(R.string.pushover_description)
                 ProviderType.SIMPLEPUSH -> stringResource(R.string.simplepush_description)
+                ProviderType.TELEGRAM   -> stringResource(R.string.telegram_description)
             },
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant
@@ -137,7 +148,7 @@ fun ProviderScreen(vm: MainViewModel) {
             )
         }
 
-        // API key / app token / channel key
+        // API key / app token / channel key / bot token
         OutlinedTextField(
             value = apiKey,
             onValueChange = { apiKey = it },
@@ -146,6 +157,7 @@ fun ProviderScreen(vm: MainViewModel) {
                     when (activeProvider) {
                         ProviderType.PUSHOVER   -> stringResource(R.string.pushover_app_token_hint)
                         ProviderType.SIMPLEPUSH -> stringResource(R.string.simplepush_key_hint)
+                        ProviderType.TELEGRAM   -> stringResource(R.string.telegram_bot_token_hint)
                         else                    -> stringResource(R.string.api_key_hint)
                     }
                 )
@@ -174,6 +186,31 @@ fun ProviderScreen(vm: MainViewModel) {
                 value = userKey3,
                 onValueChange = { userKey3 = it },
                 label = { Text(stringResource(R.string.pushover_user_key3_hint)) },
+                modifier = Modifier.fillMaxWidth(),
+                singleLine = true
+            )
+        }
+
+        // Telegram chat IDs (up to 3 recipients)
+        if (activeProvider == ProviderType.TELEGRAM) {
+            OutlinedTextField(
+                value = userKey,
+                onValueChange = { userKey = it },
+                label = { Text(stringResource(R.string.telegram_chat_id_hint)) },
+                modifier = Modifier.fillMaxWidth(),
+                singleLine = true
+            )
+            OutlinedTextField(
+                value = userKey2,
+                onValueChange = { userKey2 = it },
+                label = { Text(stringResource(R.string.telegram_chat_id2_hint)) },
+                modifier = Modifier.fillMaxWidth(),
+                singleLine = true
+            )
+            OutlinedTextField(
+                value = userKey3,
+                onValueChange = { userKey3 = it },
+                label = { Text(stringResource(R.string.telegram_chat_id3_hint)) },
                 modifier = Modifier.fillMaxWidth(),
                 singleLine = true
             )

@@ -23,7 +23,7 @@ Compatible with Karoo 3 running Karoo OS version 1.527 and later.
 - **Speed drop detection**: Detects when your speed drops suddenly and remains low for a configurable time window.
 - **Emergency countdown with cancel**: All triggers start a configurable countdown (default 30s) so you can cancel false alarms before alerts are sent. A **red overlay with a Cancel button** appears on top of the ride screen — visible from any screen, no matter which data field is active.
 - **Location included**: Your GPS coordinates are automatically included in the alert message as a Google Maps link.
-- **Multiple messaging providers**: WhatsApp via CallMeBot (free), push notification via Pushover, or free push via SimplePush.
+- **Multiple messaging providers**: WhatsApp via CallMeBot (free), push notification via Pushover, free push via SimplePush, or Telegram bot messages (free, unlimited).
 - **Ride start notification**: Optionally sends a message to your contacts when you start a ride, including a Karoo Live real-time tracking link — a better alternative to Karoo's built-in email notification.
 - **Two data fields**: SOS field and Safety Timer field — add either or both to your ride profile.
 
@@ -171,6 +171,42 @@ CallMeBot lets you send WhatsApp messages for free using a simple API. **Importa
 2. Enter the **recipient's phone number** (with country code, e.g. `+34675123123`) in the phone field.
 3. Enter the **API key** received in Step 1.
 4. Tap **Test Send** — your contact should receive a WhatsApp message within seconds.
+
+---
+
+#### Telegram (free and unlimited)
+
+Telegram lets you send messages for free through a bot you create yourself. There are no rate limits or monthly caps — it is a great option if you want a reliable free provider with no restrictions.
+
+**Step 1 — Create a Telegram bot and get your Bot Token**
+
+1. Open Telegram and search for **@BotFather**.
+2. Start a chat and send `/newbot`.
+3. Follow the instructions: choose a name and a username for your bot (username must end in `bot`, e.g. `MySafetyBot`).
+4. BotFather will give you a **Bot Token** (e.g. `7123456789:AAFxxxxxxxxxxxxxxxxxxxxxx`). Copy it.
+
+**Step 2 — Get your Chat ID**
+
+The Chat ID tells the bot where to deliver the message. You can send alerts to a **personal chat**, a **group**, or a **channel**.
+
+For a **personal chat** (easiest):
+1. Search for your new bot in Telegram and tap **Start**.
+2. Go to `https://api.telegram.org/bot<YOUR_TOKEN>/getUpdates` in a browser (replace `<YOUR_TOKEN>` with your actual token).
+3. Send any message to the bot, then refresh the page — look for `"chat":{"id":XXXXXXX}`. That number is your **Chat ID**.
+
+For a **group** or **channel**:
+1. Add the bot to the group/channel as an administrator.
+2. Send a message in the group, then fetch `getUpdates` as above — the Chat ID will be a negative number (e.g. `-1001234567890`).
+
+**Step 3 — Configure KSafe**
+
+1. In the **Provider** tab, select **Telegram**.
+2. Enter your **Bot Token** in the first field.
+3. Enter your **Chat ID** (recipient 1) in the second field.
+4. Optionally enter a second and third Chat ID to alert multiple people or groups.
+5. Tap **Test Send** — all configured chats should receive a message immediately.
+
+> If you don't receive the test message, make sure you have started a conversation with the bot first (send `/start` to it in Telegram).
 
 ---
 
