@@ -211,7 +211,7 @@ The Chat ID tells the bot where to deliver the message. You can send alerts to a
 
 For a **personal chat** (easiest):
 1. Search for your new bot in Telegram and tap **Start**.
-2. Go to `https://api.telegram.org/bot<YOUR_TOKEN>/getUpdates` in a browser (replace `<YOUR_TOKEN>` with your actual token).
+2. Go to `https://api.telegram.org/bot<BOT_TOKEN>/getUpdates` in a browser (replace `<BOT_TOKEN>` with bot token).
 3. Send any message to the bot, then refresh the page — look for `"chat":{"id":XXXXXXX}`. That number is your **Chat ID**.
 
 For a **group** or **channel**:
@@ -406,24 +406,42 @@ Typing long tokens (Pushover App Token, Telegram Bot Token, etc.) on the Karoo t
    ```bash
    adb pull /sdcard/Android/data/com.enderthor.kSafe/files/ksafe_export.json
    ```
-3. Open `ksafe_export.json` in any text editor. Find the `senderConfigs` array and fill in your keys. The field names are shared across providers:
+3. Open `ksafe_export.json` in any text editor. The exported file has a dedicated block for each provider, each with only the fields that provider actually uses:
 
-   | JSON field | CallMeBot | Pushover | Telegram | SimplePush |
-   |------------|-----------|----------|----------|------------|
-   | `apiKey` | API key | App Token | **Bot Token** | Channel Key |
-   | `userKey` | *(unused)* | User Key 1 | **Chat ID 1** | *(unused)* |
-   | `userKey2` | *(unused)* | User Key 2 | **Chat ID 2** | *(unused)* |
-   | `userKey3` | *(unused)* | User Key 3 | **Chat ID 3** | *(unused)* |
-   | `phoneNumber` | Phone number | *(unused)* | *(unused)* | *(unused)* |
+   | Provider block | Field | Description |
+   |----------------|-------|-------------|
+   | `callmebot` | `apiKey` | API key obtained from callmebot.com |
+   | `callmebot` | `phoneNumber` | Recipient WhatsApp number with country code (e.g. `+34612345678`) |
+   | `pushover` | `appToken` | Application token from pushover.net |
+   | `pushover` | `userKey` / `userKey2` / `userKey3` | Up to 3 recipient user/group keys |
+   | `simplepush` | `channelKey` | Channel key shown in the SimplePush app |
+   | `telegram` | `botToken` | Bot token from @BotFather |
+   | `telegram` | `chatId` / `chatId2` / `chatId3` | Up to 3 chat / channel / group IDs |
 
-   Example after editing:
-   ```json
-   [
-     { "provider": "TELEGRAM",  "apiKey": "7123456789:AAFxxxxxxxxxxxx", "userKey": "123456789",                    "userKey2": "", "userKey3": "", "phoneNumber": "" },
-     { "provider": "PUSHOVER",  "apiKey": "azGDORePK8gMaC0QOYAMyEEuzJnyUi", "userKey": "uQiRzpo4DXghDmr9QzzfQu", "userKey2": "", "userKey3": "", "phoneNumber": "" },
-     { "provider": "CALLMEBOT", "apiKey": "1234567",                     "userKey": "",                            "userKey2": "", "userKey3": "", "phoneNumber": "+34612345678" },
-     { "provider": "SIMPLEPUSH","apiKey": "HuxRj4",                      "userKey": "",                            "userKey2": "", "userKey3": "", "phoneNumber": "" }
-   ]
+   Example after editing (showing Telegram and Pushover):
+   ```
+   {
+     "config": { ...all settings fields... },
+     "callmebot": {
+       "apiKey": "1234567",
+       "phoneNumber": "+34612345678"
+     },
+     "pushover": {
+       "appToken": "azGDORePK8gMaC0QOYAMyEEuzJnyUi",
+       "userKey": "uQiRzpo4DXghDmr9QzzfQu",
+       "userKey2": "",
+       "userKey3": ""
+     },
+     "simplepush": {
+       "channelKey": "HuxRj4"
+     },
+     "telegram": {
+       "botToken": "7123456789:AAFxxxxxxxxxxxx",
+       "chatId": "123456789",
+       "chatId2": "",
+       "chatId3": ""
+     }
+   }
    ```
 
    > **Telegram note**: the Chat ID is required — the bot needs to know which chat/group/channel to deliver to (a bot can be in many chats at once). See the Telegram setup section above to get yours.
@@ -436,6 +454,9 @@ Typing long tokens (Pushover App Token, Telegram Bot Token, etc.) on the Karoo t
 
 > [!TIP]
 > You can also use this workflow to back up your configuration before updating the app, or to copy your setup to another Karoo device.
+
+> [!NOTE]
+> The import is tolerant: you can fill in only the providers you use and leave the rest empty. Unknown or extra fields are silently ignored, so imports from older or newer versions of KSafe always work.
 
 ## Known Issues
 
