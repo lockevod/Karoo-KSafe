@@ -54,6 +54,8 @@ fun SettingsScreen(vm: MainViewModel) {
     var crashSensitivity     by remember(config.crashSensitivity)          { mutableStateOf(config.crashSensitivity) }
     var minSpeedForCrash     by remember(config.minSpeedForCrashKmh)       { mutableStateOf(config.minSpeedForCrashKmh.toString()) }
     var customThreshold      by remember(config.customCrashThreshold)      { mutableStateOf(config.customCrashThreshold) }
+    var crashOutsideRide     by remember(config.crashMonitorOutsideRide)   { mutableStateOf(config.crashMonitorOutsideRide) }
+    var crashOutsideRideAny  by remember(config.crashMonitorOutsideRideAnySpeed) { mutableStateOf(config.crashMonitorOutsideRideAnySpeed) }
 
     var speedDropEnabled   by remember(config.speedDropDetectionEnabled)   { mutableStateOf(config.speedDropDetectionEnabled) }
     var speedDropMinutes   by remember(config.speedDropMinutes)            { mutableStateOf(config.speedDropMinutes.toString()) }
@@ -82,6 +84,7 @@ fun SettingsScreen(vm: MainViewModel) {
     LaunchedEffect(
         isActive, emergencyMessage, countdownSeconds,
         crashEnabled, crashSensitivity, minSpeedForCrash, customThreshold,
+        crashOutsideRide, crashOutsideRideAny,
         speedDropEnabled, speedDropMinutes,
         checkinEnabled, checkinInterval,
         karooLiveEnabled, karooLiveKey, karooLiveStartMessage
@@ -96,6 +99,8 @@ fun SettingsScreen(vm: MainViewModel) {
                 crashSensitivity        = crashSensitivity,
                 customCrashThreshold    = customThreshold,
                 minSpeedForCrashKmh     = minSpeedForCrash.toIntOrNull() ?: 5,
+                crashMonitorOutsideRide = crashOutsideRide,
+                crashMonitorOutsideRideAnySpeed = crashOutsideRideAny,
                 speedDropDetectionEnabled = speedDropEnabled,
                 speedDropMinutes        = speedDropMinutes.toIntOrNull() ?: 5,
                 checkinEnabled          = checkinEnabled,
@@ -318,6 +323,65 @@ fun SettingsScreen(vm: MainViewModel) {
                     )
                 }
             )
+
+            HorizontalDivider(modifier = Modifier.padding(vertical = 4.dp))
+
+            // ── Monitor crash outside of ride ─────────────────────────────────
+            SettingRow(label = stringResource(R.string.crash_outside_ride_label)) {
+                Switch(
+                    checked = crashOutsideRide,
+                    onCheckedChange = {
+                        crashOutsideRide = it
+                        if (it) crashOutsideRideAny = false // mutual exclusion: any speed takes priority
+                    }
+                )
+            }
+            if (crashOutsideRide && !crashOutsideRideAny) {
+                Text(
+                    text = stringResource(R.string.crash_outside_ride_desc),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+
+            SettingRow(label = stringResource(R.string.crash_outside_ride_any_speed_label)) {
+                Switch(
+                    checked = crashOutsideRideAny,
+                    onCheckedChange = {
+                        crashOutsideRideAny = it
+                        if (it) crashOutsideRide = false // any speed supersedes the standard option
+                    }
+                )
+            }
+            if (crashOutsideRideAny) {
+                Card(
+                    modifier = Modifier.fillMaxWidth(),
+                    colors = CardDefaults.cardColors(
+                        containerColor = Color(0xFFFFF3E0) // amber-50
+                    )
+                ) {
+                    Text(
+                        text = stringResource(R.string.crash_outside_ride_any_speed_desc),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = Color(0xFF7B3800),
+                        modifier = Modifier.padding(10.dp)
+                    )
+                }
+            } else if (crashOutsideRide) {
+                Card(
+                    modifier = Modifier.fillMaxWidth(),
+                    colors = CardDefaults.cardColors(
+                        containerColor = Color(0xFFFFF8E1) // yellow-50
+                    )
+                ) {
+                    Text(
+                        text = stringResource(R.string.crash_outside_ride_warning, minSpeedForCrash.toIntOrNull() ?: 5),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = Color(0xFF5D4037),
+                        modifier = Modifier.padding(10.dp)
+                    )
+                }
+            }
         }
 
         HorizontalDivider()

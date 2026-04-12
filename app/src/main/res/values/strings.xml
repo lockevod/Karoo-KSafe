@@ -64,6 +64,12 @@
     <string name="min_speed_hint_medium">Road + MTB: recommended 5 km/h — filters stationary false positives. Set to 0 for testing.</string>
     <string name="min_speed_hint_high">Road: recommended 10 km/h — road crashes rarely happen at low speeds. Set to 0 for testing.</string>
     <string name="min_speed_hint_custom">Set based on your riding style. Use 0 for testing at any speed.</string>
+    <string name="crash_outside_ride_label">Monitor crash when not riding</string>
+    <string name="crash_outside_ride_desc">Keeps crash detection active even when no ride is recording. Uses the minimum speed configured above. Useful if you want protection while doing a warm-up or a quick spin without starting a recording.</string>
+    <string name="crash_outside_ride_any_speed_label">Monitor crash when not riding — any speed</string>
+    <string name="crash_outside_ride_any_speed_desc">Same as above but detects crashes at any speed, even while stationary (minimum speed is ignored). ⚠ This can produce more false positives — picking up or dropping the device while still may trigger an alert.</string>
+    <string name="crash_outside_ride_warning">⚠ Crash monitoring is active outside of a recorded ride. The device must be moving at the minimum speed configured above (%1$d km/h).</string>
+    <string name="crash_outside_ride_any_speed_warning">⚠ Crash monitoring is active outside of a recorded ride at ANY speed, including while stationary. This increases the risk of false positives.</string>
     <string name="speed_drop_label">Detect prolonged stop during ride</string>
     <string name="speed_drop_minutes_label">Minutes stopped before alert</string>
     <string name="checkin_timer_label">Check-in timer</string>
