@@ -395,6 +395,48 @@ Then tap **Import** in the Settings tab. KSafe will read `ksafe_import.json` and
 
 > The export and import files have intentionally different names so there is no risk of accidentally overwriting a backup you just made.
 
+## Tips
+
+### Easiest way to enter API keys and tokens
+
+Typing long tokens (Pushover App Token, Telegram Bot Token, etc.) on the Karoo touchscreen is tedious and error-prone. The fastest workflow is:
+
+1. Open KSafe on your Karoo and tap **Export** (Settings tab, bottom of screen).
+2. Pull the file to your computer with ADB:
+   ```bash
+   adb pull /sdcard/Android/data/com.enderthor.kSafe/files/ksafe_export.json
+   ```
+3. Open `ksafe_export.json` in any text editor. Find the `senderConfigs` array and fill in your keys. The field names are shared across providers:
+
+   | JSON field | CallMeBot | Pushover | Telegram | SimplePush |
+   |------------|-----------|----------|----------|------------|
+   | `apiKey` | API key | App Token | **Bot Token** | Channel Key |
+   | `userKey` | *(unused)* | User Key 1 | **Chat ID 1** | *(unused)* |
+   | `userKey2` | *(unused)* | User Key 2 | **Chat ID 2** | *(unused)* |
+   | `userKey3` | *(unused)* | User Key 3 | **Chat ID 3** | *(unused)* |
+   | `phoneNumber` | Phone number | *(unused)* | *(unused)* | *(unused)* |
+
+   Example after editing:
+   ```json
+   [
+     { "provider": "TELEGRAM",  "apiKey": "7123456789:AAFxxxxxxxxxxxx", "userKey": "123456789",                    "userKey2": "", "userKey3": "", "phoneNumber": "" },
+     { "provider": "PUSHOVER",  "apiKey": "azGDORePK8gMaC0QOYAMyEEuzJnyUi", "userKey": "uQiRzpo4DXghDmr9QzzfQu", "userKey2": "", "userKey3": "", "phoneNumber": "" },
+     { "provider": "CALLMEBOT", "apiKey": "1234567",                     "userKey": "",                            "userKey2": "", "userKey3": "", "phoneNumber": "+34612345678" },
+     { "provider": "SIMPLEPUSH","apiKey": "HuxRj4",                      "userKey": "",                            "userKey2": "", "userKey3": "", "phoneNumber": "" }
+   ]
+   ```
+
+   > **Telegram note**: the Chat ID is required — the bot needs to know which chat/group/channel to deliver to (a bot can be in many chats at once). See the Telegram setup section above to get yours.
+
+4. Save the file and push it back as `ksafe_import.json`:
+   ```bash
+   adb push ksafe_export.json /sdcard/Android/data/com.enderthor.kSafe/files/ksafe_import.json
+   ```
+5. Tap **Import** in KSafe — all keys are applied instantly.
+
+> [!TIP]
+> You can also use this workflow to back up your configuration before updating the app, or to copy your setup to another Karoo device.
+
 ## Known Issues
 
 - Alerts will not be sent if the Karoo has no internet connection at the time of the emergency.
@@ -424,44 +466,4 @@ Then tap **Import** in the Settings tab. KSafe will read `ksafe_import.json` and
 - [Telegram BotFather](https://t.me/BotFather)
 - [DC Rainmaker sideloading guide](https://www.dcrainmaker.com/2021/02/how-to-sideload-android-apps-on-your-hammerhead-karoo-1-karoo-2.html)
 
-## Tips
-
-### Easiest way to enter API keys and tokens
-
-Typing long tokens (Pushover App Token, Telegram Bot Token, etc.) on the Karoo touchscreen is tedious and error-prone. The fastest workflow is:
-
-1. Open KSafe on your Karoo and tap **Export** (Settings tab, bottom of screen).
-2. Pull the file to your computer with ADB:
-   ```bash
-   adb pull /sdcard/Android/data/com.enderthor.kSafe/files/ksafe_export.json
-   ```
-3. Open `ksafe_export.json` in any text editor. You will see all your configuration — find the `senderConfigs` array and fill in the keys you need. The field names in the JSON are shared across providers:
-
-   | JSON field | CallMeBot | Pushover | Telegram | SimplePush |
-   |------------|-----------|----------|----------|------------|
-   | `apiKey` | API key | App Token | **Bot Token** | Channel Key |
-   | `userKey` | *(unused)* | User Key 1 | **Chat ID 1** | *(unused)* |
-   | `userKey2` | *(unused)* | User Key 2 | **Chat ID 2** | *(unused)* |
-   | `userKey3` | *(unused)* | User Key 3 | **Chat ID 3** | *(unused)* |
-   | `phoneNumber` | Phone number | *(unused)* | *(unused)* | *(unused)* |
-
-   Example after editing:
-   ```json
-   [
-     { "provider": "TELEGRAM",  "apiKey": "7123456789:AAFxxxxxxxxxxxx", "userKey": "123456789",               "userKey2": "", "userKey3": "", "phoneNumber": "" },
-     { "provider": "PUSHOVER",  "apiKey": "azGDORePK8gMaC0QOYAMyEEuzJnyUi", "userKey": "uQiRzpo4DXghDmr9QzzfQu", "userKey2": "", "userKey3": "", "phoneNumber": "" },
-     { "provider": "CALLMEBOT", "apiKey": "1234567",                     "userKey": "",                        "userKey2": "", "userKey3": "", "phoneNumber": "+34612345678" },
-     { "provider": "SIMPLEPUSH","apiKey": "HuxRj4",                      "userKey": "",                        "userKey2": "", "userKey3": "", "phoneNumber": "" }
-   ]
-   ```
-
-   > **Telegram note**: the Chat ID is required — the bot needs to know which chat/group/channel to send to (a bot can be in many chats at once). See the Telegram setup section above to get yours.
-4. Save the file and push it back as `ksafe_import.json`:
-   ```bash
-   adb push ksafe_export.json /sdcard/Android/data/com.enderthor.kSafe/files/ksafe_import.json
-   ```
-5. Tap **Import** in KSafe — all keys are applied instantly.
-
-> [!TIP]
-> You can also use this workflow to back up your configuration before updating the app, or to copy your setup to another Karoo device.
 
