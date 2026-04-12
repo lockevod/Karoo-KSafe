@@ -23,7 +23,7 @@ Compatible with Karoo 3 running Karoo OS version 1.527 and later.
 - **Speed drop detection**: Detects when your speed drops suddenly and remains low for a configurable time window.
 - **Emergency countdown with cancel**: All triggers start a configurable countdown (default 30s) so you can cancel false alarms before alerts are sent. A **red overlay with a Cancel button** appears on top of the ride screen — visible from any screen, no matter which data field is active.
 - **Location included**: Your GPS coordinates are automatically included in the alert message as a Google Maps link.
-- **Multiple messaging providers**: WhatsApp via CallMeBot (free), push notification via Pushover, free push via SimplePush, or Telegram bot messages (free, unlimited).
+- **Multiple messaging providers**: WhatsApp via CallMeBot (free), push notification via Pushover, free unlimited push via ntfy, or Telegram bot messages (free, unlimited).
 - **Ride start notification**: Optionally sends a message to your contacts when you start a ride, including a Karoo Live real-time tracking link — a better alternative to Karoo's built-in email notification.
 - **Two data fields**: SOS field and Safety Timer field — add either or both to your ride profile.
 
@@ -144,28 +144,33 @@ KSafe supports **four providers**:
 | Provider | Cost | Best for |
 |----------|------|----------|
 | **Telegram** | Free, unlimited | Best free option — no limits, no account needed beyond a bot |
-| **SimplePush** | Free (10 msg/month) | Quickest setup — install app, paste key |
+| **ntfy** | Free, unlimited | Quickest setup — no account, just pick a topic name |
 | **CallMeBot (WhatsApp)** | Free | Recipients already use WhatsApp |
 | **Pushover** | Free trial, ~$5 one-time | Most reliable push notifications |
 
-#### SimplePush (free up to 10 messages/month — easiest setup)
+#### ntfy (free and unlimited — easiest setup)
 
-SimplePush is the simplest option: no account, no registration, just install the app and paste one key. The free tier allows **10 messages per month**, which may be enough if you only use it for occasional emergency alerts. If you ride frequently or have multiple contacts, consider Pushover or CallMeBot instead.
+ntfy.sh is the simplest option: no account, no registration, no limits. Just pick a topic name and subscribe to it in the ntfy app. Notifications are delivered instantly, for free, with no monthly caps.
 
-**Step 1 — Install SimplePush and get your key**
+> [!NOTE]
+> The topic name acts like a "channel" — anyone who knows it can subscribe and receive your alerts. Use a long, random-looking name (e.g. `ksafe-alerts-r4nd0m42`) to keep it private. You can also self-host an ntfy server for full privacy.
 
-1. Install the **SimplePush** app on the phone that will receive alerts:
-   - [Android](https://play.google.com/store/apps/details?id=io.github.norbipeti.simplepush)
-   - [iOS](https://apps.apple.com/app/simplepush/id1448718895)
-2. Open the app — your **Channel Key** is displayed on the main screen (e.g. `HuxRj4`). Copy it.
+**Step 1 — Install ntfy and subscribe to your topic**
+
+1. Install the **ntfy** app on the phone that will receive alerts:
+   - [Android](https://play.google.com/store/apps/details?id=io.heckel.ntfy)
+   - [iOS](https://apps.apple.com/app/ntfy/id1625396347)
+2. Open the app and tap **+** to add a new subscription.
+3. Choose a **topic name** (e.g. `ksafe-alerts-myname`). You can use any name — just make it unique enough that others are unlikely to guess it.
+4. Tap **Subscribe**.
 
 **Step 2 — Configure KSafe**
 
-1. In the **Provider** tab, select **SimplePush**.
-2. Enter the **Channel Key** from the app.
-3. Tap **Test Send** — you should receive a push notification immediately.
+1. In the **Provider** tab, select **ntfy**.
+2. Enter the same **topic name** you subscribed to in Step 1.
+3. Tap **Test Send** — you should receive a push notification in the ntfy app immediately.
 
-> No phone number is needed in the Contacts tab when using SimplePush. The free tier covers **10 messages/month**. Check [simplepush.io](https://simplepush.io) for paid plans if you need more.
+> You can add the same topic on multiple phones to alert several people at once. Each person just subscribes to the same topic name in their ntfy app.
 
 ---
 
@@ -235,7 +240,7 @@ For a **group** or **channel**:
 
 Pushover delivers push notifications instantly to any phone or tablet. It works independently of WhatsApp — the emergency contact only needs the free Pushover app installed. Each user sets up their own independent account.
 
-Pushover is **free to try for 30 days**. After that, a **one-time payment of ~$5** is required to continue using it without restrictions (unlimited messages, emergency priority alerts, no monthly limits). This payment goes directly to Pushover — KSafe itself is always free and open-source. If you prefer a free alternative with no payment, use CallMeBot (WhatsApp) or SimplePush (push, 10 msg/month).
+Pushover is **free to try for 30 days**. After that, a **one-time payment of ~$5** is required to continue using it without restrictions (unlimited messages, emergency priority alerts, no monthly limits). This payment goes directly to Pushover — KSafe itself is always free and open-source. If you prefer a free alternative with no payment, use CallMeBot (WhatsApp) or ntfy (free, unlimited push notifications).
 
 Pushover requires **two separate keys** — this is a common point of confusion:
 
@@ -415,7 +420,7 @@ Typing long tokens (Pushover App Token, Telegram Bot Token, etc.) on the Karoo t
    | `callmebot` | `phoneNumber` | Recipient WhatsApp number with international prefix, no `+` (e.g. `34612345678`) |
    | `pushover` | `appToken` | Application token from pushover.net |
    | `pushover` | `userKey` / `userKey2` / `userKey3` | Up to 3 recipient user/group keys |
-   | `simplepush` | `channelKey` | Channel key shown in the SimplePush app |
+   | `ntfy` | `topic` | Topic name chosen by you (e.g. `ksafe-alerts-myname`) |
    | `telegram` | `botToken` | Bot token from @BotFather |
    | `telegram` | `chatId` / `chatId2` / `chatId3` | Up to 3 chat / channel / group IDs |
 
@@ -433,8 +438,8 @@ Typing long tokens (Pushover App Token, Telegram Bot Token, etc.) on the Karoo t
        "userKey2": "",
        "userKey3": ""
      },
-     "simplepush": {
-       "channelKey": "HuxRj4"
+     "ntfy": {
+       "topic": "ksafe-alerts-myname"
      },
      "telegram": {
        "botToken": "7123456789:AAFxxxxxxxxxxxx",

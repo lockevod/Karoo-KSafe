@@ -15,7 +15,7 @@ const val KAROO_LIVE_BASE_URL = "https://dashboard.hammerhead.io/live/"
 
 // ─── Enums ────────────────────────────────────────────────────────────────────
 
-enum class ProviderType { CALLMEBOT, PUSHOVER, SIMPLEPUSH, TELEGRAM }
+enum class ProviderType { CALLMEBOT, PUSHOVER, NTFY, TELEGRAM }
 
 enum class CrashSensitivity {
     LOW,    // Requires stronger impact (fewer false positives)
@@ -119,10 +119,10 @@ data class PushoverConfig(
     val userKey3: String = "",     // Optional: third recipient user/group key
 )
 
-/** SimplePush — only needs the channel key from the SimplePush app. */
+/** ntfy.sh — only needs a topic name. Free, no account required, unlimited messages. */
 @Serializable
-data class SimplePushConfig(
-    val channelKey: String = "",   // Channel key shown in the SimplePush app
+data class NtfyConfig(
+    val topic: String = "",    // Topic name chosen by you (e.g. "my-ksafe-alerts"). Anyone who knows it can subscribe.
 )
 
 /** Telegram — bot token (from @BotFather) + up to 3 chat/channel/group IDs. */
@@ -151,7 +151,7 @@ data class KSafeBackupExport(
     val config: KSafeConfig = KSafeConfig(),
     val callmebot: CallMeBotConfig = CallMeBotConfig(),
     val pushover: PushoverConfig = PushoverConfig(),
-    val simplepush: SimplePushConfig = SimplePushConfig(),
+    val ntfy: NtfyConfig = NtfyConfig(),
     val telegram: TelegramConfig = TelegramConfig(),
 )
 
@@ -165,8 +165,8 @@ fun KSafeBackupExport.toSenderConfigs(): List<SenderConfig> = listOf(
         userKey = pushover.userKey,
         userKey2 = pushover.userKey2,
         userKey3 = pushover.userKey3),
-    SenderConfig(ProviderType.SIMPLEPUSH,
-        apiKey = simplepush.channelKey),
+    SenderConfig(ProviderType.NTFY,
+        apiKey = ntfy.topic),
     SenderConfig(ProviderType.TELEGRAM,
         apiKey = telegram.botToken,
         userKey = telegram.chatId,
@@ -179,13 +179,13 @@ fun List<SenderConfig>.toBackupExport(config: KSafeConfig): KSafeBackupExport {
     fun find(p: ProviderType) = firstOrNull { it.provider == p } ?: SenderConfig(p)
     val cmb = find(ProviderType.CALLMEBOT)
     val po  = find(ProviderType.PUSHOVER)
-    val sp  = find(ProviderType.SIMPLEPUSH)
+    val sp  = find(ProviderType.NTFY)
     val tg  = find(ProviderType.TELEGRAM)
     return KSafeBackupExport(
         config     = config,
         callmebot  = CallMeBotConfig(apiKey = cmb.apiKey, phoneNumber = cmb.phoneNumber),
         pushover   = PushoverConfig(appToken = po.apiKey, userKey = po.userKey, userKey2 = po.userKey2, userKey3 = po.userKey3),
-        simplepush = SimplePushConfig(channelKey = sp.apiKey),
+        ntfy       = NtfyConfig(topic = sp.apiKey),
         telegram   = TelegramConfig(botToken = tg.apiKey, chatId = tg.userKey, chatId2 = tg.userKey2, chatId3 = tg.userKey3),
     )
 }
@@ -195,7 +195,7 @@ fun List<SenderConfig>.toBackupExport(config: KSafeConfig): KSafeBackupExport {
 val defaultSenderConfigs = listOf(
     SenderConfig(ProviderType.CALLMEBOT),
     SenderConfig(ProviderType.PUSHOVER),
-    SenderConfig(ProviderType.SIMPLEPUSH),
+    SenderConfig(ProviderType.NTFY),
     SenderConfig(ProviderType.TELEGRAM),
 )
 
