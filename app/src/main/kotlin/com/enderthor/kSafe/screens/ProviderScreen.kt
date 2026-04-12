@@ -43,18 +43,23 @@ fun ProviderScreen(vm: MainViewModel) {
     val activeSender = senderConfigs.find { it.provider == activeProvider }
     val coroutineScope = rememberCoroutineScope()
 
-    var apiKey      by remember(activeProvider, activeSender) { mutableStateOf(activeSender?.apiKey      ?: "") }
-    var userKey     by remember(activeProvider, activeSender) { mutableStateOf(activeSender?.userKey     ?: "") }
-    var userKey2    by remember(activeProvider, activeSender) { mutableStateOf(activeSender?.userKey2    ?: "") }
-    var userKey3    by remember(activeProvider, activeSender) { mutableStateOf(activeSender?.userKey3    ?: "") }
-    var phoneNumber by remember(activeProvider, activeSender) { mutableStateOf(activeSender?.phoneNumber ?: "") }
+    // `fieldsProvider` tracks which provider the current field values belong to.
+    // It is updated synchronously with the fields in onProviderClick so the
+    // auto-save LaunchedEffect always writes to the correct provider, even if the
+    // DataStore-backed `activeProvider` hasn't propagated yet.
+    var fieldsProvider by remember { mutableStateOf(activeProvider) }
+    var apiKey      by remember { mutableStateOf(activeSender?.apiKey      ?: "") }
+    var userKey     by remember { mutableStateOf(activeSender?.userKey     ?: "") }
+    var userKey2    by remember { mutableStateOf(activeSender?.userKey2    ?: "") }
+    var userKey3    by remember { mutableStateOf(activeSender?.userKey3    ?: "") }
+    var phoneNumber by remember { mutableStateOf(activeSender?.phoneNumber ?: "") }
     var testStatus  by remember { mutableStateOf("") }
     var testIsError by remember { mutableStateOf(false) }
 
-    // Auto-save with debounce whenever credential fields change
+    // Auto-save with debounce — always uses fieldsProvider (in sync with the fields)
     LaunchedEffect(apiKey, userKey, userKey2, userKey3, phoneNumber) {
         delay(700)
-        vm.updateSenderConfig(activeProvider, apiKey, userKey, userKey2, userKey3, phoneNumber)
+        vm.updateSenderConfig(fieldsProvider, apiKey, userKey, userKey2, userKey3, phoneNumber)
     }
 
     Column(
@@ -72,14 +77,20 @@ fun ProviderScreen(vm: MainViewModel) {
 
         // Provider selector chips — CallMeBot + Pushover in first row, ntfy + Telegram below
         val onProviderClick = { provider: ProviderType ->
-            vm.setActiveProvider(provider)
+            // Save the CURRENT provider's fields immediately before switching,
+            // so no data is lost if the debounce timer hasn't fired yet.
+            vm.updateSenderConfig(fieldsProvider, apiKey, userKey, userKey2, userKey3, phoneNumber)
+            // Load the new provider's saved values and update fieldsProvider atomically.
             val s = senderConfigs.find { it.provider == provider }
+            fieldsProvider = provider
             apiKey      = s?.apiKey      ?: ""
             userKey     = s?.userKey     ?: ""
             userKey2    = s?.userKey2    ?: ""
             userKey3    = s?.userKey3    ?: ""
             phoneNumber = s?.phoneNumber ?: ""
             testStatus  = ""
+            // Switch active provider last so DataStore propagates after fields are ready.
+            vm.setActiveProvider(provider)
         }
         Row(
             modifier = Modifier.fillMaxWidth(),
