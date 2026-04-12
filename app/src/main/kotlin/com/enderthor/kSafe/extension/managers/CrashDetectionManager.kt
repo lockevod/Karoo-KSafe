@@ -5,6 +5,7 @@ import android.hardware.Sensor
 import android.hardware.SensorEvent
 import android.hardware.SensorEventListener
 import android.hardware.SensorManager
+import com.enderthor.kSafe.BuildConfig
 import com.enderthor.kSafe.data.CrashSensitivity
 import com.enderthor.kSafe.data.KSafeConfig
 import com.enderthor.kSafe.data.SPEED_THRESHOLD_KMH
@@ -168,10 +169,10 @@ class CrashDetectionManager(
             impactThresholds[config.crashSensitivity] ?: 45f
         val now = System.currentTimeMillis()
 
-        // Periodic debug logging so you can see values in logcat
-        if (now - lastLogTime > LOG_INTERVAL_MS) {
+        // Periodic debug logging — only in debug builds (hot path: runs on every sensor event)
+        if (BuildConfig.DEBUG && now - lastLogTime > LOG_INTERVAL_MS) {
             lastLogTime = now
-            Timber.v("Accel magnitude=%.2fm/s² state=$state threshold=%.1f gyro=%.2f".format(magnitude, threshold, lastGyroMag))
+            Timber.v("Accel magnitude=%.2fm/s² state=%s threshold=%.1f gyro=%.2f", magnitude, state, threshold, lastGyroMag)
         }
 
         when (state) {
@@ -181,7 +182,7 @@ class CrashDetectionManager(
                 if (magnitude > threshold && speedOk) {
                     state = CrashState.IMPACT
                     impactTime = now
-                    Timber.d(">>> IMPACT detected! magnitude=%.1fm/s² (threshold=%.1f) speed=%.1fkm/h minSpeed=$minSpeed".format(magnitude, threshold, currentSpeedKmh))
+                    Timber.d(">>> IMPACT detected! magnitude=%.1fm/s² (threshold=%.1f) speed=%.1fkm/h minSpeed=%d", magnitude, threshold, currentSpeedKmh, minSpeed)
                 }
             }
 
@@ -195,11 +196,11 @@ class CrashDetectionManager(
                     deviation < SILENCE_DEVIATION_MAX && lastGyroMag < GYRO_MOVING_MAX && timeSince > 500 -> {
                         state = CrashState.SILENCE_CHECK
                         silenceStartTime = now
-                        Timber.d(">>> SILENCE_CHECK started (deviation=%.2f gyro=%.2f)".format(deviation, lastGyroMag))
+                        Timber.d(">>> SILENCE_CHECK started (deviation=%.2f gyro=%.2f)", deviation, lastGyroMag)
                     }
                     // Timeout: never settled after impact → false alarm (MTB jump that continued riding)
                     timeSince > windowMs -> {
-                        Timber.d("Impact window timeout (${windowMs}ms) → false alarm, resetting")
+                        Timber.d("Impact window timeout (%dms) → false alarm, resetting", windowMs)
                         resetState()
                     }
                 }
@@ -222,17 +223,17 @@ class CrashDetectionManager(
                             // IMPACT state and wait for the device to settle again rather than
                             // resetting completely to MONITORING (which would discard the crash).
                             state = CrashState.IMPACT
-                            Timber.d("Brief movement during silence (dev=%.2f gyro=%.2f) → back to IMPACT, waiting to settle".format(deviation, lastGyroMag))
+                            Timber.d("Brief movement during silence (dev=%.2f gyro=%.2f) → back to IMPACT", deviation, lastGyroMag)
                         } else {
                             // Impact window expired with too much movement → genuine false alarm
-                            Timber.d("Sustained movement during silence → false alarm, resetting".format())
+                            Timber.d("Sustained movement during silence → false alarm, resetting")
                             resetState()
                         }
                     }
                     // Both accel AND gyro confirm stillness for required duration → CRASH CONFIRMED
                     silenceDuration >= SILENCE_DURATION_MS && lastGyroMag < GYRO_STILL_MAX -> {
                         val totalMs = now - impactTime
-                        Timber.d(">>> CRASH CONFIRMED after ${totalMs}ms (accel dev=%.2f gyro=%.2f)".format(deviation, lastGyroMag))
+                        Timber.d(">>> CRASH CONFIRMED after %dms (accel dev=%.2f gyro=%.2f)", totalMs, deviation, lastGyroMag)
                         resetState()
                         scope.launch { onCrashDetected() }
                     }
