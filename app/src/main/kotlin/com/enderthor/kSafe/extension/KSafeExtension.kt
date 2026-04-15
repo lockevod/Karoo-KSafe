@@ -38,6 +38,10 @@ class KSafeExtension : KarooExtension("ksafe", BuildConfig.VERSION_NAME), Corout
 
     private var activeConfig = KSafeConfig()
     private var currentRideState: RideState? = null
+    /** True once the ride-start notification has been sent for the current recording session. */
+    private var rideStartNotificationSent = false
+    /** True if there was an active ride (Recording or Paused) — used to detect ride end. */
+    private var rideWasActive = false
 
     companion object {
         private var instance: KSafeExtension? = null
@@ -124,16 +128,34 @@ class KSafeExtension : KarooExtension("ksafe", BuildConfig.VERSION_NAME), Corout
                 if (activeConfig.isActive) {
                     crashManager.start(activeConfig)
                     emergencyManager.startCheckinTimer(activeConfig)
-                    sendRideStartNotification()
+                    // Only send the start notification on the very first Recording event.
+                    // Resuming from Pause also triggers Recording — we skip it there.
+                    if (!rideStartNotificationSent) {
+                        rideStartNotificationSent = true
+                        sendRideStartNotification()
+                    }
+                    rideWasActive = true
                 }
             }
             is RideState.Paused -> {
                 // Keep crash detection active while paused (rider may have crashed)
                 emergencyManager.stopCheckinTimer()
+                // If a check-in countdown was running when the user paused, cancel it —
+                // they intentionally stopped (coffee break) and should not get an alert.
+                emergencyManager.cancelCheckinEmergencyOnPause()
+                rideWasActive = true
             }
             is RideState.Idle -> {
+                val wasActive = rideWasActive
                 emergencyManager.stopAll()
                 applyIdleMonitoring(activeConfig)
+                // Reset per-ride flags
+                rideStartNotificationSent = false
+                rideWasActive = false
+                // Send ride-end notification if there was an active ride
+                if (wasActive) {
+                    sendRideEndNotification()
+                }
             }
         }
     }
@@ -202,6 +224,23 @@ class KSafeExtension : KarooExtension("ksafe", BuildConfig.VERSION_NAME), Corout
         }
     }
 
+    /** Sends a ride-end notification if the feature is enabled. */
+    private fun sendRideEndNotification() {
+        val config = activeConfig
+        if (!config.karooLiveEndEnabled) return
+        val message = config.karooLiveEndMessage
+        if (message.isBlank()) return
+
+        Timber.d("KSafe: sending ride end notification")
+        launch {
+            try {
+                sender.sendInfo(message, config.activeProvider)
+            } catch (e: Exception) {
+                Timber.e(e, "KSafe: error sending ride end notification")
+            }
+        }
+    }
+
     /**
      * Called from SettingsScreen to test the full emergency flow without a real ride.
      * Returns a message to display in the UI.
@@ -240,6 +279,20 @@ class KSafeExtension : KarooExtension("ksafe", BuildConfig.VERSION_NAME), Corout
         Timber.d("Sending test ride start notification via ${config.activeProvider}")
         val ok = sender.sendInfo(message, config.activeProvider)
         return if (ok) "Ride start message sent successfully! Check your device."
+               else "Send failed — check your provider configuration."
+    }
+
+    /**
+     * Called from SettingsScreen to test the ride-end notification.
+     * Returns a result message to display in the UI.
+     */
+    suspend fun sendTestRideEnd(): String {
+        val config = activeConfig
+        if (!config.karooLiveEndEnabled) return "Ride end notification is disabled — enable it in Settings first."
+        if (config.karooLiveEndMessage.isBlank()) return "No ride end message configured."
+        Timber.d("Sending test ride end notification via ${config.activeProvider}")
+        val ok = sender.sendInfo(config.karooLiveEndMessage, config.activeProvider)
+        return if (ok) "Ride end message sent successfully! Check your device."
                else "Send failed — check your provider configuration."
     }
 

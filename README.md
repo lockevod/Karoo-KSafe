@@ -6,7 +6,7 @@
 
 KSafe is a free, open-source safety extension for Karoo GPS devices. It monitors your ride and automatically alerts your emergency contacts if something goes wrong — crash detected, no check-in, or speed suddenly drops — and allows you to manually trigger an SOS from your ride screen.
 
-Beyond emergency alerts, KSafe can also notify your contacts when you **start a ride**, including a real-time Karoo Live tracking link. This is a better alternative to the default email notification that Karoo already offers: KSafe sends it via WhatsApp, Telegram, or push notification, directly to your contacts' phones, so they can follow your ride from the very first moment.
+Beyond emergency alerts, KSafe can also notify your contacts when you **start or finish a ride**, optionally including a real-time Karoo Live tracking link. This is a better alternative to the default email notification that Karoo already offers: KSafe sends it via WhatsApp, Telegram, or push notification, directly to your contacts' phones.
 
 Compatible with Karoo 3 running Karoo OS version 1.527 and later.
 
@@ -17,12 +17,13 @@ Compatible with Karoo 3 running Karoo OS version 1.527 and later.
 
 - **Crash detection**: Uses the Karoo's accelerometer and gyroscope to detect sudden impacts automatically.
 - **Manual SOS**: Tap the SOS data field to trigger an emergency alert manually.
-- **Check-in timer**: Set a periodic check-in interval. If you don't tap "OK" before the timer expires, an alert is sent automatically.
+- **Check-in timer**: Set a periodic check-in interval. If you don't tap "OK" before the timer expires, an alert is sent automatically. **The timer pauses automatically when the ride is paused** (coffee stop, etc.) and resets when you resume — no alerts during planned breaks.
 - **Speed drop detection**: Detects when your speed drops suddenly and remains low for a configurable time window.
 - **Emergency countdown with cancel**: All triggers start a configurable countdown (default 30s) so you can cancel false alarms before alerts are sent. A **red overlay with a Cancel button** appears on top of the ride screen — visible from any screen, no matter which data field is active.
 - **Location included**: Your GPS coordinates are automatically included in the alert message as a Google Maps link.
 - **Multiple messaging providers**: WhatsApp via CallMeBot (free), push notification via Pushover, free unlimited push via ntfy, or Telegram bot messages (free, unlimited).
-- **Ride start notification**: Optionally sends a message to your contacts when you start a ride, including a Karoo Live real-time tracking link — a better alternative to Karoo's built-in email notification.
+- **Ride start notification**: Optionally sends a message to your contacts when you start a ride, including a Karoo Live real-time tracking link. Sent **only once** when the ride truly begins — resuming after a pause does **not** trigger it again.
+- **Ride end notification**: Optionally sends a configurable message to your contacts when you finish a ride (recording stops completely).
 - **Two data fields**: SOS field and Safety Timer field — add either or both to your ride profile.
 
 ## Requirements
@@ -105,6 +106,7 @@ KSafe provides two custom data fields you can add to your ride profiles:
 - **Tap** to reset the timer (= "I'm OK" check-in).
 - During any active emergency countdown, shows **CANCEL** with remaining seconds — **tap to cancel**.
 - Shows **Timer OFF** when check-in is disabled.
+- The timer **pauses automatically when the ride is paused** and resets to the full interval when recording resumes.
 
 Add one or both fields to your Karoo ride profile from the profile editor.
 
@@ -121,17 +123,19 @@ Open the KSafe app on your Karoo to configure it.
 - **Emergency message**: The message sent to your contacts. Available placeholders:
   - `{location}` — GPS coordinates as a Google Maps link.
   - `{reason}` — reason for the alert (crash / check-in expired / manual SOS / speed drop).
-  - `{livetrack}` — Karoo Live real-time tracking link (only if a Karoo Live key is configured).
-- **Karoo Live tracking on ride start**: Toggle to enable/disable sending a notification to your contacts when the ride starts, including a real-time tracking link. **Requires a Karoo Live key** — if no key is configured, nothing is sent even if the toggle is on.
-- **Karoo Live key**: Enter only the key part of your Karoo Live URL. For example, from `https://dashboard.hammerhead.io/live/3738Ag` enter `3738Ag`.
-- **Ride start message**: The message sent when the ride starts. Use `{livetrack}` to insert the tracking link.
+  - `{livetrack}` — Karoo Live real-time tracking link (only if a key is configured).
+- **Notify contacts on ride start**: Toggle to enable/disable a notification when the ride starts. Sent **only once per ride** — resuming from a pause does not send it again. Use `{livetrack}` in the message to include the tracking link (requires a Karoo Live key).
+- **Karoo Live key**: Enter only the key part of your Karoo Live URL. For example, from `https://dashboard.hammerhead.io/live/3738Ag` enter `3738Ag`. Leave empty to send a plain start message without a tracking link.
+- **Ride start message**: The text sent when the ride starts. Use `{livetrack}` to insert the tracking link.
+- **Notify contacts on ride end**: Toggle to enable/disable a notification when the ride recording stops completely. Does not require a Karoo Live key — any message text works.
+- **Ride end message**: The text sent when the ride ends.
 - The `{livetrack}` placeholder also works in your emergency message — if a key is set, emergency alerts will include the tracking link too.
 - **Countdown seconds**: How long the cancellation countdown lasts before alerts are sent (default: 30s).
-- **Crash detection**: Enable/disable automatic crash detection via sensors. Configure sensitivity (Low / Medium / High) and minimum speed threshold (0 = detect at any speed; recommended: 10 km/h for real rides).
-- **Monitor crash when not riding**: Keeps crash detection active even when no ride is recording, using the minimum speed you have configured. Useful if you want protection on a quick spin or warm-up without starting a recording.
-- **Monitor crash when not riding — any speed**: Same as above but ignores the minimum speed threshold, detecting crashes even while completely stationary. ⚠ This setting can produce **more false positives** (e.g., picking up or dropping the device may trigger an alert). Use with caution.
-- **Speed drop detection**: Enable/disable detection of sudden prolonged speed drops. Configure the time window (minutes) with no speed before triggering.
-- **Check-in timer**: Enable/disable periodic check-ins. Configure the interval in minutes (default: 120 min). A warning beep and alert appear 10 minutes before the timer expires.
+- **Crash detection**: Enable/disable automatic crash detection. Configure sensitivity and minimum speed (see [Crash Detection](#crash-detection) for guidance on which level to choose).
+- **Monitor crash when not riding**: Keeps crash detection active even when no ride is recording. Useful for warm-ups or quick spins without starting a recording.
+- **Monitor crash when not riding — any speed**: Same as above but ignores the minimum speed threshold (detects crashes even while stationary). ⚠ More false positives — use with caution.
+- **Speed drop detection**: Enable/disable detection of prolonged speed drops. Configure the time window (minutes) with no movement before triggering.
+- **Check-in timer**: Enable/disable periodic check-ins. Configure the interval in minutes (default: 120 min). A warning beep fires 10 minutes before expiry. **The timer pauses automatically when the ride is paused** (coffee stop, traffic light, etc.) and resets to the full interval when you resume. Any active check-in countdown is also cancelled on pause.
 
 ### Provider Tab
 
@@ -292,74 +296,104 @@ Each person who uses KSafe needs to create their own Pushover application (it is
 
 ## Crash Detection
 
-Crash detection uses the Karoo's built-in accelerometer and gyroscope directly (no external sensor required). The algorithm is based on the same approach used by Garmin's incident detection: **large impact followed by no movement**.
+Crash detection uses the Karoo's built-in accelerometer and gyroscope directly (no external sensor required). The algorithm is based on the same approach used by Garmin's incident detection: **large impact followed by genuine stillness**.
 
 ### Algorithm
 
-1. **Impact**: A sudden acceleration spike above the sensitivity threshold is detected.
-2. **Silence check**: After impact, both the accelerometer and gyroscope must settle — the device must stop moving AND stop rotating. This is the key differentiator between a crash and a normal MTB jump or hard landing.
-3. **Confirmed**: If the device remains still for ~4.5 seconds, the emergency countdown starts.
+1. **Impact**: A sudden acceleration spike above the sensitivity threshold is detected (while above the minimum speed).
+2. **Silence check**: After the impact, both the accelerometer and gyroscope must settle completely. The device must stop moving AND stop rotating. **The stillness must be continuous** — any movement (gyro ≥ 1 rad/s or acceleration deviation > 4 m/s² from gravity) resets the 4.5 s countdown from scratch. This is the key differentiator between a real crash and any other event (pothole, bump, jump) followed by continued riding.
+3. **Confirmed**: If the device remains genuinely still for **4.5 consecutive seconds**, the emergency countdown starts.
 
-A jump or drop in MTB generates a high impact spike but is immediately followed by continued movement (continued riding). A real crash generates a high impact spike followed by prolonged stillness of both sensors. The gyroscope integration specifically prevents false positives from jumps where the landing is hard but the rider continues moving.
+**Why this works:** after hitting a pothole or bump, a cyclist continues pedalling — the gyroscope never stays below 1 rad/s long enough to confirm a crash. After a real crash, the device lies on the ground with near-zero gyroscope for several seconds.
 
-### Sensitivity levels
+### Choosing the right sensitivity level
 
-| Level | Threshold | Approx. | Impact window | Min. speed | Best for |
-|-------|-----------|---------|---------------|------------|----------|
-| Low | 55 m/s² | ~5.5g | **25 s** | **3 km/h** | MTB, gravel, technical terrain |
-| Medium | 45 m/s² | ~4.5g | **20 s** | **5 km/h** | Road + MTB, balanced (default) |
-| High | 35 m/s² | ~3.5g | **15 s** | **10 km/h** | Road cycling on smooth surfaces |
-| Custom | 20–70 m/s² | 2–7g | **20 s** | You decide | Any use case |
+> **Naming convention**: "High sensitivity" means a *lower* impact threshold — the system reacts to lighter impacts. This follows the standard sensor convention (higher sensitivity = detects smaller signals). It does NOT mean "better" or "safer" in all contexts.
 
-Normal hard braking and bumps produce ~1.5g (14.7 m/s²), well below all thresholds. Thresholds are based on cycling crash detection literature (IEEE accident detection studies and probabilistic crash classification research).
+| Level | Impact threshold | Min. speed | Best for |
+|-------|-----------------|------------|----------|
+| ⛰ **Low** | 55 m/s² (~5.5g) | 3 km/h | MTB, enduro, gravel, technical terrain |
+| 🚴 **Medium** | 45 m/s² (~4.5g) | 10 km/h | Road + MTB mixed **(recommended default)** |
+| 🏁 **High** | 35 m/s² (~3.5g) | 15 km/h | Smooth road only (velodrome, closed circuit) |
+| 🔧 **Custom** | 20–70 m/s² slider | You choose | Any specific use case |
 
-**Impact window**: after a detected impact, KSafe waits up to this long for the device to come to rest. A longer window allows the bike to slide or tumble down a slope after the crash before confirming. If brief movement is detected during the stillness check (e.g. the bike rolls a little), KSafe goes back to watching — it does not discard the crash unless movement is sustained for the full window.
+**Impact window** (time allowed between impact and stillness confirmation):
+- Low: 25 s — MTB bike may slide or tumble down a slope for a while
+- Medium: 20 s — mixed terrain
+- High: 15 s — road crashes settle quickly
+
+#### ⛰ Low — for MTB, gravel, enduro
+
+Requires a **very hard impact (~5.5g)** to trigger. MTB jump landings and drops typically generate 3–5g, staying safely below this threshold. Only a serious crash — hitting the ground hard at speed — reaches 5.5g+.
+
+- Min. speed **3 km/h**: technical climbs (*trialeras*) happen at walking pace. Crashes on steep technical sections can occur below 4 km/h.
+- Longer impact window (25 s): the bike may keep rolling down a slope after the crash before coming to rest.
+- If you still experience false positives on very rough terrain (e.g. large drops, aggressive landings with full stop), use **Custom** with a threshold of 60–65 m/s².
+
+#### 🚴 Medium — recommended default for most riders
+
+**Balanced threshold (~4.5g)**. A sensible starting point for road cyclists, gravel riders, and anyone combining road and trail. Normal road vibration, cobblestones, and moderate bumps stay well below 4.5g. Large potholes or expansion joints at high speed can reach this range — but with the continuous silence requirement, continued riding prevents any false alarm.
+
+- Min. speed **10 km/h**: filters out false positives from handling the bike at slow speeds (putting it on the car, slow track stands).
+- If you ride mostly MTB: lower the min. speed to 3 km/h or switch to **Low**.
+- If you ride exclusively on smooth tarmac and experience any residual false positives: raise min. speed to 15 km/h or switch to **High**.
+
+#### 🏁 High — smooth road only
+
+**More sensitive threshold (~3.5g)** — designed for perfectly smooth surfaces (velodromes, closed circuits, pristine tarmac) where normal riding never generates impacts above 3.5g. On such surfaces, any 3.5g+ impact is genuinely suspicious and likely a crash.
+
+> [!WARNING]
+> Do **not** use High on MTB trails, gravel, or roads with potholes/expansion joints. Any jump, drop, or large bump will regularly exceed 3.5g and trigger the impact detection. Even with the continuous silence check, a brief stop after a bump could produce false alarms.
+
+- Min. speed **15 km/h**: road crashes at very low speed are extremely rare.
+- Useful for: triathlon on closed circuits, velodrome training, road racing on premium tarmac.
+
+#### 🔧 Custom threshold
+
+Set the exact impact threshold with the slider (20–70 m/s²):
+- **Lower values** → more sensitive, triggers on lighter impacts.
+- **Higher values** → harder impact required, fewer false positives.
+
+Useful when no preset fits exactly — for example an aggressive enduro rider who wants something between Low and Medium, or a gravel rider on smoother surfaces.
 
 ### Real-world scenarios
 
-These are the most common situations you will encounter and how the algorithm handles each one:
-
 | Scenario | Result | Why |
 |----------|--------|-----|
-| Hard crash on a descent, bike slides for a few seconds | ✅ Detected | Impact spike → brief movement tolerated → bike settles → 4.5 s stillness confirmed |
-| Hard crash, bike stops immediately | ✅ Detected | Impact spike → quick stillness → confirmed |
-| Crash on a technical climb at 3 km/h | ✅ Detected (Low sensitivity) | Low threshold + low min. speed — designed for this |
+| Hard crash on a descent, bike slides for a few seconds | ✅ Detected | Impact → brief movement → bike settles → 4.5 s continuous stillness confirmed |
+| Hard crash, bike stops immediately | ✅ Detected | Impact → quick stillness → confirmed |
+| Crash on a technical MTB climb at 3 km/h (Low) | ✅ Detected | Low threshold + 3 km/h min. speed — designed for this |
+| Large pothole at 40 km/h, continue riding | ✅ No false alarm | Impact threshold possibly exceeded, but silence timer resets every time the gyro stays above 1 rad/s while pedalling |
+| Expansion joint or speed bump, continue riding | ✅ No false alarm | Same as above — continuous movement prevents silence confirmation |
 | MTB jump landing, continue riding immediately | ✅ No false alarm | Impact → movement never stops → window expires → reset |
-| MTB jump landing, stop to rest briefly | ✅ No false alarm (probably) | Impact → you are moving while braking → stillness after braking is brief if you shift position; also the threshold at Low (5.5g) is rarely exceeded by clean landings |
-| MTB jump landing, stop perfectly still for 5+ seconds | ⚠️ Possible false alarm | Impact + clean stillness → algorithm may confirm crash; **the countdown is your safety net** — tap SOS field or assigned button to cancel |
-| Hard landing on a jump, stop to watch others | ⚠️ Possible false alarm | Same as above — **cancel with the countdown if it starts** |
-| Riding over rough rocky terrain | ✅ No false alarm | Multiple small bumps below threshold; no single sustained spike + stillness pattern |
-| Dropping bike carelessly while stopped | ✅ No false alarm | Min. speed check: you are stationary so impact is ignored |
-| Riding on cobblestones or very rough road | ✅ No false alarm (Low/Medium) | Sustained vibration never reaches stillness check |
+| MTB jump landing, stop perfectly still for 5+ seconds | ⚠️ Possible false alarm | Impact + genuine stillness → algorithm may confirm; **the 30 s countdown is your safety net** |
+| Cobblestones or very rough road | ✅ No false alarm | Sustained vibration resets silence timer continuously |
+| Dropping bike carelessly while stopped | ✅ No false alarm | Minimum speed check: below threshold, impact ignored |
+| Pausing ride at a café, check-in timer was running | ✅ Timer paused | Check-in timer stops when ride is paused; restarts from zero when ride resumes |
 
-**Key principle**: the algorithm requires two things together — a large sudden impact AND prolonged stillness afterwards. Either one alone is not enough. The countdown (default 30 s) is the last line of defence against false positives: if a detection happens while you are fine, just tap the SOS field or the cancel button.
+**Key principle**: the algorithm requires both a large sudden impact AND prolonged, uninterrupted stillness. Either one alone is not enough. The countdown (default 30 s) is the final line of defence — if a detection happens while you are fine, just tap CANCEL.
 
-#### Minimum speed and MTB
+### Minimum speed reference
 
-The minimum speed threshold filters out crashes detected while stationary (e.g. picking up the bike, putting it in a car). For MTB it should be set low — **3 km/h or even 0** — because:
+| Level | Default min. speed | Why |
+|-------|--------------------|-----|
+| Low | 3 km/h | MTB crashes happen at walking pace on technical sections |
+| Medium | 10 km/h | Road + mixed use — filters slow-speed handling |
+| High | 15 km/h | Pure road — crashes at low speed are extremely rare |
+| Custom | Your choice | Adjust to your riding style |
 
-- Technical climbs (*trialeras*) are ridden at walking pace or slower.
-- Jump approach sections may have low speed before the jump.
-- A crash on a steep technical section can happen below 4 km/h.
-
-For road cycling, 10 km/h is a sensible default since road crashes at standstill are extremely rare. Selecting a sensitivity level automatically applies the recommended minimum speed, but you can always adjust it manually.
-
-#### Custom sensitivity
-
-The **Custom** level lets you set the exact impact threshold using a slider (20–70 m/s²). Use this if the preset levels don't match your riding style — for example, an aggressive enduro rider may want something between Low and Medium, or a triathlete on a very smooth course may want to go below High.
-
-- **Lower value** (towards 20 m/s²) = more sensitive, triggers on lighter impacts.
-- **Higher value** (towards 70 m/s²) = less sensitive, requires a harder impact.
+You can always override the min. speed manually after selecting a level. Setting it to 0 disables the check entirely (useful for testing).
 
 ## Testing
 
-KSafe provides three test buttons, all of which work **without an active ride**:
+KSafe provides test buttons, all of which work **without an active ride**:
 
 | Button | Where | What it does |
 |--------|-------|--------------|
 | **Test Send** | Provider tab | Sends a test message via the active provider. Shows a specific error (invalid key, missing credentials, no connection…) if something is wrong. |
 | **Simulate Crash** | Settings tab | Sends your emergency message immediately — no countdown, no waiting. Use this to verify the full message (location, livetrack link) reaches your contact correctly. |
-| **Test ride start notification** | Settings tab | Sends the ride-start message with the Karoo Live link. Only works if Karoo Live is enabled and a key is configured. |
+| **Test ride start notification** | Settings tab | Sends the ride-start message. Only works if the feature is enabled. |
+| **Test ride end notification** | Settings tab | Sends the ride-end message. Only works if the feature is enabled. |
 
 > **Simulate Crash** sends a real alert to your configured contact. Let them know you are testing, or use **Test Send** instead if you only want to verify connectivity.
 
@@ -423,9 +457,9 @@ Typing long tokens (Pushover App Token, Telegram Bot Token, etc.) on the Karoo t
    | `telegram` | `chatId` / `chatId2` / `chatId3` | Up to 3 chat / channel / group IDs |
 
    Example after editing (showing Telegram and Pushover):
-   ```
+   ```json
    {
-     "config": { ...all settings fields... },
+     "config": { "isActive": true, "crashDetectionEnabled": true },
      "callmebot": {
        "apiKey": "1234567",
        "phoneNumber": "34612345678"
@@ -465,9 +499,9 @@ Typing long tokens (Pushover App Token, Telegram Bot Token, etc.) on the Karoo t
 ## Known Issues
 
 - Alerts will not be sent if the Karoo has no internet connection at the time of the emergency.
-- Crash detection may produce false positives on very rough surfaces. Increase the minimum speed threshold or use Low sensitivity if this happens.
+- Crash detection can produce false positives if you stop completely for several seconds right after hitting a large pothole or expansion joint. The 30 s countdown is your safety net — tap CANCEL if you are fine.
 - Each messaging provider has its own rate limits and free tier restrictions. Check provider documentation.
-- By default, the extension only monitors during an active ride (Recording state). Crash detection remains active when the ride is paused. Use the **"Monitor crash when not riding"** options in Settings to enable monitoring outside of a recorded ride.
+- By default, the extension only monitors during an active ride (Recording state). Crash detection remains active when the ride is paused (the rider may have crashed). Use the **"Monitor crash when not riding"** options in Settings to enable monitoring outside of a recorded ride.
 
 ## Disclaimer
 
@@ -494,7 +528,7 @@ There are many conditions under which KSafe may fail to detect an incident or de
 
 - KSafe does not collect or transmit any personal data beyond what is strictly necessary to send your emergency alerts (location and the message you configure).
 - All configuration is stored locally on your Karoo device.
-- When you use a third-party provider (CallMeBot, Pushover, SimplePush, Telegram), your message content and identifiers (phone number, chat ID, user key…) can be shared with that provider. Please read and accept their terms and privacy policies before using KSafe.
+- When you use a third-party provider (CallMeBot, Pushover, ntfy, Telegram), your message content and identifiers (phone number, chat ID, user key…) can be shared with that provider. Please read and accept their terms and privacy policies before using KSafe.
 - KSafe has no relationship or partnership with any of these providers.
 - KSafe has no warranties. If you do not agree with this, please do not use it.
 
@@ -502,7 +536,7 @@ There are many conditions under which KSafe may fail to detect an incident or de
 
 - Developed by EnderThor.
 - Uses the Karoo Extensions Framework by Hammerhead.
-- Can use CallMeBot for WhatsApp message delivery, Pushover for push notifications, SimplePush for free push notifications, and Telegram Bot API for Telegram messages. These services have their own rules and agreements. KSafe has no relationship with any of them.
+- Can use CallMeBot for WhatsApp message delivery, Pushover for push notifications, ntfy for free push notifications, and Telegram Bot API for Telegram messages. These services have their own rules and agreements. KSafe has no relationship with any of them.
 - Thanks to Hammerhead for the Karoo device and extensions API.
 
 ## Useful Links
@@ -511,5 +545,4 @@ There are many conditions under which KSafe may fail to detect an incident or de
 - [CallMeBot WhatsApp API](https://www.callmebot.com/blog/free-api-whatsapp-messages/)
 - [Telegram BotFather](https://t.me/BotFather)
 - [DC Rainmaker sideloading guide](https://www.dcrainmaker.com/2021/02/how-to-sideload-android-apps-on-your-hammerhead-karoo-1-karoo-2.html)
-
 
