@@ -46,7 +46,7 @@ data class KSafeConfig(
     // Crash detection
     val crashDetectionEnabled: Boolean = true,
     val crashSensitivity: CrashSensitivity = CrashSensitivity.MEDIUM,
-    val minSpeedForCrashKmh: Int = 5,   // 0 = always detect (useful for testing)
+    val minSpeedForCrashKmh: Int = 10,   // 0 = always detect (useful for testing)
     val customCrashThreshold: Int = 45, // m/s² — only used when crashSensitivity = CUSTOM (range 20–70)
     // Monitor crash even when no ride is active
     val crashMonitorOutsideRide: Boolean = false,         // uses configured minSpeedForCrashKmh
@@ -57,6 +57,9 @@ data class KSafeConfig(
     // Check-in timer
     val checkinEnabled: Boolean = false,
     val checkinIntervalMinutes: Int = DEFAULT_CHECKIN_INTERVAL_MINUTES,
+    // Ride end notification
+    val karooLiveEndEnabled: Boolean = false,
+    val karooLiveEndMessage: String = "Ride finished! 🏁",
 )
 
 @Serializable

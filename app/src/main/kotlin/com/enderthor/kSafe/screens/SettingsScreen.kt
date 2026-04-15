@@ -66,11 +66,15 @@ fun SettingsScreen(vm: MainViewModel) {
     var karooLiveEnabled      by remember(config.karooLiveEnabled)         { mutableStateOf(config.karooLiveEnabled) }
     var karooLiveKey          by remember(config.karooLiveKey)             { mutableStateOf(config.karooLiveKey) }
     var karooLiveStartMessage by remember(config.karooLiveStartMessage)    { mutableStateOf(config.karooLiveStartMessage) }
+    var karooLiveEndEnabled   by remember(config.karooLiveEndEnabled)      { mutableStateOf(config.karooLiveEndEnabled) }
+    var karooLiveEndMessage   by remember(config.karooLiveEndMessage)      { mutableStateOf(config.karooLiveEndMessage) }
 
     var simulateStatus      by remember { mutableStateOf("") }
     var simulateIsError     by remember { mutableStateOf(false) }
     var rideStartStatus     by remember { mutableStateOf("") }
     var rideStartIsError    by remember { mutableStateOf(false) }
+    var rideEndStatus       by remember { mutableStateOf("") }
+    var rideEndIsError      by remember { mutableStateOf(false) }
     var backupStatus        by remember { mutableStateOf("") }
     var backupIsError       by remember { mutableStateOf(false) }
     val coroutineScope = rememberCoroutineScope()
@@ -87,7 +91,8 @@ fun SettingsScreen(vm: MainViewModel) {
         crashOutsideRide, crashOutsideRideAny,
         speedDropEnabled, speedDropMinutes,
         checkinEnabled, checkinInterval,
-        karooLiveEnabled, karooLiveKey, karooLiveStartMessage
+        karooLiveEnabled, karooLiveKey, karooLiveStartMessage,
+        karooLiveEndEnabled, karooLiveEndMessage
     ) {
         delay(600)
         vm.saveConfig(
@@ -108,6 +113,8 @@ fun SettingsScreen(vm: MainViewModel) {
                 karooLiveEnabled        = karooLiveEnabled,
                 karooLiveKey            = karooLiveKey.trim(),
                 karooLiveStartMessage   = karooLiveStartMessage,
+                karooLiveEndEnabled     = karooLiveEndEnabled,
+                karooLiveEndMessage     = karooLiveEndMessage,
             )
         )
     }
@@ -174,6 +181,23 @@ fun SettingsScreen(vm: MainViewModel) {
                         supportingText = { Text(stringResource(R.string.karoo_live_message_hint)) }
                     )
                 }
+
+                HorizontalDivider(modifier = Modifier.padding(vertical = 4.dp))
+
+                // ── Ride end notification ─────────────────────────────────────
+                SettingRow(label = stringResource(R.string.karoo_live_end_label)) {
+                    Switch(checked = karooLiveEndEnabled, onCheckedChange = { karooLiveEndEnabled = it })
+                }
+                if (karooLiveEndEnabled) {
+                    OutlinedTextField(
+                        value = karooLiveEndMessage,
+                        onValueChange = { karooLiveEndMessage = it },
+                        label = { Text(stringResource(R.string.karoo_live_end_message_label)) },
+                        modifier = Modifier.fillMaxWidth(),
+                        minLines = 2,
+                        supportingText = { Text(stringResource(R.string.karoo_live_end_message_hint)) }
+                    )
+                }
             }
         }
         // ─────────────────────────────────────────────────────────────────────
@@ -227,8 +251,8 @@ fun SettingsScreen(vm: MainViewModel) {
                             crashSensitivity = s
                             minSpeedForCrash = when (s) {
                                 CrashSensitivity.LOW    -> "3"
-                                CrashSensitivity.MEDIUM -> "5"
-                                CrashSensitivity.HIGH   -> "10"
+                                CrashSensitivity.MEDIUM -> "10"
+                                CrashSensitivity.HIGH   -> "15"
                                 CrashSensitivity.CUSTOM -> minSpeedForCrash
                             }
                         },
@@ -454,6 +478,36 @@ fun SettingsScreen(vm: MainViewModel) {
                 text = rideStartStatus,
                 style = MaterialTheme.typography.bodySmall,
                 color = if (rideStartIsError) Color(0xFFB71C1C) else Color(0xFF2E7D32)
+            )
+        }
+
+        // Test ride end notification
+        Button(
+            onClick = {
+                rideEndStatus = "Sending…"
+                rideEndIsError = false
+                coroutineScope.launch {
+                    val ext = KSafeExtension.getInstance()
+                    if (ext == null) {
+                        rideEndStatus = "Extension not connected — wait a moment and try again."
+                        rideEndIsError = true
+                    } else {
+                        val msg = ext.sendTestRideEnd()
+                        rideEndIsError = !msg.startsWith("Ride end message sent")
+                        rideEndStatus = msg
+                    }
+                }
+            },
+            modifier = Modifier.fillMaxWidth()
+        ) {
+            Text(stringResource(R.string.test_ride_end_notification))
+        }
+
+        if (rideEndStatus.isNotEmpty()) {
+            Text(
+                text = rideEndStatus,
+                style = MaterialTheme.typography.bodySmall,
+                color = if (rideEndIsError) Color(0xFFB71C1C) else Color(0xFF2E7D32)
             )
         }
 

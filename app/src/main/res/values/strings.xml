@@ -53,17 +53,19 @@
     <string name="sensitivity_low">Low</string>
     <string name="sensitivity_medium">Medium</string>
     <string name="sensitivity_high">High</string>
-    <string name="sensitivity_custom">Custom</string>
-    <string name="sensitivity_low_desc">Best for MTB and gravel. Requires a strong impact to trigger — reduces false positives from jumps, drops and rough terrain.</string>
-    <string name="sensitivity_medium_desc">Balanced for road and mixed terrain. Detects most real crashes while tolerating occasional hard landings. Recommended default.</string>
-    <string name="sensitivity_high_desc">Best for road cycling on smooth surfaces. Triggers on lighter impacts — may produce false positives on rough roads or MTB trails.</string>
-    <string name="sensitivity_custom_desc">Set your own impact threshold. Higher value = harder impact required (fewer false positives). Lower value = more sensitive detection.</string>
-    <string name="sensitivity_custom_threshold">Threshold: %1$d m/s²</string>
+    <string name="sensitivity_custom">Custom threshold</string>
+    <!-- Sensitivity descriptions — note: "High sensitivity" means a LOWER impact threshold (detects lighter hits).
+         The naming follows the standard sensor convention: higher sensitivity = reacts to smaller signals. -->
+    <string name="sensitivity_low_desc">⛰ MTB · Gravel · Enduro. Requires a very hard impact (~5.5g) to trigger. MTB jump landings and drops rarely exceed this, so false positives from rough terrain are minimal. Use if you experience unwanted alerts on technical or rocky terrain.</string>
+    <string name="sensitivity_medium_desc">🚴 Road + MTB mixed (recommended default). Balanced threshold (~4.5g) — detects most real crashes while tolerating normal road bumps and moderate trail impacts. Good starting point for any discipline. Min. speed 10 km/h.</string>
+    <string name="sensitivity_high_desc">🏁 Smooth road only (velodrome, closed circuit, bike path). Lower threshold (~3.5g) — more sensitive, detects lighter crashes. Safe to use on perfectly smooth surfaces where normal riding never generates large impacts. Do NOT use on MTB or rough roads — frequent false positives. Min. speed 15 km/h.</string>
+    <string name="sensitivity_custom_desc">🔧 Custom threshold. Set the exact impact value with the slider below.\n• Higher value → harder impact required → fewer false positives\n• Lower value → detects lighter impacts → more sensitive\nUseful if none of the presets match your riding style (e.g. aggressive enduro, triathlon on smooth roads).</string>
+    <string name="sensitivity_custom_threshold">Impact threshold: %1$d m/s²</string>
     <string name="min_speed_label">Min. speed to detect crash (km/h, 0 = always)</string>
-    <string name="min_speed_hint_low">MTB/gravel: recommended 3 km/h — crashes can happen at very low speeds on technical terrain. Set to 0 for testing.</string>
-    <string name="min_speed_hint_medium">Road + MTB: recommended 5 km/h — filters stationary false positives. Set to 0 for testing.</string>
-    <string name="min_speed_hint_high">Road: recommended 10 km/h — road crashes rarely happen at low speeds. Set to 0 for testing.</string>
-    <string name="min_speed_hint_custom">Set based on your riding style. Use 0 for testing at any speed.</string>
+    <string name="min_speed_hint_low">MTB/gravel: 3 km/h recommended — crashes on technical climbs can happen at walking pace. Set to 0 to detect at any speed (more false positives when handling the bike).</string>
+    <string name="min_speed_hint_medium">Road + MTB: 10 km/h recommended — ignores impacts while nearly stopped (e.g. putting the bike on the car). Reduce to 3 km/h for MTB technical sections.</string>
+    <string name="min_speed_hint_high">Smooth road: 15 km/h recommended — road crashes at very low speed are extremely rare. Set to 0 only for testing.</string>
+    <string name="min_speed_hint_custom">Choose based on your riding style. 0 = detect at any speed (useful for testing). Higher values reduce false positives when handling the bike at rest.</string>
     <string name="crash_outside_ride_label">Monitor crash when not riding</string>
     <string name="crash_outside_ride_desc">Keeps crash detection active even when no ride is recording. Uses the minimum speed configured above. Useful if you want protection while doing a warm-up or a quick spin without starting a recording.</string>
     <string name="crash_outside_ride_any_speed_label">Monitor crash when not riding — any speed</string>
@@ -75,12 +77,16 @@
     <string name="checkin_timer_label">Check-in timer</string>
     <string name="checkin_interval_label">Check-in interval (minutes)</string>
     <string name="active_label">Extension active</string>
-    <string name="karoo_live_label">Karoo Live tracking on ride start</string>
-    <string name="karoo_live_hint">When enabled, sends a message to your contacts when the ride starts. Requires a Karoo Live key — if no key is set, nothing is sent.</string>
-    <string name="karoo_live_key_label">Karoo Live key</string>
-    <string name="karoo_live_supporting">Only the key part — e.g. from https://dashboard.hammerhead.io/live/3738Ag enter 3738Ag</string>
+    <string name="karoo_live_label">Notify contacts on ride start</string>
+    <string name="karoo_live_hint">Sends a message when the ride starts (first start only — resuming after a pause does NOT send it again). Requires a Karoo Live key to include the tracking link; leave the key empty to send a plain message without a link.</string>
+    <string name="karoo_live_key_label">Karoo Live key (optional)</string>
+    <string name="karoo_live_supporting">Only the key part of the URL — e.g. from https://dashboard.hammerhead.io/live/3738Ag enter 3738Ag. Leave empty to send without a tracking link.</string>
     <string name="karoo_live_message_label">Ride start message</string>
-    <string name="karoo_live_message_hint">Use {livetrack} for the tracking link. Also use {livetrack} in your emergency message to include it in alerts.</string>
+    <string name="karoo_live_message_hint">Use {livetrack} to insert the live tracking link (only included if a key is configured). You can also use {livetrack} in your emergency message.</string>
+    <string name="karoo_live_end_label">Notify contacts on ride end</string>
+    <string name="karoo_live_end_message_label">Ride end message</string>
+    <string name="karoo_live_end_message_hint">Message sent when the ride recording stops completely. Does not require a Karoo Live key.</string>
+    <string name="test_ride_end_notification">Test ride end notification</string>
 
     <!-- Alerts and notifications -->
     <string name="sos_countdown_alert">SOS in %1$ds — Tap field to cancel (%2$s)</string>
