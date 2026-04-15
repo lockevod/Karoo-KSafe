@@ -53,6 +53,7 @@ class EmergencyManager(
     private var checkinWarningJob: Job? = null
     var currentStatus = EmergencyStatus.IDLE
         private set
+    private var currentReason: EmergencyReason? = null
 
     // ─── Public API ───────────────────────────────────────────────────────────
 
@@ -69,6 +70,7 @@ class EmergencyManager(
         if (currentStatus != EmergencyStatus.COUNTDOWN) return
         countdownJob?.cancel()
         currentStatus = EmergencyStatus.IDLE
+        currentReason = null
         sosOverlay.removeOverlay()
 
         // Update UI state synchronously — DataTypes react immediately, no DataStore wait.
@@ -162,15 +164,35 @@ class EmergencyManager(
         checkinJob?.cancel()
         checkinWarningJob?.cancel()
         currentStatus = EmergencyStatus.IDLE
+        currentReason = null
         sosOverlay.removeOverlay()
         _uiState.value = EmergencyState()
         scope.launch { configManager.saveEmergencyState(EmergencyState()) }
+    }
+
+    /**
+     * Cancels an active check-in emergency countdown when the ride is paused.
+     * The user intentionally paused the ride (coffee stop, etc.) — a check-in
+     * countdown running in the background should not fire during a pause.
+     * Crash-related countdowns are NOT cancelled here (crash detection stays active while paused).
+     */
+    fun cancelCheckinEmergencyOnPause() {
+        if (currentStatus == EmergencyStatus.COUNTDOWN && currentReason == EmergencyReason.CHECKIN_EXPIRED) {
+            countdownJob?.cancel()
+            currentStatus = EmergencyStatus.IDLE
+            currentReason = null
+            sosOverlay.removeOverlay()
+            _uiState.value = EmergencyState()
+            scope.launch { configManager.saveEmergencyState(EmergencyState()) }
+            Timber.d("Check-in emergency cancelled on ride pause")
+        }
     }
 
     // ─── Countdown ────────────────────────────────────────────────────────────
 
     private fun startCountdown(reason: EmergencyReason, config: KSafeConfig) {
         currentStatus = EmergencyStatus.COUNTDOWN
+        currentReason = reason
         val startTime = System.currentTimeMillis()
 
         // Update UI state synchronously so DataTypes react immediately (no DataStore latency).
@@ -262,6 +284,7 @@ class EmergencyManager(
 
         delay(5_000L)
         currentStatus = EmergencyStatus.IDLE
+        currentReason = null
         _uiState.value = EmergencyState()
         configManager.saveEmergencyState(EmergencyState())
     }

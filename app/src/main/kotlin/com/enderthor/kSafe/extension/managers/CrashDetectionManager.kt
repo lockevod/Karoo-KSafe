@@ -73,10 +73,10 @@ class CrashDetectionManager(
 
     // Gyroscope thresholds (rad/s)
     // Literature: crash confirmation requires rotation near zero post-impact (~45°/s = 0.785 rad/s)
-    private val GYRO_STILL_MAX   = 1.0f   // rad/s — device is not rotating (≈ 57°/s)
-    private val GYRO_MOVING_MAX  = 3.0f   // rad/s — device is clearly still moving/riding
+    private val GYRO_STILL_MAX   = 1.0f   // rad/s — device genuinely not rotating (≈ 57°/s)
+    private val GYRO_MOVING_MAX  = 3.0f   // rad/s — device is clearly still moving/riding (used in IMPACT only)
 
-    private val SILENCE_DURATION_MS =  4_500L  // must be still for 4.5s (literature uses 5s)
+    private val SILENCE_DURATION_MS =  4_500L  // must be continuously still for 4.5s (literature uses 5s)
     private val LOG_INTERVAL_MS     =  2_000L  // log magnitude every 2s for debugging
 
     // ─── State ────────────────────────────────────────────────────────────────
@@ -208,35 +208,40 @@ class CrashDetectionManager(
 
             CrashState.SILENCE_CHECK -> {
                 val deviation = abs(magnitude - GRAVITY)
-                val silenceDuration = now - silenceStartTime
                 val timeSinceImpact = now - impactTime
                 val windowMs = impactWindowMs[config.crashSensitivity] ?: 20_000L
 
-                // Device moved significantly (riding again) or rotating (still moving)
-                val accelMoving = deviation > SILENCE_DEVIATION_MAX * 1.5f
-                val gyroMoving  = lastGyroMag > GYRO_MOVING_MAX
+                // Both accel AND gyro must pass strict thresholds simultaneously.
+                // Any single reading outside these limits resets the continuous-silence timer.
+                // This is the primary fix for false positives on smooth roads:
+                //   — Old behaviour: silenceStartTime only reset when deviation > 6 m/s² OR gyro > 3 rad/s
+                //     (too permissive — normal road cycling rarely exceeds those values)
+                //   — New behaviour: timer resets whenever gyro ≥ 1 rad/s OR deviation > 4 m/s²
+                //     (strict — a cyclist continuously triggers this, a crashed device lying
+                //      still does not, because road vibration keeps the gyro above 1 rad/s)
+                val isStill = deviation <= SILENCE_DEVIATION_MAX && lastGyroMag < GYRO_STILL_MAX
 
                 when {
-                    accelMoving || gyroMoving -> {
-                        if (timeSinceImpact < windowMs) {
-                            // Slight movement (bike sliding/rolling after crash) — go back to
-                            // IMPACT state and wait for the device to settle again rather than
-                            // resetting completely to MONITORING (which would discard the crash).
-                            state = CrashState.IMPACT
-                            Timber.d("Brief movement during silence (dev=%.2f gyro=%.2f) → back to IMPACT", deviation, lastGyroMag)
-                        } else {
-                            // Impact window expired with too much movement → genuine false alarm
-                            Timber.d("Sustained movement during silence → false alarm, resetting")
-                            resetState()
-                        }
-                    }
-                    // Both accel AND gyro confirm stillness for required duration → CRASH CONFIRMED
-                    silenceDuration >= SILENCE_DURATION_MS && lastGyroMag < GYRO_STILL_MAX -> {
+                    // Confirmed: CONTINUOUS stillness for the required duration → crash
+                    isStill && (now - silenceStartTime) >= SILENCE_DURATION_MS -> {
                         val totalMs = now - impactTime
                         Timber.d(">>> CRASH CONFIRMED after %dms (accel dev=%.2f gyro=%.2f)", totalMs, deviation, lastGyroMag)
                         resetState()
                         scope.launch { onCrashDetected() }
                     }
+                    // Not still → reset continuous-silence timer.
+                    // If we have been waiting for too long (2× impact window) without ever
+                    // achieving the required stillness, give up and treat as a false alarm.
+                    !isStill -> {
+                        if (timeSinceImpact > windowMs * 2) {
+                            Timber.d("Silence never achieved after %dms → false alarm, resetting", timeSinceImpact)
+                            resetState()
+                        } else {
+                            // Reset the silence clock — stillness must be uninterrupted.
+                            silenceStartTime = now
+                        }
+                    }
+                    // else: still but silence not yet long enough → keep waiting (no action)
                 }
             }
         }
