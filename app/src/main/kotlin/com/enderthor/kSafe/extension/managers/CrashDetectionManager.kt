@@ -168,6 +168,16 @@ class CrashDetectionManager(
         }
     }
 
+    /**
+     * Resets the speed-drop accumulator when the ride is paused.
+     * While stopped at a café the speed is 0, which would otherwise trigger speed-drop
+     * detection after the configured window — even though the rider intentionally paused.
+     */
+    fun resetSpeedDropOnPause() {
+        speedDropStartTime = 0L
+        Timber.d("Speed-drop timer reset on ride pause")
+    }
+
     // ─── SensorEventListener ─────────────────────────────────────────────────
 
     override fun onSensorChanged(event: SensorEvent) {

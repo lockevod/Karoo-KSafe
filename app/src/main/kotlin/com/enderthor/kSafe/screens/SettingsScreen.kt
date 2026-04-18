@@ -69,12 +69,17 @@ fun SettingsScreen(vm: MainViewModel) {
     var karooLiveEndEnabled   by remember(config.karooLiveEndEnabled)      { mutableStateOf(config.karooLiveEndEnabled) }
     var karooLiveEndMessage   by remember(config.karooLiveEndMessage)      { mutableStateOf(config.karooLiveEndMessage) }
 
+    var customMessageEnabled  by remember(config.customMessageEnabled)     { mutableStateOf(config.customMessageEnabled) }
+    var customMessage         by remember(config.customMessage)            { mutableStateOf(config.customMessage) }
+
     var simulateStatus      by remember { mutableStateOf("") }
     var simulateIsError     by remember { mutableStateOf(false) }
     var rideStartStatus     by remember { mutableStateOf("") }
     var rideStartIsError    by remember { mutableStateOf(false) }
     var rideEndStatus       by remember { mutableStateOf("") }
     var rideEndIsError      by remember { mutableStateOf(false) }
+    var customMsgStatus     by remember { mutableStateOf("") }
+    var customMsgIsError    by remember { mutableStateOf(false) }
     var backupStatus        by remember { mutableStateOf("") }
     var backupIsError       by remember { mutableStateOf(false) }
     val coroutineScope = rememberCoroutineScope()
@@ -92,7 +97,8 @@ fun SettingsScreen(vm: MainViewModel) {
         speedDropEnabled, speedDropMinutes,
         checkinEnabled, checkinInterval,
         karooLiveEnabled, karooLiveKey, karooLiveStartMessage,
-        karooLiveEndEnabled, karooLiveEndMessage
+        karooLiveEndEnabled, karooLiveEndMessage,
+        customMessageEnabled, customMessage
     ) {
         delay(600)
         vm.saveConfig(
@@ -115,6 +121,8 @@ fun SettingsScreen(vm: MainViewModel) {
                 karooLiveStartMessage   = karooLiveStartMessage,
                 karooLiveEndEnabled     = karooLiveEndEnabled,
                 karooLiveEndMessage     = karooLiveEndMessage,
+                customMessageEnabled    = customMessageEnabled,
+                customMessage           = customMessage,
             )
         )
     }
@@ -197,6 +205,70 @@ fun SettingsScreen(vm: MainViewModel) {
                         minLines = 2,
                         supportingText = { Text(stringResource(R.string.karoo_live_end_message_hint)) }
                     )
+                }
+            }
+        }
+
+        // ── Custom message card ───────────────────────────────────────────────
+        Card(
+            modifier = Modifier.fillMaxWidth(),
+            colors = CardDefaults.cardColors(
+                containerColor = MaterialTheme.colorScheme.secondaryContainer.copy(alpha = 0.35f)
+            )
+        ) {
+            Column(
+                modifier = Modifier.padding(12.dp),
+                verticalArrangement = Arrangement.spacedBy(10.dp)
+            ) {
+                Text(
+                    text = stringResource(R.string.custom_message_section),
+                    style = MaterialTheme.typography.titleSmall,
+                    fontWeight = FontWeight.Bold,
+                    color = MaterialTheme.colorScheme.secondary
+                )
+                Text(
+                    text = stringResource(R.string.custom_message_send_hint),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                SettingRow(label = stringResource(R.string.custom_message_label)) {
+                    Switch(checked = customMessageEnabled, onCheckedChange = { customMessageEnabled = it })
+                }
+                if (customMessageEnabled) {
+                    OutlinedTextField(
+                        value = customMessage,
+                        onValueChange = { customMessage = it },
+                        label = { Text(stringResource(R.string.custom_message_hint)) },
+                        modifier = Modifier.fillMaxWidth(),
+                        minLines = 2
+                    )
+                    Button(
+                        onClick = {
+                            customMsgStatus = "Sending…"
+                            customMsgIsError = false
+                            coroutineScope.launch {
+                                val ext = KSafeExtension.getInstance()
+                                if (ext == null) {
+                                    customMsgStatus = "Extension not connected — wait a moment and try again."
+                                    customMsgIsError = true
+                                } else {
+                                    val msg = ext.sendCustomMessage()
+                                    customMsgIsError = !msg.contains("✓")
+                                    customMsgStatus = msg
+                                }
+                            }
+                        },
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Text(stringResource(R.string.custom_message_send_label))
+                    }
+                    if (customMsgStatus.isNotEmpty()) {
+                        Text(
+                            text = customMsgStatus,
+                            style = MaterialTheme.typography.bodySmall,
+                            color = if (customMsgIsError) Color(0xFFB71C1C) else Color(0xFF2E7D32)
+                        )
+                    }
                 }
             }
         }

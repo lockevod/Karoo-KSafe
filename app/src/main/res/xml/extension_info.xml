@@ -7,6 +7,9 @@
     <BonusAction
         actionId="cancel-emergency"
         displayName="@string/action_cancel_emergency" />
+    <BonusAction
+        actionId="send-custom-message"
+        displayName="@string/action_send_custom_message" />
     <DataType
         description="@string/sos_datatype_desc"
         displayName="@string/sos_datatype_name"
