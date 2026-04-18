@@ -55,9 +55,25 @@ fun ProviderScreen(vm: MainViewModel) {
     var testStatus  by remember { mutableStateOf("") }
     var testIsError by remember { mutableStateOf(false) }
 
-    // Refresh fields when the active sender changes in DataStore (e.g. after an import
-    // or config push from another screen). The `fieldsProvider` guard prevents overwriting
-    // fields mid-switch, when activeProvider and fieldsProvider temporarily diverge.
+    // Sync fieldsProvider + fields when DataStore loads the real active provider on first
+    // composition (e.g. stored provider is PUSHOVER but default is CALLMEBOT) or after
+    // an import from another screen.  onProviderClick keeps fieldsProvider in sync
+    // immediately, so when activeProvider catches up from DataStore this guard is a no-op.
+    LaunchedEffect(activeProvider) {
+        if (activeProvider != fieldsProvider) {
+            val s = senderConfigs.find { it.provider == activeProvider }
+            fieldsProvider = activeProvider
+            apiKey      = s?.apiKey      ?: ""
+            userKey     = s?.userKey     ?: ""
+            userKey2    = s?.userKey2    ?: ""
+            userKey3    = s?.userKey3    ?: ""
+            phoneNumber = s?.phoneNumber ?: ""
+        }
+    }
+
+    // Refresh fields when the active sender's data changes in DataStore (e.g. after an
+    // import or a save from another screen). The `fieldsProvider` guard prevents
+    // overwriting fields mid-switch when activeProvider and fieldsProvider diverge.
     LaunchedEffect(activeSender) {
         activeSender?.let { sender ->
             if (sender.provider == fieldsProvider) {

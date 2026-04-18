@@ -74,10 +74,33 @@ class CrashDetectionManager(
     // Gyroscope thresholds (rad/s)
     // Literature: crash confirmation requires rotation near zero post-impact (~45°/s = 0.785 rad/s)
     private val GYRO_STILL_MAX   = 1.0f   // rad/s — device genuinely not rotating (≈ 57°/s)
-    private val GYRO_MOVING_MAX  = 3.0f   // rad/s — device is clearly still moving/riding (used in IMPACT only)
+    private val GYRO_MOVING_MAX  = 2.0f   // rad/s — device is clearly still moving/riding (used in IMPACT→SILENCE_CHECK gate)
+
+    /**
+     * Maximum GPS speed (km/h) to consider the rider as truly "stopped" during crash confirmation.
+     * A crash victim at 8 km/h is physically impossible — if GPS shows movement, no confirmation.
+     * This is the most reliable fix for false positives at slow climbing speeds.
+     */
+    private val SPEED_CRASH_CONFIRM_KMH = 3.0
 
     private val SILENCE_DURATION_MS =  4_500L  // must be continuously still for 4.5s (literature uses 5s)
     private val LOG_INTERVAL_MS     =  2_000L  // log magnitude every 2s for debugging
+
+    /**
+     * Post-crash cooldown: ignore new IMPACT triggers for 30s after a confirmed crash.
+     * Prevents duplicate alerts when the emergency countdown is already running.
+     */
+    private val CRASH_COOLDOWN_MS = 30_000L
+
+    /**
+     * Short sliding-window average for the MONITORING phase.
+     * A real impact is sustained energy across several sensor frames; a terrain-edge spike
+     * (dirt→asphalt, cobblestone, speed bump) is typically 1-2 raw samples.
+     * Window of 3 samples at SENSOR_DELAY_GAME (~50 Hz) = ~60ms — enough to smooth noise
+     * without delaying real crash detection.
+     */
+    private val IMPACT_FILTER_WINDOW = 3
+    private val magnitudeBuffer = ArrayDeque<Float>(IMPACT_FILTER_WINDOW)
 
     // ─── State ────────────────────────────────────────────────────────────────
 
@@ -86,6 +109,7 @@ class CrashDetectionManager(
     private var state = CrashState.MONITORING
     private var impactTime  = 0L
     private var silenceStartTime = 0L
+    private var lastCrashTime = 0L
     private var currentSpeedKmh = 0.0
     private var config = KSafeConfig()
     private var lastLogTime = 0L
@@ -163,6 +187,14 @@ class CrashDetectionManager(
     private fun processAccelerometer(event: SensorEvent) {
         val x = event.values[0]; val y = event.values[1]; val z = event.values[2]
         val magnitude = sqrt(x*x + y*y + z*z)   // Float overload — no Double conversion
+
+        // Sliding-window average (3 samples ≈ 60ms at SENSOR_DELAY_GAME).
+        // Filters single-sample terrain-edge spikes (dirt→asphalt, cobblestones)
+        // while preserving sustained crash impacts.
+        magnitudeBuffer.addLast(magnitude)
+        if (magnitudeBuffer.size > IMPACT_FILTER_WINDOW) magnitudeBuffer.removeFirst()
+        val smoothedMagnitude = magnitudeBuffer.average().toFloat()
+
         val threshold = if (config.crashSensitivity == CrashSensitivity.CUSTOM)
             config.customCrashThreshold.toFloat().coerceIn(20f, 70f)
         else
@@ -172,17 +204,19 @@ class CrashDetectionManager(
         // Periodic debug logging — only in debug builds (hot path: runs on every sensor event)
         if (BuildConfig.DEBUG && now - lastLogTime > LOG_INTERVAL_MS) {
             lastLogTime = now
-            Timber.v("Accel magnitude=%.2fm/s² state=%s threshold=%.1f gyro=%.2f", magnitude, state, threshold, lastGyroMag)
+            Timber.v("Accel raw=%.2f smooth=%.2fm/s² state=%s threshold=%.1f gyro=%.2f", magnitude, smoothedMagnitude, state, threshold, lastGyroMag)
         }
 
         when (state) {
             CrashState.MONITORING -> {
                 val minSpeed = config.minSpeedForCrashKmh
                 val speedOk = minSpeed == 0 || currentSpeedKmh >= minSpeed
-                if (magnitude > threshold && speedOk) {
+                val cooldownOk = (now - lastCrashTime) > CRASH_COOLDOWN_MS
+                // Use smoothed magnitude — rejects single-sample noise spikes
+                if (smoothedMagnitude > threshold && speedOk && cooldownOk) {
                     state = CrashState.IMPACT
                     impactTime = now
-                    Timber.d(">>> IMPACT detected! magnitude=%.1fm/s² (threshold=%.1f) speed=%.1fkm/h minSpeed=%d", magnitude, threshold, currentSpeedKmh, minSpeed)
+                    Timber.d(">>> IMPACT detected! raw=%.1f smooth=%.1fm/s² (threshold=%.1f) speed=%.1fkm/h", magnitude, smoothedMagnitude, threshold, currentSpeedKmh)
                 }
             }
 
@@ -190,13 +224,18 @@ class CrashDetectionManager(
                 val timeSince = now - impactTime
                 val deviation = abs(magnitude - GRAVITY)
                 val windowMs  = impactWindowMs[config.crashSensitivity] ?: 20_000L
+                // GPS speed gate: only enter silence check if the rider has stopped (< 3 km/h).
+                // At slow climbing speeds (~8 km/h) the device can feel "quiet" after a bump
+                // but the rider is still moving — GPS is the definitive check here.
+                val minSpeed = config.minSpeedForCrashKmh
+                val speedHasDropped = minSpeed == 0 || currentSpeedKmh < SPEED_CRASH_CONFIRM_KMH
 
                 when {
-                    // Device settling (accel near gravity AND gyro calming down) → begin silence check
-                    deviation < SILENCE_DEVIATION_MAX && lastGyroMag < GYRO_MOVING_MAX && timeSince > 500 -> {
+                    // Device settling (accel near gravity AND gyro calming down AND GPS speed low) → begin silence check
+                    deviation < SILENCE_DEVIATION_MAX && lastGyroMag < GYRO_MOVING_MAX && timeSince > 500 && speedHasDropped -> {
                         state = CrashState.SILENCE_CHECK
                         silenceStartTime = now
-                        Timber.d(">>> SILENCE_CHECK started (deviation=%.2f gyro=%.2f)", deviation, lastGyroMag)
+                        Timber.d(">>> SILENCE_CHECK started (deviation=%.2f gyro=%.2f speed=%.1fkm/h)", deviation, lastGyroMag, currentSpeedKmh)
                     }
                     // Timeout: never settled after impact → false alarm (MTB jump that continued riding)
                     timeSince > windowMs -> {
@@ -211,21 +250,24 @@ class CrashDetectionManager(
                 val timeSinceImpact = now - impactTime
                 val windowMs = impactWindowMs[config.crashSensitivity] ?: 20_000L
 
-                // Both accel AND gyro must pass strict thresholds simultaneously.
-                // Any single reading outside these limits resets the continuous-silence timer.
-                // This is the primary fix for false positives on smooth roads:
-                //   — Old behaviour: silenceStartTime only reset when deviation > 6 m/s² OR gyro > 3 rad/s
-                //     (too permissive — normal road cycling rarely exceeds those values)
-                //   — New behaviour: timer resets whenever gyro ≥ 1 rad/s OR deviation > 4 m/s²
-                //     (strict — a cyclist continuously triggers this, a crashed device lying
-                //      still does not, because road vibration keeps the gyro above 1 rad/s)
-                val isStill = deviation <= SILENCE_DEVIATION_MAX && lastGyroMag < GYRO_STILL_MAX
+                // Both accel AND gyro must pass strict thresholds simultaneously,
+                // AND GPS speed must be < 3 km/h (truly stopped).
+                //
+                // Key fix for false positives at slow climbing speeds:
+                //   — At 8 km/h on a climb, gyro can be < 1 rad/s and accel near gravity
+                //     (the handlebar is relatively stable at low cadence/speed).
+                //   — A real crash victim is NOT moving at 8 km/h during the silence check.
+                //   — GPS < 3 km/h is the definitive "rider has stopped" gate.
+                val minSpeed = config.minSpeedForCrashKmh
+                val speedStillOk = minSpeed == 0 || currentSpeedKmh < SPEED_CRASH_CONFIRM_KMH
+                val isStill = deviation <= SILENCE_DEVIATION_MAX && lastGyroMag < GYRO_STILL_MAX && speedStillOk
 
                 when {
                     // Confirmed: CONTINUOUS stillness for the required duration → crash
                     isStill && (now - silenceStartTime) >= SILENCE_DURATION_MS -> {
                         val totalMs = now - impactTime
                         Timber.d(">>> CRASH CONFIRMED after %dms (accel dev=%.2f gyro=%.2f)", totalMs, deviation, lastGyroMag)
+                        lastCrashTime = now
                         resetState()
                         scope.launch { onCrashDetected() }
                     }
@@ -251,6 +293,7 @@ class CrashDetectionManager(
         state = CrashState.MONITORING
         impactTime = 0L
         silenceStartTime = 0L
+        magnitudeBuffer.clear()
     }
 
     // ─── Speed drop monitor ───────────────────────────────────────────────────
