@@ -24,6 +24,7 @@ Compatible with Karoo 3 running Karoo OS version 1.527 and later.
 - **Multiple messaging providers**: WhatsApp via CallMeBot (free), push notification via Pushover, free unlimited push via ntfy, or Telegram bot messages (free, unlimited).
 - **Ride start notification**: Optionally sends a message to your contacts when you start a ride, including a Karoo Live real-time tracking link. Sent **only once** when the ride truly begins — resuming after a pause does **not** trigger it again.
 - **Ride end notification**: Optionally sends a configurable message to your contacts when you finish a ride (recording stops completely).
+- **Custom message button**: Send any custom text message instantly via a hardware button or the app — no countdown, no emergency. Useful for "I'm OK", "Starting now", or any quick status update to your contacts.
 - **Two data fields**: SOS field and Safety Timer field — add either or both to your ride profile.
 
 ## Requirements
@@ -79,17 +80,24 @@ Both the **SOS field** and the **Safety Timer field** show a CANCEL button with 
 
 ### 3 — Hardware button via BonusAction (optional)
 
-KSafe registers a **"KSafe: Cancel Emergency"** action that you can assign to a compatible hardware controller button. This works from **any screen**, with no need to look at the display.
+KSafe registers two actions you can assign to hardware controller buttons:
+
+| Action | What it does |
+|--------|-------------|
+| **KSafe: Cancel Emergency** | Cancels the active emergency countdown from any screen |
+| **KSafe: Send Custom Message** | Sends your configured custom message instantly — no countdown, no emergency screen |
+
+Both work from **any screen**, with no need to look at the display.
 
 > [!NOTE]
 > `BonusAction` availability depends on your controller hardware/firmware. It is commonly used with compatible remotes (e.g. SRAM AXS controls). If your controller does not expose extension bonus actions, this option will not appear in the button assignment screen.
 
-To configure it:
+To configure either action:
 1. Go to Karoo **Settings → Controller** (or your ANT+ remote settings).
 2. Find the button you want to assign the action to.
-3. Select **KSafe: Cancel Emergency** from the action list.
+3. Select **KSafe: Cancel Emergency** or **KSafe: Send Custom Message** from the action list.
 
-Once configured, pressing that button during an active countdown will cancel it immediately.
+Once configured, pressing the button activates the action immediately from any screen.
 
 ## Data Fields
 
@@ -136,6 +144,7 @@ Open the KSafe app on your Karoo to configure it.
 - **Monitor crash when not riding — any speed**: Same as above but ignores the minimum speed threshold (detects crashes even while stationary). ⚠ More false positives — use with caution.
 - **Speed drop detection**: Enable/disable detection of prolonged speed drops. Configure the time window (minutes) with no movement before triggering.
 - **Check-in timer**: Enable/disable periodic check-ins. Configure the interval in minutes (default: 120 min). A warning beep fires 10 minutes before expiry. **The timer pauses automatically when the ride is paused** (coffee stop, traffic light, etc.) and resets to the full interval when you resume. Any active check-in countdown is also cancelled on pause.
+- **Custom message**: Enable a free-text message that can be sent at any time with a single button press (hardware button or the **Send Custom Message** button in the app). No countdown, no emergency — just a quick status message to your contacts. Examples: *"I'm OK! 👍"*, *"Starting now 🚴"*, *"Heading home"*.
 
 ### Provider Tab
 
@@ -400,6 +409,27 @@ KSafe provides test buttons, all of which work **without an active ride**:
 | **Test ride end notification** | Settings tab | Sends the ride-end message. Only works if the feature is enabled. |
 
 > **Simulate Crash** sends a real alert to your configured contact. Let them know you are testing, or use **Test Send** instead if you only want to verify connectivity.
+
+## Custom Message
+
+The custom message feature lets you send any free-text message to your contacts with a single button press — no countdown, no emergency. It is the equivalent of a quick status update button.
+
+**Use cases:**
+- *"I'm OK! 👍"* — reassure your contacts after a long silent stretch
+- *"Starting now 🚴"* — manual ride start notification without Karoo Live
+- *"Heading home"* — let someone know you are on your way back
+- Any short text you want to send on demand
+
+### Configuration
+
+1. Open KSafe → **Settings tab**.
+2. Under **Custom Message**, toggle **Enable custom message button**.
+3. Enter your message text.
+4. Tap **Send Custom Message** to send it immediately from the app, or assign the **KSafe: Send Custom Message** hardware button in Karoo controller settings for one-press access while riding.
+
+### Hardware button
+
+Assign **KSafe: Send Custom Message** to a controller button in **Karoo → Settings → Controller**. Once configured, a single press sends the message instantly — no need to unlock the screen or navigate to the app.
 
 ## Backup and Restore
 

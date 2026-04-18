@@ -13,8 +13,8 @@ android {
         applicationId = "com.enderthor.kSafe"
         minSdk = 23
         targetSdk = 34
-        versionCode = 202604181
-        versionName = "0.6.0"
+        versionCode = 202604182
+        versionName = "0.7.0"
     }
 
     buildTypes {
