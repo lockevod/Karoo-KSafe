@@ -60,6 +60,9 @@ data class KSafeConfig(
     // Ride end notification
     val karooLiveEndEnabled: Boolean = false,
     val karooLiveEndMessage: String = "Ride finished! 🏁",
+    // Custom button message (sent on demand via BonusAction or button in app)
+    val customMessageEnabled: Boolean = false,
+    val customMessage: String = "I'm OK! 👍",
 )
 
 @Serializable

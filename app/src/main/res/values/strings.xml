@@ -5,6 +5,7 @@
 
     <!-- BonusAction labels -->
     <string name="action_cancel_emergency">KSafe: Cancel Emergency</string>
+    <string name="action_send_custom_message">KSafe: Send Custom Message</string>
 
     <!-- DataType labels -->
     <string name="sos_datatype_name">KSafe SOS</string>
@@ -111,4 +112,11 @@
     <string name="timer_off">Check-in\nOFF</string>
     <string name="timer_checkin">CHECK\nIN!</string>
     <string name="timer_ok">Tap to\ncheck in</string>
+
+    <!-- Custom message -->
+    <string name="custom_message_section">Custom Message</string>
+    <string name="custom_message_label">Enable custom message button</string>
+    <string name="custom_message_hint">Message text to send when the button is pressed</string>
+    <string name="custom_message_send_label">Send Custom Message</string>
+    <string name="custom_message_send_hint">Sends the configured message immediately (no countdown). Also assignable to a hardware button in Karoo controller settings.</string>
 </resources>

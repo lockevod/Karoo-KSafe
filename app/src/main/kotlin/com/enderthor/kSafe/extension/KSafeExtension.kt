@@ -138,10 +138,13 @@ class KSafeExtension : KarooExtension("ksafe", BuildConfig.VERSION_NAME), Corout
                 }
             }
             is RideState.Paused -> {
-                // Keep crash detection active while paused (rider may have crashed)
+                // Keep crash detection active while paused (rider may have crashed).
+                // BUT reset the speed-drop accumulator — while stopped at a café the speed
+                // is 0, which would otherwise trigger speed-drop detection after N minutes
+                // even though the rider intentionally paused.
+                crashManager.resetSpeedDropOnPause()
+                // Stop the check-in timer and cancel any active check-in countdown.
                 emergencyManager.stopCheckinTimer()
-                // If a check-in countdown was running when the user paused, cancel it —
-                // they intentionally stopped (coffee break) and should not get an alert.
                 emergencyManager.cancelCheckinEmergencyOnPause()
                 rideWasActive = true
             }
@@ -195,6 +198,10 @@ class KSafeExtension : KarooExtension("ksafe", BuildConfig.VERSION_NAME), Corout
                 Timber.d("BonusAction: cancel-emergency triggered")
                 launch { emergencyManager.cancelEmergency(activeConfig) }
             }
+            "send-custom-message" -> {
+                Timber.d("BonusAction: send-custom-message triggered")
+                launch { sendCustomMessage() }
+            }
         }
     }
 
@@ -224,7 +231,7 @@ class KSafeExtension : KarooExtension("ksafe", BuildConfig.VERSION_NAME), Corout
         }
     }
 
-    /** Sends a ride-end notification if the feature is enabled. */
+    /** Sends the ride-end notification if the feature is enabled. */
     private fun sendRideEndNotification() {
         val config = activeConfig
         if (!config.karooLiveEndEnabled) return
@@ -239,6 +246,21 @@ class KSafeExtension : KarooExtension("ksafe", BuildConfig.VERSION_NAME), Corout
                 Timber.e(e, "KSafe: error sending ride end notification")
             }
         }
+    }
+
+    /**
+     * Sends the custom message configured by the user immediately (no countdown).
+     * Triggered by BonusAction hardware button or the "Send" button in Settings.
+     * Returns a human-readable result string for display in the UI.
+     */
+    suspend fun sendCustomMessage(): String {
+        val config = activeConfig
+        if (!config.customMessageEnabled) return "Custom message is disabled — enable it in Settings first."
+        if (config.customMessage.isBlank()) return "No custom message text configured."
+        Timber.d("Sending custom message via ${config.activeProvider}")
+        val ok = sender.sendInfo(config.customMessage, config.activeProvider)
+        return if (ok) "Custom message sent! ✓"
+               else "Send failed — check your provider configuration."
     }
 
     /**
