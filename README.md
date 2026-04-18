@@ -300,11 +300,13 @@ Crash detection uses the Karoo's built-in accelerometer and gyroscope directly (
 
 ### Algorithm
 
-1. **Impact**: A sudden acceleration spike above the sensitivity threshold is detected (while above the minimum speed).
-2. **Silence check**: After the impact, both the accelerometer and gyroscope must settle completely. The device must stop moving AND stop rotating. **The stillness must be continuous** — any movement (gyro ≥ 1 rad/s or acceleration deviation > 4 m/s² from gravity) resets the 4.5 s countdown from scratch. This is the key differentiator between a real crash and any other event (pothole, bump, jump) followed by continued riding.
-3. **Confirmed**: If the device remains genuinely still for **4.5 consecutive seconds**, the emergency countdown starts.
+1. **Impact**: A sudden acceleration spike above the sensitivity threshold is detected (while above the minimum speed). To reject single-sample noise — such as the jolt when transitioning from dirt to asphalt or hitting a small stone — the algorithm uses a short sliding-window average (~60 ms). A genuine impact is sustained energy across multiple sensor frames; a terrain-edge spike is typically just 1–2 raw samples and gets smoothed out.
+2. **Speed check**: The impact phase only advances to silence check if the GPS speed has already dropped below ~3 km/h. If the rider is still moving after the impact, the algorithm keeps waiting or resets — a real crash victim cannot continue riding.
+3. **Silence check**: After the impact, both the accelerometer and gyroscope must settle completely. The device must stop moving AND stop rotating, AND the GPS speed must remain below 3 km/h. **The stillness must be continuous** — any movement (gyro ≥ 1 rad/s, acceleration deviation > 4 m/s² from gravity, or GPS speed ≥ 3 km/h) resets the 4.5 s countdown from scratch. This is the key differentiator between a real crash and any other event (pothole, bump, jump, terrain change) followed by continued riding.
+4. **Confirmed**: If the device remains genuinely still for **4.5 consecutive seconds**, the emergency countdown starts.
+5. **Cooldown**: After a confirmed crash, impact detection is paused for 30 s to avoid duplicate triggers while the emergency countdown is already running.
 
-**Why this works:** after hitting a pothole or bump, a cyclist continues pedalling — the gyroscope never stays below 1 rad/s long enough to confirm a crash. After a real crash, the device lies on the ground with near-zero gyroscope for several seconds.
+**Why this works:** after hitting a pothole, bump, or terrain-change edge, a cyclist continues pedalling — the GPS keeps showing movement and the gyroscope never stays below 1 rad/s long enough to confirm a crash. On a slow climb the gyroscope can be very calm, but the GPS speed gate ensures this cannot be mistaken for a crash. After a real crash, the device lies on the ground with near-zero gyroscope and zero GPS speed for several seconds.
 
 ### Choosing the right sensitivity level
 
@@ -363,8 +365,10 @@ Useful when no preset fits exactly — for example an aggressive enduro rider wh
 | Hard crash on a descent, bike slides for a few seconds | ✅ Detected | Impact → brief movement → bike settles → 4.5 s continuous stillness confirmed |
 | Hard crash, bike stops immediately | ✅ Detected | Impact → quick stillness → confirmed |
 | Crash on a technical MTB climb at 3 km/h (Low) | ✅ Detected | Low threshold + 3 km/h min. speed — designed for this |
-| Large pothole at 40 km/h, continue riding | ✅ No false alarm | Impact threshold possibly exceeded, but silence timer resets every time the gyro stays above 1 rad/s while pedalling |
+| Large pothole at 40 km/h, continue riding | ✅ No false alarm | Impact threshold possibly exceeded, but GPS speed stays high + gyro keeps resetting the silence timer |
 | Expansion joint or speed bump, continue riding | ✅ No false alarm | Same as above — continuous movement prevents silence confirmation |
+| Transition dirt → asphalt (jolt), continue riding | ✅ No false alarm | Single-sample spike is smoothed by the 60 ms sliding window; never reaches sustained impact level |
+| Slow climb, handlebar bump while still pedalling | ✅ No false alarm | GPS speed gate: still moving → cannot enter or confirm silence check |
 | MTB jump landing, continue riding immediately | ✅ No false alarm | Impact → movement never stops → window expires → reset |
 | MTB jump landing, stop perfectly still for 5+ seconds | ⚠️ Possible false alarm | Impact + genuine stillness → algorithm may confirm; **the 30 s countdown is your safety net** |
 | Cobblestones or very rough road | ✅ No false alarm | Sustained vibration resets silence timer continuously |
@@ -500,6 +504,7 @@ Typing long tokens (Pushover App Token, Telegram Bot Token, etc.) on the Karoo t
 
 - Alerts will not be sent if the Karoo has no internet connection at the time of the emergency.
 - Crash detection can produce false positives if you stop completely for several seconds right after hitting a large pothole or expansion joint. The 30 s countdown is your safety net — tap CANCEL if you are fine.
+- If your GPS signal is lost or delayed (tunnel, tree cover), the speed gate may not fire correctly. In that case the gyroscope and accelerometer checks are the only active guard.
 - Each messaging provider has its own rate limits and free tier restrictions. Check provider documentation.
 - By default, the extension only monitors during an active ride (Recording state). Crash detection remains active when the ride is paused (the rider may have crashed). Use the **"Monitor crash when not riding"** options in Settings to enable monitoring outside of a recorded ride.
 
