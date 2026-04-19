@@ -3,8 +3,10 @@
 -keep class com.enderthor.kSafe.extension.KSafeExtension { *; }
 -keep class com.enderthor.kSafe.activity.MainActivity { *; }
 -keep class com.enderthor.kSafe.activity.CancelEmergencyActivity { *; }
+-keep class com.enderthor.kSafe.activity.FieldTapReceiver { *; }
 -keep class com.enderthor.kSafe.datatype.SOSDataType { *; }
 -keep class com.enderthor.kSafe.datatype.SafetyTimerDataType { *; }
+-keep class com.enderthor.kSafe.datatype.CustomMessageDataType { *; }
 
 # ─── Glance ActionCallbacks (referenced by class name via actionRunCallback) ──
 -keep class * extends androidx.glance.appwidget.action.ActionCallback { *; }

@@ -25,7 +25,7 @@ Compatible with Karoo 3 running Karoo OS version 1.527 and later.
 - **Ride start notification**: Optionally sends a message to your contacts when you start a ride, including a Karoo Live real-time tracking link. Sent **only once** when the ride truly begins — resuming after a pause does **not** trigger it again.
 - **Ride end notification**: Optionally sends a configurable message to your contacts when you finish a ride (recording stops completely).
 - **Custom message button**: Send any custom text message instantly via a hardware button or the app — no countdown, no emergency. Useful for "I'm OK", "Starting now", or any quick status update to your contacts.
-- **Two data fields**: SOS field and Safety Timer field — add either or both to your ride profile.
+- **Three data fields**: SOS field, Safety Timer field, and Custom Message field — add any combination to your ride profile.
 
 ## Requirements
 
@@ -101,7 +101,7 @@ Once configured, pressing the button activates the action immediately from any s
 
 ## Data Fields
 
-KSafe provides two custom data fields you can add to your ride profiles:
+KSafe provides three custom data fields you can add to your ride profiles:
 
 ### SOS Field
 - Shows **SAFE** (green) when everything is OK.
@@ -116,7 +116,15 @@ KSafe provides two custom data fields you can add to your ride profiles:
 - Shows **Timer OFF** when check-in is disabled.
 - The timer **pauses automatically when the ride is paused** and resets to the full interval when recording resumes.
 
-Add one or both fields to your Karoo ride profile from the profile editor.
+### Custom Message Field
+- Shows **MSG** (blue) when ready.
+- **Tap** to send your configured custom message instantly — no countdown, no emergency.
+- Shows **SENDING…** (orange) while the message is being sent.
+- Shows **SENT ✓** (green) on success, then returns to blue after a few seconds.
+- Shows **ERROR** (red) if sending failed — **tap again to retry**.
+- The same message can also be sent with a hardware button (see [Hardware button via BonusAction](#3--hardware-button-via-bonusaction-optional)).
+
+Add one or more fields to your Karoo ride profile from the profile editor.
 
 > [!TIP]
 > Tapping a data field is one of three ways to cancel an emergency countdown. See the [Cancelling an Emergency](#cancelling-an-emergency) section for all three methods and their trade-offs.
@@ -407,6 +415,7 @@ KSafe provides test buttons, all of which work **without an active ride**:
 | **Simulate Crash** | Settings tab | Sends your emergency message immediately — no countdown, no waiting. Use this to verify the full message (location, livetrack link) reaches your contact correctly. |
 | **Test ride start notification** | Settings tab | Sends the ride-start message. Only works if the feature is enabled. |
 | **Test ride end notification** | Settings tab | Sends the ride-end message. Only works if the feature is enabled. |
+| **Send Custom Message** | Settings tab | Sends the custom message immediately. Only works if the feature is enabled. |
 
 > **Simulate Crash** sends a real alert to your configured contact. Let them know you are testing, or use **Test Send** instead if you only want to verify connectivity.
 
