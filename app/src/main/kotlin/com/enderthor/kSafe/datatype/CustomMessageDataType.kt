@@ -7,8 +7,6 @@ import android.view.View
 import android.widget.RemoteViews
 import com.enderthor.kSafe.R
 import com.enderthor.kSafe.activity.FieldTapReceiver
-import com.enderthor.kSafe.data.EmergencyStatus
-import com.enderthor.kSafe.extension.managers.EmergencyManager
 import io.hammerhead.karooext.KarooSystemService
 import io.hammerhead.karooext.extension.DataTypeImpl
 import io.hammerhead.karooext.internal.ViewEmitter
@@ -21,22 +19,21 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.awaitCancellation
 import kotlinx.coroutines.cancel
-import kotlinx.coroutines.delay
-import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import timber.log.Timber
 
-private val COLOR_SAFE      = 0xFF1B5E20.toInt()
-private val COLOR_COUNTDOWN = 0xFFE65100.toInt()
-private val COLOR_ALERTING  = 0xFFB71C1C.toInt()
+private val COLOR_IDLE    = 0xFF1565C0.toInt()
+private val COLOR_SENDING = 0xFFE65100.toInt()
+private val COLOR_SENT    = 0xFF1B5E20.toInt()
+private val COLOR_ERROR   = 0xFFB71C1C.toInt()
 
-class SOSDataType(
+class CustomMessageDataType(
     datatype: String,
     private val context: Context,
     private val karooSystem: KarooSystemService,
 ) : DataTypeImpl("ksafe", datatype) {
 
-    /** Builds a field view with optional click PendingIntent (requestCode 101 = SOS). */
+    /** Builds a field view with optional click PendingIntent (requestCode 103 = Custom Message). */
     private fun buildView(context: Context, config: ViewConfig, bgColor: Int, main: String, hint: String = "", clickable: Boolean = true): RemoteViews {
         val content = RemoteViews(context.packageName, R.layout.field_view).apply {
             setInt(R.id.field_container, "setBackgroundColor", bgColor)
@@ -46,8 +43,8 @@ class SOSDataType(
         }
         if (!config.preview && clickable) {
             val pi = PendingIntent.getBroadcast(
-                context, 101,
-                Intent(FieldTapReceiver.ACTION_SOS).setPackage(context.packageName),
+                context, 103,
+                Intent(FieldTapReceiver.ACTION_CUSTOM_MESSAGE).setPackage(context.packageName),
                 PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
             )
             val wrapper = RemoteViews(context.packageName, R.layout.field_tap_wrapper)
@@ -70,28 +67,18 @@ class SOSDataType(
 
         val viewJob = scope.launch {
             try {
-                while (true) {
-                    val state = EmergencyManager.uiState.value
-                    when (state.status) {
-                        EmergencyStatus.IDLE -> {
-                            emitter.updateView(buildView(context, config, COLOR_SAFE, "SAFE", "tap=SOS"))
-                            EmergencyManager.uiState.first { it.status != EmergencyStatus.IDLE }
-                        }
-                        EmergencyStatus.COUNTDOWN -> {
-                            val secs = state.countdownRemaining()
-                            emitter.updateView(buildView(context, config, COLOR_COUNTDOWN, "SOS ${secs}s", "tap=cancel"))
-                            delay(1_000L)
-                        }
-                        EmergencyStatus.ALERTING -> {
-                            emitter.updateView(buildView(context, config, COLOR_ALERTING, "ALERT\nSENT", clickable = false))
-                            EmergencyManager.uiState.first { it.status != EmergencyStatus.ALERTING }
-                        }
-                    }
+                CustomMessageState.flow.collect { state ->
+                    emitter.updateView(when (state) {
+                        CustomMessageState.IDLE    -> buildView(context, config, COLOR_IDLE, "MSG", "tap=send")
+                        CustomMessageState.SENDING -> buildView(context, config, COLOR_SENDING, "Sending…", clickable = false)
+                        CustomMessageState.SENT    -> buildView(context, config, COLOR_SENT, "MSG", "SENT ✓", clickable = false)
+                        CustomMessageState.ERROR   -> buildView(context, config, COLOR_ERROR, "MSG", "ERROR tap=retry")
+                    })
                 }
             } catch (e: CancellationException) {
                 // normal
             } catch (e: Exception) {
-                Timber.e(e, "SOSDataType error: ${e.message}")
+                Timber.e(e, "CustomMessageDataType error: ${e.message}")
             }
         }
 

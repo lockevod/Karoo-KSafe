@@ -22,4 +22,10 @@
         graphical="true"
         icon="@drawable/ic_ksafe"
         typeId="timer-field" />
+    <DataType
+        description="@string/custom_message_datatype_desc"
+        displayName="@string/custom_message_datatype_name"
+        graphical="true"
+        icon="@drawable/ic_ksafe"
+        typeId="custom-message-field" />
 </ExtensionInfo>
