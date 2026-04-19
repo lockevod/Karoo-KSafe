@@ -1,0 +1,43 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Generic field view with auto-sizing text.
+  Background color, texts and hint visibility are set programmatically via RemoteViews.
+  autoSizeTextType="uniform" makes text shrink/grow to fill available space — no cutoff.
+-->
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:id="@+id/field_container"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:gravity="center"
+    android:orientation="vertical"
+    android:padding="2dp">
+
+    <!-- Main label — bold, up to 2 lines, auto-scales from 6sp to 22sp -->
+    <TextView
+        android:id="@+id/field_text_main"
+        android:layout_width="match_parent"
+        android:layout_height="0dp"
+        android:layout_weight="1.5"
+        android:autoSizeMaxTextSize="22sp"
+        android:autoSizeMinTextSize="6sp"
+        android:autoSizeTextType="uniform"
+        android:gravity="center"
+        android:maxLines="2"
+        android:textColor="#FFFFFF"
+        android:textStyle="bold" />
+
+    <!-- Hint line — smaller, 1 line, auto-scales from 5sp to 11sp -->
+    <TextView
+        android:id="@+id/field_text_hint"
+        android:layout_width="match_parent"
+        android:layout_height="0dp"
+        android:layout_weight="1"
+        android:autoSizeMaxTextSize="11sp"
+        android:autoSizeMinTextSize="5sp"
+        android:autoSizeTextType="uniform"
+        android:gravity="center"
+        android:maxLines="1"
+        android:textColor="#CCFFFFFF" />
+
+</LinearLayout>
+

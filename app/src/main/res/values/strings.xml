@@ -12,6 +12,8 @@
     <string name="sos_datatype_desc">Emergency SOS button. Tap to trigger a 30-second countdown before alerting your emergency contacts.</string>
     <string name="timer_datatype_name">KSafe Check-in</string>
     <string name="timer_datatype_desc">Check-in timer. Tap to reset. If timer expires without check-in, your contacts will be alerted.</string>
+    <string name="custom_message_datatype_name">KSafe Message</string>
+    <string name="custom_message_datatype_desc">Custom message button. Tap to send your configured message instantly to your contacts.</string>
 
     <!-- UI tabs -->
     <string name="tab_provider">Provider</string>

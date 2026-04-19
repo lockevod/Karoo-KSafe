@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Minimal FrameLayout used as a clickable wrapper around Glance-generated RemoteViews.
+  The click PendingIntent is set programmatically via RemoteViews.setOnClickPendingIntent()
+  with a unique requestCode per field, bypassing Glance's action system entirely
+  (which suffers from PendingIntent collisions when multiple fields share a screen).
+-->
+<FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:id="@+id/field_tap_wrapper"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent" />
+

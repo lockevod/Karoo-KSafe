@@ -7,7 +7,8 @@ import timber.log.Timber
 class KSafeApplication : Application() {
     override fun onCreate() {
         super.onCreate()
-        if (BuildConfig.DEBUG) {
+        val testing = false // Set to true to enable debug logging in release builds (e.g. for ADB diagnostics)
+        if (BuildConfig.DEBUG || testing ) {
             Timber.plant(Timber.DebugTree())
         } else {
             // In release: only WARN and ERROR reach logcat (useful for ADB diagnostics)

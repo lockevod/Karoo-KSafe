@@ -1,27 +1,12 @@
 package com.enderthor.kSafe.datatype
 
+import android.app.PendingIntent
 import android.content.Context
-import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.unit.DpSize
-import androidx.compose.ui.unit.TextUnit
-import androidx.compose.ui.unit.TextUnitType
-import androidx.compose.ui.unit.dp
-import androidx.glance.GlanceModifier
-import androidx.glance.appwidget.ExperimentalGlanceRemoteViewsApi
-import androidx.glance.appwidget.GlanceRemoteViews
-import androidx.glance.appwidget.action.actionRunCallback
-import androidx.glance.background
-import androidx.glance.action.clickable
-import androidx.glance.color.ColorProvider
-import androidx.glance.layout.Alignment
-import androidx.glance.layout.Box
-import androidx.glance.layout.Column
-import androidx.glance.layout.fillMaxSize
-import androidx.glance.layout.padding
-import androidx.glance.text.FontWeight
-import androidx.glance.text.Text
-import androidx.glance.text.TextAlign
-import androidx.glance.text.TextStyle
+import android.content.Intent
+import android.view.View
+import android.widget.RemoteViews
+import com.enderthor.kSafe.R
+import com.enderthor.kSafe.activity.FieldTapReceiver
 import com.enderthor.kSafe.data.CHECKIN_WARNING_THRESHOLD_MINUTES
 import com.enderthor.kSafe.data.EmergencyStatus
 import com.enderthor.kSafe.extension.managers.EmergencyManager
@@ -43,62 +28,39 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withTimeoutOrNull
 import timber.log.Timber
 
-// ─── Color constants ──────────────────────────────────────────────────────────
+private val COLOR_OK       = 0xFF1B5E20.toInt()
+private val COLOR_WARNING  = 0xFFF57F17.toInt()
+private val COLOR_EXPIRED  = 0xFFB71C1C.toInt()
+private val COLOR_DISABLED = 0xFF424242.toInt()
+private val COLOR_CANCEL   = 0xFFE65100.toInt()
 
-private val COLOR_OK       = Color(0xFF1B5E20)
-private val COLOR_WARNING  = Color(0xFFF57F17)
-private val COLOR_EXPIRED  = Color(0xFFB71C1C)
-private val COLOR_DISABLED = Color(0xFF424242)
-private val COLOR_CANCEL   = Color(0xFFE65100)
-private val COLOR_TEXT     = Color.White
-private val COLOR_HINT     = Color(0xCCFFFFFF)
-private val COLOR_DISABLED_TEXT = Color(0xFF9E9E9E)
-
-// ─── TextStyle constants — created once, reused on every render ───────────────
-
-private val STYLE_TIMER = TextStyle(
-    fontSize = TextUnit(14f, TextUnitType.Sp),
-    fontWeight = FontWeight.Bold,
-    textAlign = TextAlign.Center,
-    color = ColorProvider(COLOR_TEXT, COLOR_TEXT)
-)
-private val STYLE_TAP_HINT = TextStyle(
-    fontSize = TextUnit(8f, TextUnitType.Sp),
-    textAlign = TextAlign.Center,
-    color = ColorProvider(COLOR_HINT, COLOR_HINT)
-)
-private val STYLE_CHECKIN_LABEL = TextStyle(
-    fontSize = TextUnit(12f, TextUnitType.Sp),
-    fontWeight = FontWeight.Bold,
-    textAlign = TextAlign.Center,
-    color = ColorProvider(COLOR_TEXT, COLOR_TEXT)
-)
-private val STYLE_CANCEL_LABEL = TextStyle(
-    fontSize = TextUnit(11f, TextUnitType.Sp),
-    fontWeight = FontWeight.Bold,
-    textAlign = TextAlign.Center,
-    color = ColorProvider(COLOR_TEXT, COLOR_TEXT)
-)
-private val STYLE_CANCEL_SECONDS = TextStyle(
-    fontSize = TextUnit(16f, TextUnitType.Sp),
-    fontWeight = FontWeight.Bold,
-    textAlign = TextAlign.Center,
-    color = ColorProvider(COLOR_TEXT, COLOR_TEXT)
-)
-private val STYLE_DISABLED = TextStyle(
-    fontSize = TextUnit(10f, TextUnitType.Sp),
-    textAlign = TextAlign.Center,
-    color = ColorProvider(COLOR_DISABLED_TEXT, COLOR_DISABLED_TEXT)
-)
-
-@OptIn(ExperimentalGlanceRemoteViewsApi::class)
 class SafetyTimerDataType(
     datatype: String,
     private val context: Context,
     private val karooSystem: KarooSystemService,
 ) : DataTypeImpl("ksafe", datatype) {
 
-    private val glance = GlanceRemoteViews()
+    /** Builds a field view with optional click PendingIntent (requestCode 102 = Timer). */
+    private fun buildView(context: Context, config: ViewConfig, bgColor: Int, main: String, hint: String = "", clickable: Boolean = true): RemoteViews {
+        val content = RemoteViews(context.packageName, R.layout.field_view).apply {
+            setInt(R.id.field_container, "setBackgroundColor", bgColor)
+            setTextViewText(R.id.field_text_main, main)
+            setTextViewText(R.id.field_text_hint, hint)
+            setViewVisibility(R.id.field_text_hint, if (hint.isEmpty()) View.GONE else View.VISIBLE)
+        }
+        if (!config.preview && clickable) {
+            val pi = PendingIntent.getBroadcast(
+                context, 102,
+                Intent(FieldTapReceiver.ACTION_TIMER).setPackage(context.packageName),
+                PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
+            )
+            val wrapper = RemoteViews(context.packageName, R.layout.field_tap_wrapper)
+            wrapper.setOnClickPendingIntent(R.id.field_tap_wrapper, pi)
+            wrapper.addView(R.id.field_tap_wrapper, content)
+            return wrapper
+        }
+        return content
+    }
 
     override fun startView(context: Context, config: ViewConfig, emitter: ViewEmitter) {
         val scopeJob = Job()
@@ -110,31 +72,39 @@ class SafetyTimerDataType(
             awaitCancellation()
         }
 
-        // Hybrid loop:
-        //   COUNTDOWN   → polling cada 1s (cuenta atrás visible).
-        //   Timer OFF   → reactivo: suspende sin coste hasta que cambia el estado.
-        //   Check-in    → reactivo con timeout de 30s para refrescar los minutos restantes.
         val viewJob = scope.launch {
             try {
                 while (true) {
                     val state = EmergencyManager.uiState.value
                     when {
                         state.status == EmergencyStatus.COUNTDOWN -> {
-                            emitter.updateView(
-                                renderCancelEmergency(context, config, state.countdownRemaining()).remoteViews
-                            )
+                            val secs = state.countdownRemaining()
+                            emitter.updateView(buildView(context, config, COLOR_CANCEL, "CANCEL\n${secs}s"))
                             delay(1_000L)
                         }
                         !state.checkinEnabled -> {
-                            emitter.updateView(renderDisabled(context, config).remoteViews)
-                            // Espera sin coste hasta que se active el check-in o un countdown
+                            emitter.updateView(buildView(context, config, COLOR_DISABLED, "Timer\nOFF", clickable = false))
                             EmergencyManager.uiState.first { it != state }
                         }
                         else -> {
-                            // Check-in activo: refresca cada 30s o inmediatamente si cambia el estado
-                            emitter.updateView(
-                                renderTimer(context, config, state.checkinRemainingMinutes()).remoteViews
-                            )
+                            val remaining = state.checkinRemainingMinutes()
+                            val isExpired = remaining <= 0
+                            val isWarning = remaining in 1..CHECKIN_WARNING_THRESHOLD_MINUTES
+                            val bgColor = when {
+                                isExpired -> COLOR_EXPIRED
+                                isWarning -> COLOR_WARNING
+                                else      -> COLOR_OK
+                            }
+                            val mainText = when {
+                                isExpired -> "CHECK\nIN!"
+                                else -> {
+                                    val h = remaining / 60
+                                    val m = remaining % 60
+                                    if (h > 0) "${h}h${m}m" else "${m}m"
+                                }
+                            }
+                            val hintText = if (isExpired) "" else "tap=ok"
+                            emitter.updateView(buildView(context, config, bgColor, mainText, hintText))
                             withTimeoutOrNull(30_000L) {
                                 EmergencyManager.uiState.first { it != state }
                             }
@@ -155,56 +125,4 @@ class SafetyTimerDataType(
             scopeJob.cancel()
         }
     }
-
-    private suspend fun renderTimer(context: Context, config: ViewConfig, remainingMinutes: Int) =
-        glance.compose(context, DpSize.Unspecified) {
-            val isExpired = remainingMinutes <= 0
-            val isWarning = remainingMinutes in 1..CHECKIN_WARNING_THRESHOLD_MINUTES
-            val bgColor = when {
-                isExpired -> COLOR_EXPIRED
-                isWarning -> COLOR_WARNING
-                else      -> COLOR_OK
-            }
-
-            var modifier = GlanceModifier.fillMaxSize().background(bgColor)
-            if (!config.preview) modifier = modifier.clickable(actionRunCallback<TimerActionCallback>())
-
-            Box(modifier = modifier.padding(2.dp), contentAlignment = Alignment.Center) {
-                Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                    if (isExpired) {
-                        Text("CHECK", style = STYLE_CHECKIN_LABEL)
-                        Text("IN!", style = STYLE_CHECKIN_LABEL)
-                    } else {
-                        val hours = remainingMinutes / 60
-                        val mins  = remainingMinutes % 60
-                        val timeText = if (hours > 0) "${hours}h${mins}m" else "${mins}m"
-                        Text(timeText, style = STYLE_TIMER)
-                        Text("tap=ok", style = STYLE_TAP_HINT)
-                    }
-                }
-            }
-        }
-
-    private suspend fun renderDisabled(context: Context, config: ViewConfig) =
-        glance.compose(context, DpSize.Unspecified) {
-            Box(
-                modifier = GlanceModifier.fillMaxSize().background(COLOR_DISABLED).padding(2.dp),
-                contentAlignment = Alignment.Center
-            ) {
-                Text("Timer\nOFF", style = STYLE_DISABLED)
-            }
-        }
-
-    /** Shown during any active emergency countdown — tapping cancels the alert. */
-    private suspend fun renderCancelEmergency(context: Context, config: ViewConfig, secondsRemaining: Int) =
-        glance.compose(context, DpSize.Unspecified) {
-            var modifier = GlanceModifier.fillMaxSize().background(COLOR_CANCEL)
-            if (!config.preview) modifier = modifier.clickable(actionRunCallback<TimerActionCallback>())
-            Box(modifier = modifier.padding(2.dp), contentAlignment = Alignment.Center) {
-                Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                    Text("CANCEL", style = STYLE_CANCEL_LABEL)
-                    Text("${secondsRemaining}s", style = STYLE_CANCEL_SECONDS)
-                }
-            }
-        }
 }

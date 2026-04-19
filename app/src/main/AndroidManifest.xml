@@ -31,6 +31,19 @@
             android:noHistory="true"
             android:theme="@android:style/Theme.NoDisplay" />
 
+        <!-- BroadcastReceiver for data field taps. Each field uses a unique intent action
+             so Android creates genuinely different PendingIntents without launching any
+             Activity (no screen change during a ride). -->
+        <receiver
+            android:name=".activity.FieldTapReceiver"
+            android:exported="false">
+            <intent-filter>
+                <action android:name="com.enderthor.kSafe.TAP_SOS" />
+                <action android:name="com.enderthor.kSafe.TAP_TIMER" />
+                <action android:name="com.enderthor.kSafe.TAP_CUSTOM_MESSAGE" />
+            </intent-filter>
+        </receiver>
+
         <service
             android:name=".extension.KSafeExtension"
             android:exported="true"

@@ -5,6 +5,8 @@ import com.enderthor.kSafe.data.EmergencyReason
 import com.enderthor.kSafe.data.EmergencyStatus
 import com.enderthor.kSafe.data.KSafeConfig
 import com.enderthor.kSafe.data.ProviderType
+import com.enderthor.kSafe.datatype.CustomMessageDataType
+import com.enderthor.kSafe.datatype.CustomMessageState
 import com.enderthor.kSafe.datatype.SafetyTimerDataType
 import com.enderthor.kSafe.datatype.SOSDataType
 import com.enderthor.kSafe.extension.managers.ConfigurationManager
@@ -53,6 +55,7 @@ class KSafeExtension : KarooExtension("ksafe", BuildConfig.VERSION_NAME), Corout
         listOf(
             SOSDataType("sos-field", applicationContext, karooSystem),
             SafetyTimerDataType("timer-field", applicationContext, karooSystem),
+            CustomMessageDataType("custom-message-field", applicationContext, karooSystem),
         )
     }
 
@@ -250,17 +253,43 @@ class KSafeExtension : KarooExtension("ksafe", BuildConfig.VERSION_NAME), Corout
 
     /**
      * Sends the custom message configured by the user immediately (no countdown).
-     * Triggered by BonusAction hardware button or the "Send" button in Settings.
+     * Triggered by BonusAction hardware button, data field tap, or the "Send" button in Settings.
+     * Updates CustomMessageState so the data field reflects the result.
      * Returns a human-readable result string for display in the UI.
      */
     suspend fun sendCustomMessage(): String {
         val config = activeConfig
-        if (!config.customMessageEnabled) return "Custom message is disabled — enable it in Settings first."
-        if (config.customMessage.isBlank()) return "No custom message text configured."
+        if (!config.customMessageEnabled) {
+            // Show a brief ERROR state so the user sees the field received the tap
+            CustomMessageState.update(CustomMessageState.ERROR)
+            launch { kotlinx.coroutines.delay(3_000L); CustomMessageState.update(CustomMessageState.IDLE) }
+            return "Custom message is disabled — enable it in Settings first."
+        }
+        if (config.customMessage.isBlank()) {
+            CustomMessageState.update(CustomMessageState.ERROR)
+            launch { kotlinx.coroutines.delay(3_000L); CustomMessageState.update(CustomMessageState.IDLE) }
+            return "No custom message text configured."
+        }
         Timber.d("Sending custom message via ${config.activeProvider}")
+        CustomMessageState.update(CustomMessageState.SENDING)
         val ok = sender.sendInfo(config.customMessage, config.activeProvider)
-        return if (ok) "Custom message sent! ✓"
-               else "Send failed — check your provider configuration."
+        return if (ok) {
+            CustomMessageState.update(CustomMessageState.SENT)
+            // Auto-reset to IDLE after 4s so the field is ready for the next tap
+            launch { kotlinx.coroutines.delay(4_000L); CustomMessageState.update(CustomMessageState.IDLE) }
+            "Custom message sent! ✓"
+        } else {
+            CustomMessageState.update(CustomMessageState.ERROR)
+            "Send failed — check your provider configuration."
+        }
+    }
+
+    /** Called from CustomMessageActionCallback (data field tap). */
+    fun handleCustomMessageTap() {
+        launch {
+            val result = sendCustomMessage()
+            Timber.d("handleCustomMessageTap result: $result")
+        }
     }
 
     /**
