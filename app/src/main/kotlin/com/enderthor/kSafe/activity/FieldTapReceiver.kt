@@ -4,8 +4,6 @@ import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
 import com.enderthor.kSafe.extension.KSafeExtension
-import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import timber.log.Timber
 
@@ -31,18 +29,26 @@ class FieldTapReceiver : BroadcastReceiver() {
                 ext.handleCheckinTap()
             }
             ACTION_CUSTOM_MESSAGE -> {
-                Timber.d("FieldTapReceiver: Custom message tap")
-                CoroutineScope(Dispatchers.Main).launch {
-                    ext.sendCustomMessage()
-                }
+                Timber.d("FieldTapReceiver: Custom message tap (slot 1)")
+                ext.launch { ext.sendCustomMessage(1) }
+            }
+            ACTION_CUSTOM_MESSAGE_2 -> {
+                Timber.d("FieldTapReceiver: Custom message tap (slot 2)")
+                ext.launch { ext.sendCustomMessage(2) }
+            }
+            ACTION_CUSTOM_MESSAGE_3 -> {
+                Timber.d("FieldTapReceiver: Custom message tap (slot 3)")
+                ext.launch { ext.sendCustomMessage(3) }
             }
         }
     }
 
     companion object {
-        const val ACTION_SOS            = "com.enderthor.kSafe.TAP_SOS"
-        const val ACTION_TIMER          = "com.enderthor.kSafe.TAP_TIMER"
-        const val ACTION_CUSTOM_MESSAGE = "com.enderthor.kSafe.TAP_CUSTOM_MESSAGE"
+        const val ACTION_SOS              = "com.enderthor.kSafe.TAP_SOS"
+        const val ACTION_TIMER            = "com.enderthor.kSafe.TAP_TIMER"
+        const val ACTION_CUSTOM_MESSAGE   = "com.enderthor.kSafe.TAP_CUSTOM_MESSAGE"
+        const val ACTION_CUSTOM_MESSAGE_2 = "com.enderthor.kSafe.TAP_CUSTOM_MESSAGE_2"
+        const val ACTION_CUSTOM_MESSAGE_3 = "com.enderthor.kSafe.TAP_CUSTOM_MESSAGE_3"
     }
 }
 

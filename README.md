@@ -24,8 +24,8 @@ Compatible with Karoo 3 running Karoo OS version 1.527 and later.
 - **Multiple messaging providers**: WhatsApp via CallMeBot (free), push notification via Pushover, free unlimited push via ntfy, or Telegram bot messages (free, unlimited).
 - **Ride start notification**: Optionally sends a message to your contacts when you start a ride, including a Karoo Live real-time tracking link. Sent **only once** when the ride truly begins — resuming after a pause does **not** trigger it again.
 - **Ride end notification**: Optionally sends a configurable message to your contacts when you finish a ride (recording stops completely).
-- **Custom message button**: Send any custom text message instantly via a hardware button or the app — no countdown, no emergency. Useful for "I'm OK", "Starting now", or any quick status update to your contacts.
-- **Three data fields**: SOS field, Safety Timer field, and Custom Message field — add any combination to your ride profile.
+- **Custom message buttons**: Send any custom text message instantly via a hardware button or the app — no countdown, no emergency. Useful for "I'm OK", "Starting now", or any quick status update to your contacts. **Up to three independent message buttons** are available, each with its own configurable label and text.
+- **Five data fields**: SOS field, Safety Timer field, and up to three Custom Message fields — add any combination to your ride profile.
 
 ## Requirements
 
@@ -101,7 +101,7 @@ Once configured, pressing the button activates the action immediately from any s
 
 ## Data Fields
 
-KSafe provides three custom data fields you can add to your ride profiles:
+KSafe provides five custom data fields you can add to your ride profiles:
 
 ### SOS Field
 - Shows **SAFE** (green) when everything is OK.
@@ -116,13 +116,17 @@ KSafe provides three custom data fields you can add to your ride profiles:
 - Shows **Timer OFF** when check-in is disabled.
 - The timer **pauses automatically when the ride is paused** and resets to the full interval when recording resumes.
 
-### Custom Message Field
-- Shows **MSG** (blue) when ready.
-- **Tap** to send your configured custom message instantly — no countdown, no emergency.
+### Custom Message Fields (1, 2 and 3)
+
+KSafe provides **three independent custom message fields** — **KSafe Message 1**, **KSafe Message 2**, and **KSafe Message 3**. Each field works identically and independently:
+
+- Shows the **configured button label** (blue) when ready — e.g. *"OK👍"*, *"HOME"*, *"CREW"*.
+- **Tap** to send that field's configured message instantly — no countdown, no emergency.
 - Shows **SENDING…** (orange) while the message is being sent.
-- Shows **SENT ✓** (green) on success, then returns to blue after a few seconds.
-- Shows **ERROR** (red) if sending failed — **tap again to retry**.
-- The same message can also be sent with a hardware button (see [Hardware button via BonusAction](#3--hardware-button-via-bonusaction-optional)).
+- Shows **SENT ✓** (green) on success, then returns to ready after a few seconds.
+- Shows **ERR retry** (red) if sending failed — **tap again to retry**.
+
+Each field has its own label (shown on the button) and message text (what gets sent). You can add one, two, or all three to any ride screen. Message 1 is also assignable to a hardware button (see [Hardware button via BonusAction](#3--hardware-button-via-bonusaction-optional)).
 
 Add one or more fields to your Karoo ride profile from the profile editor.
 
@@ -148,11 +152,17 @@ Open the KSafe app on your Karoo to configure it.
 - The `{livetrack}` placeholder also works in your emergency message — if a key is set, emergency alerts will include the tracking link too.
 - **Countdown seconds**: How long the cancellation countdown lasts before alerts are sent (default: 30s).
 - **Crash detection**: Enable/disable automatic crash detection. Configure sensitivity and minimum speed (see [Crash Detection](#crash-detection) for guidance on which level to choose).
+- **Max. speed to confirm crash**: The GPS speed below which the rider is considered stopped after an impact (default: **5 km/h**). Increase to 8 km/h for MTB/gravel where sliding after a crash is common; lower to 3 km/h for strict road use.
 - **Monitor crash when not riding**: Keeps crash detection active even when no ride is recording. Useful for warm-ups or quick spins without starting a recording.
 - **Monitor crash when not riding — any speed**: Same as above but ignores the minimum speed threshold (detects crashes even while stationary). ⚠ More false positives — use with caution.
 - **Speed drop detection**: Enable/disable detection of prolonged speed drops. Configure the time window (minutes) with no movement before triggering.
 - **Check-in timer**: Enable/disable periodic check-ins. Configure the interval in minutes (default: 120 min). A warning beep fires 10 minutes before expiry. **The timer pauses automatically when the ride is paused** (coffee stop, traffic light, etc.) and resets to the full interval when you resume. Any active check-in countdown is also cancelled on pause.
-- **Custom message**: Enable a free-text message that can be sent at any time with a single button press (hardware button or the **Send Custom Message** button in the app). No countdown, no emergency — just a quick status message to your contacts. Examples: *"I'm OK! 👍"*, *"Starting now 🚴"*, *"Heading home"*.
+- **Custom messages**: Enable up to three independent message buttons. For each one:
+  - Toggle **Enable message N** to activate it.
+  - Enter a **button label** (max 5 characters) — this is what appears on the Karoo field (e.g. *"OK👍"*, *"HOME"*, *"SAFE"*). Defaults to `MSG`, `MSG2`, `MSG3`.
+  - Enter the **message text** that will be sent when the field is tapped.
+  - Tap **Send Message N** to send it immediately from the app to verify it works.
+  - **Message 1** can also be assigned to a hardware button (**KSafe: Send Custom Message**) in Karoo controller settings.
 
 ### Provider Tab
 
@@ -318,23 +328,23 @@ Crash detection uses the Karoo's built-in accelerometer and gyroscope directly (
 ### Algorithm
 
 1. **Impact**: A sudden acceleration spike above the sensitivity threshold is detected (while above the minimum speed). To reject single-sample noise — such as the jolt when transitioning from dirt to asphalt or hitting a small stone — the algorithm uses a short sliding-window average (~60 ms). A genuine impact is sustained energy across multiple sensor frames; a terrain-edge spike is typically just 1–2 raw samples and gets smoothed out.
-2. **Speed check**: The impact phase only advances to silence check if the GPS speed has already dropped below ~3 km/h. If the rider is still moving after the impact, the algorithm keeps waiting or resets — a real crash victim cannot continue riding.
-3. **Silence check**: After the impact, both the accelerometer and gyroscope must settle completely. The device must stop moving AND stop rotating, AND the GPS speed must remain below 3 km/h. **The stillness must be continuous** — any movement (gyro ≥ 1 rad/s, acceleration deviation > 4 m/s² from gravity, or GPS speed ≥ 3 km/h) resets the 4.5 s countdown from scratch. This is the key differentiator between a real crash and any other event (pothole, bump, jump, terrain change) followed by continued riding.
+2. **Speed check**: The impact phase only advances to silence check if the GPS speed has already dropped below the configured **max. confirm speed** (default **3 km/h** for Low, **5 km/h** for Medium/High — configurable in Settings). If the rider is still moving after the impact, the algorithm keeps waiting or resets — a real crash victim cannot continue riding.
+3. **Silence check**: After the impact, both the accelerometer and gyroscope must settle completely. The device must stop moving AND stop rotating, AND the GPS speed must remain below the configured threshold. **The stillness must be continuous** — any movement (gyro ≥ 1 rad/s, acceleration deviation > 4 m/s² from gravity, or GPS speed above threshold) resets the 4.5 s countdown from scratch. This is the key differentiator between a real crash and any other event (pothole, bump, jump, terrain change) followed by continued riding.
 4. **Confirmed**: If the device remains genuinely still for **4.5 consecutive seconds**, the emergency countdown starts.
 5. **Cooldown**: After a confirmed crash, impact detection is paused for 30 s to avoid duplicate triggers while the emergency countdown is already running.
 
-**Why this works:** after hitting a pothole, bump, or terrain-change edge, a cyclist continues pedalling — the GPS keeps showing movement and the gyroscope never stays below 1 rad/s long enough to confirm a crash. On a slow climb the gyroscope can be very calm, but the GPS speed gate ensures this cannot be mistaken for a crash. After a real crash, the device lies on the ground with near-zero gyroscope and zero GPS speed for several seconds.
+**Why this works:** after hitting a pothole, bump, or terrain-change edge, a cyclist continues pedalling — the GPS keeps showing movement and the gyroscope never stays below 1 rad/s long enough to confirm a crash. On a slow climb the gyroscope can be very calm, but the GPS speed gate ensures this cannot be mistaken for a crash. After a real crash, the device lies on the ground with near-zero gyroscope and near-zero GPS speed for several seconds. The confirm speed is preset-aware: **3 km/h for Low** (MTB/gravel, where crashes at very low speed are common and post-crash sliding is slower) and **5 km/h for Medium/High** (road riding, where post-crash sliding at 4–5 km/h is plausible and should still trigger confirmation).
 
 ### Choosing the right sensitivity level
 
 > **Naming convention**: "High sensitivity" means a *lower* impact threshold — the system reacts to lighter impacts. This follows the standard sensor convention (higher sensitivity = detects smaller signals). It does NOT mean "better" or "safer" in all contexts.
 
-| Level | Impact threshold | Min. speed | Best for |
-|-------|-----------------|------------|----------|
-| ⛰ **Low** | 55 m/s² (~5.5g) | 3 km/h | MTB, enduro, gravel, technical terrain |
-| 🚴 **Medium** | 45 m/s² (~4.5g) | 10 km/h | Road + MTB mixed **(recommended default)** |
-| 🏁 **High** | 35 m/s² (~3.5g) | 15 km/h | Smooth road only (velodrome, closed circuit) |
-| 🔧 **Custom** | 20–70 m/s² slider | You choose | Any specific use case |
+| Level | Impact threshold | Min. speed | Confirm speed | Best for |
+|-------|-----------------|------------|---------------|----------|
+| ⛰ **Low** | 55 m/s² (~5.5g) | 3 km/h | 3 km/h | MTB, enduro, gravel, technical terrain |
+| 🚴 **Medium** | 45 m/s² (~4.5g) | 10 km/h | 5 km/h | Road + MTB mixed **(recommended default)** |
+| 🏁 **High** | 35 m/s² (~3.5g) | 15 km/h | 5 km/h | Smooth road only (velodrome, closed circuit) |
+| 🔧 **Custom** | 20–70 m/s² slider | You choose | You choose | Any specific use case |
 
 **Impact window** (time allowed between impact and stillness confirmation):
 - Low: 25 s — MTB bike may slide or tumble down a slope for a while
@@ -381,7 +391,8 @@ Useful when no preset fits exactly — for example an aggressive enduro rider wh
 |----------|--------|-----|
 | Hard crash on a descent, bike slides for a few seconds | ✅ Detected | Impact → brief movement → bike settles → 4.5 s continuous stillness confirmed |
 | Hard crash, bike stops immediately | ✅ Detected | Impact → quick stillness → confirmed |
-| Crash on a technical MTB climb at 3 km/h (Low) | ✅ Detected | Low threshold + 3 km/h min. speed — designed for this |
+| Crash on descent, body slides at 4–5 km/h before stopping | ✅ Detected | Confirm speed is 5 km/h (Medium/High) — covers post-crash sliding |
+| Crash on a technical MTB climb at 3 km/h (Low) | ✅ Detected | Low threshold + 3 km/h min. speed + 3 km/h confirm speed — designed for this |
 | Large pothole at 40 km/h, continue riding | ✅ No false alarm | Impact threshold possibly exceeded, but GPS speed stays high + gyro keeps resetting the silence timer |
 | Expansion joint or speed bump, continue riding | ✅ No false alarm | Same as above — continuous movement prevents silence confirmation |
 | Transition dirt → asphalt (jolt), continue riding | ✅ No false alarm | Single-sample spike is smoothed by the 60 ms sliding window; never reaches sustained impact level |
@@ -415,30 +426,37 @@ KSafe provides test buttons, all of which work **without an active ride**:
 | **Simulate Crash** | Settings tab | Sends your emergency message immediately — no countdown, no waiting. Use this to verify the full message (location, livetrack link) reaches your contact correctly. |
 | **Test ride start notification** | Settings tab | Sends the ride-start message. Only works if the feature is enabled. |
 | **Test ride end notification** | Settings tab | Sends the ride-end message. Only works if the feature is enabled. |
-| **Send Custom Message** | Settings tab | Sends the custom message immediately. Only works if the feature is enabled. |
+| **Send Message 1 / 2 / 3** | Settings tab | Sends each custom message immediately. Only works if that message slot is enabled. |
 
 > **Simulate Crash** sends a real alert to your configured contact. Let them know you are testing, or use **Test Send** instead if you only want to verify connectivity.
 
-## Custom Message
+## Custom Messages
 
-The custom message feature lets you send any free-text message to your contacts with a single button press — no countdown, no emergency. It is the equivalent of a quick status update button.
+KSafe provides **three independent custom message buttons** — you can add one, two or all three to your ride screens. Each sends a different text and shows a different label on the field button. No countdown, no emergency — just a quick status update.
 
 **Use cases:**
-- *"I'm OK! 👍"* — reassure your contacts after a long silent stretch
-- *"Starting now 🚴"* — manual ride start notification without Karoo Live
-- *"Heading home"* — let someone know you are on your way back
-- Any short text you want to send on demand
+- *"OK👍"* → sends *"I'm OK! 👍"* — reassure your contacts after a long silent stretch
+- *"HOME"* → sends *"Heading home, ETA 45min"*
+- *"CREW"* → sends a message to your support crew
+- *"START"* → manual ride start notification without Karoo Live
+- Any short status you want to send on demand
 
 ### Configuration
 
-1. Open KSafe → **Settings tab**.
-2. Under **Custom Message**, toggle **Enable custom message button**.
-3. Enter your message text.
-4. Tap **Send Custom Message** to send it immediately from the app, or assign the **KSafe: Send Custom Message** hardware button in Karoo controller settings for one-press access while riding.
+1. Open KSafe → **Settings tab** → **Custom Messages** section.
+2. For each message slot (1, 2, 3):
+   - Toggle **Enable message N**.
+   - Enter a **button label** (max 5 characters) — this appears on the Karoo field button. Examples: `OK👍`, `HOME`, `SAFE`, `CREW`. Defaults: `MSG`, `MSG2`, `MSG3`.
+   - Enter the **message text** that will be sent when the field is tapped (any length).
+   - Tap **Send Message N** to test it immediately from the app.
+3. Add **KSafe Message 1**, **KSafe Message 2**, and/or **KSafe Message 3** as data fields in your Karoo ride profile.
+
+> [!TIP]
+> You can put all three fields on the same screen — they are fully independent and each sends its own message when tapped.
 
 ### Hardware button
 
-Assign **KSafe: Send Custom Message** to a controller button in **Karoo → Settings → Controller**. Once configured, a single press sends the message instantly — no need to unlock the screen or navigate to the app.
+Assign **KSafe: Send Custom Message** to a controller button in **Karoo → Settings → Controller**. Once configured, a single press sends **Message 1** instantly — no need to unlock the screen or navigate to the app.
 
 ## Backup and Restore
 
