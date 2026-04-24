@@ -71,17 +71,18 @@ class CrashDetectionManager(
     // Stillness check: how close to gravity (~9.8 m/s²) the accel must stay
     private val SILENCE_DEVIATION_MAX = 4.0f   // m/s² — tolerant of slight movements while lying down
 
-    // Gyroscope thresholds (rad/s)
-    // Literature: crash confirmation requires rotation near zero post-impact (~45°/s = 0.785 rad/s)
-    private val GYRO_STILL_MAX   = 1.0f   // rad/s — device genuinely not rotating (≈ 57°/s)
-    private val GYRO_MOVING_MAX  = 2.0f   // rad/s — device is clearly still moving/riding (used in IMPACT→SILENCE_CHECK gate)
+    // Gyroscope threshold (rad/s) — used ONLY in the IMPACT→SILENCE_CHECK gate.
+    // NOTE: GYRO_STILL_MAX is intentionally removed: requiring the gyro to be still
+    // during SILENCE_CHECK caused false negatives when the bike kept sliding after a crash
+    // while the rider was already on the ground.  GPS speed is the definitive gate there.
+    private val GYRO_MOVING_MAX  = 2.0f   // rad/s — device is clearly still moving/riding (≈ 115°/s)
 
     /**
      * Maximum GPS speed (km/h) to consider the rider as truly "stopped" during crash confirmation.
-     * A crash victim at 8 km/h is physically impossible — if GPS shows movement, no confirmation.
-     * This is the most reliable fix for false positives at slow climbing speeds.
+     * Configurable via [KSafeConfig.crashConfirmSpeedKmh] (default 5 km/h).
+     * Higher values (e.g. 8) cover post-crash sliding on slopes; lower values (3) are stricter.
      */
-    private val SPEED_CRASH_CONFIRM_KMH = 3.0
+    private val speedCrashConfirmKmh get() = config.crashConfirmSpeedKmh.toDouble()
 
     private val SILENCE_DURATION_MS =  4_500L  // must be continuously still for 4.5s (literature uses 5s)
     private val LOG_INTERVAL_MS     =  2_000L  // log magnitude every 2s for debugging
@@ -114,6 +115,22 @@ class CrashDetectionManager(
     private var config = KSafeConfig()
     private var lastLogTime = 0L
 
+    /**
+     * Cold-start guard: if no speed data has arrived yet AND we are within the guard window,
+     * the speed-drop condition is treated as NOT met — preventing a false crash confirmation
+     * caused by [currentSpeedKmh] being 0.0 (its uninitialized default value).
+     *
+     * The guard expires automatically after [COLD_START_GUARD_MS] so that devices without a
+     * speed source (no GPS lock, no ANT+ sensor) fall back to normal behavior without
+     * permanently blocking crash detection.
+     *
+     * [speedDataReceived] is only reset when [start] is called (NOT on [resetState]) so that a
+     * false-alarm reset during normal riding never re-introduces the cold-start window.
+     */
+    private val COLD_START_GUARD_MS = 8_000L
+    private var speedDataReceived = false
+    private var startTime = 0L
+
     private val sensorManager = context.getSystemService(Context.SENSOR_SERVICE) as SensorManager
     private val accelerometer = sensorManager.getDefaultSensor(Sensor.TYPE_ACCELEROMETER)
     private val gyroscope     = sensorManager.getDefaultSensor(Sensor.TYPE_GYROSCOPE)
@@ -131,6 +148,8 @@ class CrashDetectionManager(
             return
         }
         resetState()
+        speedDataReceived = false
+        startTime = System.currentTimeMillis()
 
         accelerometer?.let { sensorManager.registerListener(this, it, SensorManager.SENSOR_DELAY_GAME) }
             ?: Timber.w("No accelerometer found on this device!")
@@ -157,6 +176,10 @@ class CrashDetectionManager(
     }
 
     fun updateSpeed(speedKmh: Double) {
+        if (!speedDataReceived) {
+            speedDataReceived = true
+            Timber.d("Cold-start guard lifted: first speed data received (%.1f km/h)", speedKmh)
+        }
         currentSpeedKmh = speedKmh
 
         if (config.speedDropDetectionEnabled) {
@@ -176,6 +199,28 @@ class CrashDetectionManager(
     fun resetSpeedDropOnPause() {
         speedDropStartTime = 0L
         Timber.d("Speed-drop timer reset on ride pause")
+    }
+
+    // ─── Speed drop confirmation ──────────────────────────────────────────────
+
+    /**
+     * Returns true if the rider's GPS speed is low enough to confirm a crash.
+     *
+     * Cold-start guard: blocks confirmation for [COLD_START_GUARD_MS] if no speed data has
+     * been received yet — prevents false alarms caused by [currentSpeedKmh] defaulting to 0.0.
+     * The guard is transparent once data arrives (even 1 sample lifts it immediately) or once
+     * the timeout expires (fallback for devices with no speed source).
+     */
+    private fun isSpeedDropConfirmed(): Boolean {
+        // Guard: no data yet AND within the cold-start window → not safe to confirm
+        if (!speedDataReceived && (System.currentTimeMillis() - startTime) < COLD_START_GUARD_MS) {
+            Timber.d("Cold-start guard active — speed confirmation blocked (no data yet, %.1fs elapsed)",
+                (System.currentTimeMillis() - startTime) / 1000.0)
+            return false
+        }
+        val minSpeed = config.minSpeedForCrashKmh
+        // minSpeed == 0 means user wants detection at any speed → treat as always stopped
+        return minSpeed == 0 || currentSpeedKmh < speedCrashConfirmKmh
     }
 
     // ─── SensorEventListener ─────────────────────────────────────────────────
@@ -234,11 +279,11 @@ class CrashDetectionManager(
                 val timeSince = now - impactTime
                 val deviation = abs(magnitude - GRAVITY)
                 val windowMs  = impactWindowMs[config.crashSensitivity] ?: 20_000L
-                // GPS speed gate: only enter silence check if the rider has stopped (< 3 km/h).
-                // At slow climbing speeds (~8 km/h) the device can feel "quiet" after a bump
+                // GPS speed gate: only enter silence check if the rider has stopped.
+                // Configurable via crashConfirmSpeedKmh (default 5 km/h).
+                // At slow climbing speeds the device can feel "quiet" after a bump
                 // but the rider is still moving — GPS is the definitive check here.
-                val minSpeed = config.minSpeedForCrashKmh
-                val speedHasDropped = minSpeed == 0 || currentSpeedKmh < SPEED_CRASH_CONFIRM_KMH
+                val speedHasDropped = isSpeedDropConfirmed()
 
                 when {
                     // Device settling (accel near gravity AND gyro calming down AND GPS speed low) → begin silence check
@@ -260,23 +305,29 @@ class CrashDetectionManager(
                 val timeSinceImpact = now - impactTime
                 val windowMs = impactWindowMs[config.crashSensitivity] ?: 20_000L
 
-                // Both accel AND gyro must pass strict thresholds simultaneously,
-                // AND GPS speed must be < 3 km/h (truly stopped).
+                // Stillness check: accel near gravity AND GPS speed low.
                 //
-                // Key fix for false positives at slow climbing speeds:
-                //   — At 8 km/h on a climb, gyro can be < 1 rad/s and accel near gravity
-                //     (the handlebar is relatively stable at low cadence/speed).
-                //   — A real crash victim is NOT moving at 8 km/h during the silence check.
-                //   — GPS < 3 km/h is the definitive "rider has stopped" gate.
-                val minSpeed = config.minSpeedForCrashKmh
-                val speedStillOk = minSpeed == 0 || currentSpeedKmh < SPEED_CRASH_CONFIRM_KMH
-                val isStill = deviation <= SILENCE_DEVIATION_MAX && lastGyroMag < GYRO_STILL_MAX && speedStillOk
+                // NOTE: gyro is intentionally NOT part of the final SILENCE_CHECK condition.
+                //
+                // Reason: the device is mounted on the bike (Karoo on handlebars).
+                // After a crash the RIDER may be stopped, but the BIKE can keep sliding or
+                // rolling (especially on slopes), which would make the gyro spin even though
+                // the rider is already on the ground.  If we required the gyro to be still
+                // here, a real crash where the bike keeps moving would NEVER be confirmed
+                // → no alert sent → dangerous false negative.
+                //
+                // The gyro is already used in the IMPACT→SILENCE_CHECK gate above
+                // (lastGyroMag < GYRO_MOVING_MAX) to avoid entering this phase while
+                // still actively riding.  Once inside SILENCE_CHECK the GPS speed gate
+                // is the definitive "rider has stopped" discriminator.
+                val speedStillOk = isSpeedDropConfirmed()
+                val isStill = deviation <= SILENCE_DEVIATION_MAX && speedStillOk
 
                 when {
                     // Confirmed: CONTINUOUS stillness for the required duration → crash
                     isStill && (now - silenceStartTime) >= SILENCE_DURATION_MS -> {
                         val totalMs = now - impactTime
-                        Timber.d(">>> CRASH CONFIRMED after %dms (accel dev=%.2f gyro=%.2f)", totalMs, deviation, lastGyroMag)
+                        Timber.d(">>> CRASH CONFIRMED after %dms (accel dev=%.2f speed=%.1fkm/h gyro=%.2f[ignored])", totalMs, deviation, currentSpeedKmh, lastGyroMag)
                         lastCrashTime = now
                         resetState()
                         scope.launch { onCrashDetected() }

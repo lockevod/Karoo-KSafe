@@ -47,7 +47,8 @@ data class KSafeConfig(
     val crashDetectionEnabled: Boolean = true,
     val crashSensitivity: CrashSensitivity = CrashSensitivity.MEDIUM,
     val minSpeedForCrashKmh: Int = 10,   // 0 = always detect (useful for testing)
-    val customCrashThreshold: Int = 45, // m/s² — only used when crashSensitivity = CUSTOM (range 20–70)
+    val customCrashThreshold: Int = 45, // m/s — only used when crashSensitivity = CUSTOM (range 20–70)
+    val crashConfirmSpeedKmh: Int = 5,  // km/h — max speed to confirm crash (rider considered stopped)
     // Monitor crash even when no ride is active
     val crashMonitorOutsideRide: Boolean = false,         // uses configured minSpeedForCrashKmh
     val crashMonitorOutsideRideAnySpeed: Boolean = false, // forces minSpeed = 0 — ⚠ more false positives
@@ -60,9 +61,16 @@ data class KSafeConfig(
     // Ride end notification
     val karooLiveEndEnabled: Boolean = false,
     val karooLiveEndMessage: String = "Ride finished! 🏁",
-    // Custom button message (sent on demand via BonusAction or button in app)
+    // Custom button messages (slots 1–3, sent on demand via data field tap or button in app)
     val customMessageEnabled: Boolean = false,
+    val customMessageTitle: String = "MSG",
     val customMessage: String = "I'm OK! 👍",
+    val customMessage2Enabled: Boolean = false,
+    val customMessage2Title: String = "MSG2",
+    val customMessage2: String = "",
+    val customMessage3Enabled: Boolean = false,
+    val customMessage3Title: String = "MSG3",
+    val customMessage3: String = "",
 )
 
 @Serializable

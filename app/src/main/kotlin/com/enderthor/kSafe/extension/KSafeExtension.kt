@@ -55,7 +55,9 @@ class KSafeExtension : KarooExtension("ksafe", BuildConfig.VERSION_NAME), Corout
         listOf(
             SOSDataType("sos-field", applicationContext, karooSystem),
             SafetyTimerDataType("timer-field", applicationContext, karooSystem),
-            CustomMessageDataType("custom-message-field", applicationContext, karooSystem),
+            CustomMessageDataType("custom-message-field", applicationContext, karooSystem, slot = 1),
+            CustomMessageDataType("custom-message-field-2", applicationContext, karooSystem, slot = 2),
+            CustomMessageDataType("custom-message-field-3", applicationContext, karooSystem, slot = 3),
         )
     }
 
@@ -252,42 +254,50 @@ class KSafeExtension : KarooExtension("ksafe", BuildConfig.VERSION_NAME), Corout
     }
 
     /**
-     * Sends the custom message configured by the user immediately (no countdown).
-     * Triggered by BonusAction hardware button, data field tap, or the "Send" button in Settings.
-     * Updates CustomMessageState so the data field reflects the result.
+     * Sends the custom message for the given [slot] (1, 2 or 3) immediately (no countdown).
+     * Triggered by data field tap, BonusAction, or "Send" button in Settings.
+     * Updates CustomMessageState for that slot so the data field reflects the result.
      * Returns a human-readable result string for display in the UI.
      */
-    suspend fun sendCustomMessage(): String {
+    suspend fun sendCustomMessage(slot: Int = 1): String {
         val config = activeConfig
-        if (!config.customMessageEnabled) {
-            // Show a brief ERROR state so the user sees the field received the tap
-            CustomMessageState.update(CustomMessageState.ERROR)
-            launch { kotlinx.coroutines.delay(3_000L); CustomMessageState.update(CustomMessageState.IDLE) }
-            return "Custom message is disabled — enable it in Settings first."
+        val enabled = when (slot) {
+            2 -> config.customMessage2Enabled
+            3 -> config.customMessage3Enabled
+            else -> config.customMessageEnabled
         }
-        if (config.customMessage.isBlank()) {
-            CustomMessageState.update(CustomMessageState.ERROR)
-            launch { kotlinx.coroutines.delay(3_000L); CustomMessageState.update(CustomMessageState.IDLE) }
-            return "No custom message text configured."
+        val message = when (slot) {
+            2 -> config.customMessage2
+            3 -> config.customMessage3
+            else -> config.customMessage
         }
-        Timber.d("Sending custom message via ${config.activeProvider}")
-        CustomMessageState.update(CustomMessageState.SENDING)
-        val ok = sender.sendInfo(config.customMessage, config.activeProvider)
+        if (!enabled) {
+            CustomMessageState.update(slot, CustomMessageState.ERROR)
+            launch { kotlinx.coroutines.delay(3_000L); CustomMessageState.update(slot, CustomMessageState.IDLE) }
+            return "Custom message $slot is disabled — enable it in Settings first."
+        }
+        if (message.isBlank()) {
+            CustomMessageState.update(slot, CustomMessageState.ERROR)
+            launch { kotlinx.coroutines.delay(3_000L); CustomMessageState.update(slot, CustomMessageState.IDLE) }
+            return "No text configured for message $slot."
+        }
+        Timber.d("Sending custom message slot=$slot via ${config.activeProvider}")
+        CustomMessageState.update(slot, CustomMessageState.SENDING)
+        val ok = sender.sendInfo(message, config.activeProvider)
         return if (ok) {
-            CustomMessageState.update(CustomMessageState.SENT)
-            // Auto-reset to IDLE after 4s so the field is ready for the next tap
-            launch { kotlinx.coroutines.delay(4_000L); CustomMessageState.update(CustomMessageState.IDLE) }
+            CustomMessageState.update(slot, CustomMessageState.SENT)
+            launch { kotlinx.coroutines.delay(4_000L); CustomMessageState.update(slot, CustomMessageState.IDLE) }
             "Custom message sent! ✓"
         } else {
-            CustomMessageState.update(CustomMessageState.ERROR)
+            CustomMessageState.update(slot, CustomMessageState.ERROR)
             "Send failed — check your provider configuration."
         }
     }
 
-    /** Called from CustomMessageActionCallback (data field tap). */
+    /** Called from CustomMessageActionCallback / BonusAction (slot 1 only). */
     fun handleCustomMessageTap() {
         launch {
-            val result = sendCustomMessage()
+            val result = sendCustomMessage(1)
             Timber.d("handleCustomMessageTap result: $result")
         }
     }

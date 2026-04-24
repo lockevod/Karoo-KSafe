@@ -28,4 +28,16 @@
         graphical="true"
         icon="@drawable/ic_ksafe"
         typeId="custom-message-field" />
+    <DataType
+        description="@string/custom_message_datatype_desc"
+        displayName="@string/custom_message_2_datatype_name"
+        graphical="true"
+        icon="@drawable/ic_ksafe"
+        typeId="custom-message-field-2" />
+    <DataType
+        description="@string/custom_message_datatype_desc"
+        displayName="@string/custom_message_3_datatype_name"
+        graphical="true"
+        icon="@drawable/ic_ksafe"
+        typeId="custom-message-field-3" />
 </ExtensionInfo>

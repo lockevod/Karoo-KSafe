@@ -54,6 +54,7 @@ fun SettingsScreen(vm: MainViewModel) {
     var crashSensitivity     by remember(config.crashSensitivity)          { mutableStateOf(config.crashSensitivity) }
     var minSpeedForCrash     by remember(config.minSpeedForCrashKmh)       { mutableStateOf(config.minSpeedForCrashKmh.toString()) }
     var customThreshold      by remember(config.customCrashThreshold)      { mutableStateOf(config.customCrashThreshold) }
+    var crashConfirmSpeed    by remember(config.crashConfirmSpeedKmh)      { mutableStateOf(config.crashConfirmSpeedKmh.toString()) }
     var crashOutsideRide     by remember(config.crashMonitorOutsideRide)   { mutableStateOf(config.crashMonitorOutsideRide) }
     var crashOutsideRideAny  by remember(config.crashMonitorOutsideRideAnySpeed) { mutableStateOf(config.crashMonitorOutsideRideAnySpeed) }
 
@@ -70,7 +71,14 @@ fun SettingsScreen(vm: MainViewModel) {
     var karooLiveEndMessage   by remember(config.karooLiveEndMessage)      { mutableStateOf(config.karooLiveEndMessage) }
 
     var customMessageEnabled  by remember(config.customMessageEnabled)     { mutableStateOf(config.customMessageEnabled) }
+    var customMessageTitle    by remember(config.customMessageTitle)       { mutableStateOf(config.customMessageTitle) }
     var customMessage         by remember(config.customMessage)            { mutableStateOf(config.customMessage) }
+    var customMessage2Enabled by remember(config.customMessage2Enabled)   { mutableStateOf(config.customMessage2Enabled) }
+    var customMessage2Title   by remember(config.customMessage2Title)     { mutableStateOf(config.customMessage2Title) }
+    var customMessage2        by remember(config.customMessage2)          { mutableStateOf(config.customMessage2) }
+    var customMessage3Enabled by remember(config.customMessage3Enabled)   { mutableStateOf(config.customMessage3Enabled) }
+    var customMessage3Title   by remember(config.customMessage3Title)     { mutableStateOf(config.customMessage3Title) }
+    var customMessage3        by remember(config.customMessage3)          { mutableStateOf(config.customMessage3) }
 
     var simulateStatus      by remember { mutableStateOf("") }
     var simulateIsError     by remember { mutableStateOf(false) }
@@ -80,6 +88,10 @@ fun SettingsScreen(vm: MainViewModel) {
     var rideEndIsError      by remember { mutableStateOf(false) }
     var customMsgStatus     by remember { mutableStateOf("") }
     var customMsgIsError    by remember { mutableStateOf(false) }
+    var customMsg2Status    by remember { mutableStateOf("") }
+    var customMsg2IsError   by remember { mutableStateOf(false) }
+    var customMsg3Status    by remember { mutableStateOf("") }
+    var customMsg3IsError   by remember { mutableStateOf(false) }
     var backupStatus        by remember { mutableStateOf("") }
     var backupIsError       by remember { mutableStateOf(false) }
     val coroutineScope = rememberCoroutineScope()
@@ -92,13 +104,15 @@ fun SettingsScreen(vm: MainViewModel) {
     // Auto-save: runs whenever any setting changes, with a short debounce for text fields
     LaunchedEffect(
         isActive, emergencyMessage, countdownSeconds,
-        crashEnabled, crashSensitivity, minSpeedForCrash, customThreshold,
+        crashEnabled, crashSensitivity, minSpeedForCrash, customThreshold, crashConfirmSpeed,
         crashOutsideRide, crashOutsideRideAny,
         speedDropEnabled, speedDropMinutes,
         checkinEnabled, checkinInterval,
         karooLiveEnabled, karooLiveKey, karooLiveStartMessage,
         karooLiveEndEnabled, karooLiveEndMessage,
-        customMessageEnabled, customMessage
+        customMessageEnabled, customMessage, customMessageTitle,
+        customMessage2Enabled, customMessage2, customMessage2Title,
+        customMessage3Enabled, customMessage3, customMessage3Title,
     ) {
         delay(600)
         vm.saveConfig(
@@ -109,6 +123,7 @@ fun SettingsScreen(vm: MainViewModel) {
                 crashDetectionEnabled   = crashEnabled,
                 crashSensitivity        = crashSensitivity,
                 customCrashThreshold    = customThreshold,
+                crashConfirmSpeedKmh    = crashConfirmSpeed.toIntOrNull() ?: 5,
                 minSpeedForCrashKmh     = minSpeedForCrash.toIntOrNull() ?: 5,
                 crashMonitorOutsideRide = crashOutsideRide,
                 crashMonitorOutsideRideAnySpeed = crashOutsideRideAny,
@@ -122,7 +137,14 @@ fun SettingsScreen(vm: MainViewModel) {
                 karooLiveEndEnabled     = karooLiveEndEnabled,
                 karooLiveEndMessage     = karooLiveEndMessage,
                 customMessageEnabled    = customMessageEnabled,
+                customMessageTitle      = customMessageTitle.take(5).ifBlank { "MSG" },
                 customMessage           = customMessage,
+                customMessage2Enabled   = customMessage2Enabled,
+                customMessage2Title     = customMessage2Title.take(5).ifBlank { "MSG2" },
+                customMessage2          = customMessage2,
+                customMessage3Enabled   = customMessage3Enabled,
+                customMessage3Title     = customMessage3Title.take(5).ifBlank { "MSG3" },
+                customMessage3          = customMessage3,
             )
         )
     }
@@ -231,10 +253,20 @@ fun SettingsScreen(vm: MainViewModel) {
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
+
+                // ── Slot 1 ──────────────────────────────────────────────────
                 SettingRow(label = stringResource(R.string.custom_message_label)) {
                     Switch(checked = customMessageEnabled, onCheckedChange = { customMessageEnabled = it })
                 }
                 if (customMessageEnabled) {
+                    OutlinedTextField(
+                        value = customMessageTitle,
+                        onValueChange = { if (it.length <= 5) customMessageTitle = it },
+                        label = { Text(stringResource(R.string.custom_message_title_hint)) },
+                        modifier = Modifier.fillMaxWidth(),
+                        singleLine = true,
+                        supportingText = { Text(stringResource(R.string.custom_message_title_desc)) }
+                    )
                     OutlinedTextField(
                         value = customMessage,
                         onValueChange = { customMessage = it },
@@ -252,7 +284,7 @@ fun SettingsScreen(vm: MainViewModel) {
                                     customMsgStatus = "Extension not connected — wait a moment and try again."
                                     customMsgIsError = true
                                 } else {
-                                    val msg = ext.sendCustomMessage()
+                                    val msg = ext.sendCustomMessage(1)
                                     customMsgIsError = !msg.contains("✓")
                                     customMsgStatus = msg
                                 }
@@ -267,6 +299,104 @@ fun SettingsScreen(vm: MainViewModel) {
                             text = customMsgStatus,
                             style = MaterialTheme.typography.bodySmall,
                             color = if (customMsgIsError) Color(0xFFB71C1C) else Color(0xFF2E7D32)
+                        )
+                    }
+                }
+
+                // ── Slot 2 ──────────────────────────────────────────────────
+                SettingRow(label = stringResource(R.string.custom_message_2_label)) {
+                    Switch(checked = customMessage2Enabled, onCheckedChange = { customMessage2Enabled = it })
+                }
+                if (customMessage2Enabled) {
+                    OutlinedTextField(
+                        value = customMessage2Title,
+                        onValueChange = { if (it.length <= 5) customMessage2Title = it },
+                        label = { Text(stringResource(R.string.custom_message_title_hint)) },
+                        modifier = Modifier.fillMaxWidth(),
+                        singleLine = true,
+                        supportingText = { Text(stringResource(R.string.custom_message_title_desc)) }
+                    )
+                    OutlinedTextField(
+                        value = customMessage2,
+                        onValueChange = { customMessage2 = it },
+                        label = { Text(stringResource(R.string.custom_message_2_hint)) },
+                        modifier = Modifier.fillMaxWidth(),
+                        minLines = 2
+                    )
+                    Button(
+                        onClick = {
+                            customMsg2Status = "Sending…"
+                            customMsg2IsError = false
+                            coroutineScope.launch {
+                                val ext = KSafeExtension.getInstance()
+                                if (ext == null) {
+                                    customMsg2Status = "Extension not connected — wait a moment and try again."
+                                    customMsg2IsError = true
+                                } else {
+                                    val msg = ext.sendCustomMessage(2)
+                                    customMsg2IsError = !msg.contains("✓")
+                                    customMsg2Status = msg
+                                }
+                            }
+                        },
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Text(stringResource(R.string.custom_message_2_send_label))
+                    }
+                    if (customMsg2Status.isNotEmpty()) {
+                        Text(
+                            text = customMsg2Status,
+                            style = MaterialTheme.typography.bodySmall,
+                            color = if (customMsg2IsError) Color(0xFFB71C1C) else Color(0xFF2E7D32)
+                        )
+                    }
+                }
+
+                // ── Slot 3 ──────────────────────────────────────────────────
+                SettingRow(label = stringResource(R.string.custom_message_3_label)) {
+                    Switch(checked = customMessage3Enabled, onCheckedChange = { customMessage3Enabled = it })
+                }
+                if (customMessage3Enabled) {
+                    OutlinedTextField(
+                        value = customMessage3Title,
+                        onValueChange = { if (it.length <= 5) customMessage3Title = it },
+                        label = { Text(stringResource(R.string.custom_message_title_hint)) },
+                        modifier = Modifier.fillMaxWidth(),
+                        singleLine = true,
+                        supportingText = { Text(stringResource(R.string.custom_message_title_desc)) }
+                    )
+                    OutlinedTextField(
+                        value = customMessage3,
+                        onValueChange = { customMessage3 = it },
+                        label = { Text(stringResource(R.string.custom_message_3_hint)) },
+                        modifier = Modifier.fillMaxWidth(),
+                        minLines = 2
+                    )
+                    Button(
+                        onClick = {
+                            customMsg3Status = "Sending…"
+                            customMsg3IsError = false
+                            coroutineScope.launch {
+                                val ext = KSafeExtension.getInstance()
+                                if (ext == null) {
+                                    customMsg3Status = "Extension not connected — wait a moment and try again."
+                                    customMsg3IsError = true
+                                } else {
+                                    val msg = ext.sendCustomMessage(3)
+                                    customMsg3IsError = !msg.contains("✓")
+                                    customMsg3Status = msg
+                                }
+                            }
+                        },
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Text(stringResource(R.string.custom_message_3_send_label))
+                    }
+                    if (customMsg3Status.isNotEmpty()) {
+                        Text(
+                            text = customMsg3Status,
+                            style = MaterialTheme.typography.bodySmall,
+                            color = if (customMsg3IsError) Color(0xFFB71C1C) else Color(0xFF2E7D32)
                         )
                     }
                 }
@@ -326,6 +456,12 @@ fun SettingsScreen(vm: MainViewModel) {
                                 CrashSensitivity.MEDIUM -> "10"
                                 CrashSensitivity.HIGH   -> "15"
                                 CrashSensitivity.CUSTOM -> minSpeedForCrash
+                            }
+                            crashConfirmSpeed = when (s) {
+                                CrashSensitivity.LOW    -> "3"
+                                CrashSensitivity.MEDIUM -> "5"
+                                CrashSensitivity.HIGH   -> "5"
+                                CrashSensitivity.CUSTOM -> crashConfirmSpeed
                             }
                         },
                         label = {
@@ -418,6 +554,15 @@ fun SettingsScreen(vm: MainViewModel) {
                         }
                     )
                 }
+            )
+
+            OutlinedTextField(
+                value = crashConfirmSpeed,
+                onValueChange = { if (it.all { c -> c.isDigit() }) crashConfirmSpeed = it },
+                label = { Text(stringResource(R.string.crash_confirm_speed_label)) },
+                modifier = Modifier.fillMaxWidth(),
+                singleLine = true,
+                supportingText = { Text(stringResource(R.string.crash_confirm_speed_hint)) }
             )
 
             HorizontalDivider(modifier = Modifier.padding(vertical = 4.dp))
