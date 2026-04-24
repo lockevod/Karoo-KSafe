@@ -12,8 +12,10 @@
     <string name="sos_datatype_desc">Emergency SOS button. Tap to trigger a 30-second countdown before alerting your emergency contacts.</string>
     <string name="timer_datatype_name">KSafe Check-in</string>
     <string name="timer_datatype_desc">Check-in timer. Tap to reset. If timer expires without check-in, your contacts will be alerted.</string>
-    <string name="custom_message_datatype_name">KSafe Message</string>
+    <string name="custom_message_datatype_name">KSafe Message 1</string>
     <string name="custom_message_datatype_desc">Custom message button. Tap to send your configured message instantly to your contacts.</string>
+    <string name="custom_message_2_datatype_name">KSafe Message 2</string>
+    <string name="custom_message_3_datatype_name">KSafe Message 3</string>
 
     <!-- UI tabs -->
     <string name="tab_provider">Provider</string>
@@ -69,6 +71,8 @@
     <string name="min_speed_hint_medium">Road + MTB: 10 km/h recommended — ignores impacts while nearly stopped (e.g. putting the bike on the car). Reduce to 3 km/h for MTB technical sections.</string>
     <string name="min_speed_hint_high">Smooth road: 15 km/h recommended — road crashes at very low speed are extremely rare. Set to 0 only for testing.</string>
     <string name="min_speed_hint_custom">Choose based on your riding style. 0 = detect at any speed (useful for testing). Higher values reduce false positives when handling the bike at rest.</string>
+    <string name="crash_confirm_speed_label">Max. speed to confirm crash (km/h)</string>
+    <string name="crash_confirm_speed_hint">Speed below which the rider is considered stopped after an impact. Default 5 km/h. Increase to 8 km/h for MTB/gravel where sliding after a crash is common. Lower values (3) are stricter and reduce false positives on slow climbs.</string>
     <string name="crash_outside_ride_label">Monitor crash when not riding</string>
     <string name="crash_outside_ride_desc">Keeps crash detection active even when no ride is recording. Uses the minimum speed configured above. Useful if you want protection while doing a warm-up or a quick spin without starting a recording.</string>
     <string name="crash_outside_ride_any_speed_label">Monitor crash when not riding — any speed</string>
@@ -115,10 +119,17 @@
     <string name="timer_checkin">CHECK\nIN!</string>
     <string name="timer_ok">Tap to\ncheck in</string>
 
-    <!-- Custom message -->
-    <string name="custom_message_section">Custom Message</string>
-    <string name="custom_message_label">Enable custom message button</string>
-    <string name="custom_message_hint">Message text to send when the button is pressed</string>
-    <string name="custom_message_send_label">Send Custom Message</string>
-    <string name="custom_message_send_hint">Sends the configured message immediately (no countdown). Also assignable to a hardware button in Karoo controller settings.</string>
+    <string name="custom_message_section">Custom Messages</string>
+    <string name="custom_message_label">Enable message 1</string>
+    <string name="custom_message_title_hint">Button label (max 5 chars)</string>
+    <string name="custom_message_title_desc">Short name shown on the Karoo field button (e.g. "OK👍", "HOME", "SAFE")</string>
+    <string name="custom_message_hint">Message 1 text (sent when tapped)</string>
+    <string name="custom_message_send_label">Send Message 1</string>
+    <string name="custom_message_send_hint">Tap fields on the Karoo screen to send each message instantly (no countdown). Message 1 is also assignable to a hardware button.</string>
+    <string name="custom_message_2_label">Enable message 2</string>
+    <string name="custom_message_2_hint">Message 2 text (sent when tapped)</string>
+    <string name="custom_message_2_send_label">Send Message 2</string>
+    <string name="custom_message_3_label">Enable message 3</string>
+    <string name="custom_message_3_hint">Message 3 text (sent when tapped)</string>
+    <string name="custom_message_3_send_label">Send Message 3</string>
 </resources>
