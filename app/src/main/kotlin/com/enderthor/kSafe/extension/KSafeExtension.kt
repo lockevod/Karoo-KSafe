@@ -75,7 +75,8 @@ class KSafeExtension : KarooExtension("ksafe", BuildConfig.VERSION_NAME), Corout
         sender = Sender(karooSystem, configManager)
         calibLogger = CalibrationLogger(applicationContext, this)
         emergencyManager = EmergencyManager(
-            applicationContext, karooSystem, configManager, locationManager, sender, this
+            applicationContext, karooSystem, configManager, locationManager, sender, this,
+            calibLogger
         )
         crashManager = CrashDetectionManager(applicationContext, this, {
             Timber.d("Crash detected by sensor!")

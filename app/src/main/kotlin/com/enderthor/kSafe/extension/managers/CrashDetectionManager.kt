@@ -228,9 +228,15 @@ class CrashDetectionManager(
     @Volatile private var lastHighMagLogMs = 0L
     /** Last time a SILENCE_BROKEN event was logged — rate-limited to 1/2s. */
     @Volatile private var lastSilenceBrokenMs = 0L
+    /** Last time a GYRO_BLOCKED event was logged — rate-limited to 1/s. */
+    @Volatile private var lastGyroBlockedLogMs = 0L
     /** Last time a PERIODIC snapshot was logged — once per 5 min. */
     @Volatile private var lastPeriodicLogMs = 0L
     private val PERIODIC_LOG_INTERVAL_MS = 300_000L  // 5 minutes
+    /** Tracks the previous GPS-stale state to log only when the condition changes. */
+    @Volatile private var lastGpsStaleState = false
+    /** Tracks the last sensitivity preset to detect mid-ride config changes. */
+    @Volatile private var lastLoggedSensitivity = config.crashSensitivity
 
     // ─── Public API ───────────────────────────────────────────────────────────
 
@@ -243,6 +249,11 @@ class CrashDetectionManager(
         resetState()
         speedDataReceived = false
         startTime = System.currentTimeMillis()
+        // Reset periodic log timer so the first sensor sample fires an immediate config snapshot.
+        // This captures preset, thresholds and initial state at the start of each session.
+        lastPeriodicLogMs = 0L
+        lastGpsStaleState = false
+        lastLoggedSensitivity = config.crashSensitivity
 
         accelerometer?.let { sensorManager.registerListener(this, it, SensorManager.SENSOR_DELAY_GAME) }
             ?: Timber.w("No accelerometer found on this device!")
@@ -262,7 +273,24 @@ class CrashDetectionManager(
 
     fun updateConfig(config: KSafeConfig) {
         val wasEnabled = this.config.crashDetectionEnabled
+        val oldSensitivity = this.config.crashSensitivity
+        val oldCustomThr = this.config.customCrashThreshold
         this.config = config
+        // Log config change mid-ride so the CSV captures the exact moment thresholds shifted.
+        // This is critical for calibration: events before and after must be analysed with
+        // the thresholds that were active at the time.
+        if (calibLogger != null && calibLogger.isEnabled &&
+            (config.crashSensitivity != oldSensitivity || config.customCrashThreshold != oldCustomThr)) {
+            val newThr = if (config.crashSensitivity == CrashSensitivity.CUSTOM)
+                config.customCrashThreshold.toFloat().coerceIn(20f, 70f)
+            else
+                impactThresholds[config.crashSensitivity] ?: 45f
+            calibLogger.log(CalibrationLogger.Event.PERIODIC) {
+                // Re-use PERIODIC tag but with a "config_change=true" marker so it's easy to filter
+                "config_change=true,old_preset=$oldSensitivity,new_preset=${config.crashSensitivity},new_thr=$newThr,min_spd=${config.minSpeedForCrashKmh}"
+            }
+            lastLoggedSensitivity = config.crashSensitivity
+        }
         // If crash detection was toggled, restart listener
         if (wasEnabled && !config.crashDetectionEnabled) stop()
         else if (!wasEnabled && config.crashDetectionEnabled) start(config)
@@ -398,6 +426,20 @@ class CrashDetectionManager(
             Timber.v("Accel raw=%.2f smooth=%.2fm/s² state=%s thr=%.1f peak_thr=%.1f gyro=%.2f", magnitude, smoothedMagnitude, state, threshold, peakThreshold, lastGyroMag)
         }
 
+        // ── GPS stale transition — log once when stale state changes ──────────
+        // isGpsStale() is computed once here and reused throughout to avoid
+        // multiple System.currentTimeMillis() calls on the hot sensor path.
+        val gpsCurrentlyStale = isGpsStale()
+        if (gpsCurrentlyStale != lastGpsStaleState) {
+            lastGpsStaleState = gpsCurrentlyStale
+            if (gpsCurrentlyStale) {
+                // GPS just became stale — accel-hardened mode will now be used in SILENCE_CHECK
+                calibLogger?.log(CalibrationLogger.Event.GPS_STALE) {
+                    "stale=true,since_ms=${now - speedLastUpdatedTime},last_speed=%.1f,state=$state".format(currentSpeedKmh)
+                }
+            }
+        }
+
         when (state) {
             CrashState.MONITORING -> {
                 val minSpeed = config.minSpeedForCrashKmh
@@ -417,9 +459,12 @@ class CrashDetectionManager(
                             else -> "PEAK"
                         }
                         Timber.d(">>> IMPACT detected! raw=%.1f smooth=%.1fm/s² (thr=%.1f peak_thr=%.1f) speed=%.1fkm/h", magnitude, smoothedMagnitude, threshold, peakThreshold, currentSpeedKmh)
-                        // ── Calibration: which detector fired, at what levels, at what speed
+                        // ── Calibration: which detector fired, at what levels, at what speed, gyro + buffer
+                        // buf: the 3 sliding-window samples in chronological order — helps calibrate IMPACT_FILTER_WINDOW.
+                        // gyro: rotation during impact — high gyro on real crashes vs. bike handling events.
                         calibLogger?.log(CalibrationLogger.Event.IMPACT_ENTER) {
-                            "source=$source,raw=%.1f,smooth=%.1f,thr=%.1f,pthr=%.1f,speed=%.1f,preset=${config.crashSensitivity}".format(magnitude, smoothedMagnitude, threshold, peakThreshold, currentSpeedKmh)
+                            val bufStr = magnitudeBuffer.joinToString("|") { "%.1f".format(it) }
+                            "source=$source,raw=%.1f,smooth=%.1f,thr=%.1f,pthr=%.1f,speed=%.1f,gyro=%.2f,buf=$bufStr,preset=${config.crashSensitivity}".format(magnitude, smoothedMagnitude, threshold, peakThreshold, currentSpeedKmh, lastGyroMag)
                         }
                     }
                     impactDetected && !speedOk && cooldownOk -> {
@@ -435,7 +480,8 @@ class CrashDetectionManager(
                         if ((now - lastHighMagLogMs) > CalibrationLogger.HIGH_MAG_INTERVAL_MS) {
                             lastHighMagLogMs = now
                             calibLogger?.log(CalibrationLogger.Event.HIGH_MAG_NORISING) {
-                                "raw=%.1f,smooth=%.1f,thr=%.1f,pthr=%.1f,speed=%.1f,preset=${config.crashSensitivity}".format(magnitude, smoothedMagnitude, threshold, peakThreshold, currentSpeedKmh)
+                                // gyro included: high gyro = device moving/handling = not terrain noise
+                                "raw=%.1f,smooth=%.1f,thr=%.1f,pthr=%.1f,speed=%.1f,gyro=%.2f,preset=${config.crashSensitivity}".format(magnitude, smoothedMagnitude, threshold, peakThreshold, currentSpeedKmh, lastGyroMag)
                             }
                         }
                     }
@@ -453,18 +499,32 @@ class CrashDetectionManager(
                         state = CrashState.SILENCE_CHECK
                         silenceStartTime = now
                         Timber.d(">>> SILENCE_CHECK started (deviation=%.2f gyro=%.2f speed=%.1fkm/h)", deviation, lastGyroMag, currentSpeedKmh)
-                        // ── Calibration: silence entry context
+                        // ── Calibration: silence entry context — use gpsCurrentlyStale (already computed)
                         calibLogger?.log(CalibrationLogger.Event.SILENCE_ENTER) {
-                            "time_since_impact_ms=$timeSince,deviation=%.2f,gyro=%.2f,speed=%.1f,gps_stale=${isGpsStale()}".format(deviation, lastGyroMag, currentSpeedKmh)
+                            "time_since_impact_ms=$timeSince,deviation=%.2f,gyro=%.2f,speed=%.1f,gps_stale=$gpsCurrentlyStale".format(deviation, lastGyroMag, currentSpeedKmh)
+                        }
+                    }
+                    // Gyro gate blocking: accel is quiet AND speed dropped, but device is still rotating.
+                    // Logged rate-limited (1/s) — key for calibrating GYRO_MOVING_MAX (2.0 rad/s).
+                    // If this fires repeatedly on confirmed real crashes, GYRO_MOVING_MAX may be too strict.
+                    deviation < SILENCE_DEVIATION_MAX && lastGyroMag >= GYRO_MOVING_MAX && timeSince > 500 && speedHasDropped -> {
+                        if ((now - lastGyroBlockedLogMs) > CalibrationLogger.GYRO_BLOCKED_INTERVAL_MS) {
+                            lastGyroBlockedLogMs = now
+                            calibLogger?.log(CalibrationLogger.Event.GYRO_BLOCKED) {
+                                "gyro=%.2f,gyro_max=$GYRO_MOVING_MAX,deviation=%.2f,speed=%.1f,time_since_impact_ms=$timeSince".format(lastGyroMag, deviation, currentSpeedKmh)
+                            }
                         }
                     }
                     timeSince > windowMs -> {
                         Timber.d("Impact window timeout (%dms) → false alarm, resetting", windowMs)
-                        // ── Calibration point 3: timeout — how long in IMPACT and why it didn't settle
+                        // ── Calibration: timeout — how long in IMPACT and why it didn't settle
                         calibLogger?.log(CalibrationLogger.Event.IMPACT_TIMEOUT) {
                             "time_in_impact_ms=$timeSince,window_ms=$windowMs,speed=%.1f,gyro=%.2f,deviation=%.2f,preset=${config.crashSensitivity}".format(currentSpeedKmh, lastGyroMag, deviation)
                         }
                         resetState()
+                        // Schedule a post-reset snapshot 2s later.
+                        // If the device is still by then (speed=0, low deviation), this was likely a real crash.
+                        schedulePostResetSnapshot("IMPACT_TMO")
                     }
                 }
             }
@@ -498,7 +558,7 @@ class CrashDetectionManager(
                 // (lastGyroMag < GYRO_MOVING_MAX) to avoid entering this phase while
                 // still actively riding/pedaling.  Once inside SILENCE_CHECK the GPS speed gate
                 // is sufficient.
-                val gpsStale = isGpsStale()
+                val gpsStale = gpsCurrentlyStale
                 val effectiveDeviationMax = if (gpsStale) GPS_STALE_DEVIATION_MAX else SILENCE_DEVIATION_MAX
                 val effectiveSilenceMs    = if (gpsStale) GPS_STALE_SILENCE_DURATION_MS else SILENCE_DURATION_MS
                 val speedStillOk = isSpeedDropConfirmed()
@@ -510,8 +570,10 @@ class CrashDetectionManager(
                         val totalMs = now - impactTime
                         Timber.d(">>> CRASH CONFIRMED after %dms (accel dev=%.2f speed=%.1fkm/h gyro=%.2f[ignored] gpsStale=%b)", totalMs, deviation, currentSpeedKmh, lastGyroMag, gpsStale)
                         // ── Calibration: crash confirmed — full context for validation
+                        // countdown_s: user has this many seconds to cancel before the emergency is sent.
+                        // If the user cancels, CRASH_NO will follow → that row identifies this as a false positive.
                         calibLogger?.log(CalibrationLogger.Event.CRASH_CONFIRMED) {
-                            "total_ms=$totalMs,deviation=%.2f,speed=%.1f,gps_stale=$gpsStale,preset=${config.crashSensitivity},effective_dev_max=$effectiveDeviationMax,effective_silence_ms=$effectiveSilenceMs".format(deviation, currentSpeedKmh)
+                            "total_ms=$totalMs,deviation=%.2f,speed=%.1f,gps_stale=$gpsStale,preset=${config.crashSensitivity},effective_dev_max=$effectiveDeviationMax,effective_silence_ms=$effectiveSilenceMs,countdown_s=${config.countdownSeconds}".format(deviation, currentSpeedKmh)
                         }
                         lastCrashTime = now
                         resetState()
@@ -520,7 +582,15 @@ class CrashDetectionManager(
                     !isStill -> {
                         if (timeSinceImpact > windowMs * 2) {
                             Timber.d("Silence never achieved after %dms → false alarm, resetting", timeSinceImpact)
+                            // ── Calibration: entered SILENCE_CHECK but never achieved stillness
+                            // Distinct from IMPACT_TMO (that fires before reaching SILENCE stage).
+                            calibLogger?.log(CalibrationLogger.Event.SILENCE_TIMEOUT) {
+                                "time_since_impact_ms=$timeSinceImpact,window_ms=$windowMs,deviation=%.2f,eff_max=$effectiveDeviationMax,speed=%.1f,gps_stale=$gpsStale,preset=${config.crashSensitivity}".format(deviation, currentSpeedKmh)
+                            }
                             resetState()
+                            // Schedule a post-reset snapshot 2s later.
+                            // If device is quiet and speed=0 shortly after, this was likely a real crash.
+                            schedulePostResetSnapshot("SIL_TMO")
                         } else {
                             // ── Calibration point 4: silence broken — rate-limited to 1/2s
                             if (now - lastSilenceBrokenMs > CalibrationLogger.SILENCE_BROKEN_INTERVAL_MS) {
@@ -542,12 +612,16 @@ class CrashDetectionManager(
         // ── Calibration: periodic ride-context snapshot ───────────────────────
         // Fires every 5 min regardless of crash state — gives the ride timeline so
         // you can see: at what speed was the rider? was GPS stale? which preset was active?
+        // Also fires immediately on the first sensor sample after start() — acts as a
+        // config snapshot (captures active thresholds, sensitivity, min speed).
         // The check is cheap (two @Volatile reads + comparison) when logging is disabled.
         if (calibLogger != null && calibLogger.isEnabled &&
             (now - lastPeriodicLogMs) > PERIODIC_LOG_INTERVAL_MS) {
             lastPeriodicLogMs = now
             calibLogger.log(CalibrationLogger.Event.PERIODIC) {
-                "state=$state,speed=%.1f,accel_dev=%.2f,gyro=%.2f,preset=${config.crashSensitivity},gps_stale=${isGpsStale()}".format(currentSpeedKmh, lastAccelDeviation, lastGyroMag)
+                // thr/pthr: exact impact thresholds active right now (changes with preset/custom)
+                // min_spd: minimum speed configured for crash detection
+                "state=$state,speed=%.1f,accel_dev=%.2f,gyro=%.2f,preset=${config.crashSensitivity},thr=%.1f,pthr=%.1f,min_spd=${config.minSpeedForCrashKmh},gps_stale=$gpsCurrentlyStale".format(currentSpeedKmh, lastAccelDeviation, lastGyroMag, threshold, peakThreshold)
             }
         }
     }
@@ -557,6 +631,27 @@ class CrashDetectionManager(
         impactTime = 0L
         silenceStartTime = 0L
         magnitudeBuffer.clear()
+    }
+
+    /**
+     * Fires a POST_RESET_SNAP calibration event 2 seconds after an internal pipeline reset.
+     *
+     * Purpose: determine whether the auto-cancelled detection was a real crash or not.
+     * Logic: if speed is near zero AND accel deviation is low 2s after the reset, the device
+     * is motionless — strongly suggests a real crash was missed (false negative).
+     * If speed is non-zero and deviation is high, the reset was correct (false alarm gone).
+     *
+     * The 2s delay allows the accel signal to settle after the impact window / silence timeout.
+     * [cancelledBy]: tag of the event that triggered the reset (IMPACT_TMO or SIL_TMO).
+     */
+    private fun schedulePostResetSnapshot(cancelledBy: String) {
+        if (calibLogger == null || !calibLogger.isEnabled) return
+        scope.launch {
+            kotlinx.coroutines.delay(2_000L)
+            calibLogger.log(CalibrationLogger.Event.POST_RESET_SNAP) {
+                "cancelled_by=$cancelledBy,speed=%.1f,accel_dev=%.2f,gyro=%.2f,state=$state,gps_stale=${isGpsStale()}".format(currentSpeedKmh, lastAccelDeviation, lastGyroMag)
+            }
+        }
     }
 
     // ─── Speed drop monitor ───────────────────────────────────────────────────
