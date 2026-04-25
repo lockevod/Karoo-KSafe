@@ -47,12 +47,38 @@ class CalibrationLogger(
         IMPACT_ENTER("IMPACT_IN"),
         /** IMPACT window expired without settling → false alarm. */
         IMPACT_TIMEOUT("IMPACT_TMO"),
+        /**
+         * Inside IMPACT state: accel was quiet AND speed dropped, but gyro was too high
+         * (lastGyroMag ≥ GYRO_MOVING_MAX) so the SILENCE_CHECK transition was blocked.
+         * Key for calibrating GYRO_MOVING_MAX: if this fires on real crashes the threshold is too strict.
+         * Rate-limited to 1/s to avoid flooding the buffer on continuous active movement.
+         */
+        GYRO_BLOCKED("GYRO_BLK"),
         /** Entered SILENCE_CHECK. */
         SILENCE_ENTER("SIL_IN"),
         /** Stillness condition broken inside SILENCE_CHECK — timer reset. */
         SILENCE_BROKEN("SIL_BRK"),
         /** Crash confirmed — full pipeline completed. */
         CRASH_CONFIRMED("CRASH_OK"),
+        /**
+         * User cancelled the crash countdown — this is a CONFIRMED FALSE POSITIVE.
+         * Pairing with the preceding CRASH_OK row identifies exactly which detections were wrong.
+         * how_long_ms: time between CRASH_OK and user tap — near-zero means obvious false alarm.
+         */
+        CRASH_CANCELLED("CRASH_NO"),
+        /**
+         * SILENCE_CHECK timed out — device entered the silence phase but never achieved
+         * uninterrupted stillness within the double-window period → false alarm at stage 3.
+         * Distinct from IMPACT_TMO (which fires before entering SILENCE_CHECK at all).
+         */
+        SILENCE_TIMEOUT("SIL_TMO"),
+        /**
+         * Snapshot of sensor state taken 2 seconds after any internal pipeline reset
+         * (IMPACT_TMO or SIL_TMO). Captures whether the device went still shortly after the
+         * cancel — if speed=0 and deviation is low here, the cancelled event was likely a real crash.
+         * This is the key datapoint for identifying false negatives caused by auto-cancellation.
+         */
+        POST_RESET_SNAP("RST_SNAP"),
         /** Speed-drop monitor evaluated (every 30 s, only when timer is active). */
         SPEEDDROP_EVAL("SPDRP_EVAL"),
         /** GPS stale condition detected (informational marker). */
@@ -61,6 +87,8 @@ class CalibrationLogger(
         PERIODIC("PERIODIC"),
         /** Marker written when logging is enabled — anchor for elapsed_s calculations. */
         LOGGER_START("LOG_START"),
+        /** Marker written when logging is disabled — session end boundary. */
+        LOG_END("LOG_END"),
     }
 
     companion object {
@@ -77,6 +105,8 @@ class CalibrationLogger(
         const val HIGH_MAG_INTERVAL_MS = 1_000L
         /** Rate-limit SILENCE_BROKEN logs: at most once per 2 seconds. */
         const val SILENCE_BROKEN_INTERVAL_MS = 2_000L
+        /** Rate-limit GYRO_BLOCKED logs: at most once per 1 second. */
+        const val GYRO_BLOCKED_INTERVAL_MS = 1_000L
     }
 
     // ─── State ───────────────────────────────────────────────────────────────
@@ -120,7 +150,9 @@ class CalibrationLogger(
         isEnabled = false
         flushJob?.cancel()
         flushJob = null
-        flush()   // write any remaining buffer entries to disk
+        // Write session-end marker before the final flush so it is included in the sent file
+        addEntryDirect(Event.LOG_END, "session_end,duration_s=${"%.0f".format((System.currentTimeMillis() - startTime) / 1_000f)}")
+        flush()   // write all remaining buffer entries (including LOG_END) to disk
         Timber.i("CalibrationLogger disabled — final flush done")
     }
 
@@ -142,7 +174,10 @@ class CalibrationLogger(
     fun addEntry(event: Event, data: String) {
         val now = System.currentTimeMillis()
         val elapsed = (now - startTime) / 1_000f
-        val line = "$now,${"%.1f".format(elapsed)},${event.tag},$data"
+        // Quote the data field when it contains commas so the CSV remains valid in Excel/Sheets.
+        // Without quoting, a data value like "speed=5.0,gyro=0.2" gets split into extra columns.
+        val csvData = if (',' in data) "\"$data\"" else data
+        val line = "$now,${"%.1f".format(elapsed)},${event.tag},$csvData"
         synchronized(buffer) {
             if (buffer.size >= MAX_BUFFER) buffer.removeFirst()
             buffer.addLast(line)
@@ -231,7 +266,8 @@ class CalibrationLogger(
     /** Writes a log entry without checking [isEnabled] — used only during [enable]/[disable]. */
     private fun addEntryDirect(event: Event, data: String) {
         val now = System.currentTimeMillis()
-        val line = "$now,0.0,${event.tag},$data"
+        val csvData = if (',' in data) "\"$data\"" else data
+        val line = "$now,0.0,${event.tag},$csvData"
         synchronized(buffer) {
             if (buffer.size >= MAX_BUFFER) buffer.removeFirst()
             buffer.addLast(line)

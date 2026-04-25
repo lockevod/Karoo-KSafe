@@ -36,7 +36,8 @@ class EmergencyManager(
     private val configManager: ConfigurationManager,
     private val locationManager: LocationManager,
     private val sender: Sender,
-    private val scope: CoroutineScope
+    private val scope: CoroutineScope,
+    private val calibLogger: CalibrationLogger? = null,
 ) {
     companion object {
 
@@ -54,6 +55,8 @@ class EmergencyManager(
     var currentStatus = EmergencyStatus.IDLE
         private set
     private var currentReason: EmergencyReason? = null
+    /** Timestamp when the current countdown started — used to compute how_long_ms in CRASH_NO log. */
+    private var countdownStartedAt = 0L
 
     // ─── Public API ───────────────────────────────────────────────────────────
 
@@ -68,10 +71,24 @@ class EmergencyManager(
 
     suspend fun cancelEmergency(config: KSafeConfig? = null) {
         if (currentStatus != EmergencyStatus.COUNTDOWN) return
+
+        // Capture reason before clearing — needed for CRASH_NO calibration log.
+        val cancelledReason = currentReason
+        val howLongMs = if (countdownStartedAt > 0L) System.currentTimeMillis() - countdownStartedAt else 0L
+
         countdownJob?.cancel()
         currentStatus = EmergencyStatus.IDLE
         currentReason = null
+        countdownStartedAt = 0L
         sosOverlay.removeOverlay()
+
+        // If user cancelled a crash-triggered countdown → confirmed false positive.
+        // how_long_ms near 0 = immediate cancel (very obvious FP); longer = hesitation.
+        if (cancelledReason == EmergencyReason.CRASH_DETECTED) {
+            calibLogger?.log(CalibrationLogger.Event.CRASH_CANCELLED) {
+                "how_long_ms=$howLongMs,reason=${cancelledReason.label}"
+            }
+        }
 
         // Update UI state synchronously — DataTypes react immediately, no DataStore wait.
         _uiState.value = EmergencyState()
@@ -84,7 +101,7 @@ class EmergencyManager(
             configManager.saveEmergencyState(EmergencyState())
         }
 
-        Timber.d("Emergency cancelled by user")
+        Timber.d("Emergency cancelled by user (reason=$cancelledReason, after ${howLongMs}ms)")
     }
 
     fun startCheckinTimer(config: KSafeConfig) {
@@ -165,6 +182,7 @@ class EmergencyManager(
         checkinWarningJob?.cancel()
         currentStatus = EmergencyStatus.IDLE
         currentReason = null
+        countdownStartedAt = 0L
         sosOverlay.removeOverlay()
         _uiState.value = EmergencyState()
         scope.launch { configManager.saveEmergencyState(EmergencyState()) }
@@ -181,6 +199,7 @@ class EmergencyManager(
             countdownJob?.cancel()
             currentStatus = EmergencyStatus.IDLE
             currentReason = null
+            countdownStartedAt = 0L
             sosOverlay.removeOverlay()
             _uiState.value = EmergencyState()
             scope.launch { configManager.saveEmergencyState(EmergencyState()) }
@@ -194,6 +213,7 @@ class EmergencyManager(
         currentStatus = EmergencyStatus.COUNTDOWN
         currentReason = reason
         val startTime = System.currentTimeMillis()
+        countdownStartedAt = startTime
 
         // Update UI state synchronously so DataTypes react immediately (no DataStore latency).
         val countdownState = EmergencyState(
