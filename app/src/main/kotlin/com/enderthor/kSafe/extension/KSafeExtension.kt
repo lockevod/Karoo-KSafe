@@ -9,10 +9,12 @@ import com.enderthor.kSafe.datatype.CustomMessageDataType
 import com.enderthor.kSafe.datatype.CustomMessageState
 import com.enderthor.kSafe.datatype.SafetyTimerDataType
 import com.enderthor.kSafe.datatype.SOSDataType
+import com.enderthor.kSafe.extension.managers.CalibrationLogger
 import com.enderthor.kSafe.extension.managers.ConfigurationManager
 import com.enderthor.kSafe.extension.managers.CrashDetectionManager
 import com.enderthor.kSafe.extension.managers.EmergencyManager
 import com.enderthor.kSafe.extension.managers.LocationManager
+import com.enderthor.kSafe.extension.managers.LogReporter
 import io.hammerhead.karooext.KarooSystemService
 import io.hammerhead.karooext.extension.KarooExtension
 import io.hammerhead.karooext.models.RideState
@@ -37,6 +39,7 @@ class KSafeExtension : KarooExtension("ksafe", BuildConfig.VERSION_NAME), Corout
     private lateinit var crashManager: CrashDetectionManager
     private lateinit var emergencyManager: EmergencyManager
     private lateinit var sender: Sender
+    private lateinit var calibLogger: CalibrationLogger
 
     private var activeConfig = KSafeConfig()
     private var currentRideState: RideState? = null
@@ -70,15 +73,16 @@ class KSafeExtension : KarooExtension("ksafe", BuildConfig.VERSION_NAME), Corout
         configManager = ConfigurationManager(applicationContext)
         locationManager = LocationManager(karooSystem, this)
         sender = Sender(karooSystem, configManager)
+        calibLogger = CalibrationLogger(applicationContext, this)
         emergencyManager = EmergencyManager(
             applicationContext, karooSystem, configManager, locationManager, sender, this
         )
-        crashManager = CrashDetectionManager(applicationContext, this) {
+        crashManager = CrashDetectionManager(applicationContext, this, {
             Timber.d("Crash detected by sensor!")
             if (activeConfig.isActive) {
                 emergencyManager.triggerEmergency(EmergencyReason.CRASH_DETECTED, activeConfig)
             }
-        }
+        }, calibLogger)
 
         karooSystem.connect { connected ->
             if (connected) {
@@ -97,6 +101,18 @@ class KSafeExtension : KarooExtension("ksafe", BuildConfig.VERSION_NAME), Corout
             configManager.loadConfigFlow().collect { config ->
                 activeConfig = config
                 crashManager.updateConfig(config)
+                // Toggle calibration logging based on config
+                if (config.calibrationLoggingEnabled && !calibLogger.isEnabled) {
+                    calibLogger.enable()
+                } else if (!config.calibrationLoggingEnabled && calibLogger.isEnabled) {
+                    // disable() flushes the remaining buffer to disk before returning
+                    calibLogger.disable()
+                    // Read the full CSV (all flushed chunks) and send via Telegram (fire-and-forget)
+                    val logContent = calibLogger.getFileContent()
+                    launch {
+                        LogReporter.sendLogFile(logContent, karooSystem = karooSystem)
+                    }
+                }
                 // Re-evaluate crash monitoring if idle (ride start/pause is handled by handleRideState)
                 if (currentRideState is RideState.Idle) {
                     applyIdleMonitoring(config)
@@ -155,6 +171,7 @@ class KSafeExtension : KarooExtension("ksafe", BuildConfig.VERSION_NAME), Corout
             }
             is RideState.Idle -> {
                 val wasActive = rideWasActive
+                val wasLogging = calibLogger.isEnabled
                 emergencyManager.stopAll()
                 applyIdleMonitoring(activeConfig)
                 // Reset per-ride flags
@@ -163,6 +180,15 @@ class KSafeExtension : KarooExtension("ksafe", BuildConfig.VERSION_NAME), Corout
                 // Send ride-end notification if there was an active ride
                 if (wasActive) {
                     sendRideEndNotification()
+                }
+                // Auto-send calibration log if it was active during the ride
+                // (only if the user hasn't already turned off logging — that path sends its own copy)
+                if (wasActive && wasLogging && calibLogger.isEnabled) {
+                    // Read the full file (all previously flushed chunks + current buffer)
+                    val logContent = calibLogger.getFileContent()
+                    launch {
+                        LogReporter.sendLogFile(logContent, karooSystem = karooSystem)
+                    }
                 }
             }
         }
@@ -303,7 +329,32 @@ class KSafeExtension : KarooExtension("ksafe", BuildConfig.VERSION_NAME), Corout
     }
 
     /**
-     * Called from SettingsScreen to test the full emergency flow without a real ride.
+     * Sends the complete CSV calibration log to the developer via Telegram.
+     * Called from the Settings UI "Send now" button for manual trigger.
+     * The file is sent regardless of whether logging is currently active.
+     */
+    suspend fun sendCalibrationLog(): String {
+        val logContent = calibLogger.getFileContent()
+        if (logContent.isBlank()) return "No calibration data on disk yet."
+        Timber.d("Sending calibration log manually via Telegram")
+        val ok = LogReporter.sendLogFile(logContent, karooSystem = karooSystem)
+        return if (ok) "Calibration log sent via Telegram ✓"
+               else "Send failed — check Telegram credentials or connection."
+    }
+
+    /** Returns a string with file location info for display in the Settings UI. */
+    fun getCalibrationLogInfo(): String {
+        val count = calibLogger.getEntryCount()
+        val file = calibLogger.getLogFile()
+        return if (file != null) "$count entries | ${file.path}"
+               else "$count entries (not yet flushed to disk)"
+    }
+
+    fun clearCalibrationLog() {
+        calibLogger.clear()
+    }
+
+    /** Called from SettingsScreen to test the full emergency flow without a real ride.
      * Returns a message to display in the UI.
      */
     suspend fun simulateCrash(): String {
@@ -398,6 +449,7 @@ class KSafeExtension : KarooExtension("ksafe", BuildConfig.VERSION_NAME), Corout
         crashManager.stop()
         locationManager.stop()
         emergencyManager.stopAll()
+        calibLogger.disable()
         karooSystem.disconnect()
         job.cancel()
         instance = null

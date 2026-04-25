@@ -79,6 +79,7 @@ fun SettingsScreen(vm: MainViewModel) {
     var customMessage3Enabled by remember(config.customMessage3Enabled)   { mutableStateOf(config.customMessage3Enabled) }
     var customMessage3Title   by remember(config.customMessage3Title)     { mutableStateOf(config.customMessage3Title) }
     var customMessage3        by remember(config.customMessage3)          { mutableStateOf(config.customMessage3) }
+    var calibrationLogging    by remember(config.calibrationLoggingEnabled) { mutableStateOf(config.calibrationLoggingEnabled) }
 
     var simulateStatus      by remember { mutableStateOf("") }
     var simulateIsError     by remember { mutableStateOf(false) }
@@ -92,6 +93,9 @@ fun SettingsScreen(vm: MainViewModel) {
     var customMsg2IsError   by remember { mutableStateOf(false) }
     var customMsg3Status    by remember { mutableStateOf("") }
     var customMsg3IsError   by remember { mutableStateOf(false) }
+    var calibLogStatus      by remember { mutableStateOf("") }
+    var calibLogIsError     by remember { mutableStateOf(false) }
+    var calibLogInfo        by remember { mutableStateOf("") }
     var backupStatus        by remember { mutableStateOf("") }
     var backupIsError       by remember { mutableStateOf(false) }
     val coroutineScope = rememberCoroutineScope()
@@ -113,6 +117,7 @@ fun SettingsScreen(vm: MainViewModel) {
         customMessageEnabled, customMessage, customMessageTitle,
         customMessage2Enabled, customMessage2, customMessage2Title,
         customMessage3Enabled, customMessage3, customMessage3Title,
+        calibrationLogging,
     ) {
         delay(600)
         vm.saveConfig(
@@ -145,6 +150,7 @@ fun SettingsScreen(vm: MainViewModel) {
                 customMessage3Enabled   = customMessage3Enabled,
                 customMessage3Title     = customMessage3Title.take(5).ifBlank { "MSG3" },
                 customMessage3          = customMessage3,
+                calibrationLoggingEnabled = calibrationLogging,
             )
         )
     }
@@ -756,6 +762,102 @@ fun SettingsScreen(vm: MainViewModel) {
                 text = simulateStatus,
                 style = MaterialTheme.typography.bodySmall,
                 color = if (simulateIsError) Color(0xFFB71C1C) else Color(0xFF2E7D32)
+            )
+        }
+
+        HorizontalDivider()
+
+        // ── Calibration logging ───────────────────────────────────────────────
+        Text(
+            text = stringResource(R.string.section_calibration),
+            style = MaterialTheme.typography.titleSmall,
+            fontWeight = FontWeight.Bold,
+            color = MaterialTheme.colorScheme.onSurfaceVariant
+        )
+        Text(
+            text = stringResource(R.string.calibration_desc),
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant
+        )
+
+        SettingRow(label = stringResource(R.string.calibration_logging_label)) {
+            Switch(
+                checked = calibrationLogging,
+                onCheckedChange = {
+                    calibrationLogging = it
+                    calibLogInfo = KSafeExtension.getInstance()?.getCalibrationLogInfo() ?: ""
+                    calibLogStatus = if (it) "Logging enabled — data will be collected." else "Logging disabled."
+                    calibLogIsError = false
+                }
+            )
+        }
+
+        if (calibrationLogging) {
+            // Refresh entry count
+            LaunchedEffect(calibrationLogging) {
+                while (calibrationLogging) {
+                    calibLogInfo = KSafeExtension.getInstance()?.getCalibrationLogInfo() ?: ""
+                    kotlinx.coroutines.delay(5_000L)
+                }
+            }
+            if (calibLogInfo.isNotEmpty()) {
+                Text(
+                    text = calibLogInfo,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                Button(
+                    onClick = {
+                        calibLogStatus = "Sending…"
+                        calibLogIsError = false
+                        coroutineScope.launch {
+                            val ext = KSafeExtension.getInstance()
+                            if (ext == null) {
+                                calibLogStatus = "Extension not running."
+                                calibLogIsError = true
+                                return@launch
+                            }
+                            val result = ext.sendCalibrationLog()
+                            calibLogStatus = result
+                            calibLogIsError = !result.contains("✓")
+                        }
+                    },
+                    modifier = Modifier.weight(1f)
+                ) { Text(stringResource(R.string.calibration_send)) }
+
+                Button(
+                    onClick = {
+                        KSafeExtension.getInstance()?.clearCalibrationLog()
+                        calibLogStatus = "Log cleared."
+                        calibLogIsError = false
+                        calibLogInfo = ""
+                    },
+                    modifier = Modifier.weight(1f),
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = MaterialTheme.colorScheme.errorContainer,
+                        contentColor = MaterialTheme.colorScheme.onErrorContainer
+                    )
+                ) { Text(stringResource(R.string.calibration_clear)) }
+            }
+
+            Text(
+                text = stringResource(R.string.calibration_adb_hint),
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+        }
+
+        if (calibLogStatus.isNotEmpty()) {
+            Text(
+                text = calibLogStatus,
+                style = MaterialTheme.typography.bodySmall,
+                color = if (calibLogIsError) Color(0xFFB71C1C) else Color(0xFF2E7D32)
             )
         }
 

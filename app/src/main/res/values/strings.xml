@@ -132,4 +132,12 @@
     <string name="custom_message_3_label">Enable message 3</string>
     <string name="custom_message_3_hint">Message 3 text (sent when tapped)</string>
     <string name="custom_message_3_send_label">Send Message 3</string>
+
+    <!-- Calibration logging -->
+    <string name="section_calibration">🔬 Help improve KSafe</string>
+    <string name="calibration_desc">When enabled, KSafe records anonymous sensor data (accelerometer values, speed readings, detection states) to help the developer calibrate the crash detection algorithm. No GPS coordinates, no messages, no personal information of any kind is ever included. Data is sent automatically to the developer when you disable this option or finish a ride. Disabled by default — completely optional.</string>
+    <string name="calibration_logging_label">Send anonymous calibration data</string>
+    <string name="calibration_send">Send now</string>
+    <string name="calibration_clear">Clear log</string>
+    <string name="calibration_adb_hint">Pull full CSV: adb pull /sdcard/Android/data/com.enderthor.kSafe/files/ksafe_calibration.csv</string>
 </resources>
