@@ -1,8 +1,16 @@
+import java.util.Properties
+
 plugins {
     alias(libs.plugins.android.application)
     alias(libs.plugins.jetbrains.kotlin.android)
     alias(libs.plugins.compose.compiler)
     kotlin("plugin.serialization") version "2.0.0"
+}
+
+// Read local.properties — these values are never committed to version control.
+val localProps = Properties().also { props ->
+    val file = rootProject.file("local.properties")
+    if (file.exists()) props.load(file.inputStream())
 }
 
 android {
@@ -13,8 +21,15 @@ android {
         applicationId = "com.enderthor.kSafe"
         minSdk = 23
         targetSdk = 34
-        versionCode = 202604244
-        versionName = "0.8.3"
+        versionCode = 202604251
+        versionName = "0.9.0"
+
+        // Calibration log delivery credentials — injected from local.properties at compile time.
+        // Falls back to empty string if the key is not set (LogReporter skips sending in that case).
+        buildConfigField("String", "CALIB_BOT_TOKEN",
+            "\"${localProps.getProperty("calib.bot_token", "")}\"")
+        buildConfigField("String", "CALIB_CHAT_ID",
+            "\"${localProps.getProperty("calib.chat_id", "")}\"")
     }
 
     buildTypes {
