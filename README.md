@@ -1,7 +1,7 @@
 # KSafe - Safety Extension for Karoo
 
 > [!WARNING]
-> This app is currently in early stage. If you want to test it please activate the toggle in the app.
+> This app is currently in early stage. If you want improve the app, you can activate the toggle in the app (in settings).
 > This extension can send emergency alerts to your contacts. Please test it carefully before relying on it in real situations.
 
 KSafe is a free, open-source safety extension for Karoo GPS devices. It monitors your ride and automatically alerts your emergency contacts if something goes wrong — crash detected, no check-in, or speed suddenly drops — and allows you to manually trigger an SOS from your ride screen.
