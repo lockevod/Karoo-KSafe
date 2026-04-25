@@ -1,7 +1,7 @@
 # KSafe - Safety Extension for Karoo
 
 > [!WARNING]
-> This app is currently in early stage and its main features might not work at all. If you want to test it and encounter issues, please report them in the GitHub issues, ideally with adb logs attached.
+> This app is currently in early stage. If you want to test it please activate the toggle in the app.
 > This extension can send emergency alerts to your contacts. Please test it carefully before relying on it in real situations.
 
 KSafe is a free, open-source safety extension for Karoo GPS devices. It monitors your ride and automatically alerts your emergency contacts if something goes wrong — crash detected, no check-in, or speed suddenly drops — and allows you to manually trigger an SOS from your ride screen.
@@ -26,6 +26,7 @@ Compatible with Karoo 3 running Karoo OS version 1.527 and later.
 - **Ride end notification**: Optionally sends a configurable message to your contacts when you finish a ride (recording stops completely).
 - **Custom message buttons**: Send any custom text message instantly via a hardware button or the app — no countdown, no emergency. Useful for "I'm OK", "Starting now", or any quick status update to your contacts. **Up to three independent message buttons** are available, each with its own configurable label and text.
 - **Five data fields**: SOS field, Safety Timer field, and up to three Custom Message fields — add any combination to your ride profile.
+- **Help improve KSafe** *(optional)*: Enable anonymous calibration data sending to help tune the crash detection algorithm. See [Calibration Logging](#calibration-logging-optional) for details.
 
 ## Requirements
 
@@ -163,6 +164,55 @@ Open the KSafe app on your Karoo to configure it.
   - Enter the **message text** that will be sent when the field is tapped.
   - Tap **Send Message N** to send it immediately from the app to verify it works.
   - **Message 1** can also be assigned to a hardware button (**KSafe: Send Custom Message**) in Karoo controller settings.
+
+### Calibration Logging (optional)
+
+At the very bottom of the Settings tab you will find the **"Help improve KSafe"** section with a single toggle: **Send anonymous calibration data**.
+
+This feature is **disabled by default** and completely optional. Enabling it helps the developer improve and calibrate the crash detection algorithm over time, using real-world data from different riding styles and terrain types.
+
+#### What data is collected
+
+When enabled, KSafe records detailed sensor events to a local CSV file:
+
+| Data recorded | Examples |
+|---|---|
+| Accelerometer magnitude values | `raw=52.3 m/s²`, `smooth=49.1 m/s²` |
+| Detection thresholds in use | `threshold=45 m/s²`, `peakThreshold=60 m/s²` |
+| GPS speed at the moment of each event | `speed=28.4 km/h` |
+| Crash detection state | `MONITORING`, `IMPACT`, `SILENCE_CHECK` |
+| Sensitivity preset active | `preset=MEDIUM` |
+| Gyroscope magnitude | `gyro=0.82 rad/s` |
+| GPS stale flag | `gps_stale=false` |
+| Elapsed ride time | `elapsed_s=1247.3` |
+
+#### What is NOT collected
+
+- ❌ GPS coordinates — no location data, no maps, no tracking
+- ❌ Emergency messages or contact information
+- ❌ Device identifiers, account data, or any user-identifiable information
+- ❌ Anything related to who you are or where you ride
+
+The data consists exclusively of raw sensor readings and algorithm states — the same numbers the crash detection algorithm reads internally. It is not possible to identify you, your location, your route, or your contacts from this data.
+
+#### How the data is sent
+
+The CSV file is sent automatically to the developer via Telegram (a private bot) when you:
+- **Disable** the calibration logging toggle, or
+- **Finish a ride** (if logging was active during the ride)
+
+You can also tap **Send now** to transmit the current log immediately. The file is typically 50–400 KB for a 2–4 hour ride session.
+
+#### Why this helps
+
+Crash detection thresholds (impact magnitudes, silence durations, speed gates) need to be tuned to real-world conditions across different riding disciplines — MTB, gravel, road, velodrome. Each discipline generates a different noise floor and a different impact distribution. The calibration data allows the developer to:
+
+- Understand the terrain noise distribution at different speed/terrain combinations
+- Identify conditions where the speed gate is too aggressive (misses real crashes)
+- Identify conditions that produce false positives (terrain spikes that look like crashes)
+- Tune the SILENCE_CHECK duration and deviation thresholds to real post-crash physics
+
+This data is processed by the developer and never shared with third parties.
 
 ### Provider Tab
 
@@ -593,6 +643,14 @@ There are many conditions under which KSafe may fail to detect an incident or de
 - When you use a third-party provider (CallMeBot, Pushover, ntfy, Telegram), your message content and identifiers (phone number, chat ID, user key…) can be shared with that provider. Please read and accept their terms and privacy policies before using KSafe.
 - KSafe has no relationship or partnership with any of these providers.
 - KSafe has no warranties. If you do not agree with this, please do not use it.
+
+### Calibration logging (optional, disabled by default)
+
+If you enable the **"Send anonymous calibration data"** toggle in Settings, KSafe will record and transmit sensor data (accelerometer values, GPS speed, gyroscope readings, detection algorithm states) to the developer via a private Telegram bot. This data is used exclusively to improve and calibrate the crash detection algorithm.
+
+**No personal information is ever included**: no GPS coordinates, no location data, no emergency messages, no contact information, no device identifiers. The data contains only raw sensor readings and algorithm states — it is not possible to identify you, your location, or your ride from it.
+
+This feature is **disabled by default**. Enabling it is entirely voluntary and helps make KSafe more accurate for all riders.
 
 ## Credits
 

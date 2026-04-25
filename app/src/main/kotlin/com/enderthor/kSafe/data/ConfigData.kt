@@ -71,6 +71,8 @@ data class KSafeConfig(
     val customMessage3Enabled: Boolean = false,
     val customMessage3Title: String = "MSG3",
     val customMessage3: String = "",
+    // Calibration logging — writes detailed sensor events to CSV for threshold tuning
+    val calibrationLoggingEnabled: Boolean = false,
 )
 
 @Serializable
