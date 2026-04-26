@@ -1,6 +1,6 @@
 # KSafe — Crash Detection Algorithm
 
-> **Version:** April 2026 (revision 2 — post-review)
+> **Version:** April 2026 (revision 3 — post-calibration)
 > **File:** `CrashDetectionManager.kt`
 > **Sensors:** Android SensorManager (accelerometer + gyroscope) + Karoo SDK (speed)
 
@@ -71,16 +71,18 @@ The **smoothed** threshold is the 3-sample moving average of total acceleration 
 
 ### Peak thresholds by sensitivity preset (single sample)
 
-The **peak** detector fires on a single raw sample exceeding a higher bar, without the 3-sample smoothing. It captures sharp, rigid impacts that last only 10–20ms (one frame at 50 Hz).
+The **peak** detector fires on a single raw sample exceeding this bar, without the 3-sample smoothing. It captures sharp, rigid impacts that last only 10–20ms (one frame at 50 Hz).
 
-| Preset | Peak threshold | G equivalent |
-|--------|---------------|-------------|
-| **LOW** | 70 m/s² | ~7g |
-| **MEDIUM** | 60 m/s² | ~6g |
-| **HIGH** | 50 m/s² | ~5g |
-| **CUSTOM** | 1.3 × `customCrashThreshold`, capped at 80 m/s² | varies |
+| Preset | Peak threshold | G equivalent | Calibration basis |
+|--------|---------------|-------------|------------------|
+| **LOW** | **60 m/s²** | ~6g | Real ride logs: normal MTB riding tops at ~67–69 m/s²; pthr=60 adds 2–3 extra IMPACT cycles/session (all IMPACT_TMO, none reach CRASH_OK) |
+| **MEDIUM** | **50 m/s²** | ~5g | Real ride logs: normal riding peaked at ~46 m/s² in MEDIUM; pthr=50 has zero overlap with observed noise distribution |
+| **HIGH** | **40 m/s²** | ~4g | Consistent thr+5 principle; road riding rarely generates isolated spikes above 35 m/s² |
+| **CUSTOM** | 1.3 × `customCrashThreshold`, capped at 80 m/s² | varies | — |
 
-> **Why two detectors:** the smoothed path rejects single-sample noise from cobblestones, dirt-to-asphalt transitions or speed bumps. But a real rigid impact (handlebar against asphalt, direct collision with an obstacle) can produce a peak that lasts only 10–20ms — a single sample at 50 Hz. Smoothing alone would dilute a 70 m/s² peak with two surrounding 15 m/s² samples down to ~33 m/s², below the MEDIUM/HIGH smoothed thresholds, causing a silent false negative. The peak path catches these short events; the higher per-preset bar compensates for the lower statistical reliability of a single-sample reading.
+> **Calibration note (revision 3):** previous peak thresholds (70/60/50 m/s²) created a 15 m/s² blind-spot window per preset where a single-frame crash spike between `smoothedThreshold` and `peakThreshold` was invisible to both detectors. The new values use `pthr = smoothedThr + 5` as a uniform principle, closing that gap. Validated against 83 minutes of real MTB ride data (v1 log) and a separate road/climb session (v2 log).
+
+> **Why two detectors:** the smoothed path rejects single-sample noise from cobblestones, dirt-to-asphalt transitions or speed bumps. But a real rigid impact (handlebar against asphalt, direct collision with an obstacle) can produce a peak that lasts only 10–20ms — a single sample at 50 Hz. Smoothing alone would dilute a 70 m/s² peak with two surrounding 15 m/s² samples down to ~33 m/s², below the MEDIUM/HIGH smoothed thresholds, causing a silent false negative. The peak path catches these short events.
 
 > **Reference (IEEE Accident Detection literature):**
 > Normal bumps / hard braking → up to ~1.5g (14.7 m/s²)
@@ -234,34 +236,18 @@ isSpeedDropConfirmed():
 │      ⚠ Caller (SILENCE_CHECK) is expected to switch to GPS_STALE_DEVIATION_MAX
 │        and GPS_STALE_SILENCE_DURATION_MS to compensate.
 │
-├─ minSpeedForCrashKmh == 0?
-│   └─ return true  ← "detect at any speed" mode, skip speed gate
-│
-└─ return (currentSpeedKmh < crashConfirmSpeedKmh)
+└─ return (crashConfirmSpeedKmh == 0  OR  currentSpeedKmh < crashConfirmSpeedKmh)
     ├─ LOW preset  → < 3.0 km/h
     └─ MEDIUM/HIGH → < 5.0 km/h
+    └─ crashConfirmSpeedKmh = 0 → gate disabled explicitly (not the same as minSpeedForCrashKmh = 0)
 ```
 
-### Cold-start guard
-
-A `COLD_START_GUARD_MS = 8,000ms` window blocks speed-drop confirmation if no real GPS/speed data has been received yet, preventing false confirmations from `currentSpeedKmh = 0.0` defaults.
-
-- `speedDataReceived` starts as `false` on every `start()` call
-- First `updateSpeed()` call: sets `speedDataReceived = true` → guard lifts immediately
-- If no speed data arrives within 8 seconds: guard expires automatically (fallback for devices with no GPS / no ANT+)
-- `speedDataReceived` is **not** reset on `resetState()` — only on `start()` — so a false-alarm reset during normal riding never re-introduces the cold-start window
-
-### GPS-stale fallback (NEW)
-
-The Karoo SDK returns the last-known speed value when GPS lock is lost mid-ride (tunnels, dense forest, cable disconnect). Without mitigation, this could:
-- **Block confirmation indefinitely** if last-known was high (e.g. 35 km/h before entering tunnel) — `isSpeedDropConfirmed` would always return `false`.
-- **Falsely confirm** if last-known was 0 km/h before the GPS dropout.
-
-When `now - speedLastUpdatedTime > GPS_STALE_MS (10s)`:
-1. `isSpeedDropConfirmed()` returns `true` so the accel can take over.
-2. SILENCE_CHECK switches to **stricter** thresholds: deviation ≤ 1.5 m/s² (vs 4.0) and stillness ≥ 8 s (vs 4.5 s).
-
-This reduces the chance that passive coasting between bumps with frozen GPS is misread as the rider on the ground, while still allowing real crashes to be confirmed.
+> **Important (revision 3):** `crashConfirmSpeedKmh` is now **independent** of `minSpeedForCrashKmh`.
+> Previously, setting `minSpeedForCrashKmh = 0` (test mode: detect at any speed) also bypassed
+> the CRASH_OK confirmation speed gate, allowing a false positive when cycling slowly uphill
+> with `minSpeed=0`: between pedal strokes, accel deviation can drop below 4.0 m/s² for >4.5s
+> while speed is still ~6–7 km/h. The fix: only `crashConfirmSpeedKmh = 0` disables the
+> confirmation gate. `minSpeedForCrashKmh = 0` only disables the IMPACT entrance gate.
 
 ---
 
@@ -394,7 +380,7 @@ Captures the scenario where the rider falls and is unconscious at low speed (e.g
 | Sensor sampling rate | ~50 Hz |
 | Smoothing window | 3 samples ≈ 60ms |
 | Smoothed thresholds | 35 / 45 / 55 m/s² (HIGH / MEDIUM / LOW) |
-| Peak thresholds (single sample) | 50 / 60 / 70 m/s² (HIGH / MEDIUM / LOW) |
+| Peak thresholds (single sample) | **40 / 50 / 60 m/s²** (HIGH / MEDIUM / LOW) — *revised in rev 3* |
 | Minimum time from impact to SILENCE entry | 500ms |
 | IMPACT timeout (LOW) | 25,000ms |
 | IMPACT timeout (MEDIUM) | 20,000ms |
@@ -439,7 +425,16 @@ The class does not use locks. The algorithm tolerates slightly stale reads acros
 
 ## Change Log (vs. previous revision)
 
-### Closed
+### Revision 3 — April 2026 (post-calibration, real ride logs)
+
+| ID | Change | Status |
+|----|--------|--------|
+| **C1** | **Peak thresholds reduced** from 70/60/50 m/s² to **60/50/40 m/s²** (uniform `pthr = smoothedThr + 5` principle). Closes the 15 m/s² blind-spot between `smoothedThreshold` and old `peakThreshold`. Validated against 83 min MTB log (v1) and road/climb log (v2). | ✅ Implemented |
+| **C2** | **FP fix: `crashConfirmSpeedKmh` decoupled from `minSpeedForCrashKmh`**. Root cause: uphill cycling at 6.8 km/h with `minSpeed=0` (test mode) was falsely confirmed because `minSpeed==0` also bypassed the confirmation speed gate. Fix: confirmation gate is now controlled exclusively by `crashConfirmSpeedKmh == 0`. | ✅ Implemented |
+| **C3** | **Config migration v0→v2** (`configVersion` field added to `KSafeConfig`). On first load after upgrade, stale generic defaults (minSpeed=10, confirmSpeed=5) are replaced with preset-canonical values for LOW (3/3) and HIGH (15/5). MEDIUM users see no change (canonical=old default). Migration is idempotent and logged via Timber. | ✅ Implemented |
+| **C4** | `CRASH_OK` log event now includes `confirm_spd_thr` field — makes it easy to verify which speed threshold was active at confirmation time. | ✅ Implemented |
+
+### Revision 2 — April 2026 (post-review)
 
 | ID | Change | Status |
 |----|--------|--------|
@@ -481,18 +476,20 @@ The LOW preset at 3 km/h already covers the most common low-speed MTB scenarios 
 
 **Status:** LOW is considered resolved. MEDIUM/HIGH binary cutoff remains a known limitation. No code change until empirical false-positive data is available to justify the trade-off.
 
-### Empirical calibration needed
+### Empirical calibration status (updated revision 3)
 
-Several thresholds introduced in this revision are educated guesses, not data-derived:
+| Parameter | Value | Status |
+|-----------|-------|--------|
+| **Peak thresholds** | **60 / 50 / 40 m/s²** | ✅ **Data-validated** for LOW (83 min MTB log) and MEDIUM (road/climb log). HIGH is inferred from the thr+5 principle — no road-bike log yet. |
+| `GPS_STALE_DEVIATION_MAX` | 1.5 m/s² | ⚠ Order-of-magnitude estimate. Needs validation. |
+| `GPS_STALE_SILENCE_DURATION_MS` | 8,000 ms | ⚠ ~2× nominal; chosen conservatively. No GPS-stale scenario in logs yet. |
+| `SPEED_DROP_ACCEL_STILL_MS` | 60,000 ms | ⚠ Long enough to filter normal human activity, short relative to a 5 min ride pause. |
 
-| Parameter | Value | Justification |
-|-----------|-------|--------------|
-| Peak thresholds | 70 / 60 / 50 m/s² | ~1.3× the smoothed thresholds; needs validation against real impact logs |
-| `GPS_STALE_DEVIATION_MAX` | 1.5 m/s² | Order-of-magnitude estimate for "device truly motionless on the ground" |
-| `GPS_STALE_SILENCE_DURATION_MS` | 8,000 ms | ~2× the nominal duration; chosen conservatively |
-| `SPEED_DROP_ACCEL_STILL_MS` | 60,000 ms | Long enough to filter normal human activity, short relative to a 5 min ride pause |
+### Soft-fall detectability ceiling
 
-Recommendation: log raw accel peaks, smoothed peaks, and `accelStillSinceMs` durations during a calibration period (1–2 months across diverse riders), then re-evaluate.
+From real log analysis (v1, MTB session): a soft fall at 13–16 km/h generated raw=43.7 m/s² peak and smooth=21.7 m/s². Normal riding in the same session generated raw values up to 67.7 m/s², with 29 events in the 40–50 m/s² range. The fall signal is **within the normal riding noise distribution** — no threshold adjustment can cleanly separate it from terrain events using acceleration magnitude alone.
+
+This is a fundamental limitation of accelerometer-based detection for low-energy impacts. The RST_SNAP event (logged 2s after every pipeline auto-reset) is the diagnostic tool for identifying these cases in future logs.
 
 ### Residual risks not yet addressed
 
@@ -503,3 +500,4 @@ Recommendation: log raw accel peaks, smoothed peaks, and `accelStillSinceMs` dur
 3. **`SensorManager` event batching** — `SENSOR_DELAY_GAME` does not guarantee 50 Hz. Android may batch events under load, in which case the 3-sample smoothing window may cover more than 60ms. Has not been observed in practice but worth measuring. Workaround if needed: use sample timestamps instead of fixed-count windows.
 
 ---
+
