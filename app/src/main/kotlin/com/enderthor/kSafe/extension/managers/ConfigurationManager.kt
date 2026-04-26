@@ -10,6 +10,7 @@ import com.enderthor.kSafe.data.SenderConfig
 import com.enderthor.kSafe.data.defaultEmergencyStateJson
 import com.enderthor.kSafe.data.defaultKSafeConfigJson
 import com.enderthor.kSafe.data.defaultSenderConfigJson
+import com.enderthor.kSafe.data.migrateToLatest
 import com.enderthor.kSafe.extension.jsonWithUnknownKeys
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.distinctUntilChanged
@@ -37,8 +38,9 @@ class ConfigurationManager(private val context: Context) {
             try {
                 val raw = (prefs[configKey] ?: defaultKSafeConfigJson)
                     .replace("\"SIMPLEPUSH\"", "\"NTFY\"") // migration: SIMPLEPUSH renamed to NTFY
-                jsonWithUnknownKeys.decodeFromString<List<KSafeConfig>>(raw)
-                    .firstOrNull() ?: KSafeConfig()
+                (jsonWithUnknownKeys.decodeFromString<List<KSafeConfig>>(raw)
+                    .firstOrNull() ?: KSafeConfig())
+                    .migrateToLatest()
             } catch (e: Throwable) {
                 Timber.e(e, "Failed to read KSafeConfig")
                 KSafeConfig()
