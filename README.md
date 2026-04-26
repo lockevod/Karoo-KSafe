@@ -153,7 +153,7 @@ Open the KSafe app on your Karoo to configure it.
 - The `{livetrack}` placeholder also works in your emergency message — if a key is set, emergency alerts will include the tracking link too.
 - **Countdown seconds**: How long the cancellation countdown lasts before alerts are sent (default: 30s).
 - **Crash detection**: Enable/disable automatic crash detection. Configure sensitivity and minimum speed (see [Crash Detection](#crash-detection) for guidance on which level to choose).
-- **Max. speed to confirm crash**: The GPS speed below which the rider is considered stopped after an impact (default: **5 km/h**). Increase to 8 km/h for MTB/gravel where sliding after a crash is common; lower to 3 km/h for strict road use.
+- **Max. speed to confirm crash**: The GPS speed below which the rider is considered stopped after an impact (default: **3 km/h** for Low, **5 km/h** for Medium/High). Increase to 8 km/h for MTB/gravel where sliding after a crash is common; lower to 3 km/h for strict road use.
 - **Monitor crash when not riding**: Keeps crash detection active even when no ride is recording. Useful for warm-ups or quick spins without starting a recording.
 - **Monitor crash when not riding — any speed**: Same as above but ignores the minimum speed threshold (detects crashes even while stationary). ⚠ More false positives — use with caution.
 - **Speed drop detection**: Enable/disable detection of prolonged speed drops. Configure the time window (minutes) with no movement before triggering.
@@ -178,7 +178,7 @@ When enabled, KSafe records detailed sensor events to a local CSV file:
 | Data recorded | Examples |
 |---|---|
 | Accelerometer magnitude values | `raw=52.3 m/s²`, `smooth=49.1 m/s²` |
-| Detection thresholds in use | `threshold=45 m/s²`, `peakThreshold=60 m/s²` |
+| Detection thresholds in use | `threshold=45 m/s²`, `peakThreshold=50 m/s²` |
 | GPS speed at the moment of each event | `speed=28.4 km/h` |
 | Crash detection state | `MONITORING`, `IMPACT`, `SILENCE_CHECK` |
 | Sensitivity preset active | `preset=MEDIUM` |
@@ -379,9 +379,9 @@ Crash detection uses the Karoo's built-in accelerometer and gyroscope directly (
 
 1. **Impact**: A sudden acceleration spike above the sensitivity threshold is detected (while above the minimum speed). To reject single-sample noise — such as the jolt when transitioning from dirt to asphalt or hitting a small stone — the algorithm uses a short sliding-window average (~60 ms). A genuine impact is sustained energy across multiple sensor frames; a terrain-edge spike is typically just 1–2 raw samples and gets smoothed out.
 2. **Speed check**: The impact phase only advances to silence check if the GPS speed has already dropped below the configured **max. confirm speed** (default **3 km/h** for Low, **5 km/h** for Medium/High — configurable in Settings). If the rider is still moving after the impact, the algorithm keeps waiting or resets — a real crash victim cannot continue riding.
-3. **Silence check**: After the impact, both the accelerometer and gyroscope must settle completely. The device must stop moving AND stop rotating, AND the GPS speed must remain below the configured threshold. **The stillness must be continuous** — any movement (gyro ≥ 1 rad/s, acceleration deviation > 4 m/s² from gravity, or GPS speed above threshold) resets the 4.5 s countdown from scratch. This is the key differentiator between a real crash and any other event (pothole, bump, jump, terrain change) followed by continued riding.
+3. **Silence check**: After the impact, both the accelerometer and gyroscope must settle completely. The device must stop moving AND stop rotating, AND the GPS speed must remain below the configured threshold. **The stillness must be continuous** — any movement (gyro ≥ 2 rad/s, acceleration deviation > 4 m/s² from gravity, or GPS speed above threshold) resets the 4.5 s countdown from scratch. This is the key differentiator between a real crash and any other event (pothole, bump, jump, terrain change) followed by continued riding.
 4. **Confirmed**: If the device remains genuinely still for **4.5 consecutive seconds**, the emergency countdown starts.
-5. **Cooldown**: After a confirmed crash, impact detection is paused for 30 s to avoid duplicate triggers while the emergency countdown is already running.
+5. **Cooldown**: After a confirmed crash, impact detection is paused for **countdown + 30 s** to avoid duplicate triggers while the emergency countdown is already running (e.g. 60 s with the default 30 s countdown).
 
 **Why this works:** after hitting a pothole, bump, or terrain-change edge, a cyclist continues pedalling — the GPS keeps showing movement and the gyroscope never stays below 1 rad/s long enough to confirm a crash. On a slow climb the gyroscope can be very calm, but the GPS speed gate ensures this cannot be mistaken for a crash. After a real crash, the device lies on the ground with near-zero gyroscope and near-zero GPS speed for several seconds. The confirm speed is preset-aware: **3 km/h for Low** (MTB/gravel, where crashes at very low speed are common and post-crash sliding is slower) and **5 km/h for Medium/High** (road riding, where post-crash sliding at 4–5 km/h is plausible and should still trigger confirmation).
 
@@ -389,12 +389,12 @@ Crash detection uses the Karoo's built-in accelerometer and gyroscope directly (
 
 > **Naming convention**: "High sensitivity" means a *lower* impact threshold — the system reacts to lighter impacts. This follows the standard sensor convention (higher sensitivity = detects smaller signals). It does NOT mean "better" or "safer" in all contexts.
 
-| Level | Impact threshold | Min. speed | Confirm speed | Best for |
-|-------|-----------------|------------|---------------|----------|
-| ⛰ **Low** | 55 m/s² (~5.5g) | 3 km/h | 3 km/h | MTB, enduro, gravel, technical terrain |
-| 🚴 **Medium** | 45 m/s² (~4.5g) | 10 km/h | 5 km/h | Road + MTB mixed **(recommended default)** |
-| 🏁 **High** | 35 m/s² (~3.5g) | 15 km/h | 5 km/h | Smooth road only (velodrome, closed circuit) |
-| 🔧 **Custom** | 20–70 m/s² slider | You choose | You choose | Any specific use case |
+| Level | Impact threshold | Peak threshold | Min. speed | Confirm speed | Best for |
+|-------|-----------------|----------------|------------|---------------|----------|
+| ⛰ **Low** | 55 m/s² (~5.5g) | 60 m/s² | 3 km/h | 3 km/h | MTB, enduro, gravel, technical terrain |
+| 🚴 **Medium** | 45 m/s² (~4.5g) | 50 m/s² | 10 km/h | 5 km/h | Road + MTB mixed **(recommended default)** |
+| 🏁 **High** | 35 m/s² (~3.5g) | 40 m/s² | 15 km/h | 5 km/h | Smooth road only (velodrome, closed circuit) |
+| 🔧 **Custom** | 20–70 m/s² slider | thr + 5 m/s² | You choose | You choose | Any specific use case |
 
 **Impact window** (time allowed between impact and stillness confirmation):
 - Low: 25 s — MTB bike may slide or tumble down a slope for a while

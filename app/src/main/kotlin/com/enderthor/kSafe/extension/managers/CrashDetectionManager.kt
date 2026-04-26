@@ -57,21 +57,30 @@ class CrashDetectionManager(
 
     /**
      * Single-sample peak thresholds — a parallel detector that fires on a single raw sample
-     * exceeding a higher bar, without requiring the 3-sample sliding average.
+     * exceeding this bar, without requiring the 3-sample sliding average.
      *
      * Rationale: sharp, rigid impacts (handlebar hitting asphalt, direct obstacle collision)
      * can produce a real crash peak lasting only 10–20ms (1 sample at 50 Hz). The sliding-window
-     * average would reduce a single 70 m/s² spike at ~1.3× to below the smoothed threshold,
-     * causing a silent false negative. The peak detector captures these short-duration events.
+     * average would reduce a single spike to roughly 1/3 its true value, causing a silent false
+     * negative if we only relied on the smoothed threshold. The peak detector captures these
+     * short-duration events independently.
      *
-     * The higher per-preset bar compensates for lower statistical reliability vs. the smoothed
-     * signal: a single sample can be noise; if it passes this higher gate AND is followed by
-     * the normal settling sequence, it is a real crash.
+     * Calibration (from real ride logs):
+     *  - LOW (MTB/gravel): normal riding tops out at ~67–69 m/s² raw in rough terrain.
+     *    pthr=60 activates on 2–3 events/session (64–69 m/s²) that all end in IMPACT_TMO
+     *    (rider still moving). Captures rigid crashes at 60–69 m/s² that the smooth avg misses.
+     *  - MEDIUM (road+gravel): normal riding peaks at ~46 m/s². pthr=50 has zero overlap
+     *    with the observed normal-riding distribution — very safe.
+     *  - HIGH (road): pthr=40 follows the same thr+5 principle; road riding rarely produces
+     *    isolated smooth spikes above 35 m/s².
+     *
+     * All presets use pthr = smooth_thr + 5, closing the previous 15 m/s² blind-spot window
+     * where a single-frame crash spike between thr and old_pthr would be invisible to both detectors.
      */
     private val peakImpactThresholds = mapOf(
-        CrashSensitivity.LOW    to 70f,  // ~7g — single-frame peak variant of LOW
-        CrashSensitivity.MEDIUM to 60f,  // ~6g — single-frame peak variant of MEDIUM
-        CrashSensitivity.HIGH   to 50f   // ~5g — single-frame peak variant of HIGH
+        CrashSensitivity.LOW    to 60f,  // thr+5: was 70; real logs show safe at 60 (2-3 IMPACT_TMO/session)
+        CrashSensitivity.MEDIUM to 50f,  // thr+5: was 60; MEDIUM riding noise tops at ~46 m/s²
+        CrashSensitivity.HIGH   to 40f   // thr+5: was 50; road riding rarely spikes above 35 m/s²
         // CUSTOM → 1.3× customCrashThreshold, capped at 80 m/s²
     )
 
@@ -362,9 +371,16 @@ class CrashDetectionManager(
                 (System.currentTimeMillis() - speedLastUpdatedTime) / 1000.0)
             return true
         }
-        val minSpeed = config.minSpeedForCrashKmh
-        // minSpeed == 0 means user wants detection at any speed → treat as always stopped
-        return minSpeed == 0 || currentSpeedKmh < speedCrashConfirmKmh
+        // crashConfirmSpeedKmh is INDEPENDENT of minSpeedForCrashKmh — they serve different purposes:
+        //   minSpeedForCrashKmh = 0 → disable the IMPACT entrance gate (detect even when stationary/testing)
+        //   crashConfirmSpeedKmh = 5 → always require the device to be near-stopped at confirmation time
+        //
+        // Previously "minSpeed == 0" also bypassed the confirmation gate, causing FPs when a user
+        // set minSpeed=0 for testing and then cycled slowly uphill: between pedal strokes the
+        // accel quiet window could exceed 4.5s while speed was still 6–7 km/h.
+        //
+        // Fix: use crashConfirmSpeedKmh == 0 to explicitly disable the confirmation gate only.
+        return config.crashConfirmSpeedKmh == 0 || currentSpeedKmh < speedCrashConfirmKmh
     }
 
     // ─── SensorEventListener ─────────────────────────────────────────────────
@@ -573,7 +589,7 @@ class CrashDetectionManager(
                         // countdown_s: user has this many seconds to cancel before the emergency is sent.
                         // If the user cancels, CRASH_NO will follow → that row identifies this as a false positive.
                         calibLogger?.log(CalibrationLogger.Event.CRASH_CONFIRMED) {
-                            "total_ms=$totalMs,deviation=%.2f,speed=%.1f,gps_stale=$gpsStale,preset=${config.crashSensitivity},effective_dev_max=$effectiveDeviationMax,effective_silence_ms=$effectiveSilenceMs,countdown_s=${config.countdownSeconds}".format(deviation, currentSpeedKmh)
+                            "total_ms=$totalMs,deviation=%.2f,speed=%.1f,confirm_spd_thr=${config.crashConfirmSpeedKmh},gps_stale=$gpsStale,preset=${config.crashSensitivity},effective_dev_max=$effectiveDeviationMax,effective_silence_ms=$effectiveSilenceMs,countdown_s=${config.countdownSeconds}".format(deviation, currentSpeedKmh)
                         }
                         lastCrashTime = now
                         resetState()

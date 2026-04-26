@@ -3,6 +3,7 @@ package com.enderthor.kSafe.data
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
+import timber.log.Timber
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
@@ -12,6 +13,41 @@ const val DEFAULT_SPEED_DROP_MINUTES = 5
 const val CHECKIN_WARNING_THRESHOLD_MINUTES = 10
 const val SPEED_THRESHOLD_KMH = 5.0   // km/h — below this is considered "stopped"
 const val KAROO_LIVE_BASE_URL = "https://dashboard.hammerhead.io/live/"
+
+// ─── Schema versioning ────────────────────────────────────────────────────────
+
+/**
+ * Current KSafeConfig schema version. Increment whenever a new field is added
+ * that requires preset-specific defaults different from the Kotlin data-class default.
+ *
+ * History:
+ *  v0 (default) → v2 : minSpeedForCrashKmh and crashConfirmSpeedKmh gained preset-canonical
+ *                       values (LOW=3/3, MEDIUM=10/5, HIGH=15/5). Old installs may have the
+ *                       generic Kotlin defaults (10 and 5) regardless of preset — migration
+ *                       applies the correct canonical values if the stored value matches the
+ *                       old generic default.
+ */
+const val CONFIG_VERSION = 2
+
+/**
+ * Canonical minSpeedForCrashKmh value per preset.
+ * These are the values the Settings screen sets when the user taps a preset chip.
+ */
+val PRESET_MIN_SPEED = mapOf(
+    CrashSensitivity.LOW    to 3,
+    CrashSensitivity.MEDIUM to 10,
+    CrashSensitivity.HIGH   to 15,
+)
+
+/**
+ * Canonical crashConfirmSpeedKmh value per preset.
+ * Reflects the real-data calibration: LOW users (MTB/gravel) often crash at very low speed.
+ */
+val PRESET_CONFIRM_SPEED = mapOf(
+    CrashSensitivity.LOW    to 3,
+    CrashSensitivity.MEDIUM to 5,
+    CrashSensitivity.HIGH   to 5,
+)
 
 // ─── Enums ────────────────────────────────────────────────────────────────────
 
@@ -73,6 +109,12 @@ data class KSafeConfig(
     val customMessage3: String = "",
     // Calibration logging — writes detailed sensor events to CSV for threshold tuning
     val calibrationLoggingEnabled: Boolean = false,
+    /**
+     * Config schema version — used to detect stale saved configs and apply migrations.
+     * Default 0 ensures that any pre-versioning config (JSON without this field) triggers migration.
+     * New installs also start at 0 and migrate on first load, which is a no-op for most presets.
+     */
+    val configVersion: Int = 0,
 )
 
 @Serializable
@@ -218,3 +260,55 @@ val defaultSenderConfigs = listOf(
 val defaultSenderConfigJson: String = Json.encodeToString(defaultSenderConfigs)
 val defaultKSafeConfigJson: String = Json.encodeToString(listOf(KSafeConfig()))
 val defaultEmergencyStateJson: String = Json.encodeToString(EmergencyState())
+
+// ─── Config migration ─────────────────────────────────────────────────────────
+
+/**
+ * Migrates a deserialized [KSafeConfig] to the current schema version. Idempotent.
+ *
+ * The migrated config is returned in-memory; it is persisted the next time the user
+ * saves settings (or any automatic config write), so no separate DataStore write is needed.
+ *
+ * ## v0 → v2 (current)
+ * `minSpeedForCrashKmh` and `crashConfirmSpeedKmh` were originally added with generic Kotlin
+ * defaults (10 and 5 respectively), not preset-specific values. A user who had LOW/HIGH preset
+ * selected before this migration was introduced may still have those stale generic defaults
+ * stored. This step replaces them with the correct canonical preset values **only if** the
+ * stored value matches the old generic default — deliberate customisations are preserved.
+ *
+ * | Preset | minSpeed canonical | confirmSpeed canonical |
+ * |--------|-------------------|----------------------|
+ * | LOW    | 3 km/h            | 3 km/h               |
+ * | MEDIUM | 10 km/h (= old default, no change) | 5 km/h (= old default, no change) |
+ * | HIGH   | 15 km/h           | 5 km/h (= old default, no change) |
+ */
+fun KSafeConfig.migrateToLatest(): KSafeConfig {
+    var c = this
+
+    if (c.configVersion < 2) {
+        val preset = c.crashSensitivity
+        if (preset != CrashSensitivity.CUSTOM) {
+            val canonMin     = PRESET_MIN_SPEED[preset]     ?: c.minSpeedForCrashKmh
+            val canonConfirm = PRESET_CONFIRM_SPEED[preset] ?: c.crashConfirmSpeedKmh
+            // Only touch values that are still at the old generic defaults (10 / 5).
+            // If the user had already customised them, leave them alone.
+            val newMin     = if (c.minSpeedForCrashKmh == 10)  canonMin     else c.minSpeedForCrashKmh
+            val newConfirm = if (c.crashConfirmSpeedKmh == 5) canonConfirm else c.crashConfirmSpeedKmh
+            c = c.copy(minSpeedForCrashKmh = newMin, crashConfirmSpeedKmh = newConfirm, configVersion = CONFIG_VERSION)
+        } else {
+            c = c.copy(configVersion = CONFIG_VERSION)
+        }
+        if (c.minSpeedForCrashKmh != minSpeedForCrashKmh || c.crashConfirmSpeedKmh != crashConfirmSpeedKmh) {
+            Timber.i(
+                "KSafeConfig migrated v%d→v%d: minSpeed %d→%d, confirmSpeed %d→%d (preset=%s)",
+                configVersion, CONFIG_VERSION,
+                minSpeedForCrashKmh, c.minSpeedForCrashKmh,
+                crashConfirmSpeedKmh, c.crashConfirmSpeedKmh,
+                preset
+            )
+        }
+    }
+
+    return c
+}
+
