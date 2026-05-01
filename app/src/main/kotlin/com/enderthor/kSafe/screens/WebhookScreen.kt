@@ -570,6 +570,7 @@ private fun WebhookSlotFields(
                     value = geoLat,
                     onValueChange = onGeoLatChange,
                     label = { Text(stringResource(R.string.webhook_geo_lat)) },
+                    placeholder = { Text(stringResource(R.string.webhook_geo_lat_placeholder), style = MaterialTheme.typography.bodySmall) },
                     modifier = Modifier.weight(1f),
                     singleLine = true,
                     keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal)
@@ -578,6 +579,7 @@ private fun WebhookSlotFields(
                     value = geoLon,
                     onValueChange = onGeoLonChange,
                     label = { Text(stringResource(R.string.webhook_geo_lon)) },
+                    placeholder = { Text(stringResource(R.string.webhook_geo_lon_placeholder), style = MaterialTheme.typography.bodySmall) },
                     modifier = Modifier.weight(1f),
                     singleLine = true,
                     keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal)
