@@ -8,6 +8,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.FilterChip
@@ -29,6 +30,8 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.ui.unit.dp
 import com.enderthor.kSafe.R
 import com.enderthor.kSafe.activity.MainViewModel
@@ -58,12 +61,20 @@ fun ActionsScreen(vm: MainViewModel) {
     var webhook1Method   by remember(config.webhook1Method)   { mutableStateOf(config.webhook1Method) }
     var webhook1Headers  by remember(config.webhook1Headers)  { mutableStateOf(config.webhook1Headers) }
     var webhook1Body     by remember(config.webhook1Body)     { mutableStateOf(config.webhook1Body) }
+    var webhook1GeoEnabled  by remember(config.webhook1GeoEnabled)  { mutableStateOf(config.webhook1GeoEnabled) }
+    var webhook1GeoLat      by remember(config.webhook1GeoLat)      { mutableStateOf(if (config.webhook1GeoLat == 0.0) "" else config.webhook1GeoLat.toString()) }
+    var webhook1GeoLon      by remember(config.webhook1GeoLon)      { mutableStateOf(if (config.webhook1GeoLon == 0.0) "" else config.webhook1GeoLon.toString()) }
+    var webhook1GeoRadius   by remember(config.webhook1GeoRadiusM)  { mutableStateOf(config.webhook1GeoRadiusM.toString()) }
     var webhook2Enabled  by remember(config.webhook2Enabled)  { mutableStateOf(config.webhook2Enabled) }
     var webhook2Label    by remember(config.webhook2Label)    { mutableStateOf(config.webhook2Label) }
     var webhook2Url      by remember(config.webhook2Url)      { mutableStateOf(config.webhook2Url) }
     var webhook2Method   by remember(config.webhook2Method)   { mutableStateOf(config.webhook2Method) }
     var webhook2Headers  by remember(config.webhook2Headers)  { mutableStateOf(config.webhook2Headers) }
     var webhook2Body     by remember(config.webhook2Body)     { mutableStateOf(config.webhook2Body) }
+    var webhook2GeoEnabled  by remember(config.webhook2GeoEnabled)  { mutableStateOf(config.webhook2GeoEnabled) }
+    var webhook2GeoLat      by remember(config.webhook2GeoLat)      { mutableStateOf(if (config.webhook2GeoLat == 0.0) "" else config.webhook2GeoLat.toString()) }
+    var webhook2GeoLon      by remember(config.webhook2GeoLon)      { mutableStateOf(if (config.webhook2GeoLon == 0.0) "" else config.webhook2GeoLon.toString()) }
+    var webhook2GeoRadius   by remember(config.webhook2GeoRadiusM)  { mutableStateOf(config.webhook2GeoRadiusM.toString()) }
 
     // ── Status states ─────────────────────────────────────────────────────────
     var customMsgStatus   by remember { mutableStateOf("") }
@@ -85,7 +96,9 @@ fun ActionsScreen(vm: MainViewModel) {
         customMessage2Enabled, customMessage2, customMessage2Title,
         customMessage3Enabled, customMessage3, customMessage3Title,
         webhook1Enabled, webhook1Label, webhook1Url, webhook1Method, webhook1Headers, webhook1Body,
+        webhook1GeoEnabled, webhook1GeoLat, webhook1GeoLon, webhook1GeoRadius,
         webhook2Enabled, webhook2Label, webhook2Url, webhook2Method, webhook2Headers, webhook2Body,
+        webhook2GeoEnabled, webhook2GeoLat, webhook2GeoLon, webhook2GeoRadius,
     ) {
         delay(600)
         vm.saveConfig(
@@ -105,12 +118,20 @@ fun ActionsScreen(vm: MainViewModel) {
                 webhook1Method   = webhook1Method,
                 webhook1Headers  = webhook1Headers,
                 webhook1Body     = webhook1Body,
+                webhook1GeoEnabled  = webhook1GeoEnabled,
+                webhook1GeoLat      = webhook1GeoLat.toDoubleOrNull() ?: 0.0,
+                webhook1GeoLon      = webhook1GeoLon.toDoubleOrNull() ?: 0.0,
+                webhook1GeoRadiusM  = webhook1GeoRadius.toIntOrNull()?.coerceAtLeast(1) ?: 50,
                 webhook2Enabled  = webhook2Enabled,
                 webhook2Label    = webhook2Label,
                 webhook2Url      = webhook2Url,
                 webhook2Method   = webhook2Method,
                 webhook2Headers  = webhook2Headers,
                 webhook2Body     = webhook2Body,
+                webhook2GeoEnabled  = webhook2GeoEnabled,
+                webhook2GeoLat      = webhook2GeoLat.toDoubleOrNull() ?: 0.0,
+                webhook2GeoLon      = webhook2GeoLon.toDoubleOrNull() ?: 0.0,
+                webhook2GeoRadiusM  = webhook2GeoRadius.toIntOrNull()?.coerceAtLeast(1) ?: 50,
             )
         )
     }
@@ -336,6 +357,14 @@ fun ActionsScreen(vm: MainViewModel) {
                     onHeadersChange = { webhook1Headers = it },
                     body = webhook1Body,
                     onBodyChange = { webhook1Body = it },
+                    geoEnabled = webhook1GeoEnabled,
+                    onGeoEnabledChange = { webhook1GeoEnabled = it },
+                    geoLat = webhook1GeoLat,
+                    onGeoLatChange = { webhook1GeoLat = it },
+                    geoLon = webhook1GeoLon,
+                    onGeoLonChange = { webhook1GeoLon = it },
+                    geoRadius = webhook1GeoRadius,
+                    onGeoRadiusChange = { webhook1GeoRadius = it },
                     testStatus = webhook1Status,
                     testIsError = webhook1IsError,
                     onTest = {
@@ -373,6 +402,14 @@ fun ActionsScreen(vm: MainViewModel) {
                     onHeadersChange = { webhook2Headers = it },
                     body = webhook2Body,
                     onBodyChange = { webhook2Body = it },
+                    geoEnabled = webhook2GeoEnabled,
+                    onGeoEnabledChange = { webhook2GeoEnabled = it },
+                    geoLat = webhook2GeoLat,
+                    onGeoLatChange = { webhook2GeoLat = it },
+                    geoLon = webhook2GeoLon,
+                    onGeoLonChange = { webhook2GeoLon = it },
+                    geoRadius = webhook2GeoRadius,
+                    onGeoRadiusChange = { webhook2GeoRadius = it },
                     testStatus = webhook2Status,
                     testIsError = webhook2IsError,
                     onTest = {
@@ -435,11 +472,21 @@ private fun WebhookSlotFields(
     onHeadersChange: (String) -> Unit,
     body: String,
     onBodyChange: (String) -> Unit,
+    geoEnabled: Boolean,
+    onGeoEnabledChange: (Boolean) -> Unit,
+    geoLat: String,
+    onGeoLatChange: (String) -> Unit,
+    geoLon: String,
+    onGeoLonChange: (String) -> Unit,
+    geoRadius: String,
+    onGeoRadiusChange: (String) -> Unit,
     testStatus: String,
     testIsError: Boolean,
     onTest: () -> Unit,
     testButtonLabel: String,
 ) {
+    val coroutineScope = rememberCoroutineScope()
+
     ActionSettingRow(label = enableLabel) {
         Switch(checked = enabled, onCheckedChange = onEnabledChange)
     }
@@ -481,6 +528,81 @@ private fun WebhookSlotFields(
                 minLines = 2
             )
         }
+
+        // ── Geo-fence ─────────────────────────────────────────────────────
+        HorizontalDivider(modifier = Modifier.padding(vertical = 4.dp))
+        ActionSettingRow(label = stringResource(R.string.webhook_geo_label)) {
+            Switch(checked = geoEnabled, onCheckedChange = onGeoEnabledChange)
+        }
+        if (geoEnabled) {
+            Text(
+                text = stringResource(R.string.webhook_geo_hint),
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+            // "Use current location" button
+            Button(
+                onClick = {
+                    coroutineScope.launch {
+                        val ext = KSafeExtension.getInstance()
+                        if (ext != null) {
+                            val (lat, lon) = ext.getCurrentLocation()
+                            if (lat != 0.0 || lon != 0.0) {
+                                onGeoLatChange(lat.toBigDecimal().toPlainString())
+                                onGeoLonChange(lon.toBigDecimal().toPlainString())
+                            }
+                        }
+                    }
+                },
+                modifier = Modifier.fillMaxWidth(),
+                colors = ButtonDefaults.buttonColors(
+                    containerColor = MaterialTheme.colorScheme.secondaryContainer,
+                    contentColor = MaterialTheme.colorScheme.onSecondaryContainer
+                )
+            ) {
+                Text(stringResource(R.string.webhook_geo_use_current))
+            }
+            Row(
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                OutlinedTextField(
+                    value = geoLat,
+                    onValueChange = onGeoLatChange,
+                    label = { Text(stringResource(R.string.webhook_geo_lat)) },
+                    modifier = Modifier.weight(1f),
+                    singleLine = true,
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal)
+                )
+                OutlinedTextField(
+                    value = geoLon,
+                    onValueChange = onGeoLonChange,
+                    label = { Text(stringResource(R.string.webhook_geo_lon)) },
+                    modifier = Modifier.weight(1f),
+                    singleLine = true,
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal)
+                )
+            }
+            OutlinedTextField(
+                value = geoRadius,
+                onValueChange = { if (it.all { c -> c.isDigit() }) onGeoRadiusChange(it) },
+                label = { Text(stringResource(R.string.webhook_geo_radius)) },
+                modifier = Modifier.fillMaxWidth(),
+                singleLine = true,
+                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                supportingText = { Text(stringResource(R.string.webhook_geo_radius_hint)) }
+            )
+            // Show currently stored coords if set
+            if (geoLat.isNotBlank() && geoLon.isNotBlank()) {
+                Text(
+                    text = "📍 ${geoLat.take(10)}, ${geoLon.take(11)}",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.primary
+                )
+            }
+        }
+        // ─────────────────────────────────────────────────────────────────
+
         Button(onClick = onTest, modifier = Modifier.fillMaxWidth()) { Text(testButtonLabel) }
         if (testStatus.isNotEmpty()) {
             Text(

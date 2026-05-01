@@ -28,6 +28,11 @@ import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.launch
 import timber.log.Timber
 import kotlin.coroutines.CoroutineContext
+import kotlin.math.atan2
+import kotlin.math.cos
+import kotlin.math.pow
+import kotlin.math.sin
+import kotlin.math.sqrt
 
 class KSafeExtension : KarooExtension("ksafe", BuildConfig.VERSION_NAME), CoroutineScope {
 
@@ -426,12 +431,52 @@ class KSafeExtension : KarooExtension("ksafe", BuildConfig.VERSION_NAME), Corout
     /**
      * Fire-and-forget webhook trigger. Shows a SystemNotification with the result.
      * Called from BonusAction or directly from the settings UI test path.
+     * When geo-fence is enabled for the slot, the request is blocked if the device
+     * is further than the configured radius from the target coordinates.
      */
     fun handleWebhookTap(slot: Int) {
         launch {
             val config = activeConfig
             val label = if (slot == 1) config.webhook1Label.ifBlank { "Action 1" }
                         else config.webhook2Label.ifBlank { "Action 2" }
+
+            // ── Geo-fence check ───────────────────────────────────────────────
+            val geoEnabled = if (slot == 1) config.webhook1GeoEnabled else config.webhook2GeoEnabled
+            if (geoEnabled) {
+                val targetLat = if (slot == 1) config.webhook1GeoLat else config.webhook2GeoLat
+                val targetLon = if (slot == 1) config.webhook1GeoLon else config.webhook2GeoLon
+                val radiusM   = if (slot == 1) config.webhook1GeoRadiusM else config.webhook2GeoRadiusM
+                val curLat = locationManager.lastLat
+                val curLon = locationManager.lastLng
+                if (curLat == 0.0 && curLon == 0.0) {
+                    karooSystem.dispatch(SystemNotification(
+                        id = "ksafe-webhook-$slot-geo-nofix",
+                        header = "KSafe",
+                        message = "$label blocked — no GPS fix yet"
+                    ))
+                    return@launch
+                }
+                if (targetLat == 0.0 && targetLon == 0.0) {
+                    karooSystem.dispatch(SystemNotification(
+                        id = "ksafe-webhook-$slot-geo-nocfg",
+                        header = "KSafe",
+                        message = "$label blocked — no target location configured"
+                    ))
+                    return@launch
+                }
+                val distance = distanceMeters(curLat, curLon, targetLat, targetLon)
+                if (distance > radiusM) {
+                    karooSystem.dispatch(SystemNotification(
+                        id = "ksafe-webhook-$slot-geo-far",
+                        header = "KSafe",
+                        message = "$label blocked — ${distance.toInt()}m away (max ${radiusM}m)"
+                    ))
+                    Timber.d("Webhook $slot geo-fenced: ${distance.toInt()}m > ${radiusM}m")
+                    return@launch
+                }
+                Timber.d("Webhook $slot geo-fence passed: ${distance.toInt()}m ≤ ${radiusM}m")
+            }
+
             val result = webhookManager.trigger(slot, config)
             karooSystem.dispatch(
                 SystemNotification(
@@ -490,6 +535,29 @@ class KSafeExtension : KarooExtension("ksafe", BuildConfig.VERSION_NAME), Corout
                 }
             }
         }
+    }
+
+    /**
+     * Returns the last known GPS position as (latitude, longitude).
+     * Returns (0.0, 0.0) if no fix has been stored yet.
+     * Used by the Settings UI to pre-fill the geo-fence target coordinates.
+     */
+    fun getCurrentLocation(): Pair<Double, Double> =
+        Pair(locationManager.lastLat, locationManager.lastLng)
+
+    // ─── Helpers ──────────────────────────────────────────────────────────────
+
+    /**
+     * Haversine distance between two GPS coordinates, in metres.
+     */
+    private fun distanceMeters(lat1: Double, lon1: Double, lat2: Double, lon2: Double): Double {
+        val earthRadius = 6_371_000.0
+        val dLat = Math.toRadians(lat2 - lat1)
+        val dLon = Math.toRadians(lon2 - lon1)
+        val a = sin(dLat / 2).pow(2) +
+                cos(Math.toRadians(lat1)) * cos(Math.toRadians(lat2)) * sin(dLon / 2).pow(2)
+        val c = 2 * atan2(sqrt(a), sqrt(1 - a))
+        return earthRadius * c
     }
 
     override fun onDestroy() {

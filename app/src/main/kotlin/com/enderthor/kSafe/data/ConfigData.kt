@@ -124,6 +124,16 @@ data class KSafeConfig(
     val webhook2Method: String = "POST",
     val webhook2Headers: String = "",
     val webhook2Body: String = "",
+    // Geo-fence for webhook triggers — when enabled the webhook only fires if the device
+    // is within [webhookNGeoRadiusM] metres of the configured target coordinates.
+    val webhook1GeoEnabled: Boolean = false,
+    val webhook1GeoLat: Double = 0.0,
+    val webhook1GeoLon: Double = 0.0,
+    val webhook1GeoRadiusM: Int = 50,
+    val webhook2GeoEnabled: Boolean = false,
+    val webhook2GeoLat: Double = 0.0,
+    val webhook2GeoLon: Double = 0.0,
+    val webhook2GeoRadiusM: Int = 50,
     /**
      * Config schema version — used to detect stale saved configs and apply migrations.
      * Default 0 ensures that any pre-versioning config (JSON without this field) triggers migration.
