@@ -432,28 +432,6 @@ fun ActionsScreen(vm: MainViewModel) {
             }
         }
 
-        // ── Info card — hardware button assignment ────────────────────────────
-        Card(
-            modifier = Modifier.fillMaxWidth(),
-            colors = CardDefaults.cardColors(
-                containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)
-            )
-        ) {
-            Column(modifier = Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                Text(
-                    text = "💡 Assign to hardware buttons",
-                    style = MaterialTheme.typography.titleSmall,
-                    fontWeight = FontWeight.Bold
-                )
-                Text(
-                    text = "Go to Karoo Settings → Controller and assign any of these actions to a button:\n" +
-                            "• KSafe: Send Custom Message → sends Message 1 instantly\n" +
-                            "• KSafe: Webhook Action 1 / 2 → fires the configured HTTP request",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
-            }
-        }
     }
 }
 
