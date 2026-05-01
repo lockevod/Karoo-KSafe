@@ -93,15 +93,15 @@ KSafe registers four actions you can assign to hardware controller buttons:
 | **KSafe: Webhook Action 1** | Fires the configured HTTP request for webhook slot 1 |
 | **KSafe: Webhook Action 2** | Fires the configured HTTP request for webhook slot 2 |
 
-Both work from **any screen**, with no need to look at the display.
+All four actions work from **any screen**, with no need to look at the display.
 
 > [!NOTE]
 > `BonusAction` availability depends on your controller hardware/firmware. It is commonly used with compatible remotes (e.g. SRAM AXS controls). If your controller does not expose extension bonus actions, this option will not appear in the button assignment screen.
 
-To configure either action:
+To configure any of these actions:
 1. Go to Karoo **Settings → Controller** (or your ANT+ remote settings).
 2. Find the button you want to assign the action to.
-3. Select **KSafe: Cancel Emergency** or **KSafe: Send Custom Message** from the action list.
+3. Select the desired **KSafe** action from the list.
 
 Once configured, pressing the button activates the action immediately from any screen.
 
@@ -134,7 +134,7 @@ KSafe provides **three independent custom message fields** — **KSafe Message 1
 
 Each field has its own label (shown on the button) and message text (what gets sent). You can add one, two, or all three to any ride screen. Message 1 is also assignable to a hardware button (see [Hardware button via BonusAction](#3--hardware-button-via-bonusaction-optional)).
 
-Add one or more fields to your Karoo ride profile from the profile editor.
+Add one or more fields to your Karoo ride profile from the profile editor. Configure them in the **Actions tab** of the KSafe app.
 
 > [!TIP]
 > Tapping a data field is one of three ways to cancel an emergency countdown. See the [Cancelling an Emergency](#cancelling-an-emergency) section for all three methods and their trade-offs.
@@ -144,8 +144,8 @@ Add one or more fields to your Karoo ride profile from the profile editor.
 Open the KSafe app on your Karoo to configure it. The app has three tabs:
 
 - **Provider** — select and configure the messaging provider (Telegram, ntfy, WhatsApp, Pushover).
-- **Settings** — all safety settings: crash detection, check-in timer, speed drop, emergency message, custom messages, and calibration logging.
-- **Actions** — configure webhook actions to trigger HTTP endpoints from hardware buttons (garage door, smart home, push notifications, etc.).
+- **Settings** — all safety settings: crash detection, check-in timer, speed drop, emergency message, and calibration logging.
+- **Actions** — configure custom message buttons (slots 1–3) and webhook actions (slots 1–2) to trigger messages or HTTP endpoints from hardware buttons.
 
 ### Settings Tab
 
@@ -167,12 +167,6 @@ Open the KSafe app on your Karoo to configure it. The app has three tabs:
 - **Monitor crash when not riding — any speed**: Same as above but ignores the minimum speed threshold (detects crashes even while stationary). ⚠ More false positives — use with caution.
 - **Speed drop detection**: Enable/disable detection of prolonged speed drops. Configure the time window (minutes) with no movement before triggering.
 - **Check-in timer**: Enable/disable periodic check-ins. Configure the interval in minutes (default: 120 min). A warning beep fires 10 minutes before expiry. **The timer pauses automatically when the ride is paused** (coffee stop, traffic light, etc.) and resets to the full interval when you resume. Any active check-in countdown is also cancelled on pause.
-- **Custom messages**: Enable up to three independent message buttons. For each one:
-  - Toggle **Enable message N** to activate it.
-  - Enter a **button label** (max 5 characters) — this is what appears on the Karoo field (e.g. *"OK👍"*, *"HOME"*, *"SAFE"*). Defaults to `MSG`, `MSG2`, `MSG3`.
-  - Enter the **message text** that will be sent when the field is tapped.
-  - Tap **Send Message N** to send it immediately from the app to verify it works.
-  - **Message 1** can also be assigned to a hardware button (**KSafe: Send Custom Message**) in Karoo controller settings.
 
 ### Calibration Logging (optional)
 
@@ -485,9 +479,13 @@ KSafe provides test buttons, all of which work **without an active ride**:
 | **Simulate Crash** | Settings tab | Sends your emergency message immediately — no countdown, no waiting. Use this to verify the full message (location, livetrack link) reaches your contact correctly. |
 | **Test ride start notification** | Settings tab | Sends the ride-start message. Only works if the feature is enabled. |
 | **Test ride end notification** | Settings tab | Sends the ride-end message. Only works if the feature is enabled. |
-| **Send Message 1 / 2 / 3** | Settings tab | Sends each custom message immediately. Only works if that message slot is enabled. |
+| **Send Message 1 / 2 / 3** | Actions tab | Sends each custom message immediately. Only works if that message slot is enabled. |
 
 > **Simulate Crash** sends a real alert to your configured contact. Let them know you are testing, or use **Test Send** instead if you only want to verify connectivity.
+
+## Actions Tab
+
+The **Actions tab** contains two independent feature groups: **Custom Messages** (message buttons 1–3) and **Webhook Actions** (HTTP request slots 1–2). Both are configured in the same tab and can be assigned to Karoo hardware controller buttons via BonusAction.
 
 ## Custom Messages
 
@@ -502,7 +500,7 @@ KSafe provides **three independent custom message buttons** — you can add one,
 
 ### Configuration
 
-1. Open KSafe → **Settings tab** → **Custom Messages** section.
+1. Open KSafe → **Actions tab**.
 2. For each message slot (1, 2, 3):
    - Toggle **Enable message N**.
    - Enter a **button label** (max 5 characters) — this appears on the Karoo field button. Examples: `OK👍`, `HOME`, `SAFE`, `CREW`. Defaults: `MSG`, `MSG2`, `MSG3`.
@@ -517,7 +515,7 @@ KSafe provides **three independent custom message buttons** — you can add one,
 
 Assign **KSafe: Send Custom Message** to a controller button in **Karoo → Settings → Controller**. Once configured, a single press sends **Message 1** instantly — no need to unlock the screen or navigate to the app.
 
-## Webhook Actions (Actions Tab)
+## Webhook Actions
 
 KSafe provides **two configurable webhook action buttons** that you can assign to Karoo hardware controller buttons. Each button fires an HTTP request to any URL you configure — useful for triggering automations while riding without touching your phone.
 

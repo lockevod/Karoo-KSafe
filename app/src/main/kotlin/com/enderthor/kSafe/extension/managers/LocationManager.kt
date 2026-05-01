@@ -31,8 +31,10 @@ class LocationManager(
         private const val LOCATION_SAMPLE_MS = 2 * 60_000L
     }
 
-    private var lastLat: Double = 0.0
-    private var lastLng: Double = 0.0
+    var lastLat: Double = 0.0
+        private set
+    var lastLng: Double = 0.0
+        private set
     private var lastSampleTime: Long = 0L
     private var locationJob: Job? = null
 

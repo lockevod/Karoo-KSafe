@@ -152,6 +152,13 @@
     <string name="webhook_body_hint">Body (optional, POST only)</string>
     <string name="webhook_body_example">e.g. {\"entity_id\":\"cover.garage_door\"}</string>
     <string name="webhook_test">Test</string>
+    <string name="webhook_geo_label">Only trigger when near location</string>
+    <string name="webhook_geo_hint">The action will be blocked if the device is further than the configured radius from the target point. Useful to prevent triggering your garage door when away from home.</string>
+    <string name="webhook_geo_use_current">📍 Use current GPS location as target</string>
+    <string name="webhook_geo_lat">Latitude</string>
+    <string name="webhook_geo_lon">Longitude</string>
+    <string name="webhook_geo_radius">Max distance (metres)</string>
+    <string name="webhook_geo_radius_hint">Action blocked if device is further than this distance from the target</string>
     <string name="calibration_desc">When enabled, KSafe records anonymous sensor data (accelerometer values, speed readings, detection states) to help the developer calibrate the crash detection algorithm. No GPS coordinates, no messages, no personal information of any kind is ever included. Data is sent automatically to the developer when you disable this option or finish a ride. Disabled by default — completely optional.</string>
     <string name="calibration_logging_label">Send anonymous calibration data</string>
     <string name="calibration_send">Send now</string>
