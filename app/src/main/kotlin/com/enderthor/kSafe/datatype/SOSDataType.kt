@@ -26,9 +26,9 @@ import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import timber.log.Timber
 
-private val COLOR_SAFE      = 0xFF1B5E20.toInt()
-private val COLOR_COUNTDOWN = 0xFFE65100.toInt()
-private val COLOR_ALERTING  = 0xFFB71C1C.toInt()
+private const val COLOR_SAFE      = 0xFF1B5E20.toInt()
+private const val COLOR_COUNTDOWN = 0xFFE65100.toInt()
+private const val COLOR_ALERTING  = 0xFFB71C1C.toInt()
 
 class SOSDataType(
     datatype: String,
@@ -88,7 +88,7 @@ class SOSDataType(
                         }
                     }
                 }
-            } catch (e: CancellationException) {
+            } catch (_: CancellationException) {
                 // normal
             } catch (e: Exception) {
                 Timber.e(e, "SOSDataType error: ${e.message}")

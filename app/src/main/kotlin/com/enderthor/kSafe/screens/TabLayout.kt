@@ -1,7 +1,6 @@
 package com.enderthor.kSafe.screens
 
 import android.content.Intent
-import android.net.Uri
 import android.provider.Settings
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column

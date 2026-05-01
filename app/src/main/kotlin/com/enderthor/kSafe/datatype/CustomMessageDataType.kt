@@ -25,10 +25,10 @@ import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.launch
 import timber.log.Timber
 
-private val COLOR_IDLE    = 0xFF1565C0.toInt()
-private val COLOR_SENDING = 0xFFE65100.toInt()
-private val COLOR_SENT    = 0xFF1B5E20.toInt()
-private val COLOR_ERROR   = 0xFFB71C1C.toInt()
+private const val COLOR_IDLE    = 0xFF1565C0.toInt()
+private const val COLOR_SENDING = 0xFFE65100.toInt()
+private const val COLOR_SENT    = 0xFF1B5E20.toInt()
+private const val COLOR_ERROR   = 0xFFB71C1C.toInt()
 
 /**
  * @param slot 1, 2 or 3 — determines which state flow and PendingIntent to use.
@@ -104,7 +104,7 @@ class CustomMessageDataType(
                 }.collect { view ->
                     emitter.updateView(view)
                 }
-            } catch (e: CancellationException) {
+            } catch (_: CancellationException) {
                 // normal
             } catch (e: Exception) {
                 Timber.e(e, "CustomMessageDataType slot=$slot error: ${e.message}")

@@ -663,7 +663,7 @@ class CrashDetectionManager(
     private fun schedulePostResetSnapshot(cancelledBy: String) {
         if (calibLogger == null || !calibLogger.isEnabled) return
         scope.launch {
-            kotlinx.coroutines.delay(2_000L)
+            delay(2_000L)
             calibLogger.log(CalibrationLogger.Event.POST_RESET_SNAP) {
                 "cancelled_by=$cancelledBy,speed=%.1f,accel_dev=%.2f,gyro=%.2f,state=$state,gps_stale=${isGpsStale()}".format(currentSpeedKmh, lastAccelDeviation, lastGyroMag)
             }
