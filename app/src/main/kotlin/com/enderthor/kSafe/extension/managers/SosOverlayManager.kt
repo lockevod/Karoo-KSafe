@@ -1,6 +1,5 @@
 package com.enderthor.kSafe.extension.managers
 
-import android.annotation.SuppressLint
 import android.content.Context
 import android.graphics.PixelFormat
 import android.os.Handler

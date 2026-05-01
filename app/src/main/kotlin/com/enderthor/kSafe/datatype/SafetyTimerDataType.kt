@@ -28,11 +28,11 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withTimeoutOrNull
 import timber.log.Timber
 
-private val COLOR_OK       = 0xFF1B5E20.toInt()
-private val COLOR_WARNING  = 0xFFF57F17.toInt()
-private val COLOR_EXPIRED  = 0xFFB71C1C.toInt()
-private val COLOR_DISABLED = 0xFF424242.toInt()
-private val COLOR_CANCEL   = 0xFFE65100.toInt()
+private const val COLOR_OK       = 0xFF1B5E20.toInt()
+private const val COLOR_WARNING  = 0xFFF57F17.toInt()
+private const val COLOR_EXPIRED  = 0xFFB71C1C.toInt()
+private const val COLOR_DISABLED = 0xFF424242.toInt()
+private const val COLOR_CANCEL   = 0xFFE65100.toInt()
 
 class SafetyTimerDataType(
     datatype: String,
@@ -111,7 +111,7 @@ class SafetyTimerDataType(
                         }
                     }
                 }
-            } catch (e: CancellationException) {
+            } catch (_: CancellationException) {
                 // normal
             } catch (e: Exception) {
                 Timber.e(e, "SafetyTimerDataType error: ${e.message}")

@@ -22,6 +22,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -53,7 +54,7 @@ fun SettingsScreen(vm: MainViewModel) {
     var crashEnabled         by remember(config.crashDetectionEnabled)     { mutableStateOf(config.crashDetectionEnabled) }
     var crashSensitivity     by remember(config.crashSensitivity)          { mutableStateOf(config.crashSensitivity) }
     var minSpeedForCrash     by remember(config.minSpeedForCrashKmh)       { mutableStateOf(config.minSpeedForCrashKmh.toString()) }
-    var customThreshold      by remember(config.customCrashThreshold)      { mutableStateOf(config.customCrashThreshold) }
+    var customThreshold      by remember(config.customCrashThreshold)      { mutableIntStateOf(config.customCrashThreshold) }
     var crashConfirmSpeed    by remember(config.crashConfirmSpeedKmh)      { mutableStateOf(config.crashConfirmSpeedKmh.toString()) }
     var crashOutsideRide     by remember(config.crashMonitorOutsideRide)   { mutableStateOf(config.crashMonitorOutsideRide) }
     var crashOutsideRideAny  by remember(config.crashMonitorOutsideRideAnySpeed) { mutableStateOf(config.crashMonitorOutsideRideAnySpeed) }
@@ -599,7 +600,7 @@ fun SettingsScreen(vm: MainViewModel) {
             LaunchedEffect(calibrationLogging) {
                 while (calibrationLogging) {
                     calibLogInfo = KSafeExtension.getInstance()?.getCalibrationLogInfo() ?: ""
-                    kotlinx.coroutines.delay(5_000L)
+                    delay(5_000L)
                 }
             }
             if (calibLogInfo.isNotEmpty()) {
