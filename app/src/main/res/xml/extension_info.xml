@@ -10,6 +10,12 @@
     <BonusAction
         actionId="send-custom-message"
         displayName="@string/action_send_custom_message" />
+    <BonusAction
+        actionId="trigger-webhook-1"
+        displayName="@string/action_webhook_1" />
+    <BonusAction
+        actionId="trigger-webhook-2"
+        displayName="@string/action_webhook_2" />
     <DataType
         description="@string/sos_datatype_desc"
         displayName="@string/sos_datatype_name"

@@ -6,6 +6,8 @@
     <!-- BonusAction labels -->
     <string name="action_cancel_emergency">KSafe: Cancel Emergency</string>
     <string name="action_send_custom_message">KSafe: Send Custom Message</string>
+    <string name="action_webhook_1">KSafe: Webhook Action 1</string>
+    <string name="action_webhook_2">KSafe: Webhook Action 2</string>
 
     <!-- DataType labels -->
     <string name="sos_datatype_name">KSafe SOS</string>
@@ -20,6 +22,7 @@
     <!-- UI tabs -->
     <string name="tab_provider">Provider</string>
     <string name="tab_settings">Settings</string>
+    <string name="tab_actions">Actions</string>
 
     <!-- Provider screen -->
     <string name="provider_title">Message Provider</string>
@@ -135,6 +138,20 @@
 
     <!-- Calibration logging -->
     <string name="section_calibration">🔬 Help improve KSafe</string>
+
+    <!-- Webhook actions -->
+    <string name="webhook_section">⚡ Webhook Actions</string>
+    <string name="webhook_hint">Trigger any HTTP endpoint from a Karoo hardware button. Works with Home Assistant, ntfy, IFTTT, n8n, Make, or any webhook. The request is sent via the Karoo network bridge — works over Bluetooth tether when not on Wi-Fi.</string>
+    <string name="webhook_1_label">Enable Webhook 1</string>
+    <string name="webhook_2_label">Enable Webhook 2</string>
+    <string name="webhook_label_hint">Action label (shown in alerts)</string>
+    <string name="webhook_url_hint">URL</string>
+    <string name="webhook_url_example">e.g. https://ha.example.com/api/services/cover/toggle</string>
+    <string name="webhook_headers_hint">Header (optional)</string>
+    <string name="webhook_headers_example">e.g. Authorization: Bearer your_long_lived_token</string>
+    <string name="webhook_body_hint">Body (optional, POST only)</string>
+    <string name="webhook_body_example">e.g. {\"entity_id\":\"cover.garage_door\"}</string>
+    <string name="webhook_test">Test</string>
     <string name="calibration_desc">When enabled, KSafe records anonymous sensor data (accelerometer values, speed readings, detection states) to help the developer calibrate the crash detection algorithm. No GPS coordinates, no messages, no personal information of any kind is ever included. Data is sent automatically to the developer when you disable this option or finish a ride. Disabled by default — completely optional.</string>
     <string name="calibration_logging_label">Send anonymous calibration data</string>
     <string name="calibration_send">Send now</string>
