@@ -27,6 +27,7 @@ Compatible with Karoo 3 running Karoo OS version 1.527 and later.
 - **Ride start notification**: Optionally sends a message to your contacts when you start a ride, including a Karoo Live real-time tracking link. Sent **only once** when the ride truly begins — resuming after a pause does **not** trigger it again.
 - **Ride end notification**: Optionally sends a configurable message to your contacts when you finish a ride (recording stops completely).
 - **Custom message buttons**: Send any custom text message instantly via a hardware button or the app — no countdown, no emergency. Useful for "I'm OK", "Starting now", or any quick status update to your contacts. **Up to three independent message buttons** are available, each with its own configurable label and text.
+- **Webhook actions**: Trigger any HTTP endpoint from a Karoo hardware button — open your garage door (Home Assistant, Shelly), send a push notification (ntfy), fire an IFTTT/n8n/Make automation, or call any REST API. Works over Bluetooth tether. Two independent webhook slots available (see [Webhook Actions](#webhook-actions-actions-tab)).
 - **Five data fields**: SOS field, Safety Timer field, and up to three Custom Message fields — add any combination to your ride profile.
 - **Help improve KSafe** *(optional)*: Enable anonymous calibration data sending to help tune the crash detection algorithm. See [Calibration Logging](#calibration-logging-optional) for details.
 
@@ -83,12 +84,14 @@ Both the **SOS field** and the **Safety Timer field** show a CANCEL button with 
 
 ### 3 — Hardware button via BonusAction (optional)
 
-KSafe registers two actions you can assign to hardware controller buttons:
+KSafe registers four actions you can assign to hardware controller buttons:
 
 | Action | What it does |
 |--------|-------------|
 | **KSafe: Cancel Emergency** | Cancels the active emergency countdown from any screen |
 | **KSafe: Send Custom Message** | Sends your configured custom message instantly — no countdown, no emergency screen |
+| **KSafe: Webhook Action 1** | Fires the configured HTTP request for webhook slot 1 |
+| **KSafe: Webhook Action 2** | Fires the configured HTTP request for webhook slot 2 |
 
 Both work from **any screen**, with no need to look at the display.
 
@@ -138,7 +141,11 @@ Add one or more fields to your Karoo ride profile from the profile editor.
 
 ## Configuration
 
-Open the KSafe app on your Karoo to configure it.
+Open the KSafe app on your Karoo to configure it. The app has three tabs:
+
+- **Provider** — select and configure the messaging provider (Telegram, ntfy, WhatsApp, Pushover).
+- **Settings** — all safety settings: crash detection, check-in timer, speed drop, emergency message, custom messages, and calibration logging.
+- **Actions** — configure webhook actions to trigger HTTP endpoints from hardware buttons (garage door, smart home, push notifications, etc.).
 
 ### Settings Tab
 
@@ -509,6 +516,129 @@ KSafe provides **three independent custom message buttons** — you can add one,
 ### Hardware button
 
 Assign **KSafe: Send Custom Message** to a controller button in **Karoo → Settings → Controller**. Once configured, a single press sends **Message 1** instantly — no need to unlock the screen or navigate to the app.
+
+## Webhook Actions (Actions Tab)
+
+KSafe provides **two configurable webhook action buttons** that you can assign to Karoo hardware controller buttons. Each button fires an HTTP request to any URL you configure — useful for triggering automations while riding without touching your phone.
+
+**Use cases:**
+- Open your garage door (Home Assistant, Shelly, any smart relay)
+- Send yourself a push notification (ntfy)
+- Trigger an IFTTT / n8n / Make automation
+- Toggle any smart home device
+- Call any REST API or webhook
+
+The requests are sent **via the Karoo network bridge** — the same mechanism used for emergency alerts. This means they work over Bluetooth tether even when the Karoo is not on Wi-Fi.
+
+### Configuration
+
+1. Open KSafe → **Actions tab**.
+2. For each webhook slot (1 and 2):
+   - Toggle **Enable Webhook N**.
+   - Enter a **label** — shown in the in-ride notification when the action fires (e.g. *"Garage"*, *"Door"*).
+   - Enter the **URL** of the endpoint to call.
+   - Choose **GET** or **POST**.
+   - Optionally enter a **header** (one line, format `Key: Value`) — required for authentication with many services.
+   - For POST requests, optionally enter a **body** (JSON or any text).
+   - Tap **Test Webhook N** to verify it works before assigning it to a button.
+3. Assign to a hardware button: go to **Karoo Settings → Controller**, find the button, and select **KSafe: Webhook Action 1** or **KSafe: Webhook Action 2**.
+
+When you press the configured button during a ride, the HTTP request fires immediately and you get an in-ride notification showing success or failure.
+
+### Examples
+
+#### 🏠 Home Assistant — toggle a cover (garage door)
+
+Home Assistant exposes a REST API for every entity. To toggle a cover (garage door, roller shutter, etc.):
+
+| Field | Value |
+|-------|-------|
+| **URL** | `https://your-ha-instance.com/api/services/cover/toggle` |
+| **Method** | POST |
+| **Header** | `Authorization: Bearer YOUR_LONG_LIVED_TOKEN` |
+| **Body** | `{"entity_id": "cover.garage_door"}` |
+
+Replace `your-ha-instance.com` with your Home Assistant URL (local or via Nabu Casa), and `cover.garage_door` with your entity ID. Get a Long-Lived Access Token from **Home Assistant → Profile → Long-Lived Access Tokens**.
+
+> You can use any Home Assistant service: `light.toggle`, `switch.turn_on`, `script.my_script`, `input_boolean.toggle`, etc. The entity ID is found in HA under **Settings → Devices & Services → Entities**.
+
+#### 🔌 Shelly — toggle a relay (garage door motor)
+
+Shelly devices expose a simple local HTTP API — no cloud required.
+
+**Shelly 1 / 1PM / Plus 1 (local API):**
+
+| Field | Value |
+|-------|-------|
+| **URL** | `http://192.168.1.50/relay/0?turn=toggle` |
+| **Method** | GET |
+| **Header** | *(leave empty if no password set)* |
+| **Body** | *(not needed for GET)* |
+
+Replace `192.168.1.50` with your Shelly's local IP address. The Shelly must be on the same Wi-Fi network as your phone (the request goes through the Karoo → phone bridge).
+
+**Shelly via cloud (if not on the same network):**
+
+| Field | Value |
+|-------|-------|
+| **URL** | `https://shelly-xxx.shelly.cloud/device/relay/control` |
+| **Method** | POST |
+| **Header** | `Content-Type: application/json` |
+| **Body** | `{"id": "YOUR_DEVICE_ID", "auth_key": "YOUR_AUTH_KEY", "channel": 0, "turn": "toggle"}` |
+
+Get your device ID and auth key from the Shelly Cloud dashboard.
+
+#### 📬 ntfy — send a push notification to yourself
+
+ntfy lets you send notifications to your own phone without any external service. Useful for confirming the action was triggered.
+
+| Field | Value |
+|-------|-------|
+| **URL** | `https://ntfy.sh/your-topic-name` |
+| **Method** | POST |
+| **Header** | `Title: KSafe Action` |
+| **Body** | `Garage door toggled from the bike!` |
+
+Replace `your-topic-name` with the topic you subscribed to in the ntfy app. The `Header` field can only hold one header — for ntfy the `Title` header sets the notification title. The body is the notification text.
+
+#### ⚡ IFTTT Webhook (Applets)
+
+IFTTT supports incoming webhooks to trigger any applet:
+
+| Field | Value |
+|-------|-------|
+| **URL** | `https://maker.ifttt.com/trigger/YOUR_EVENT/with/key/YOUR_IFTTT_KEY` |
+| **Method** | POST |
+| **Header** | `Content-Type: application/json` |
+| **Body** | `{"value1": "triggered from KSafe"}` |
+
+Replace `YOUR_EVENT` with your IFTTT event name and `YOUR_IFTTT_KEY` with your Webhooks key (found at [ifttt.com/maker_webhooks](https://ifttt.com/maker_webhooks)).
+
+#### 🔁 n8n / Make (generic webhook)
+
+Both n8n and Make expose webhook URLs that accept any HTTP request:
+
+| Field | Value |
+|-------|-------|
+| **URL** | Your webhook URL from n8n / Make |
+| **Method** | POST |
+| **Header** | *(optional, e.g. `Authorization: Bearer token` if protected)* |
+| **Body** | `{"source": "ksafe", "action": "button1"}` |
+
+Both platforms let you trigger any automation flow when the webhook fires.
+
+### Hardware button assignment
+
+After configuring a webhook slot:
+1. Go to **Karoo → Settings → Controller**.
+2. Find the button you want to assign the action to.
+3. Select **KSafe: Webhook Action 1** or **KSafe: Webhook Action 2** from the list.
+4. Press the button during a ride — the HTTP request fires instantly and you get an in-ride notification.
+
+> [!NOTE]
+> BonusAction availability depends on your controller hardware. It works with compatible ANT+ remotes (e.g. SRAM AXS, Garmin remote). If your controller does not expose extension bonus actions, this option will not appear in the button assignment screen.
+
+---
 
 ## Backup and Restore
 

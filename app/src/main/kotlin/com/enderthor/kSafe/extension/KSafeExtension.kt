@@ -15,9 +15,11 @@ import com.enderthor.kSafe.extension.managers.CrashDetectionManager
 import com.enderthor.kSafe.extension.managers.EmergencyManager
 import com.enderthor.kSafe.extension.managers.LocationManager
 import com.enderthor.kSafe.extension.managers.LogReporter
+import com.enderthor.kSafe.extension.managers.WebhookManager
 import io.hammerhead.karooext.KarooSystemService
 import io.hammerhead.karooext.extension.KarooExtension
 import io.hammerhead.karooext.models.RideState
+import io.hammerhead.karooext.models.SystemNotification
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -40,6 +42,7 @@ class KSafeExtension : KarooExtension("ksafe", BuildConfig.VERSION_NAME), Corout
     private lateinit var emergencyManager: EmergencyManager
     private lateinit var sender: Sender
     private lateinit var calibLogger: CalibrationLogger
+    private lateinit var webhookManager: WebhookManager
 
     private var activeConfig = KSafeConfig()
     private var currentRideState: RideState? = null
@@ -74,6 +77,7 @@ class KSafeExtension : KarooExtension("ksafe", BuildConfig.VERSION_NAME), Corout
         locationManager = LocationManager(karooSystem, this)
         sender = Sender(karooSystem, configManager)
         calibLogger = CalibrationLogger(applicationContext, this)
+        webhookManager = WebhookManager(karooSystem)
         emergencyManager = EmergencyManager(
             applicationContext, karooSystem, configManager, locationManager, sender, this,
             calibLogger
@@ -233,6 +237,14 @@ class KSafeExtension : KarooExtension("ksafe", BuildConfig.VERSION_NAME), Corout
             "send-custom-message" -> {
                 Timber.d("BonusAction: send-custom-message triggered")
                 launch { sendCustomMessage() }
+            }
+            "trigger-webhook-1" -> {
+                Timber.d("BonusAction: trigger-webhook-1 triggered")
+                handleWebhookTap(1)
+            }
+            "trigger-webhook-2" -> {
+                Timber.d("BonusAction: trigger-webhook-2 triggered")
+                handleWebhookTap(2)
             }
         }
     }
@@ -410,6 +422,40 @@ class KSafeExtension : KarooExtension("ksafe", BuildConfig.VERSION_NAME), Corout
     }
 
     // ─── Actions called from DataType callbacks ───────────────────────────────
+
+    /**
+     * Fire-and-forget webhook trigger. Shows a SystemNotification with the result.
+     * Called from BonusAction or directly from the settings UI test path.
+     */
+    fun handleWebhookTap(slot: Int) {
+        launch {
+            val config = activeConfig
+            val label = if (slot == 1) config.webhook1Label.ifBlank { "Action 1" }
+                        else config.webhook2Label.ifBlank { "Action 2" }
+            val result = webhookManager.trigger(slot, config)
+            karooSystem.dispatch(
+                SystemNotification(
+                    id = "ksafe-webhook-$slot-${if (result.success) "ok" else "err"}",
+                    header = "KSafe",
+                    message = if (result.success) "$label sent ✓" else result.message,
+                )
+            )
+        }
+    }
+
+    /**
+     * Test a webhook from the Settings UI.
+     * Returns a human-readable result string.
+     */
+    suspend fun testWebhook(slot: Int): String {
+        val config = activeConfig
+        val enabled = if (slot == 1) config.webhook1Enabled else config.webhook2Enabled
+        val url = if (slot == 1) config.webhook1Url else config.webhook2Url
+        if (!enabled) return "Webhook $slot is disabled — enable it first."
+        if (url.isBlank()) return "No URL configured."
+        val result = webhookManager.trigger(slot, config)
+        return if (result.success) result.message else "Failed: ${result.message}"
+    }
 
     fun handleSOSTap() {
         if (!activeConfig.isActive) return

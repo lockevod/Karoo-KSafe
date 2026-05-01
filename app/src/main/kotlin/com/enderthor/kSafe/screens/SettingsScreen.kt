@@ -70,16 +70,8 @@ fun SettingsScreen(vm: MainViewModel) {
     var karooLiveEndEnabled   by remember(config.karooLiveEndEnabled)      { mutableStateOf(config.karooLiveEndEnabled) }
     var karooLiveEndMessage   by remember(config.karooLiveEndMessage)      { mutableStateOf(config.karooLiveEndMessage) }
 
-    var customMessageEnabled  by remember(config.customMessageEnabled)     { mutableStateOf(config.customMessageEnabled) }
-    var customMessageTitle    by remember(config.customMessageTitle)       { mutableStateOf(config.customMessageTitle) }
-    var customMessage         by remember(config.customMessage)            { mutableStateOf(config.customMessage) }
-    var customMessage2Enabled by remember(config.customMessage2Enabled)   { mutableStateOf(config.customMessage2Enabled) }
-    var customMessage2Title   by remember(config.customMessage2Title)     { mutableStateOf(config.customMessage2Title) }
-    var customMessage2        by remember(config.customMessage2)          { mutableStateOf(config.customMessage2) }
-    var customMessage3Enabled by remember(config.customMessage3Enabled)   { mutableStateOf(config.customMessage3Enabled) }
-    var customMessage3Title   by remember(config.customMessage3Title)     { mutableStateOf(config.customMessage3Title) }
-    var customMessage3        by remember(config.customMessage3)          { mutableStateOf(config.customMessage3) }
     var calibrationLogging    by remember(config.calibrationLoggingEnabled) { mutableStateOf(config.calibrationLoggingEnabled) }
+
 
     var simulateStatus      by remember { mutableStateOf("") }
     var simulateIsError     by remember { mutableStateOf(false) }
@@ -87,12 +79,6 @@ fun SettingsScreen(vm: MainViewModel) {
     var rideStartIsError    by remember { mutableStateOf(false) }
     var rideEndStatus       by remember { mutableStateOf("") }
     var rideEndIsError      by remember { mutableStateOf(false) }
-    var customMsgStatus     by remember { mutableStateOf("") }
-    var customMsgIsError    by remember { mutableStateOf(false) }
-    var customMsg2Status    by remember { mutableStateOf("") }
-    var customMsg2IsError   by remember { mutableStateOf(false) }
-    var customMsg3Status    by remember { mutableStateOf("") }
-    var customMsg3IsError   by remember { mutableStateOf(false) }
     var calibLogStatus      by remember { mutableStateOf("") }
     var calibLogIsError     by remember { mutableStateOf(false) }
     var calibLogInfo        by remember { mutableStateOf("") }
@@ -114,9 +100,6 @@ fun SettingsScreen(vm: MainViewModel) {
         checkinEnabled, checkinInterval,
         karooLiveEnabled, karooLiveKey, karooLiveStartMessage,
         karooLiveEndEnabled, karooLiveEndMessage,
-        customMessageEnabled, customMessage, customMessageTitle,
-        customMessage2Enabled, customMessage2, customMessage2Title,
-        customMessage3Enabled, customMessage3, customMessage3Title,
         calibrationLogging,
     ) {
         delay(600)
@@ -141,15 +124,6 @@ fun SettingsScreen(vm: MainViewModel) {
                 karooLiveStartMessage   = karooLiveStartMessage,
                 karooLiveEndEnabled     = karooLiveEndEnabled,
                 karooLiveEndMessage     = karooLiveEndMessage,
-                customMessageEnabled    = customMessageEnabled,
-                customMessageTitle      = customMessageTitle.take(5).ifBlank { "MSG" },
-                customMessage           = customMessage,
-                customMessage2Enabled   = customMessage2Enabled,
-                customMessage2Title     = customMessage2Title.take(5).ifBlank { "MSG2" },
-                customMessage2          = customMessage2,
-                customMessage3Enabled   = customMessage3Enabled,
-                customMessage3Title     = customMessage3Title.take(5).ifBlank { "MSG3" },
-                customMessage3          = customMessage3,
                 calibrationLoggingEnabled = calibrationLogging,
             )
         )
@@ -237,178 +211,6 @@ fun SettingsScreen(vm: MainViewModel) {
             }
         }
 
-        // ── Custom message card ───────────────────────────────────────────────
-        Card(
-            modifier = Modifier.fillMaxWidth(),
-            colors = CardDefaults.cardColors(
-                containerColor = MaterialTheme.colorScheme.secondaryContainer.copy(alpha = 0.35f)
-            )
-        ) {
-            Column(
-                modifier = Modifier.padding(12.dp),
-                verticalArrangement = Arrangement.spacedBy(10.dp)
-            ) {
-                Text(
-                    text = stringResource(R.string.custom_message_section),
-                    style = MaterialTheme.typography.titleSmall,
-                    fontWeight = FontWeight.Bold,
-                    color = MaterialTheme.colorScheme.secondary
-                )
-                Text(
-                    text = stringResource(R.string.custom_message_send_hint),
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
-
-                // ── Slot 1 ──────────────────────────────────────────────────
-                SettingRow(label = stringResource(R.string.custom_message_label)) {
-                    Switch(checked = customMessageEnabled, onCheckedChange = { customMessageEnabled = it })
-                }
-                if (customMessageEnabled) {
-                    OutlinedTextField(
-                        value = customMessageTitle,
-                        onValueChange = { if (it.length <= 5) customMessageTitle = it },
-                        label = { Text(stringResource(R.string.custom_message_title_hint)) },
-                        modifier = Modifier.fillMaxWidth(),
-                        singleLine = true,
-                        supportingText = { Text(stringResource(R.string.custom_message_title_desc)) }
-                    )
-                    OutlinedTextField(
-                        value = customMessage,
-                        onValueChange = { customMessage = it },
-                        label = { Text(stringResource(R.string.custom_message_hint)) },
-                        modifier = Modifier.fillMaxWidth(),
-                        minLines = 2
-                    )
-                    Button(
-                        onClick = {
-                            customMsgStatus = "Sending…"
-                            customMsgIsError = false
-                            coroutineScope.launch {
-                                val ext = KSafeExtension.getInstance()
-                                if (ext == null) {
-                                    customMsgStatus = "Extension not connected — wait a moment and try again."
-                                    customMsgIsError = true
-                                } else {
-                                    val msg = ext.sendCustomMessage(1)
-                                    customMsgIsError = !msg.contains("✓")
-                                    customMsgStatus = msg
-                                }
-                            }
-                        },
-                        modifier = Modifier.fillMaxWidth()
-                    ) {
-                        Text(stringResource(R.string.custom_message_send_label))
-                    }
-                    if (customMsgStatus.isNotEmpty()) {
-                        Text(
-                            text = customMsgStatus,
-                            style = MaterialTheme.typography.bodySmall,
-                            color = if (customMsgIsError) Color(0xFFB71C1C) else Color(0xFF2E7D32)
-                        )
-                    }
-                }
-
-                // ── Slot 2 ──────────────────────────────────────────────────
-                SettingRow(label = stringResource(R.string.custom_message_2_label)) {
-                    Switch(checked = customMessage2Enabled, onCheckedChange = { customMessage2Enabled = it })
-                }
-                if (customMessage2Enabled) {
-                    OutlinedTextField(
-                        value = customMessage2Title,
-                        onValueChange = { if (it.length <= 5) customMessage2Title = it },
-                        label = { Text(stringResource(R.string.custom_message_title_hint)) },
-                        modifier = Modifier.fillMaxWidth(),
-                        singleLine = true,
-                        supportingText = { Text(stringResource(R.string.custom_message_title_desc)) }
-                    )
-                    OutlinedTextField(
-                        value = customMessage2,
-                        onValueChange = { customMessage2 = it },
-                        label = { Text(stringResource(R.string.custom_message_2_hint)) },
-                        modifier = Modifier.fillMaxWidth(),
-                        minLines = 2
-                    )
-                    Button(
-                        onClick = {
-                            customMsg2Status = "Sending…"
-                            customMsg2IsError = false
-                            coroutineScope.launch {
-                                val ext = KSafeExtension.getInstance()
-                                if (ext == null) {
-                                    customMsg2Status = "Extension not connected — wait a moment and try again."
-                                    customMsg2IsError = true
-                                } else {
-                                    val msg = ext.sendCustomMessage(2)
-                                    customMsg2IsError = !msg.contains("✓")
-                                    customMsg2Status = msg
-                                }
-                            }
-                        },
-                        modifier = Modifier.fillMaxWidth()
-                    ) {
-                        Text(stringResource(R.string.custom_message_2_send_label))
-                    }
-                    if (customMsg2Status.isNotEmpty()) {
-                        Text(
-                            text = customMsg2Status,
-                            style = MaterialTheme.typography.bodySmall,
-                            color = if (customMsg2IsError) Color(0xFFB71C1C) else Color(0xFF2E7D32)
-                        )
-                    }
-                }
-
-                // ── Slot 3 ──────────────────────────────────────────────────
-                SettingRow(label = stringResource(R.string.custom_message_3_label)) {
-                    Switch(checked = customMessage3Enabled, onCheckedChange = { customMessage3Enabled = it })
-                }
-                if (customMessage3Enabled) {
-                    OutlinedTextField(
-                        value = customMessage3Title,
-                        onValueChange = { if (it.length <= 5) customMessage3Title = it },
-                        label = { Text(stringResource(R.string.custom_message_title_hint)) },
-                        modifier = Modifier.fillMaxWidth(),
-                        singleLine = true,
-                        supportingText = { Text(stringResource(R.string.custom_message_title_desc)) }
-                    )
-                    OutlinedTextField(
-                        value = customMessage3,
-                        onValueChange = { customMessage3 = it },
-                        label = { Text(stringResource(R.string.custom_message_3_hint)) },
-                        modifier = Modifier.fillMaxWidth(),
-                        minLines = 2
-                    )
-                    Button(
-                        onClick = {
-                            customMsg3Status = "Sending…"
-                            customMsg3IsError = false
-                            coroutineScope.launch {
-                                val ext = KSafeExtension.getInstance()
-                                if (ext == null) {
-                                    customMsg3Status = "Extension not connected — wait a moment and try again."
-                                    customMsg3IsError = true
-                                } else {
-                                    val msg = ext.sendCustomMessage(3)
-                                    customMsg3IsError = !msg.contains("✓")
-                                    customMsg3Status = msg
-                                }
-                            }
-                        },
-                        modifier = Modifier.fillMaxWidth()
-                    ) {
-                        Text(stringResource(R.string.custom_message_3_send_label))
-                    }
-                    if (customMsg3Status.isNotEmpty()) {
-                        Text(
-                            text = customMsg3Status,
-                            style = MaterialTheme.typography.bodySmall,
-                            color = if (customMsg3IsError) Color(0xFFB71C1C) else Color(0xFF2E7D32)
-                        )
-                    }
-                }
-            }
-        }
-        // ─────────────────────────────────────────────────────────────────────
 
         HorizontalDivider()
 

@@ -109,6 +109,21 @@ data class KSafeConfig(
     val customMessage3: String = "",
     // Calibration logging — writes detailed sensor events to CSV for threshold tuning
     val calibrationLoggingEnabled: Boolean = false,
+    // Webhook actions — generic HTTP buttons assignable to Karoo hardware buttons.
+    // Each action fires a single HTTP request (GET or POST) to any endpoint.
+    // Compatible with Home Assistant, ntfy, IFTTT, n8n, Make, and any webhook service.
+    val webhook1Enabled: Boolean = false,
+    val webhook1Label: String = "Action 1",   // shown in in-ride alerts
+    val webhook1Url: String = "",
+    val webhook1Method: String = "POST",       // "GET" or "POST"
+    val webhook1Headers: String = "",          // one header line: "Authorization: Bearer xxx"
+    val webhook1Body: String = "",             // optional POST body (e.g. JSON)
+    val webhook2Enabled: Boolean = false,
+    val webhook2Label: String = "Action 2",
+    val webhook2Url: String = "",
+    val webhook2Method: String = "POST",
+    val webhook2Headers: String = "",
+    val webhook2Body: String = "",
     /**
      * Config schema version — used to detect stale saved configs and apply migrations.
      * Default 0 ensures that any pre-versioning config (JSON without this field) triggers migration.

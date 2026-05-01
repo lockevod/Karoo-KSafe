@@ -59,6 +59,7 @@ fun TabLayout(vm: MainViewModel = viewModel()) {
     val tabs = listOf(
         stringResource(R.string.tab_provider),
         stringResource(R.string.tab_settings),
+        stringResource(R.string.tab_actions),
     )
     var selectedTab by remember { mutableIntStateOf(0) }
 
@@ -134,6 +135,7 @@ fun TabLayout(vm: MainViewModel = viewModel()) {
         when (selectedTab) {
             0 -> ProviderScreen(vm)
             1 -> SettingsScreen(vm)
+            2 -> ActionsScreen(vm)
         }
     }
 }
