@@ -8,6 +8,7 @@ import android.widget.RemoteViews
 import com.enderthor.kSafe.R
 import com.enderthor.kSafe.activity.FieldTapReceiver
 import com.enderthor.kSafe.data.EmergencyStatus
+import com.enderthor.kSafe.extension.managers.ConfigurationManager
 import com.enderthor.kSafe.extension.managers.EmergencyManager
 import io.hammerhead.karooext.KarooSystemService
 import io.hammerhead.karooext.extension.DataTypeImpl
@@ -24,9 +25,9 @@ import kotlinx.coroutines.cancel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withTimeoutOrNull
 import timber.log.Timber
 
-private const val COLOR_SAFE      = 0xFF1B5E20.toInt()
 private const val COLOR_COUNTDOWN = 0xFFE65100.toInt()
 private const val COLOR_ALERTING  = 0xFFB71C1C.toInt()
 
@@ -35,6 +36,8 @@ class SOSDataType(
     private val context: Context,
     private val karooSystem: KarooSystemService,
 ) : DataTypeImpl("ksafe", datatype) {
+
+    private val configManager = ConfigurationManager(context)
 
     /** Builds a field view with optional click PendingIntent (requestCode 101 = SOS). */
     private fun buildView(context: Context, config: ViewConfig, bgColor: Int, main: String, hint: String = "", clickable: Boolean = true): RemoteViews {
@@ -70,12 +73,20 @@ class SOSDataType(
 
         val viewJob = scope.launch {
             try {
+                // Track config changes in a child coroutine so idleColor stays current
+                var idleColor = 0xFF1B5E20.toInt()
+                launch {
+                    configManager.loadConfigFlow().collect { c -> idleColor = c.sosFieldColor }
+                }
                 while (true) {
                     val state = EmergencyManager.uiState.value
                     when (state.status) {
                         EmergencyStatus.IDLE -> {
-                            emitter.updateView(buildView(context, config, COLOR_SAFE, "SAFE", "tap=SOS"))
-                            EmergencyManager.uiState.first { it.status != EmergencyStatus.IDLE }
+                            emitter.updateView(buildView(context, config, idleColor, "SAFE", "tap=SOS"))
+                            // Wait for state change; timeout to pick up colour changes from config
+                            withTimeoutOrNull(5_000L) {
+                                EmergencyManager.uiState.first { it.status != EmergencyStatus.IDLE }
+                            }
                         }
                         EmergencyStatus.COUNTDOWN -> {
                             val secs = state.countdownRemaining()

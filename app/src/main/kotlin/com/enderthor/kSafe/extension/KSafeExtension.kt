@@ -443,6 +443,17 @@ class KSafeExtension : KarooExtension("ksafe", BuildConfig.VERSION_NAME), Corout
             val label = if (slot == 1) config.webhook1Label.ifBlank { "Action 1" }
                         else config.webhook2Label.ifBlank { "Action 2" }
 
+            // ── URL check ─────────────────────────────────────────────────────
+            val url = if (slot == 1) config.webhook1Url else config.webhook2Url
+            if (url.isBlank()) {
+                karooSystem.dispatch(SystemNotification(
+                    id = "ksafe-webhook-$slot-nourl",
+                    header = "KSafe",
+                    message = "$label — no URL configured"
+                ))
+                return@launch
+            }
+
             // ── Geo-fence check ───────────────────────────────────────────────
             val geoEnabled = if (slot == 1) config.webhook1GeoEnabled else config.webhook2GeoEnabled
             if (geoEnabled) {

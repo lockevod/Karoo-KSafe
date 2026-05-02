@@ -9,6 +9,7 @@ import com.enderthor.kSafe.R
 import com.enderthor.kSafe.activity.FieldTapReceiver
 import com.enderthor.kSafe.data.CHECKIN_WARNING_THRESHOLD_MINUTES
 import com.enderthor.kSafe.data.EmergencyStatus
+import com.enderthor.kSafe.extension.managers.ConfigurationManager
 import com.enderthor.kSafe.extension.managers.EmergencyManager
 import io.hammerhead.karooext.KarooSystemService
 import io.hammerhead.karooext.extension.DataTypeImpl
@@ -28,7 +29,6 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withTimeoutOrNull
 import timber.log.Timber
 
-private const val COLOR_OK       = 0xFF1B5E20.toInt()
 private const val COLOR_WARNING  = 0xFFF57F17.toInt()
 private const val COLOR_EXPIRED  = 0xFFB71C1C.toInt()
 private const val COLOR_DISABLED = 0xFF424242.toInt()
@@ -39,6 +39,8 @@ class SafetyTimerDataType(
     private val context: Context,
     private val karooSystem: KarooSystemService,
 ) : DataTypeImpl("ksafe", datatype) {
+
+    private val configManager = ConfigurationManager(context)
 
     /** Builds a field view with optional click PendingIntent (requestCode 102 = Timer). */
     private fun buildView(context: Context, config: ViewConfig, bgColor: Int, main: String, hint: String = "", clickable: Boolean = true): RemoteViews {
@@ -74,6 +76,10 @@ class SafetyTimerDataType(
 
         val viewJob = scope.launch {
             try {
+                var okColor = 0xFF1B5E20.toInt()
+                launch {
+                    configManager.loadConfigFlow().collect { c -> okColor = c.timerFieldColor }
+                }
                 while (true) {
                     val state = EmergencyManager.uiState.value
                     when {
@@ -93,7 +99,7 @@ class SafetyTimerDataType(
                             val bgColor = when {
                                 isExpired -> COLOR_EXPIRED
                                 isWarning -> COLOR_WARNING
-                                else      -> COLOR_OK
+                                else      -> okColor
                             }
                             val mainText = when {
                                 isExpired -> "CHECK\nIN!"

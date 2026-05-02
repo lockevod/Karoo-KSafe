@@ -25,7 +25,6 @@ import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.launch
 import timber.log.Timber
 
-private const val COLOR_IDLE    = 0xFF1565C0.toInt()
 private const val COLOR_SENDING = 0xFFE65100.toInt()
 private const val COLOR_SENT    = 0xFF1B5E20.toInt()
 private const val COLOR_ERROR   = 0xFFB71C1C.toInt()
@@ -51,9 +50,15 @@ class CustomMessageDataType(
     private val configManager = ConfigurationManager(context)
 
     private fun titleFromConfig(config: KSafeConfig) = when (slot) {
-        2 -> config.customMessage2Title.take(5).ifBlank { "MSG2" }
-        3 -> config.customMessage3Title.take(5).ifBlank { "MSG3" }
-        else -> config.customMessageTitle.take(5).ifBlank { "MSG" }
+        2 -> config.customMessage2Title.take(7).ifBlank { "MSG2" }
+        3 -> config.customMessage3Title.take(7).ifBlank { "MSG3" }
+        else -> config.customMessageTitle.take(7).ifBlank { "MSG" }
+    }
+
+    private fun idleColorFromConfig(config: KSafeConfig) = when (slot) {
+        2 -> config.customMsg2Color
+        3 -> config.customMsg3Color
+        else -> config.customMsg1Color
     }
 
     /** Builds a field view with optional click PendingIntent. */
@@ -95,8 +100,9 @@ class CustomMessageDataType(
                     configManager.loadConfigFlow()
                 ) { state, ksafeConfig ->
                     val title = titleFromConfig(ksafeConfig)
+                    val idleColor = idleColorFromConfig(ksafeConfig)
                     when (state) {
-                        CustomMessageState.IDLE    -> buildView(context, config, COLOR_IDLE, title, "tap=send")
+                        CustomMessageState.IDLE    -> buildView(context, config, idleColor, title, "tap=send")
                         CustomMessageState.SENDING -> buildView(context, config, COLOR_SENDING, title, "Sending…", clickable = false)
                         CustomMessageState.SENT    -> buildView(context, config, COLOR_SENT, title, "SENT ✓", clickable = false)
                         CustomMessageState.ERROR   -> buildView(context, config, COLOR_ERROR, title, "ERR retry")

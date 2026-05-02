@@ -54,6 +54,11 @@ fun ActionsScreen(vm: MainViewModel) {
     var customMessage3Title   by remember(config.customMessage3Title)   { mutableStateOf(config.customMessage3Title) }
     var customMessage3        by remember(config.customMessage3)        { mutableStateOf(config.customMessage3) }
 
+    // ── Custom message field colours ─────────────────────────────────────────
+    var customMsg1Color by remember(config.customMsg1Color) { mutableStateOf(config.customMsg1Color) }
+    var customMsg2Color by remember(config.customMsg2Color) { mutableStateOf(config.customMsg2Color) }
+    var customMsg3Color by remember(config.customMsg3Color) { mutableStateOf(config.customMsg3Color) }
+
     // ── Webhooks ──────────────────────────────────────────────────────────────
     var webhook1Enabled  by remember(config.webhook1Enabled)  { mutableStateOf(config.webhook1Enabled) }
     var webhook1Label    by remember(config.webhook1Label)    { mutableStateOf(config.webhook1Label) }
@@ -80,6 +85,10 @@ fun ActionsScreen(vm: MainViewModel) {
     var webhook2AlertEnabled by remember(config.webhook2AlertEnabled) { mutableStateOf(config.webhook2AlertEnabled) }
     var webhook2AlertText    by remember(config.webhook2AlertText)    { mutableStateOf(config.webhook2AlertText) }
 
+    // ── Webhook field colours ─────────────────────────────────────────────────
+    var webhook1Color by remember(config.webhook1Color) { mutableStateOf(config.webhook1Color) }
+    var webhook2Color by remember(config.webhook2Color) { mutableStateOf(config.webhook2Color) }
+
     // ── Status states ─────────────────────────────────────────────────────────
     var customMsgStatus   by remember { mutableStateOf("") }
     var customMsgIsError  by remember { mutableStateOf(false) }
@@ -99,25 +108,30 @@ fun ActionsScreen(vm: MainViewModel) {
         customMessageEnabled, customMessage, customMessageTitle,
         customMessage2Enabled, customMessage2, customMessage2Title,
         customMessage3Enabled, customMessage3, customMessage3Title,
+        customMsg1Color, customMsg2Color, customMsg3Color,
         webhook1Enabled, webhook1Label, webhook1Url, webhook1Method, webhook1Headers, webhook1Body,
         webhook1GeoEnabled, webhook1GeoLat, webhook1GeoLon, webhook1GeoRadius,
         webhook1AlertEnabled, webhook1AlertText,
         webhook2Enabled, webhook2Label, webhook2Url, webhook2Method, webhook2Headers, webhook2Body,
         webhook2GeoEnabled, webhook2GeoLat, webhook2GeoLon, webhook2GeoRadius,
         webhook2AlertEnabled, webhook2AlertText,
+        webhook1Color, webhook2Color,
     ) {
         delay(600)
         vm.saveConfig(
             config.copy(
                 customMessageEnabled    = customMessageEnabled,
-                customMessageTitle      = customMessageTitle.take(5).ifBlank { "MSG" },
+                customMessageTitle      = customMessageTitle.take(7).ifBlank { "MSG" },
                 customMessage           = customMessage,
                 customMessage2Enabled   = customMessage2Enabled,
-                customMessage2Title     = customMessage2Title.take(5).ifBlank { "MSG2" },
+                customMessage2Title     = customMessage2Title.take(7).ifBlank { "MSG2" },
                 customMessage2          = customMessage2,
                 customMessage3Enabled   = customMessage3Enabled,
-                customMessage3Title     = customMessage3Title.take(5).ifBlank { "MSG3" },
+                customMessage3Title     = customMessage3Title.take(7).ifBlank { "MSG3" },
                 customMessage3          = customMessage3,
+                customMsg1Color         = customMsg1Color,
+                customMsg2Color         = customMsg2Color,
+                customMsg3Color         = customMsg3Color,
                 webhook1Enabled  = webhook1Enabled,
                 webhook1Label    = webhook1Label,
                 webhook1Url      = webhook1Url,
@@ -142,6 +156,8 @@ fun ActionsScreen(vm: MainViewModel) {
                 webhook2GeoRadiusM  = webhook2GeoRadius.toIntOrNull()?.coerceAtLeast(1) ?: 50,
                 webhook2AlertEnabled = webhook2AlertEnabled,
                 webhook2AlertText    = webhook2AlertText,
+                webhook1Color        = webhook1Color,
+                webhook2Color        = webhook2Color,
             )
         )
     }
@@ -189,7 +205,7 @@ fun ActionsScreen(vm: MainViewModel) {
                 if (customMessageEnabled) {
                     OutlinedTextField(
                         value = customMessageTitle,
-                        onValueChange = { if (it.length <= 5) customMessageTitle = it },
+                        onValueChange = { if (it.length <= 7) customMessageTitle = it },
                         label = { Text(stringResource(R.string.custom_message_title_hint)) },
                         modifier = Modifier.fillMaxWidth(),
                         singleLine = true,
@@ -201,6 +217,11 @@ fun ActionsScreen(vm: MainViewModel) {
                         label = { Text(stringResource(R.string.custom_message_hint)) },
                         modifier = Modifier.fillMaxWidth(),
                         minLines = 2
+                    )
+                    FieldColorPicker(
+                        label = stringResource(R.string.field_color_label),
+                        selected = customMsg1Color,
+                        onSelected = { customMsg1Color = it }
                     )
                     Button(
                         onClick = {
@@ -238,7 +259,7 @@ fun ActionsScreen(vm: MainViewModel) {
                 if (customMessage2Enabled) {
                     OutlinedTextField(
                         value = customMessage2Title,
-                        onValueChange = { if (it.length <= 5) customMessage2Title = it },
+                        onValueChange = { if (it.length <= 7) customMessage2Title = it },
                         label = { Text(stringResource(R.string.custom_message_title_hint)) },
                         modifier = Modifier.fillMaxWidth(),
                         singleLine = true,
@@ -250,6 +271,11 @@ fun ActionsScreen(vm: MainViewModel) {
                         label = { Text(stringResource(R.string.custom_message_2_hint)) },
                         modifier = Modifier.fillMaxWidth(),
                         minLines = 2
+                    )
+                    FieldColorPicker(
+                        label = stringResource(R.string.field_color_label),
+                        selected = customMsg2Color,
+                        onSelected = { customMsg2Color = it }
                     )
                     Button(
                         onClick = {
@@ -287,7 +313,7 @@ fun ActionsScreen(vm: MainViewModel) {
                 if (customMessage3Enabled) {
                     OutlinedTextField(
                         value = customMessage3Title,
-                        onValueChange = { if (it.length <= 5) customMessage3Title = it },
+                        onValueChange = { if (it.length <= 7) customMessage3Title = it },
                         label = { Text(stringResource(R.string.custom_message_title_hint)) },
                         modifier = Modifier.fillMaxWidth(),
                         singleLine = true,
@@ -299,6 +325,11 @@ fun ActionsScreen(vm: MainViewModel) {
                         label = { Text(stringResource(R.string.custom_message_3_hint)) },
                         modifier = Modifier.fillMaxWidth(),
                         minLines = 2
+                    )
+                    FieldColorPicker(
+                        label = stringResource(R.string.field_color_label),
+                        selected = customMsg3Color,
+                        onSelected = { customMsg3Color = it }
                     )
                     Button(
                         onClick = {
@@ -379,6 +410,8 @@ fun ActionsScreen(vm: MainViewModel) {
                     onAlertEnabledChange = { webhook1AlertEnabled = it },
                     alertText = webhook1AlertText,
                     onAlertTextChange = { webhook1AlertText = it },
+                    fieldColor = webhook1Color,
+                    onFieldColorChange = { webhook1Color = it },
                     testStatus = webhook1Status,
                     testIsError = webhook1IsError,
                     onTest = {
@@ -428,6 +461,8 @@ fun ActionsScreen(vm: MainViewModel) {
                     onAlertEnabledChange = { webhook2AlertEnabled = it },
                     alertText = webhook2AlertText,
                     onAlertTextChange = { webhook2AlertText = it },
+                    fieldColor = webhook2Color,
+                    onFieldColorChange = { webhook2Color = it },
                     testStatus = webhook2Status,
                     testIsError = webhook2IsError,
                     onTest = {
@@ -480,6 +515,8 @@ private fun WebhookSlotFields(
     onAlertEnabledChange: (Boolean) -> Unit,
     alertText: String,
     onAlertTextChange: (String) -> Unit,
+    fieldColor: Int,
+    onFieldColorChange: (Int) -> Unit,
     testStatus: String,
     testIsError: Boolean,
     onTest: () -> Unit,
@@ -622,6 +659,12 @@ private fun WebhookSlotFields(
             )
         }
         // ─────────────────────────────────────────────────────────────────
+
+        FieldColorPicker(
+            label = stringResource(R.string.field_color_label),
+            selected = fieldColor,
+            onSelected = onFieldColorChange
+        )
 
         Button(onClick = onTest, modifier = Modifier.fillMaxWidth()) { Text(testButtonLabel) }
         if (testStatus.isNotEmpty()) {

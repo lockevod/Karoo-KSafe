@@ -49,6 +49,20 @@ val PRESET_CONFIRM_SPEED = mapOf(
     CrashSensitivity.HIGH   to 5,
 )
 
+// ─── Field colour palette ─────────────────────────────────────────────────────
+
+/** Dark colours that look good with white text on a Karoo ride field. */
+val FIELD_COLOR_PALETTE: List<Int> = listOf(
+    0xFF1565C0.toInt(),  // Blue          (default actions)
+    0xFF1B5E20.toInt(),  // Dark Green    (default SOS / Timer)
+    0xFF4527A0.toInt(),  // Deep Purple
+    0xFF00695C.toInt(),  // Teal
+    0xFF1A237E.toInt(),  // Indigo
+    0xFF4E342E.toInt(),  // Brown
+    0xFF37474F.toInt(),  // Blue Grey
+    0xFF880E4F.toInt(),  // Dark Pink
+)
+
 // ─── Enums ────────────────────────────────────────────────────────────────────
 
 enum class ProviderType { CALLMEBOT, PUSHOVER, NTFY, TELEGRAM }
@@ -109,6 +123,14 @@ data class KSafeConfig(
     val customMessage3: String = "",
     // Calibration logging — writes detailed sensor events to CSV for threshold tuning
     val calibrationLoggingEnabled: Boolean = false,
+    // Field colours — idle/ready background for each ride-screen widget
+    val sosFieldColor: Int = 0xFF1B5E20.toInt(),       // SOS: idle=SAFE (green)
+    val timerFieldColor: Int = 0xFF1B5E20.toInt(),     // Safety Timer: OK (green)
+    val customMsg1Color: Int = 0xFF1565C0.toInt(),     // Custom Message 1: idle (blue)
+    val customMsg2Color: Int = 0xFF1565C0.toInt(),     // Custom Message 2: idle (blue)
+    val customMsg3Color: Int = 0xFF1565C0.toInt(),     // Custom Message 3: idle (blue)
+    val webhook1Color: Int = 0xFF1565C0.toInt(),       // Webhook 1: idle (blue)
+    val webhook2Color: Int = 0xFF1565C0.toInt(),       // Webhook 2: idle (blue)
     // Webhook actions — generic HTTP buttons assignable to Karoo hardware buttons.
     // Each action fires a single HTTP request (GET or POST) to any endpoint.
     // Compatible with Home Assistant, ntfy, IFTTT, n8n, Make, and any webhook service.
