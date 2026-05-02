@@ -21,14 +21,22 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.awaitCancellation
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import timber.log.Timber
 
 private const val COLOR_DISABLED = 0xFF616161.toInt() // grey — not configured
+private const val COLOR_FIRING   = 0xFFE65100.toInt() // orange — in progress
+private const val COLOR_SUCCESS  = 0xFF1B5E20.toInt() // green  — fired OK
+private const val COLOR_ERROR    = 0xFFB71C1C.toInt() // red    — failed
 
 /**
  * Tappable data field for webhook slot 1 or 2.
  * Shows the configured label and fires the webhook when tapped.
+ * Mirrors CustomMessageDataType: uses combine(WebhookState, configFlow) so the
+ * initial view is rendered immediately (StateFlow emits synchronously) and the
+ * tap PendingIntent is always registered.
  *
  * @param slot 1 or 2
  * requestCode: 106 = slot1, 107 = slot2
@@ -102,17 +110,41 @@ class WebhookDataType(
             awaitCancellation()
         }
 
+        // Immediate initial clickable view with real config — ensures PendingIntent is always
+        // registered from the first frame without showing a generic "WH1/WH2" placeholder.
+        scope.launch {
+            val initialConfig = runCatching { configManager.loadConfigFlow().first() }.getOrNull()
+            if (initialConfig != null) {
+                val label     = labelFromConfig(initialConfig)
+                val enabled   = isEnabled(initialConfig)
+                val idleColor = idleColorFromConfig(initialConfig)
+                val bgColor   = if (enabled) idleColor else COLOR_DISABLED
+                val hint      = if (enabled) "tap" else "off"
+                emitter.updateView(buildView(context, config, bgColor, label, hint))
+            }
+            // If DataStore hasn't emitted yet (very rare), the combine below will render the first view
+        }
+
         val viewJob = scope.launch {
             try {
-                configManager.loadConfigFlow().collect { ksafeConfig ->
-                    val label = labelFromConfig(ksafeConfig)
-                    val enabled = isEnabled(ksafeConfig)
+                combine(
+                    WebhookState.flowForSlot(slot),
+                    configManager.loadConfigFlow()
+                ) { stateData, ksafeConfig ->
+                    val label     = labelFromConfig(ksafeConfig)
+                    val enabled   = isEnabled(ksafeConfig)
                     val idleColor = idleColorFromConfig(ksafeConfig)
-                    val view = if (enabled) {
-                        buildView(context, config, idleColor, label, "tap")
-                    } else {
-                        buildView(context, config, COLOR_DISABLED, label, "off", clickable = false)
+                    when (stateData.state) {
+                        WebhookState.IDLE    -> {
+                            val bgColor = if (enabled) idleColor else COLOR_DISABLED
+                            val hint    = if (enabled) "tap" else "off"
+                            buildView(context, config, bgColor, label, hint)
+                        }
+                        WebhookState.FIRING  -> buildView(context, config, COLOR_FIRING,  label, "firing…", clickable = false)
+                        WebhookState.SUCCESS -> buildView(context, config, COLOR_SUCCESS,  label, stateData.message.ifBlank { "OK ✓" }, clickable = false)
+                        WebhookState.ERROR   -> buildView(context, config, COLOR_ERROR,    label, stateData.message.ifBlank { "ERR retry" })
                     }
+                }.collect { view ->
                     emitter.updateView(view)
                 }
             } catch (_: CancellationException) {
@@ -130,4 +162,3 @@ class WebhookDataType(
         }
     }
 }
-

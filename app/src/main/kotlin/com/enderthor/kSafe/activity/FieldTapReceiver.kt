@@ -15,8 +15,9 @@ import timber.log.Timber
  */
 class FieldTapReceiver : BroadcastReceiver() {
     override fun onReceive(context: Context, intent: Intent) {
+        Timber.d("FieldTapReceiver.onReceive action=${intent.action}")
         val ext = KSafeExtension.getInstance() ?: run {
-            Timber.w("FieldTapReceiver: KSafeExtension not available")
+            Timber.w("FieldTapReceiver: KSafeExtension not available — getInstance() returned null")
             return
         }
         when (intent.action) {
@@ -42,11 +43,11 @@ class FieldTapReceiver : BroadcastReceiver() {
             }
             ACTION_WEBHOOK_1 -> {
                 Timber.d("FieldTapReceiver: Webhook tap (slot 1)")
-                ext.handleWebhookTap(1)
+                ext.launch { ext.handleWebhookTap(1) }
             }
             ACTION_WEBHOOK_2 -> {
                 Timber.d("FieldTapReceiver: Webhook tap (slot 2)")
-                ext.handleWebhookTap(2)
+                ext.launch { ext.handleWebhookTap(2) }
             }
         }
     }

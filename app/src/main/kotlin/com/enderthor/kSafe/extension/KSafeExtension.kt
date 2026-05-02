@@ -7,6 +7,7 @@ import com.enderthor.kSafe.data.KSafeConfig
 import com.enderthor.kSafe.data.ProviderType
 import com.enderthor.kSafe.datatype.CustomMessageDataType
 import com.enderthor.kSafe.datatype.CustomMessageState
+import com.enderthor.kSafe.datatype.WebhookState
 import com.enderthor.kSafe.datatype.SafetyTimerDataType
 import com.enderthor.kSafe.datatype.SOSDataType
 import com.enderthor.kSafe.datatype.WebhookDataType
@@ -248,11 +249,11 @@ class KSafeExtension : KarooExtension("ksafe", BuildConfig.VERSION_NAME), Corout
             }
             "trigger-webhook-1" -> {
                 Timber.d("BonusAction: trigger-webhook-1 triggered")
-                handleWebhookTap(1)
+                launch { handleWebhookTap(1) }
             }
             "trigger-webhook-2" -> {
                 Timber.d("BonusAction: trigger-webhook-2 triggered")
-                handleWebhookTap(2)
+                launch { handleWebhookTap(2) }
             }
         }
     }
@@ -437,21 +438,39 @@ class KSafeExtension : KarooExtension("ksafe", BuildConfig.VERSION_NAME), Corout
      * When geo-fence is enabled for the slot, the request is blocked if the device
      * is further than the configured radius from the target coordinates.
      */
-    fun handleWebhookTap(slot: Int) {
-        launch {
+    suspend fun handleWebhookTap(slot: Int) {
+        Timber.d("handleWebhookTap called slot=$slot")
+        try {
             val config = activeConfig
             val label = if (slot == 1) config.webhook1Label.ifBlank { "Action 1" }
                         else config.webhook2Label.ifBlank { "Action 2" }
 
+            // ── Enabled check ─────────────────────────────────────────────────
+            val enabled = if (slot == 1) config.webhook1Enabled else config.webhook2Enabled
+            if (!enabled) {
+                Timber.d("handleWebhookTap slot=$slot disabled")
+                WebhookState.update(slot, WebhookState.ERROR, "disabled")
+                launch { kotlinx.coroutines.delay(4_000L); WebhookState.update(slot, WebhookState.IDLE) }
+                karooSystem.dispatch(SystemNotification(
+                    id = "ksafe-webhook-$slot-disabled",
+                    header = label,
+                    message = "Webhook disabled — enable it in the Actions tab"
+                ))
+                return
+            }
+
             // ── URL check ─────────────────────────────────────────────────────
             val url = if (slot == 1) config.webhook1Url else config.webhook2Url
             if (url.isBlank()) {
+                Timber.d("handleWebhookTap slot=$slot no URL")
+                WebhookState.update(slot, WebhookState.ERROR, "no URL")
+                launch { kotlinx.coroutines.delay(4_000L); WebhookState.update(slot, WebhookState.IDLE) }
                 karooSystem.dispatch(SystemNotification(
                     id = "ksafe-webhook-$slot-nourl",
-                    header = "KSafe",
-                    message = "$label — no URL configured"
+                    header = label,
+                    message = "No URL configured — set one in the Actions tab"
                 ))
-                return@launch
+                return
             }
 
             // ── Geo-fence check ───────────────────────────────────────────────
@@ -463,44 +482,56 @@ class KSafeExtension : KarooExtension("ksafe", BuildConfig.VERSION_NAME), Corout
                 val curLat = locationManager.lastLat
                 val curLon = locationManager.lastLng
                 if (curLat == 0.0 && curLon == 0.0) {
+                    WebhookState.update(slot, WebhookState.ERROR, "no GPS")
+                    launch { kotlinx.coroutines.delay(4_000L); WebhookState.update(slot, WebhookState.IDLE) }
                     karooSystem.dispatch(SystemNotification(
                         id = "ksafe-webhook-$slot-geo-nofix",
-                        header = "KSafe",
-                        message = "$label blocked — no GPS fix yet"
+                        header = label,
+                        message = "Blocked — no GPS fix yet"
                     ))
-                    return@launch
+                    return
                 }
                 if (targetLat == 0.0 && targetLon == 0.0) {
+                    WebhookState.update(slot, WebhookState.ERROR, "no target")
+                    launch { kotlinx.coroutines.delay(4_000L); WebhookState.update(slot, WebhookState.IDLE) }
                     karooSystem.dispatch(SystemNotification(
                         id = "ksafe-webhook-$slot-geo-nocfg",
-                        header = "KSafe",
-                        message = "$label blocked — no target location configured"
+                        header = label,
+                        message = "Blocked — no target location configured"
                     ))
-                    return@launch
+                    return
                 }
                 val distance = distanceMeters(curLat, curLon, targetLat, targetLon)
                 if (distance > radiusM) {
+                    val distKm = if (distance >= 1000) "${"%.1f".format(distance/1000)}km" else "${distance.toInt()}m"
+                    WebhookState.update(slot, WebhookState.ERROR, "geo $distKm")
+                    launch { kotlinx.coroutines.delay(5_000L); WebhookState.update(slot, WebhookState.IDLE) }
                     karooSystem.dispatch(SystemNotification(
                         id = "ksafe-webhook-$slot-geo-far",
-                        header = "KSafe",
-                        message = "$label blocked — ${distance.toInt()}m away (max ${radiusM}m)"
+                        header = label,
+                        message = "Blocked — ${distance.toInt()}m away (max ${radiusM}m)"
                     ))
                     Timber.d("Webhook $slot geo-fenced: ${distance.toInt()}m > ${radiusM}m")
-                    return@launch
+                    return
                 }
-                Timber.d("Webhook $slot geo-fence passed: ${distance.toInt()}m ≤ ${radiusM}m")
+                Timber.d("Webhook $slot geo-fence passed: ${distance.toInt()}m <= ${radiusM}m")
             }
 
+            Timber.d("handleWebhookTap slot=$slot firing HTTP request")
+            WebhookState.update(slot, WebhookState.FIRING, "firing…")
             val result = webhookManager.trigger(slot, config)
+            Timber.d("handleWebhookTap slot=$slot result=${result.success} msg=${result.message}")
+            val resultMsg = if (result.success) "OK ✓" else "ERR"
+            WebhookState.update(slot, if (result.success) WebhookState.SUCCESS else WebhookState.ERROR, resultMsg)
+            launch { kotlinx.coroutines.delay(4_000L); WebhookState.update(slot, WebhookState.IDLE) }
+
             karooSystem.dispatch(
                 SystemNotification(
                     id = "ksafe-webhook-$slot-${if (result.success) "ok" else "err"}",
-                    header = "KSafe",
+                    header = label,
                     message = if (result.success) "$label ✓" else result.message,
                 )
             )
-            // Optional ride alert with custom text — shown after a successful trigger.
-            // Helps the user notice accidental button presses.
             if (result.success) {
                 val alertEnabled = if (slot == 1) config.webhook1AlertEnabled else config.webhook2AlertEnabled
                 val alertText    = if (slot == 1) config.webhook1AlertText    else config.webhook2AlertText
@@ -514,6 +545,10 @@ class KSafeExtension : KarooExtension("ksafe", BuildConfig.VERSION_NAME), Corout
                     )
                 }
             }
+        } catch (e: Exception) {
+            Timber.e(e, "handleWebhookTap slot=$slot EXCEPTION: ${e.message}")
+            WebhookState.update(slot, WebhookState.ERROR, "exception")
+            launch { kotlinx.coroutines.delay(4_000L); WebhookState.update(slot, WebhookState.IDLE) }
         }
     }
 

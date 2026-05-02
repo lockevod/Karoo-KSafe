@@ -51,16 +51,17 @@ val PRESET_CONFIRM_SPEED = mapOf(
 
 // ─── Field colour palette ─────────────────────────────────────────────────────
 
-/** Dark colours that look good with white text on a Karoo ride field. */
+/** Dark colours that look good with white text on a Karoo ride field.
+ *  Chosen to be visually distinct from each other — one per major hue region. */
 val FIELD_COLOR_PALETTE: List<Int> = listOf(
-    0xFF1565C0.toInt(),  // Blue          (default actions)
-    0xFF1B5E20.toInt(),  // Dark Green    (default SOS / Timer)
-    0xFF4527A0.toInt(),  // Deep Purple
-    0xFF00695C.toInt(),  // Teal
-    0xFF1A237E.toInt(),  // Indigo
-    0xFF4E342E.toInt(),  // Brown
-    0xFF37474F.toInt(),  // Blue Grey
-    0xFF880E4F.toInt(),  // Dark Pink
+    0xFF1565C0.toInt(),  // Blue           (default actions / webhooks)
+    0xFF2E7D32.toInt(),  // Forest Green   (default SOS / Timer)
+    0xFF6A1B9A.toInt(),  // Deep Purple
+    0xFF00838F.toInt(),  // Teal
+    0xFF880E4F.toInt(),  // Wine / Dark Pink
+    0xFF6D4C41.toInt(),  // Brown
+    0xFF37474F.toInt(),  // Slate Grey
+    0xFF1A237E.toInt(),  // Midnight Blue  (clearly darker/cooler than vivid Blue)
 )
 
 // ─── Enums ────────────────────────────────────────────────────────────────────
@@ -124,8 +125,8 @@ data class KSafeConfig(
     // Calibration logging — writes detailed sensor events to CSV for threshold tuning
     val calibrationLoggingEnabled: Boolean = false,
     // Field colours — idle/ready background for each ride-screen widget
-    val sosFieldColor: Int = 0xFF1B5E20.toInt(),       // SOS: idle=SAFE (green)
-    val timerFieldColor: Int = 0xFF1B5E20.toInt(),     // Safety Timer: OK (green)
+    val sosFieldColor: Int = 0xFF2E7D32.toInt(),       // SOS: idle=SAFE (forest green)
+    val timerFieldColor: Int = 0xFF2E7D32.toInt(),     // Safety Timer: OK (forest green)
     val customMsg1Color: Int = 0xFF1565C0.toInt(),     // Custom Message 1: idle (blue)
     val customMsg2Color: Int = 0xFF1565C0.toInt(),     // Custom Message 2: idle (blue)
     val customMsg3Color: Int = 0xFF1565C0.toInt(),     // Custom Message 3: idle (blue)
