@@ -43,6 +43,8 @@
                 <action android:name="com.enderthor.kSafe.TAP_CUSTOM_MESSAGE" />
                 <action android:name="com.enderthor.kSafe.TAP_CUSTOM_MESSAGE_2" />
                 <action android:name="com.enderthor.kSafe.TAP_CUSTOM_MESSAGE_3" />
+                <action android:name="com.enderthor.kSafe.TAP_WEBHOOK_1" />
+                <action android:name="com.enderthor.kSafe.TAP_WEBHOOK_2" />
             </intent-filter>
         </receiver>
 

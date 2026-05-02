@@ -40,6 +40,14 @@ class FieldTapReceiver : BroadcastReceiver() {
                 Timber.d("FieldTapReceiver: Custom message tap (slot 3)")
                 ext.launch { ext.sendCustomMessage(3) }
             }
+            ACTION_WEBHOOK_1 -> {
+                Timber.d("FieldTapReceiver: Webhook tap (slot 1)")
+                ext.handleWebhookTap(1)
+            }
+            ACTION_WEBHOOK_2 -> {
+                Timber.d("FieldTapReceiver: Webhook tap (slot 2)")
+                ext.handleWebhookTap(2)
+            }
         }
     }
 
@@ -49,6 +57,8 @@ class FieldTapReceiver : BroadcastReceiver() {
         const val ACTION_CUSTOM_MESSAGE   = "com.enderthor.kSafe.TAP_CUSTOM_MESSAGE"
         const val ACTION_CUSTOM_MESSAGE_2 = "com.enderthor.kSafe.TAP_CUSTOM_MESSAGE_2"
         const val ACTION_CUSTOM_MESSAGE_3 = "com.enderthor.kSafe.TAP_CUSTOM_MESSAGE_3"
+        const val ACTION_WEBHOOK_1        = "com.enderthor.kSafe.TAP_WEBHOOK_1"
+        const val ACTION_WEBHOOK_2        = "com.enderthor.kSafe.TAP_WEBHOOK_2"
     }
 }
 
