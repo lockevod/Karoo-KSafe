@@ -263,7 +263,7 @@ CallMeBot lets you send WhatsApp messages for free using a simple API. **Importa
 **Step 1 — Activate CallMeBot from the contact's phone**
 
 1. Open WhatsApp on the **destination phone** (your emergency contact's).
-2. Add the number `+34 644 59 77 96` to their contacts (save it as "CallMeBot" or any name).
+2. Add the number `+34 644 31 95 65` to their contacts (save it as "CallMeBot" or any name).
 3. Send this exact message to that number via WhatsApp:
    ```
    I allow callmebot to send me messages
