@@ -9,6 +9,7 @@ import com.enderthor.kSafe.datatype.CustomMessageDataType
 import com.enderthor.kSafe.datatype.CustomMessageState
 import com.enderthor.kSafe.datatype.SafetyTimerDataType
 import com.enderthor.kSafe.datatype.SOSDataType
+import com.enderthor.kSafe.datatype.WebhookDataType
 import com.enderthor.kSafe.extension.managers.CalibrationLogger
 import com.enderthor.kSafe.extension.managers.ConfigurationManager
 import com.enderthor.kSafe.extension.managers.CrashDetectionManager
@@ -69,6 +70,8 @@ class KSafeExtension : KarooExtension("ksafe", BuildConfig.VERSION_NAME), Corout
             CustomMessageDataType("custom-message-field", applicationContext, karooSystem, slot = 1),
             CustomMessageDataType("custom-message-field-2", applicationContext, karooSystem, slot = 2),
             CustomMessageDataType("custom-message-field-3", applicationContext, karooSystem, slot = 3),
+            WebhookDataType("webhook-field-1", applicationContext, karooSystem, slot = 1),
+            WebhookDataType("webhook-field-2", applicationContext, karooSystem, slot = 2),
         )
     }
 
