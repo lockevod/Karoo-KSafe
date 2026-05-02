@@ -552,7 +552,7 @@ The requests are sent **via the Karoo network bridge** — the same mechanism us
    - Tap **Test Webhook N** to verify it works before assigning it to a button.
 3. Assign to a SRAM AXS button: go to **Sensors → [your AXS groupset] → Configure Controls** on the Karoo, press the physical shifter button you want, and select **KSafe: Webhook Action 1** or **KSafe: Webhook Action 2** from the list. Short Press and Long Press can be assigned independently.
 
-When you press the configured button during a ride, the HTTP request fires immediately and you get an in-ride notification showing success or failure.
+When you press the configured button during a ride, the HTTP request fires immediately and you get an in-ride notification showing success or failure. If the webhook is **disabled** or the **URL is blank**, you will receive a notification explaining why the action was not fired — the field is always tappable so you can confirm at a glance why nothing happened.
 
 ### Examples
 
@@ -672,14 +672,14 @@ Each KSafe ride field has a customisable **idle background colour** — the colo
 
 | Swatch | Colour | Default for |
 |--------|--------|-------------|
-| 🔵 | Dark Blue | Webhooks, Custom Messages |
-| 🟢 | Dark Green | SOS (SAFE state), Safety Timer (OK state) |
+| 🔵 | Blue | Webhooks, Custom Messages |
+| 🟢 | Forest Green | SOS (SAFE state), Safety Timer (OK state) |
 | 🟣 | Deep Purple | — |
 | 🩵 | Teal | — |
-| 🔷 | Indigo | — |
+| 🍷 | Wine / Dark Pink | — |
 | 🟤 | Brown | — |
-| ⬛ | Blue Grey | — |
-| 🩷 | Dark Pink | — |
+| ⬛ | Slate Grey | — |
+| 🌌 | Midnight Blue | — |
 
 **State-driven colours are always preserved** regardless of your idle colour choice:
 
