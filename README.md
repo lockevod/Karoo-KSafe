@@ -1,7 +1,7 @@
 # KSafe - Safety Extension for Karoo
 
-> [!IMPORTANT]
-> This app is currently in early stage. If you want to improve the app, you can activate the toggle in the app (in settings) and send me the calibration data after your rides (anonymous). The more data I get, the better I can tune the crash detection algorithm for all users. See the [Calibration Logging](#calibration-logging-optional) section for details.
+> [!NOTE]
+> If you want to help improve crash detection, enable the anonymous calibration data toggle in the app (Settings tab) and send the data after your rides. The more data collected, the better the algorithm gets tuned for all users. See [Calibration Logging](#calibration-logging-optional) for details.
 
 > [!WARNING]
 > This extension can send emergency alerts to your contacts. Please test it carefully before relying on it in real situations.
@@ -28,6 +28,8 @@ Compatible with Karoo 3 running Karoo OS version 1.527 and later.
 - **Ride end notification**: Optionally sends a configurable message to your contacts when you finish a ride (recording stops completely).
 - **Custom message buttons**: Send any custom text message instantly via a hardware button or the app — no countdown, no emergency. Useful for "I'm OK", "Starting now", or any quick status update to your contacts. **Up to three independent message buttons** are available, each with its own configurable label and text.
 - **Webhook actions**: Trigger any HTTP endpoint from a Karoo hardware button — open your garage door (Home Assistant, Shelly), send a push notification (ntfy), fire an IFTTT/n8n/Make automation, or call any REST API. Works over Bluetooth tether. Two independent webhook slots available (see [Webhook Actions](#webhook-actions)).
+- **Webhook geo-fence** *(optional)*: Restrict each webhook so it only fires when the device is within a configurable radius of a saved GPS point. Prevents accidental triggers — e.g. your garage door only opens when you are actually near home.
+- **Webhook ride alert** *(optional)*: Show a configurable on-screen notification every time a webhook fires — useful to notice accidental button presses immediately.
 - **Five data fields**: SOS field, Safety Timer field, and up to three Custom Message fields — add any combination to your ride profile.
 - **Help improve KSafe** *(optional)*: Enable anonymous calibration data sending to help tune the crash detection algorithm. See [Calibration Logging](#calibration-logging-optional) for details.
 
@@ -537,7 +539,9 @@ The requests are sent **via the Karoo network bridge** — the same mechanism us
    - Enter the **URL** of the endpoint to call.
    - Choose **GET** or **POST**.
    - Optionally enter a **header** (one line, format `Key: Value`) — required for authentication with many services.
-   - For POST requests, optionally enter a **body** (JSON or any text).
+   - For POST requests, optionally enter a **body** (JSON or `key=value` form-encoded).
+   - **Only trigger when near location** *(optional)*: enable the geo-fence toggle, tap **Use current GPS location as target** (or enter coordinates manually), and set a radius in metres. The webhook will be blocked if the device is further away than the configured radius.
+   - **Show ride alert when triggered** *(optional)*: enable the alert toggle and enter a custom text (e.g. *"Garage door opened!"*). An on-screen notification with this text appears every time the action fires — useful to notice accidental button presses.
    - Tap **Test Webhook N** to verify it works before assigning it to a button.
 3. Assign to a hardware button: go to **Karoo Settings → Controller**, find the button, and select **KSafe: Webhook Action 1** or **KSafe: Webhook Action 2**.
 

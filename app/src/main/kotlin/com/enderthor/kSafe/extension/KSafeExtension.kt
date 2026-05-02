@@ -482,9 +482,24 @@ class KSafeExtension : KarooExtension("ksafe", BuildConfig.VERSION_NAME), Corout
                 SystemNotification(
                     id = "ksafe-webhook-$slot-${if (result.success) "ok" else "err"}",
                     header = "KSafe",
-                    message = if (result.success) "$label sent ✓" else result.message,
+                    message = if (result.success) "$label ✓" else result.message,
                 )
             )
+            // Optional ride alert with custom text — shown after a successful trigger.
+            // Helps the user notice accidental button presses.
+            if (result.success) {
+                val alertEnabled = if (slot == 1) config.webhook1AlertEnabled else config.webhook2AlertEnabled
+                val alertText    = if (slot == 1) config.webhook1AlertText    else config.webhook2AlertText
+                if (alertEnabled && alertText.isNotBlank()) {
+                    karooSystem.dispatch(
+                        SystemNotification(
+                            id = "ksafe-webhook-$slot-alert",
+                            header = label,
+                            message = alertText,
+                        )
+                    )
+                }
+            }
         }
     }
 
