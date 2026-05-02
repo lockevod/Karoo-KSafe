@@ -161,6 +161,10 @@
     <string name="webhook_geo_lon_placeholder">e.g. -3.7038</string>
     <string name="webhook_geo_radius">Max distance (metres)</string>
     <string name="webhook_geo_radius_hint">Action blocked if device is further than this distance from the target</string>
+    <string name="webhook_alert_label">Show ride alert when triggered</string>
+    <string name="webhook_alert_text_hint">Alert text</string>
+    <string name="webhook_alert_text_example">e.g. Garage door opened!</string>
+    <string name="webhook_alert_text_desc">This message will appear as an on-screen notification every time the action fires</string>
     <string name="calibration_desc">When enabled, KSafe records anonymous sensor data (accelerometer values, speed readings, detection states) to help the developer calibrate the crash detection algorithm. No GPS coordinates, no messages, no personal information of any kind is ever included. Data is sent automatically to the developer when you disable this option or finish a ride. Disabled by default — completely optional.</string>
     <string name="calibration_logging_label">Send anonymous calibration data</string>
     <string name="calibration_send">Send now</string>

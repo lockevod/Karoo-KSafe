@@ -65,6 +65,8 @@ fun ActionsScreen(vm: MainViewModel) {
     var webhook1GeoLat      by remember(config.webhook1GeoLat)      { mutableStateOf(if (config.webhook1GeoLat == 0.0) "" else config.webhook1GeoLat.toString()) }
     var webhook1GeoLon      by remember(config.webhook1GeoLon)      { mutableStateOf(if (config.webhook1GeoLon == 0.0) "" else config.webhook1GeoLon.toString()) }
     var webhook1GeoRadius   by remember(config.webhook1GeoRadiusM)  { mutableStateOf(config.webhook1GeoRadiusM.toString()) }
+    var webhook1AlertEnabled by remember(config.webhook1AlertEnabled) { mutableStateOf(config.webhook1AlertEnabled) }
+    var webhook1AlertText    by remember(config.webhook1AlertText)    { mutableStateOf(config.webhook1AlertText) }
     var webhook2Enabled  by remember(config.webhook2Enabled)  { mutableStateOf(config.webhook2Enabled) }
     var webhook2Label    by remember(config.webhook2Label)    { mutableStateOf(config.webhook2Label) }
     var webhook2Url      by remember(config.webhook2Url)      { mutableStateOf(config.webhook2Url) }
@@ -75,6 +77,8 @@ fun ActionsScreen(vm: MainViewModel) {
     var webhook2GeoLat      by remember(config.webhook2GeoLat)      { mutableStateOf(if (config.webhook2GeoLat == 0.0) "" else config.webhook2GeoLat.toString()) }
     var webhook2GeoLon      by remember(config.webhook2GeoLon)      { mutableStateOf(if (config.webhook2GeoLon == 0.0) "" else config.webhook2GeoLon.toString()) }
     var webhook2GeoRadius   by remember(config.webhook2GeoRadiusM)  { mutableStateOf(config.webhook2GeoRadiusM.toString()) }
+    var webhook2AlertEnabled by remember(config.webhook2AlertEnabled) { mutableStateOf(config.webhook2AlertEnabled) }
+    var webhook2AlertText    by remember(config.webhook2AlertText)    { mutableStateOf(config.webhook2AlertText) }
 
     // ── Status states ─────────────────────────────────────────────────────────
     var customMsgStatus   by remember { mutableStateOf("") }
@@ -97,8 +101,10 @@ fun ActionsScreen(vm: MainViewModel) {
         customMessage3Enabled, customMessage3, customMessage3Title,
         webhook1Enabled, webhook1Label, webhook1Url, webhook1Method, webhook1Headers, webhook1Body,
         webhook1GeoEnabled, webhook1GeoLat, webhook1GeoLon, webhook1GeoRadius,
+        webhook1AlertEnabled, webhook1AlertText,
         webhook2Enabled, webhook2Label, webhook2Url, webhook2Method, webhook2Headers, webhook2Body,
         webhook2GeoEnabled, webhook2GeoLat, webhook2GeoLon, webhook2GeoRadius,
+        webhook2AlertEnabled, webhook2AlertText,
     ) {
         delay(600)
         vm.saveConfig(
@@ -122,6 +128,8 @@ fun ActionsScreen(vm: MainViewModel) {
                 webhook1GeoLat      = webhook1GeoLat.toDoubleOrNull() ?: 0.0,
                 webhook1GeoLon      = webhook1GeoLon.toDoubleOrNull() ?: 0.0,
                 webhook1GeoRadiusM  = webhook1GeoRadius.toIntOrNull()?.coerceAtLeast(1) ?: 50,
+                webhook1AlertEnabled = webhook1AlertEnabled,
+                webhook1AlertText    = webhook1AlertText,
                 webhook2Enabled  = webhook2Enabled,
                 webhook2Label    = webhook2Label,
                 webhook2Url      = webhook2Url,
@@ -132,6 +140,8 @@ fun ActionsScreen(vm: MainViewModel) {
                 webhook2GeoLat      = webhook2GeoLat.toDoubleOrNull() ?: 0.0,
                 webhook2GeoLon      = webhook2GeoLon.toDoubleOrNull() ?: 0.0,
                 webhook2GeoRadiusM  = webhook2GeoRadius.toIntOrNull()?.coerceAtLeast(1) ?: 50,
+                webhook2AlertEnabled = webhook2AlertEnabled,
+                webhook2AlertText    = webhook2AlertText,
             )
         )
     }
@@ -365,6 +375,10 @@ fun ActionsScreen(vm: MainViewModel) {
                     onGeoLonChange = { webhook1GeoLon = it },
                     geoRadius = webhook1GeoRadius,
                     onGeoRadiusChange = { webhook1GeoRadius = it },
+                    alertEnabled = webhook1AlertEnabled,
+                    onAlertEnabledChange = { webhook1AlertEnabled = it },
+                    alertText = webhook1AlertText,
+                    onAlertTextChange = { webhook1AlertText = it },
                     testStatus = webhook1Status,
                     testIsError = webhook1IsError,
                     onTest = {
@@ -410,6 +424,10 @@ fun ActionsScreen(vm: MainViewModel) {
                     onGeoLonChange = { webhook2GeoLon = it },
                     geoRadius = webhook2GeoRadius,
                     onGeoRadiusChange = { webhook2GeoRadius = it },
+                    alertEnabled = webhook2AlertEnabled,
+                    onAlertEnabledChange = { webhook2AlertEnabled = it },
+                    alertText = webhook2AlertText,
+                    onAlertTextChange = { webhook2AlertText = it },
                     testStatus = webhook2Status,
                     testIsError = webhook2IsError,
                     onTest = {
@@ -458,6 +476,10 @@ private fun WebhookSlotFields(
     onGeoLonChange: (String) -> Unit,
     geoRadius: String,
     onGeoRadiusChange: (String) -> Unit,
+    alertEnabled: Boolean,
+    onAlertEnabledChange: (Boolean) -> Unit,
+    alertText: String,
+    onAlertTextChange: (String) -> Unit,
     testStatus: String,
     testIsError: Boolean,
     onTest: () -> Unit,
@@ -580,6 +602,24 @@ private fun WebhookSlotFields(
                     color = MaterialTheme.colorScheme.primary
                 )
             }
+        }
+        // ─────────────────────────────────────────────────────────────────
+
+        // ── Ride alert ────────────────────────────────────────────────────
+        HorizontalDivider(modifier = Modifier.padding(vertical = 4.dp))
+        ActionSettingRow(label = stringResource(R.string.webhook_alert_label)) {
+            Switch(checked = alertEnabled, onCheckedChange = onAlertEnabledChange)
+        }
+        if (alertEnabled) {
+            OutlinedTextField(
+                value = alertText,
+                onValueChange = onAlertTextChange,
+                label = { Text(stringResource(R.string.webhook_alert_text_hint)) },
+                placeholder = { Text(stringResource(R.string.webhook_alert_text_example), style = MaterialTheme.typography.bodySmall) },
+                modifier = Modifier.fillMaxWidth(),
+                singleLine = true,
+                supportingText = { Text(stringResource(R.string.webhook_alert_text_desc)) }
+            )
         }
         // ─────────────────────────────────────────────────────────────────
 

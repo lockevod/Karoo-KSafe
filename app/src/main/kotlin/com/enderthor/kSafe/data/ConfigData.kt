@@ -134,6 +134,12 @@ data class KSafeConfig(
     val webhook2GeoLat: Double = 0.0,
     val webhook2GeoLon: Double = 0.0,
     val webhook2GeoRadiusM: Int = 50,
+    // Ride alert — when enabled a SystemNotification with a custom text is shown after the webhook fires.
+    // Useful as an accidental-press warning: the user sees exactly what action was triggered.
+    val webhook1AlertEnabled: Boolean = false,
+    val webhook1AlertText: String = "",
+    val webhook2AlertEnabled: Boolean = false,
+    val webhook2AlertText: String = "",
     /**
      * Config schema version — used to detect stale saved configs and apply migrations.
      * Default 0 ensures that any pre-versioning config (JSON without this field) triggers migration.
