@@ -27,7 +27,7 @@ Compatible with Karoo 3 running Karoo OS version 1.527 and later.
 - **Ride start notification**: Optionally sends a message to your contacts when you start a ride, including a Karoo Live real-time tracking link. Sent **only once** when the ride truly begins — resuming after a pause does **not** trigger it again.
 - **Ride end notification**: Optionally sends a configurable message to your contacts when you finish a ride (recording stops completely).
 - **Custom message buttons**: Send any custom text message instantly via a hardware button or the app — no countdown, no emergency. Useful for "I'm OK", "Starting now", or any quick status update to your contacts. **Up to three independent message buttons** are available, each with its own configurable label and text.
-- **Webhook actions**: Trigger any HTTP endpoint from a Karoo hardware button — open your garage door (Home Assistant, Shelly), send a push notification (ntfy), fire an IFTTT/n8n/Make automation, or call any REST API. Works over Bluetooth tether. Two independent webhook slots available (see [Webhook Actions](#webhook-actions-actions-tab)).
+- **Webhook actions**: Trigger any HTTP endpoint from a Karoo hardware button — open your garage door (Home Assistant, Shelly), send a push notification (ntfy), fire an IFTTT/n8n/Make automation, or call any REST API. Works over Bluetooth tether. Two independent webhook slots available (see [Webhook Actions](#webhook-actions)).
 - **Five data fields**: SOS field, Safety Timer field, and up to three Custom Message fields — add any combination to your ride profile.
 - **Help improve KSafe** *(optional)*: Enable anonymous calibration data sending to help tune the crash detection algorithm. See [Calibration Logging](#calibration-logging-optional) for details.
 
@@ -579,12 +579,29 @@ Replace `192.168.1.50` with your Shelly's local IP address. The Shelly must be o
 
 | Field | Value |
 |-------|-------|
-| **URL** | `https://shelly-xxx.shelly.cloud/device/relay/control` |
+| **URL** | `https://shelly-103-eu.shelly.cloud/device/relay/control` |
 | **Method** | POST |
 | **Header** | `Content-Type: application/json` |
-| **Body** | `{"id": "YOUR_DEVICE_ID", "auth_key": "YOUR_AUTH_KEY", "channel": 0, "turn": "toggle"}` |
+| **Body** | `{"auth_key": "YOUR_AUTH_KEY", "id": "YOUR_DEVICE_ID", "channel": 0, "turn": "on", "timer": 1}` |
 
-Get your device ID and auth key from the Shelly Cloud dashboard.
+> **`"timer": 1` is key for garage doors** — it activates the relay for 1 second then releases it, which is exactly what a garage door push-button needs. Without it the relay stays on.
+
+**How to get your credentials from the Shelly app:**
+
+1. Open the **Shelly app** → tap your device → **Settings → User Settings → Authorization Cloud Key**.
+2. Note down:
+   - **`auth_key`** — your cloud authorisation key.
+   - **Cloud server** — shown as something like `shelly-103-eu.shelly.cloud` (use this as the hostname in the URL).
+   - **`id`** — the device ID shown in the device info screen.
+
+> [!TIP]
+> Test the call with `curl` or Postman before setting it up in KSafe:
+> ```bash
+> curl -X POST https://shelly-103-eu.shelly.cloud/device/relay/control \
+>   -H "Content-Type: application/json" \
+>   -d '{"auth_key":"YOUR_AUTH_KEY","id":"YOUR_DEVICE_ID","channel":0,"turn":"on","timer":1}'
+> ```
+> You should hear the relay click. If it works there, it will work from KSafe.
 
 #### 📬 ntfy — send a push notification to yourself
 
