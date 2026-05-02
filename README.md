@@ -31,6 +31,7 @@ Compatible with Karoo 3 running Karoo OS version 1.527 and later.
 - **Webhook geo-fence** *(optional)*: Restrict each webhook so it only fires when the device is within a configurable radius of a saved GPS point. Prevents accidental triggers — e.g. your garage door only opens when you are actually near home.
 - **Webhook ride alert** *(optional)*: Show a configurable on-screen notification every time a webhook fires — useful to notice accidental button presses immediately.
 - **Five data fields**: SOS field, Safety Timer field, and up to three Custom Message fields — add any combination to your ride profile.
+- **Custom field colours**: Each ride field (SOS, Safety Timer, Custom Messages and Webhooks) can be assigned an independent idle background colour from a preset palette of eight dark colours. State-driven colours (countdown, error, sent…) are always preserved regardless of your choice.
 - **Help improve KSafe** *(optional)*: Enable anonymous calibration data sending to help tune the crash detection algorithm. See [Calibration Logging](#calibration-logging-optional) for details.
 
 ## Requirements
@@ -112,10 +113,11 @@ Once configured, hitting that control fires the action immediately from any scre
 KSafe provides five custom data fields you can add to your ride profiles:
 
 ### SOS Field
-- Shows **SAFE** (green) when everything is OK.
+- Shows **SAFE** in the configured idle colour (default: dark green) when everything is OK.
 - **Tap** to manually trigger an SOS emergency countdown.
 - During countdown shows remaining seconds in orange — **tap again to cancel**.
 - Shows **ALERT SENT** (red) briefly when alerts have been dispatched.
+- Idle colour can be changed in the **Settings tab** → *SOS field colour* swatch row.
 
 ### Safety Timer Field
 - Shows remaining check-in time (green/yellow/red depending on urgency).
@@ -123,18 +125,19 @@ KSafe provides five custom data fields you can add to your ride profiles:
 - During any active emergency countdown, shows **CANCEL** with remaining seconds — **tap to cancel**.
 - Shows **Timer OFF** when check-in is disabled.
 - The timer **pauses automatically when the ride is paused** and resets to the full interval when recording resumes.
+- Idle colour can be changed in the **Settings tab** → *Timer field colour* swatch row.
 
 ### Custom Message Fields (1, 2 and 3)
 
 KSafe provides **three independent custom message fields** — **KSafe Message 1**, **KSafe Message 2**, and **KSafe Message 3**. Each field works identically and independently:
 
-- Shows the **configured button label** (blue) when ready — e.g. *"OK👍"*, *"HOME"*, *"CREW"*.
+- Shows the **configured button label** in the configured idle colour (default: blue) when ready — e.g. *"OK👍"*, *"HOME"*, *"CREW"*.
 - **Tap** to send that field's configured message instantly — no countdown, no emergency.
 - Shows **SENDING…** (orange) while the message is being sent.
 - Shows **SENT ✓** (green) on success, then returns to ready after a few seconds.
 - Shows **ERR retry** (red) if sending failed — **tap again to retry**.
 
-Each field has its own label (shown on the button) and message text (what gets sent). You can add one, two, or all three to any ride screen. Message 1 is also assignable to a hardware button (see [Hardware button via BonusAction](#3--hardware-button-via-bonusaction-optional)).
+Each field has its own label (shown on the button), message text (what gets sent), and idle colour. You can add one, two, or all three to any ride screen. Message 1 is also assignable to a hardware button (see [Hardware button via BonusAction](#3--hardware-button-via-bonusaction-optional)).
 
 Add one or more fields to your Karoo ride profile from the profile editor. Configure them in the **Actions tab** of the KSafe app.
 
@@ -152,6 +155,8 @@ Open the KSafe app on your Karoo to configure it. The app has three tabs:
 ### Settings Tab
 
 - **Active**: Enable or disable the extension entirely.
+- **SOS field colour**: Choose the idle background colour for the SOS data field (shown when in SAFE state). Select from a palette of 8 preset dark colours with white text.
+- **Timer field colour**: Choose the idle background colour for the Safety Timer field (shown when the timer is running normally). Warning (yellow) and expired (red) state colours are always preserved regardless of this setting.
 - **Emergency message**: The message sent to your contacts. Available placeholders:
   - `{location}` — GPS coordinates as a Google Maps link.
   - `{reason}` — reason for the alert (crash / check-in expired / manual SOS / speed drop).
@@ -505,8 +510,9 @@ KSafe provides **three independent custom message buttons** — you can add one,
 1. Open KSafe → **Actions tab**.
 2. For each message slot (1, 2, 3):
    - Toggle **Enable message N**.
-   - Enter a **button label** (max 5 characters) — this appears on the Karoo field button. Examples: `OK👍`, `HOME`, `SAFE`, `CREW`. Defaults: `MSG`, `MSG2`, `MSG3`.
+   - Enter a **button label** (max 7 characters) — this appears on the Karoo field button. Examples: `OK👍`, `HOME`, `SAFE`, `CREW`. Defaults: `MSG`, `MSG2`, `MSG3`.
    - Enter the **message text** that will be sent when the field is tapped (any length).
+   - Choose the **idle colour** for the field using the colour swatch row beneath the text fields.
    - Tap **Send Message N** to test it immediately from the app.
 3. Add **KSafe Message 1**, **KSafe Message 2**, and/or **KSafe Message 3** as data fields in your Karoo ride profile.
 
@@ -540,6 +546,7 @@ The requests are sent **via the Karoo network bridge** — the same mechanism us
    - Choose **GET** or **POST**.
    - Optionally enter a **header** (one line, format `Key: Value`) — required for authentication with many services.
    - For POST requests, optionally enter a **body** (JSON or `key=value` form-encoded).
+   - Choose the **idle colour** for the webhook field using the colour swatch row.
    - **Only trigger when near location** *(optional)*: enable the geo-fence toggle, tap **Use current GPS location as target** (or enter coordinates manually), and set a radius in metres. The webhook will be blocked if the device is further away than the configured radius.
    - **Show ride alert when triggered** *(optional)*: enable the alert toggle and enter a custom text (e.g. *"Garage door opened!"*). An on-screen notification with this text appears every time the action fires — useful to notice accidental button presses.
    - Tap **Test Webhook N** to verify it works before assigning it to a button.
@@ -658,6 +665,40 @@ After configuring a webhook slot:
 
 > [!NOTE]
 > BonusActions are **exclusive to SRAM AXS controllers** (RED/Force AXS shifters with the additional button). Other ANT+ remotes or Garmin controllers do not expose this feature. If you do not have a SRAM AXS groupset, these actions cannot be assigned to any button. See the [official Hammerhead guide on SRAM AXS controllers](https://support.hammerhead.io/hc/en-us/articles/25672636525979-Karoo-OS-Controlling-Karoo-with-SRAM-AXS-Controllers) for full details.
+
+## Field Colours
+
+Each KSafe ride field has a customisable **idle background colour** — the colour shown when the field is in its normal/ready state. Eight dark colours are available, all chosen for legibility with white text on a Karoo display:
+
+| Swatch | Colour | Default for |
+|--------|--------|-------------|
+| 🔵 | Dark Blue | Webhooks, Custom Messages |
+| 🟢 | Dark Green | SOS (SAFE state), Safety Timer (OK state) |
+| 🟣 | Deep Purple | — |
+| 🩵 | Teal | — |
+| 🔷 | Indigo | — |
+| 🟤 | Brown | — |
+| ⬛ | Blue Grey | — |
+| 🩷 | Dark Pink | — |
+
+**State-driven colours are always preserved** regardless of your idle colour choice:
+
+| State | Colour | Applies to |
+|-------|--------|------------|
+| Countdown (SOS/Timer) | Orange | All fields |
+| Alert sent | Red | SOS |
+| Timer warning | Yellow | Safety Timer |
+| Timer expired | Red | Safety Timer |
+| Sending | Orange | Custom Messages |
+| Sent ✓ | Green | Custom Messages |
+| Error | Red | Custom Messages |
+
+### Where to change colours
+
+- **SOS field** → **Settings tab** → *SOS field colour* swatch row (near the top, under Countdown seconds).
+- **Safety Timer field** → **Settings tab** → *Timer field colour* swatch row (just below the Check-in interval setting).
+- **Custom Message 1 / 2 / 3** → **Actions tab** → expand the message slot → colour swatches below the message text field.
+- **Webhook 1 / 2** → **Actions tab** → expand the webhook slot → colour swatches below the label field.
 
 ---
 

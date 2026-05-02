@@ -3,9 +3,9 @@
   "packageName": "com.enderthor.kSafe",
   "latestApkUrl": "https://github.com/lockevod/Karoo-KSafe/releases/latest/download/ksafe.apk",
   "iconUrl": "https://github.com/lockevod/Karoo-KSafe/releases/latest/download/ksage.png",
-  "latestVersion": "1.0.1",
-  "latestVersionCode": 202605021,
+  "latestVersion": "1.1.0",
+  "latestVersionCode": 202605022,
   "developer": "github.com/lockevod",
   "description": "Karoo safety extension: crash detection, manual SOS, check-in timer. Sends alerts via WhatsApp (CallMeBot), Telegram, Pushover or ntfy. Beta version, use with care.",
-  "releaseNotes": "Add webhooks and ride alerts, you can execute any action actionable by webhook. Improve FN and FP in crash detection. Added extra custom field notification. Fix crash algorithm. Add end of ride notification option. Fix countdown (when pause ride). Fix duplicate notifications. Fix sensibility (crash detection) "
+  "releaseNotes": "Added colour picker. Add webhooks and ride alerts, you can execute any action actionable by webhook. Improve FN and FP in crash detection. Added extra custom field notification. Fix crash algorithm. Add end of ride notification option. Fix countdown (when pause ride). Fix duplicate notifications. Fix sensibility (crash detection) "
 }

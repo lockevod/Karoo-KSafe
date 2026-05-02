@@ -24,7 +24,6 @@ import kotlinx.coroutines.cancel
 import kotlinx.coroutines.launch
 import timber.log.Timber
 
-private const val COLOR_IDLE    = 0xFF1565C0.toInt()  // blue — ready
 private const val COLOR_DISABLED = 0xFF616161.toInt() // grey — not configured
 
 /**
@@ -51,14 +50,19 @@ class WebhookDataType(
     private val configManager = ConfigurationManager(context)
 
     private fun labelFromConfig(config: KSafeConfig) = if (slot == 1)
-        config.webhook1Label.ifBlank { "WH1" }.take(5)
+        config.webhook1Label.ifBlank { "WH1" }.take(7)
     else
-        config.webhook2Label.ifBlank { "WH2" }.take(5)
+        config.webhook2Label.ifBlank { "WH2" }.take(7)
 
     private fun isEnabled(config: KSafeConfig) = if (slot == 1)
-        config.webhook1Enabled && config.webhook1Url.isNotBlank()
+        config.webhook1Enabled
     else
-        config.webhook2Enabled && config.webhook2Url.isNotBlank()
+        config.webhook2Enabled
+
+    private fun idleColorFromConfig(config: KSafeConfig) = if (slot == 1)
+        config.webhook1Color
+    else
+        config.webhook2Color
 
     private fun buildView(
         context: Context,
@@ -103,8 +107,9 @@ class WebhookDataType(
                 configManager.loadConfigFlow().collect { ksafeConfig ->
                     val label = labelFromConfig(ksafeConfig)
                     val enabled = isEnabled(ksafeConfig)
+                    val idleColor = idleColorFromConfig(ksafeConfig)
                     val view = if (enabled) {
-                        buildView(context, config, COLOR_IDLE, label, "tap")
+                        buildView(context, config, idleColor, label, "tap")
                     } else {
                         buildView(context, config, COLOR_DISABLED, label, "off", clickable = false)
                     }

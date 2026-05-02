@@ -173,4 +173,9 @@
     <string name="calibration_send">Send now</string>
     <string name="calibration_clear">Clear log</string>
     <string name="calibration_adb_hint">Pull full CSV: adb pull /sdcard/Android/data/com.enderthor.kSafe/files/ksafe_calibration.csv</string>
+
+    <!-- Field colour picker -->
+    <string name="field_color_label">Field colour</string>
+    <string name="sos_field_color_label">SOS field colour</string>
+    <string name="timer_field_color_label">Timer field colour</string>
 </resources>

@@ -73,6 +73,8 @@ fun SettingsScreen(vm: MainViewModel) {
 
     var calibrationLogging    by remember(config.calibrationLoggingEnabled) { mutableStateOf(config.calibrationLoggingEnabled) }
 
+    var sosFieldColor  by remember(config.sosFieldColor)  { mutableStateOf(config.sosFieldColor) }
+    var timerFieldColor by remember(config.timerFieldColor) { mutableStateOf(config.timerFieldColor) }
 
     var simulateStatus      by remember { mutableStateOf("") }
     var simulateIsError     by remember { mutableStateOf(false) }
@@ -102,6 +104,7 @@ fun SettingsScreen(vm: MainViewModel) {
         karooLiveEnabled, karooLiveKey, karooLiveStartMessage,
         karooLiveEndEnabled, karooLiveEndMessage,
         calibrationLogging,
+        sosFieldColor, timerFieldColor,
     ) {
         delay(600)
         vm.saveConfig(
@@ -126,6 +129,8 @@ fun SettingsScreen(vm: MainViewModel) {
                 karooLiveEndEnabled     = karooLiveEndEnabled,
                 karooLiveEndMessage     = karooLiveEndMessage,
                 calibrationLoggingEnabled = calibrationLogging,
+                sosFieldColor           = sosFieldColor,
+                timerFieldColor         = timerFieldColor,
             )
         )
     }
@@ -239,6 +244,12 @@ fun SettingsScreen(vm: MainViewModel) {
             label = { Text(stringResource(R.string.countdown_seconds_label)) },
             modifier = Modifier.fillMaxWidth(),
             singleLine = true
+        )
+
+        FieldColorPicker(
+            label = stringResource(R.string.sos_field_color_label),
+            selected = sosFieldColor,
+            onSelected = { sosFieldColor = it }
         )
 
         HorizontalDivider()
@@ -467,6 +478,12 @@ fun SettingsScreen(vm: MainViewModel) {
                 singleLine = true
             )
         }
+
+        FieldColorPicker(
+            label = stringResource(R.string.timer_field_color_label),
+            selected = timerFieldColor,
+            onSelected = { timerFieldColor = it }
+        )
 
         HorizontalDivider()
 
