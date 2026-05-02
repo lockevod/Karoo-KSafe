@@ -86,7 +86,7 @@ Both the **SOS field** and the **Safety Timer field** show a CANCEL button with 
 
 ### 3 — Hardware button via BonusAction (optional)
 
-KSafe registers four actions you can assign to hardware controller buttons:
+KSafe registers four actions you can assign to hardware controller buttons or in-ride menu slots:
 
 | Action | What it does |
 |--------|-------------|
@@ -97,15 +97,15 @@ KSafe registers four actions you can assign to hardware controller buttons:
 
 All four actions work from **any screen**, with no need to look at the display.
 
-> [!NOTE]
-> `BonusAction` availability depends on your controller hardware/firmware. It is commonly used with compatible remotes (e.g. SRAM AXS controls). If your controller does not expose extension bonus actions, this option will not appear in the button assignment screen.
-
 To configure any of these actions:
-1. Go to Karoo **Settings → Controller** (or your ANT+ remote settings).
-2. Find the button you want to assign the action to.
-3. Select the desired **KSafe** action from the list.
+1. On the Karoo, go to **Sensors → [your AXS groupset] → Configure Controls**.
+2. Press the physical SRAM AXS shifter button you want to use.
+3. Select the desired **KSafe** action from the list. **Short Press** and **Long Press** can be assigned independently on the same button.
 
-Once configured, pressing the button activates the action immediately from any screen.
+Once configured, hitting that control fires the action immediately from any screen during a ride.
+
+> [!NOTE]
+> BonusActions are **exclusive to SRAM AXS controllers** (RED/Force AXS shifters). This option will only appear if you have a SRAM AXS groupset paired to your Karoo. Make sure KSafe is installed and the Karoo has been restarted after installation. See the [official Hammerhead guide](https://support.hammerhead.io/hc/en-us/articles/25672636525979-Karoo-OS-Controlling-Karoo-with-SRAM-AXS-Controllers) for details on pairing and configuring AXS controls.
 
 ## Data Fields
 
@@ -515,7 +515,7 @@ KSafe provides **three independent custom message buttons** — you can add one,
 
 ### Hardware button
 
-Assign **KSafe: Send Custom Message** to a controller button in **Karoo → Settings → Controller**. Once configured, a single press sends **Message 1** instantly — no need to unlock the screen or navigate to the app.
+To assign **KSafe: Send Custom Message** to a SRAM AXS button: on the Karoo go to **Sensors → [your AXS groupset] → Configure Controls**, press the physical shifter button you want to use, and select the KSafe action from the list. You can bind **Short Press** and **Long Press** independently. Once configured, a single press sends **Message 1** instantly — no need to unlock the screen or navigate to the app.
 
 ## Webhook Actions
 
@@ -543,7 +543,7 @@ The requests are sent **via the Karoo network bridge** — the same mechanism us
    - **Only trigger when near location** *(optional)*: enable the geo-fence toggle, tap **Use current GPS location as target** (or enter coordinates manually), and set a radius in metres. The webhook will be blocked if the device is further away than the configured radius.
    - **Show ride alert when triggered** *(optional)*: enable the alert toggle and enter a custom text (e.g. *"Garage door opened!"*). An on-screen notification with this text appears every time the action fires — useful to notice accidental button presses.
    - Tap **Test Webhook N** to verify it works before assigning it to a button.
-3. Assign to a hardware button: go to **Karoo Settings → Controller**, find the button, and select **KSafe: Webhook Action 1** or **KSafe: Webhook Action 2**.
+3. Assign to a SRAM AXS button: go to **Sensors → [your AXS groupset] → Configure Controls** on the Karoo, press the physical shifter button you want, and select **KSafe: Webhook Action 1** or **KSafe: Webhook Action 2** from the list. Short Press and Long Press can be assigned independently.
 
 When you press the configured button during a ride, the HTTP request fires immediately and you get an in-ride notification showing success or failure.
 
@@ -651,13 +651,13 @@ Both platforms let you trigger any automation flow when the webhook fires.
 ### Hardware button assignment
 
 After configuring a webhook slot:
-1. Go to **Karoo → Settings → Controller**.
-2. Find the button you want to assign the action to.
-3. Select **KSafe: Webhook Action 1** or **KSafe: Webhook Action 2** from the list.
+1. On the Karoo, go to **Sensors → [your AXS groupset] → Configure Controls**.
+2. Press the physical SRAM AXS shifter button you want to assign.
+3. Select **KSafe: Webhook Action 1** or **KSafe: Webhook Action 2** from the actions list. **Short Press** and **Long Press** can be configured independently on the same button.
 4. Press the button during a ride — the HTTP request fires instantly and you get an in-ride notification.
 
 > [!NOTE]
-> BonusAction availability depends on your controller hardware. It works with compatible ANT+ remotes (e.g. SRAM AXS, Garmin remote). If your controller does not expose extension bonus actions, this option will not appear in the button assignment screen.
+> BonusActions are **exclusive to SRAM AXS controllers** (RED/Force AXS shifters with the additional button). Other ANT+ remotes or Garmin controllers do not expose this feature. If you do not have a SRAM AXS groupset, these actions cannot be assigned to any button. See the [official Hammerhead guide on SRAM AXS controllers](https://support.hammerhead.io/hc/en-us/articles/25672636525979-Karoo-OS-Controlling-Karoo-with-SRAM-AXS-Controllers) for full details.
 
 ---
 
