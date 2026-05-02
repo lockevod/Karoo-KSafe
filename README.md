@@ -581,10 +581,12 @@ Replace `192.168.1.50` with your Shelly's local IP address. The Shelly must be o
 |-------|-------|
 | **URL** | `https://shelly-103-eu.shelly.cloud/device/relay/control` |
 | **Method** | POST |
-| **Header** | `Content-Type: application/json` |
-| **Body** | `{"auth_key": "YOUR_AUTH_KEY", "id": "YOUR_DEVICE_ID", "channel": 0, "turn": "on", "timer": 1}` |
+| **Header** | `Content-Type: application/x-www-form-urlencoded` |
+| **Body** | `auth_key=YOUR_AUTH_KEY&id=YOUR_DEVICE_ID&channel=0&turn=on&timer=1` |
 
-> **`"timer": 1` is key for garage doors** — it activates the relay for 1 second then releases it, which is exactly what a garage door push-button needs. Without it the relay stays on.
+> ⚠️ The Shelly Cloud API expects **form-urlencoded**, not JSON. Make sure the `Content-Type` header is set exactly as above and the body uses the `key=value&key=value` format.
+
+> **`timer=1` is key for garage doors** — it activates the relay for 1 second then releases it, which is exactly what a garage door push-button needs. Without it the relay stays on.
 
 **How to get your credentials from the Shelly app:**
 
@@ -598,8 +600,8 @@ Replace `192.168.1.50` with your Shelly's local IP address. The Shelly must be o
 > Test the call with `curl` or Postman before setting it up in KSafe:
 > ```bash
 > curl -X POST https://shelly-103-eu.shelly.cloud/device/relay/control \
->   -H "Content-Type: application/json" \
->   -d '{"auth_key":"YOUR_AUTH_KEY","id":"YOUR_DEVICE_ID","channel":0,"turn":"on","timer":1}'
+>   -H "Content-Type: application/x-www-form-urlencoded" \
+>   -d "auth_key=YOUR_AUTH_KEY&id=YOUR_DEVICE_ID&channel=0&turn=on&timer=1"
 > ```
 > You should hear the relay click. If it works there, it will work from KSafe.
 
