@@ -37,8 +37,6 @@ fun KarooSystemService.streamDataFlow(dataTypeId: String): Flow<StreamState> = c
     awaitClose { removeConsumer(listenerId) }
 }
 
-fun KarooSystemService.streamDataMonitorFlow(dataTypeId: String): Flow<StreamState> =
-    streamDataFlow(dataTypeId)
 
 fun KarooSystemService.streamRide(): Flow<RideState> = callbackFlow {
     val listenerId = addConsumer<RideState>(onEvent = { trySend(it) })

@@ -2,6 +2,7 @@ package com.enderthor.kSafe.extension
 
 import android.net.Uri
 import com.enderthor.kSafe.data.ProviderType
+import com.enderthor.kSafe.data.SenderConfig
 import com.enderthor.kSafe.extension.managers.ConfigurationManager
 import io.hammerhead.karooext.KarooSystemService
 import kotlinx.coroutines.delay
@@ -183,6 +184,14 @@ class Sender(
     // ─── Retry logic ──────────────────────────────────────────────────────────
 
     private suspend fun sendWithRetry(message: String, provider: ProviderType, isEmergency: Boolean): Boolean {
+        // Load config ONCE before the retry loop — avoids up to 9 DataStore reads + JSON
+        // deserialisations (one per attempt) for a value that cannot change mid-emergency.
+        val configs = configManager.loadSenderConfigFlow().first()
+        val config  = configs.find { it.provider == provider } ?: run {
+            Timber.e("sendWithRetry: no config found for $provider")
+            return false
+        }
+
         var totalAttempts = 0
         var currentCycle = 0
 
@@ -196,7 +205,7 @@ class Sender(
                         delay(waitSeconds * 1000L)
                     }
                     val result = withTimeoutOrNull(30_000L) {
-                        attemptSend(message, provider, isEmergency)
+                        attemptSend(message, provider, isEmergency, config)
                     } == true
 
                     if (result) {
@@ -225,6 +234,15 @@ class Sender(
     private suspend fun attemptSend(message: String, provider: ProviderType, isEmergency: Boolean): Boolean {
         val configs = configManager.loadSenderConfigFlow().first()
         val config = configs.find { it.provider == provider } ?: return false
+        return attemptSend(message, provider, isEmergency, config)
+    }
+
+    private suspend fun attemptSend(
+        message: String,
+        provider: ProviderType,
+        isEmergency: Boolean,
+        config: SenderConfig,
+    ): Boolean {
 
         return when (provider) {
             ProviderType.CALLMEBOT -> {

@@ -26,10 +26,10 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.flow.distinctUntilChanged
-import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.launch
 import timber.log.Timber
 import kotlin.coroutines.CoroutineContext
+import kotlin.math.PI
 import kotlin.math.atan2
 import kotlin.math.cos
 import kotlin.math.pow
@@ -121,15 +121,17 @@ class KSafeExtension : KarooExtension("ksafe", BuildConfig.VERSION_NAME), Corout
                 } else if (!config.calibrationLoggingEnabled && calibLogger.isEnabled) {
                     // disable() flushes the remaining buffer to disk before returning
                     calibLogger.disable()
-                    // Read the full CSV (all flushed chunks) and send via Telegram (fire-and-forget)
-                    val logContent = calibLogger.getFileContent()
-                    launch {
-                        LogReporter.sendLogFile(
-                            content  = logContent,
-                            fileName = calibLogger.fileNameForSession,
-                            caption  = calibLogger.captionForSession(logContent.count { it == '\n' }),
-                            karooSystem = karooSystem,
-                        )
+                    // Read the full CSV on IO and send via Telegram (fire-and-forget)
+                    launch(Dispatchers.IO) {
+                        val logContent = calibLogger.getFileContent()
+                        if (logContent.isNotBlank()) {
+                            LogReporter.sendLogFile(
+                                content  = logContent,
+                                fileName = calibLogger.fileNameForSession,
+                                caption  = calibLogger.captionForSession(logContent.count { it == '\n' }),
+                                karooSystem = karooSystem,
+                            )
+                        }
                     }
                 }
                 // Re-evaluate crash monitoring if idle (ride start/pause is handled by handleRideState)
@@ -143,7 +145,6 @@ class KSafeExtension : KarooExtension("ksafe", BuildConfig.VERSION_NAME), Corout
         launch {
             // Observe ride state
             karooSystem.streamRide()
-                .map { it }
                 .distinctUntilChanged()
                 .collect { state ->
                     handleRideState(state)
@@ -237,15 +238,17 @@ class KSafeExtension : KarooExtension("ksafe", BuildConfig.VERSION_NAME), Corout
                 // Auto-send calibration log if it was active during the ride
                 // (only if the user hasn't already turned off logging — that path sends its own copy)
                 if (wasActive && wasLogging && calibLogger.isEnabled) {
-                    // Read the full file (all previously flushed chunks + current buffer)
-                    val logContent = calibLogger.getFileContent()
-                    launch {
-                        LogReporter.sendLogFile(
-                            content  = logContent,
-                            fileName = calibLogger.fileNameForSession,
-                            caption  = calibLogger.captionForSession(logContent.count { it == '\n' }),
-                            karooSystem = karooSystem,
-                        )
+                    // Move the file-read to IO so we don't block the Main dispatcher
+                    launch(Dispatchers.IO) {
+                        val logContent = calibLogger.getFileContent()
+                        if (logContent.isNotBlank()) {
+                            LogReporter.sendLogFile(
+                                content  = logContent,
+                                fileName = calibLogger.fileNameForSession,
+                                caption  = calibLogger.captionForSession(logContent.count { it == '\n' }),
+                                karooSystem = karooSystem,
+                            )
+                        }
                     }
                 }
             }
@@ -665,10 +668,10 @@ class KSafeExtension : KarooExtension("ksafe", BuildConfig.VERSION_NAME), Corout
      */
     private fun distanceMeters(lat1: Double, lon1: Double, lat2: Double, lon2: Double): Double {
         val earthRadius = 6_371_000.0
-        val dLat = Math.toRadians(lat2 - lat1)
-        val dLon = Math.toRadians(lon2 - lon1)
+        val dLat = (lat2 - lat1) * PI / 180.0
+        val dLon = (lon2 - lon1) * PI / 180.0
         val a = sin(dLat / 2).pow(2) +
-                cos(Math.toRadians(lat1)) * cos(Math.toRadians(lat2)) * sin(dLon / 2).pow(2)
+                cos(lat1 * PI / 180.0) * cos(lat2 * PI / 180.0) * sin(dLon / 2).pow(2)
         val c = 2 * atan2(sqrt(a), sqrt(1 - a))
         return earthRadius * c
     }
