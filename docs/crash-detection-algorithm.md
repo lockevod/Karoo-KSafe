@@ -1,8 +1,8 @@
 # KSafe — Crash Detection Algorithm
 
-> **Version:** April 2026 (revision 3 — post-calibration)
+> **Version:** May 2026 (revision 4 — contextual sensor data)
 > **File:** `CrashDetectionManager.kt`
-> **Sensors:** Android SensorManager (accelerometer + gyroscope) + Karoo SDK (speed)
+> **Sensors:** Android SensorManager (accelerometer + gyroscope) + Karoo SDK (speed, cadence, grade)
 
 ---
 
@@ -32,7 +32,9 @@ Two new mechanisms in this revision:
 |--------|------|----------|
 | **Accelerometer** (`TYPE_ACCELEROMETER`) | ~50 Hz (`SENSOR_DELAY_GAME`) | Primary crash trigger + stillness confirmation |
 | **Gyroscope** (`TYPE_GYROSCOPE`) | ~50 Hz | Gate between IMPACT → SILENCE_CHECK |
-| **GPS/speed** (Karoo SDK) | Variable | Speed drop confirmation in all phases |
+| **GPS/speed** (Karoo SDK `TYPE_SPEED_ID`) | Variable | Speed drop confirmation in all phases |
+| **Cadence** (Karoo SDK `TYPE_CADENCE_ID`) | Variable (~1 Hz) | **False-positive gate in SILENCE_CHECK**: if cadence > 20 RPM the rider is still pedalling → immediate false-alarm exit. Optional — algorithm falls back gracefully when no cadence sensor is paired. |
+| **Road grade** (Karoo SDK `TYPE_ELEVATION_GRADE_ID`) | Variable (~1 Hz) | **Proactive descent boost**: the peak-impact threshold is raised on descents (grade < −4 %) to suppress terrain-noise spikes before the reactive TERRAIN_CLUSTER mechanism fires. |
 
 > Note: `TYPE_ACCELEROMETER` is required (includes gravity). The whole stillness logic compares magnitude against 9.81 m/s². If anyone ever changes this to `TYPE_LINEAR_ACCELERATION`, the algorithm breaks silently.
 
@@ -331,6 +333,8 @@ Captures the scenario where the rider falls and is unconscious at low speed (e.g
 | Bike keeps sliding without rider | Gyroscope removed from SILENCE_CHECK final check (only GPS counts) |
 | GPS frozen at last known value mid-ride | GPS-stale fallback: bypass speed gate, harden accel thresholds |
 | Speed-drop poll lands on lucky moment | Stable-stillness accumulator (60s continuous) |
+| Rough terrain single-frame spikes on descents | Grade-aware proactive peak boost (+2/+5/+8 m/s² at −4/−7/−10% grade) |
+| Rider still pedalling during crash confirmation | Cadence gate: >20 RPM in SILENCE_CHECK → instant false-alarm exit |
 
 ---
 
@@ -424,6 +428,15 @@ The class does not use locks. The algorithm tolerates slightly stale reads acros
 ---
 
 ## Change Log (vs. previous revision)
+
+### Revision 4 — May 2026 (contextual sensor data)
+
+| ID | Change | Status |
+|----|--------|--------|
+| **C5** | **Cadence gate in SILENCE_CHECK.** If `cadenceDataReceived && cadence > 20 RPM`, the rider is actively pedalling → instant false-alarm exit with `CAD_GATE` log event. Guard: only active when a cadence sensor/provider has been detected at least once (first data point lifts `cadenceDataReceived`). No cadence sensor = algorithm unchanged. | ✅ Implemented |
+| **C6** | **Grade-aware proactive peak boost.** The single-frame peak threshold is raised by +2/+5/+8 m/s² for descents of −4/−7/−10% respectively. This pre-empts the first TERRAIN_CLUSTER false alarm on bad descents. The smooth threshold is untouched — a real crash on a descent still fires via the smooth path. | ✅ Implemented |
+| **C7** | **Deceleration tracking in `updateSpeed()`.** `lastDecelerationKmhPerS = Δspeed/Δt` is computed on every speed update and logged at `IMPACT_ENTER`. Not used as a gate (GPS ~1 Hz is too coarse), but large negative values (< −10 km/h/s) at impact are strong calibration evidence. | ✅ Implemented (logging only) |
+| **C8** | **Enriched calibration logs.** All major events (`IMPACT_ENTER`, `IMPACT_TMO`, `CRASH_CONFIRMED`, `PERIODIC`, `HIGH_MAG_NORISING`) now include `grade`, `cadence`, `grade_boost`, and `decel` fields. Gives full contextual picture for each event. | ✅ Implemented |
 
 ### Revision 3 — April 2026 (post-calibration, real ride logs)
 

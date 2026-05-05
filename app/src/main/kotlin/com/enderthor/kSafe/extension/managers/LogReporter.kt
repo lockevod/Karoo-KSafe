@@ -36,6 +36,10 @@ object LogReporter {
     /**
      * Sends [content] as a Telegram document named [fileName] to the hardcoded developer chat.
      *
+     * [caption] is attached as the message text alongside the document — shown immediately
+     * in the Telegram chat so the developer can identify the session without opening the file.
+     * Pass an empty string to send without a caption.
+     *
      * The body is encoded as `multipart/form-data` and built entirely from the in-memory
      * [content] string — no temporary files are created. Returns `true` on success.
      *
@@ -45,6 +49,7 @@ object LogReporter {
     suspend fun sendLogFile(
         content: String,
         fileName: String = "ksafe_calibration.csv",
+        caption: String = "",
         karooSystem: KarooSystemService,
     ): Boolean {
         if (BOT_TOKEN.isBlank() || BOT_TOKEN.startsWith("REPLACE") ||
@@ -59,9 +64,9 @@ object LogReporter {
 
         return try {
             val boundary = "KSafeBoundary_${System.currentTimeMillis()}"
-            val body     = buildMultipart(boundary, fileName, content)
+            val body     = buildMultipart(boundary, fileName, content, caption)
 
-            Timber.d("LogReporter: sending ${body.size} bytes to Telegram…")
+            Timber.d("LogReporter: sending ${body.size} bytes to Telegram (session caption: ${caption.take(60)}…)")
 
             val response: HttpResponseState.Complete? = withTimeoutOrNull(TIMEOUT_MS) {
                 karooSystem.httpRequest(
@@ -95,11 +100,15 @@ object LogReporter {
     /**
      * Builds a `multipart/form-data` body compatible with the Telegram Bot API `sendDocument`
      * endpoint. No external dependencies required — the bytes are assembled in-memory.
+     *
+     * [caption] is included as an optional `caption` field — shown as the message text
+     * alongside the document in the Telegram chat. Empty string = no caption.
      */
     private fun buildMultipart(
         boundary: String,
         fileName: String,
         fileContent: String,
+        caption: String = "",
     ): ByteArray {
         val CRLF = "\r\n"
         return buildString {
@@ -109,6 +118,14 @@ object LogReporter {
             append(CRLF)
             append(CHAT_ID)
             append(CRLF)
+            // optional caption part — shown as the message text alongside the file in Telegram
+            if (caption.isNotBlank()) {
+                append("--$boundary$CRLF")
+                append("Content-Disposition: form-data; name=\"caption\"$CRLF")
+                append(CRLF)
+                append(caption)
+                append(CRLF)
+            }
             // document part
             append("--$boundary$CRLF")
             append("Content-Disposition: form-data; name=\"document\"; filename=\"$fileName\"$CRLF")

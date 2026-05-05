@@ -124,7 +124,12 @@ class KSafeExtension : KarooExtension("ksafe", BuildConfig.VERSION_NAME), Corout
                     // Read the full CSV (all flushed chunks) and send via Telegram (fire-and-forget)
                     val logContent = calibLogger.getFileContent()
                     launch {
-                        LogReporter.sendLogFile(logContent, karooSystem = karooSystem)
+                        LogReporter.sendLogFile(
+                            content  = logContent,
+                            fileName = calibLogger.fileNameForSession,
+                            caption  = calibLogger.captionForSession(logContent.count { it == '\n' }),
+                            karooSystem = karooSystem,
+                        )
                     }
                 }
                 // Re-evaluate crash monitoring if idle (ride start/pause is handled by handleRideState)
@@ -151,6 +156,40 @@ class KSafeExtension : KarooExtension("ksafe", BuildConfig.VERSION_NAME), Corout
                 .collect { streamState ->
                     val speedKmh = streamState.speedKmh() ?: return@collect
                     crashManager.updateSpeed(speedKmh)
+                }
+        }
+
+        launch {
+            // Stream cadence to crash detector.
+            // Cadence > 20 RPM during SILENCE_CHECK = rider is still pedalling → instant false-alarm exit.
+            // This stream is optional: if no cadence sensor is paired the flow emits nothing and
+            // cadenceDataReceived stays false, so the gate never blocks a real crash.
+            karooSystem.streamDataFlow(io.hammerhead.karooext.models.DataType.Type.CADENCE)
+                .collect { streamState ->
+                    val cadenceRpm = streamState.cadenceRpm() ?: return@collect
+                    crashManager.updateCadence(cadenceRpm)
+                }
+        }
+
+        launch {
+            // Stream road grade (%) to crash detector.
+            // Used for a proactive peak-threshold boost on descents to reduce terrain-noise false alarms
+            // before the reactive TERRAIN_CLUSTER mechanism can engage.
+            karooSystem.streamDataFlow(io.hammerhead.karooext.models.DataType.Type.ELEVATION_GRADE)
+                .collect { streamState ->
+                    val grade = streamState.gradePercent() ?: return@collect
+                    crashManager.updateGrade(grade)
+                }
+        }
+
+        launch {
+            // Stream the active Karoo ride profile to the crash detector.
+            // routingPreference (ROAD/GRAVEL/MTB) is logged in PERIODIC and IMPACT_ENTER rows
+            // for post-ride calibration analysis. It is not used as a gate or threshold modifier
+            // at runtime — the reactive cluster boost and grade-aware boost handle that.
+            karooSystem.streamRideProfile()
+                .collect { profile ->
+                    crashManager.updateRideProfile(profile.routingPreference)
                 }
         }
     }
@@ -201,7 +240,12 @@ class KSafeExtension : KarooExtension("ksafe", BuildConfig.VERSION_NAME), Corout
                     // Read the full file (all previously flushed chunks + current buffer)
                     val logContent = calibLogger.getFileContent()
                     launch {
-                        LogReporter.sendLogFile(logContent, karooSystem = karooSystem)
+                        LogReporter.sendLogFile(
+                            content  = logContent,
+                            fileName = calibLogger.fileNameForSession,
+                            caption  = calibLogger.captionForSession(logContent.count { it == '\n' }),
+                            karooSystem = karooSystem,
+                        )
                     }
                 }
             }
@@ -359,7 +403,12 @@ class KSafeExtension : KarooExtension("ksafe", BuildConfig.VERSION_NAME), Corout
         val logContent = calibLogger.getFileContent()
         if (logContent.isBlank()) return "No calibration data on disk yet."
         Timber.d("Sending calibration log manually via Telegram")
-        val ok = LogReporter.sendLogFile(logContent, karooSystem = karooSystem)
+        val ok = LogReporter.sendLogFile(
+            content  = logContent,
+            fileName = calibLogger.fileNameForSession,
+            caption  = calibLogger.captionForSession(logContent.count { it == '\n' }),
+            karooSystem = karooSystem,
+        )
         return if (ok) "Calibration log sent via Telegram ✓"
                else "Send failed — check Telegram credentials or connection."
     }
