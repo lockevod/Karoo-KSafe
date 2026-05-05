@@ -1,6 +1,7 @@
 package com.enderthor.kSafe.extension.managers
 
 import android.content.Context
+import com.enderthor.kSafe.BuildConfig
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -83,7 +84,21 @@ class CalibrationLogger(
         SPEEDDROP_EVAL("SPDRP_EVAL"),
         /** GPS stale condition detected (informational marker). */
         GPS_STALE("GPS_STALE"),
-        /** Periodic ride-context snapshot — speed, accel deviation, gyro, state (every 5 min). */
+        /**
+         * Rough-terrain cluster detected: ≥ [CLUSTER_COUNT] IMPACT_TMO events within
+         * [CLUSTER_WINDOW_MS]. The longer peak-threshold boost is now active.
+         * Key for calibration: confirms the rider is on consistently rough terrain
+         * (cobblestones, gravel, badly paved descent) rather than isolated bumps.
+         */
+        TERRAIN_CLUSTER("TERRAIN_CLUST"),
+        /**
+         * Cadence gate fired during SILENCE_CHECK: rider was actively pedaling (cadence > 20 RPM)
+         * while the crash confirmation phase was running → immediate false alarm exit.
+         * This is a near-certain false positive identifier: a real crash victim doesn't pedal.
+         * Key for calibration: if this fires it was definitely not a crash.
+         */
+        CADENCE_GATE("CAD_GATE"),
+        /** Periodic ride-context snapshot — speed, accel deviation, gyro, state (every 2 min). */
         PERIODIC("PERIODIC"),
         /** Marker written when logging is enabled — anchor for elapsed_s calculations. */
         LOGGER_START("LOG_START"),
@@ -107,12 +122,63 @@ class CalibrationLogger(
         const val SILENCE_BROKEN_INTERVAL_MS = 2_000L
         /** Rate-limit GYRO_BLOCKED logs: at most once per 1 second. */
         const val GYRO_BLOCKED_INTERVAL_MS = 1_000L
+
+        /**
+         * Device model sanitised for filesystem / Telegram filename use.
+         * E.g. "Karoo 3" → "Karoo-3", "karoo2mini" → "karoo2mini". Max 20 chars.
+         * Computed once via lazy — the hardware model never changes at runtime.
+         */
+        val DEVICE_LABEL: String by lazy {
+            android.os.Build.MODEL.trim()
+                .replace(' ', '-')
+                .replace(Regex("[^A-Za-z0-9._-]"), "")
+                .take(20)
+                .ifEmpty { "device" }
+        }
     }
 
     // ─── State ───────────────────────────────────────────────────────────────
 
     @Volatile var isEnabled = false
         private set
+
+    /**
+     * Random 6-character hex session ID generated fresh on each [enable] call.
+     *
+     * Purpose: distinguish logs from different sessions (and users) in the developer's
+     * Telegram inbox. When multiple users send logs simultaneously, each file arrives
+     * with a unique ID in the filename and caption — easy to correlate with a specific ride.
+     *
+     * Privacy: the ID is randomly generated from the lower bits of the system clock at
+     * the moment logging is enabled. It does NOT encode the time, date, ride start, or
+     * any device identifier. It is purely a session-discriminator with no personal data.
+     */
+    var sessionId: String = "000000"
+        private set
+
+    /**
+     * Telegram-safe filename for the current session's CSV.
+     * Format: `ksafe_v{version}_{sessionId}_{deviceLabel}.csv`
+     * E.g. `ksafe_v1.5.3_a3f9c2_Karoo-3.csv`
+     */
+    val fileNameForSession: String
+        get() = "ksafe_v${BuildConfig.VERSION_NAME}_${sessionId}_${DEVICE_LABEL}.csv"
+
+    /**
+     * Returns a short plain-text caption for the Telegram `sendDocument` call.
+     * Shown as the message text alongside the file in the chat — immediately identifies
+     * the session without opening the CSV.
+     *
+     * [lineCount]: total number of data rows in the file (newlines in content); used for
+     * a rough size indicator. Pass 0 to omit.
+     *
+     * Privacy: contains app version, random session ID, and device model. No personal data.
+     */
+    fun captionForSession(lineCount: Int = 0): String {
+        val sizeInfo = if (lineCount > 0) " | $lineCount rows" else ""
+        return "📊 kSafe Calibration Log\n" +
+               "Session: $sessionId | ${android.os.Build.MODEL} | v${BuildConfig.VERSION_NAME}$sizeInfo"
+    }
 
     private val buffer = ArrayDeque<String>()
     @Volatile private var startTime = 0L
@@ -122,6 +188,10 @@ class CalibrationLogger(
 
     fun enable() {
         startTime = System.currentTimeMillis()
+        // Generate a new random session ID for this logging session.
+        // Uses lower 24 bits of current time (ms) XORed with a pseudo-random salt so two
+        // sessions started at nearly the same millisecond still get different IDs.
+        sessionId = "%06x".format((startTime xor (startTime.ushr(16))) and 0xFFFFFFL)
         synchronized(buffer) { buffer.clear() }
         isEnabled = true
         // Reset output file: delete old data and write a fresh header so this session is clean.
@@ -141,9 +211,11 @@ class CalibrationLogger(
                 flush()
             }
         }
-        // Write a marker so the CSV has an anchor timestamp for all elapsed_s values
-        addEntryDirect(Event.LOGGER_START, "logging_enabled,version=2")
-        Timber.i("CalibrationLogger enabled — new session started")
+        // Write a marker so the CSV has an anchor timestamp for all elapsed_s values.
+        // Includes session ID, device model, and app version so each file is self-identifying.
+        addEntryDirect(Event.LOGGER_START,
+            "logging_enabled,version=2,session=$sessionId,device=${DEVICE_LABEL},app_version=${BuildConfig.VERSION_NAME}")
+        Timber.i("CalibrationLogger enabled — session=$sessionId device=${DEVICE_LABEL} v${BuildConfig.VERSION_NAME}")
     }
 
     fun disable() {

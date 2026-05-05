@@ -1,10 +1,12 @@
 package com.enderthor.kSafe.extension
 
 import io.hammerhead.karooext.KarooSystemService
+import io.hammerhead.karooext.models.ActiveRideProfile
 import io.hammerhead.karooext.models.HttpResponseState
 import io.hammerhead.karooext.models.OnHttpResponse
 import io.hammerhead.karooext.models.OnLocationChanged
 import io.hammerhead.karooext.models.OnStreamState
+import io.hammerhead.karooext.models.RideProfile
 import io.hammerhead.karooext.models.RideState
 import io.hammerhead.karooext.models.StreamState
 import io.hammerhead.karooext.models.UserProfile
@@ -53,6 +55,21 @@ fun KarooSystemService.streamUserProfile(): Flow<UserProfile> = callbackFlow {
     awaitClose { removeConsumer(listenerId) }
 }
 
+/**
+ * Streams the currently active [RideProfile] — the profile the user selected on the launcher.
+ * Emits immediately on subscription with the current profile, then on every profile change.
+ *
+ * Provides [RideProfile.routingPreference] (ROAD / GRAVEL / MTB) and
+ * [RideProfile.defaultActivityType] (RIDE / MOUNTAIN_BIKE / GRAVEL / EBIKE / …).
+ * Used to add ride-context to calibration logs and optionally pre-tune crash thresholds.
+ *
+ * @since Karoo SDK 1.1.5
+ */
+fun KarooSystemService.streamRideProfile(): Flow<RideProfile> = callbackFlow {
+    val listenerId = addConsumer<ActiveRideProfile>(onEvent = { trySend(it.profile) })
+    awaitClose { removeConsumer(listenerId) }
+}
+
 /** Makes an HTTP request and returns the completed response. */
 suspend fun KarooSystemService.httpRequest(
     method: String,
@@ -80,3 +97,19 @@ fun StreamState.speedKmh(): Double? {
     val raw = dataPoint.singleValue ?: return null
     return raw * 3.6 // m/s → km/h
 }
+
+/** Extracts cadence in RPM from a CADENCE StreamState.Streaming data point. */
+fun StreamState.cadenceRpm(): Double? {
+    if (this !is StreamState.Streaming) return null
+    return dataPoint.singleValue  // already in RPM
+}
+
+/**
+ * Extracts the current road grade in percent from an ELEVATION_GRADE StreamState.
+ * Negative = downhill, positive = uphill. E.g. -8.0 = 8% descent.
+ */
+fun StreamState.gradePercent(): Double? {
+    if (this !is StreamState.Streaming) return null
+    return dataPoint.singleValue  // already in %
+}
+

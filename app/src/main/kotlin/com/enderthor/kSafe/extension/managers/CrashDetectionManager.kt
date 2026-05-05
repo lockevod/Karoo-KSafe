@@ -117,6 +117,42 @@ class CrashDetectionManager(
     private val SILENCE_DURATION_MS =  4_500L  // must be continuously still for 4.5s (literature uses 5s)
     private val LOG_INTERVAL_MS     =  2_000L  // log magnitude every 2s for debugging
 
+    // ─── Post-IMPACT_TMO dynamic peak-threshold boost ─────────────────────────
+    //
+    // Problem observed in v3 calibration logs: rough terrain (cobblestones, gravel,
+    // badly paved descents) produces clusters of 3–5 consecutive IMPACT_IN/IMPACT_TMO
+    // events within 60–120 seconds, all from source=PEAK with raw=50–64 m/s².
+    // The smooth average never exceeds the threshold (terrain spikes are single-frame),
+    // and the speed never drops (rider is still moving at 25–45 km/h), so all resolve
+    // as IMPACT_TMO — but they create repeated false alarms and wear on the user.
+    //
+    // Solution: after each IMPACT_TMO, temporarily raise the effective peak threshold
+    // by POST_TMO_BOOST for POST_TMO_COOLDOWN_MS.  If a rough-terrain CLUSTER is
+    // detected (≥ CLUSTER_MIN_TMO timeouts within CLUSTER_WINDOW_MS), the boost
+    // period is extended to POST_CLUSTER_COOLDOWN_MS.
+    //
+    // Safety: the smooth threshold (smoothedMagnitude > threshold) is NEVER boosted.
+    // Only the single-frame peak path is elevated.  A real crash at speed still
+    // produces smooth > 45 m/s² and will enter IMPACT regardless of the boost.
+    // The IMPACT_ENTER log records boost_active=true so we can verify no real crash
+    // was missed during a boosted window.
+
+    /** Extra m/s² added to the peak threshold during cooldown following an IMPACT_TMO. */
+    private val POST_TMO_BOOST         = 8f
+    /** Duration of the per-event cooldown after a single IMPACT_TMO (ms). */
+    private val POST_TMO_COOLDOWN_MS   = 30_000L
+    /** Duration of the extended cooldown when a terrain cluster is detected (ms). */
+    private val POST_CLUSTER_COOLDOWN_MS = 60_000L
+    /** Rolling window for clustering consecutive IMPACT_TMO events (ms). */
+    private val CLUSTER_WINDOW_MS      = 120_000L
+    /** Number of IMPACT_TMO events within CLUSTER_WINDOW_MS to declare a cluster. */
+    private val CLUSTER_MIN_TMO        = 3
+
+    /** Timestamp until which the peak threshold boost is active (epoch ms). 0 = inactive. */
+    @Volatile private var postImpactBoostUntil = 0L
+    /** Recent IMPACT_TMO timestamps used for cluster detection (sensor thread only). */
+    private val recentTmoTimestamps = ArrayDeque<Long>(8)
+
     /**
      * Post-crash cooldown: ignore new IMPACT triggers after a confirmed crash.
      * Must be strictly GREATER than the cancel-countdown duration to avoid a re-trigger
@@ -155,6 +191,23 @@ class CrashDetectionManager(
      */
     private val GPS_STALE_SILENCE_DURATION_MS = 8_000L
 
+    // ─── Impact window progress tracking ─────────────────────────────────────
+    //
+    // Tracked from IMPACT_ENTER to IMPACT_TMO/SILENCE_ENTER.
+    // Provides richer IMPACT_TMO log rows for post-ride calibration analysis:
+    //   max_smooth_in_win: peak smoothed magnitude seen during the window
+    //   min_spd_in_win:    minimum GPS speed during the window (did it ever drop?)
+    //   min_dev_in_win:    minimum accel deviation from gravity (did it ever settle?)
+    //   gyro_blocked_cnt:  how many times gyro blocked SILENCE_CHECK entry
+    //   speed_reached:     did the speed gate ever pass (isSpeedDropConfirmed)?
+    // Together these explain WHY a given impact timed out: SPEED / ACCEL / GYRO / UNKNOWN.
+
+    @Volatile private var maxSmoothedInWindow   = 0f
+    @Volatile private var minSpeedInWindow      = Double.MAX_VALUE
+    @Volatile private var minDeviationInWindow  = Float.MAX_VALUE
+    @Volatile private var gyroBlockedCnt        = 0
+    @Volatile private var speedReachedInWindow  = false
+
     /**
      * Speed-drop monitor: minimum time the accelerometer must have been continuously near
      * gravity before the speed-drop alert can fire. Prevents a single lucky snapshot at
@@ -174,6 +227,22 @@ class CrashDetectionManager(
      */
     private val IMPACT_FILTER_WINDOW = 3
     private val magnitudeBuffer = ArrayDeque<Float>(IMPACT_FILTER_WINDOW)
+
+    /**
+     * Rolling window of raw acceleration magnitudes used to compute the terrain-noise metric
+     * [accelStdDev].  250 samples at SENSOR_DELAY_GAME (~50 Hz) ≈ 5 seconds of signal.
+     *
+     * This is NOT redundant with the 3-sample [magnitudeBuffer]:
+     *  - [magnitudeBuffer] smooths instantaneous spikes for the impact detector
+     *  - [varianceBuffer] captures the statistical spread of magnitudes over 5 s to quantify
+     *    how rough the terrain currently is (σ ≈ 1–3 m/s² on smooth asphalt vs 8–12+ on cobblestones)
+     *
+     * Updated on every accelerometer event (O(1) amortized ArrayDeque operations).
+     * Std-dev is computed only on demand (PERIODIC log / IMPACT_ENTER), so it never runs
+     * on the hot sensor path.
+     */
+    private val VARIANCE_WINDOW = 250  // ~5 s at 50 Hz
+    private val varianceBuffer = ArrayDeque<Float>(VARIANCE_WINDOW)
 
     // ─── State ────────────────────────────────────────────────────────────────
     //
@@ -220,6 +289,63 @@ class CrashDetectionManager(
     @Volatile private var lastGyroMag   = 0f
     @Volatile private var lastAccelDeviation = 0f  // |accel - gravity|, updated on every sensor event
 
+    // ─── Contextual sensor data ───────────────────────────────────────────────
+    //
+    // These supplement the crash pipeline with environmental context.
+    // They are optional: if the sensor/data-source is absent the guarded fields stay at
+    // their safe defaults and the algorithm behaves exactly as before.
+
+    /**
+     * Current pedalling cadence in RPM (from Karoo SDK ANT+/BLE cadence sensor).
+     *
+     * Used in SILENCE_CHECK: if the rider is actively pedalling (cadence > 20 RPM) it is
+     * definitively NOT a crash — an unconscious rider cannot pedal. This is the highest-confidence
+     * false-positive filter available without extra infrastructure.
+     *
+     * Thread: Karoo SDK callback → [updateCadence] (Volatile read/write only).
+     */
+    @Volatile private var currentCadence = 0.0
+    /** True once at least one cadence data point has been received (sensor/provider present). */
+    @Volatile private var cadenceDataReceived = false
+
+    /**
+     * Current road grade in percent (from Karoo SDK barometric elevation grade stream).
+     * Negative = downhill, positive = uphill. E.g. -8.0 = 8 % descent.
+     *
+     * Used to apply a proactive grade-aware boost to the single-frame peak threshold:
+     * on descents the road vibration noise floor is elevated so we pre-emptively raise
+     * the peak bar rather than waiting for a TERRAIN_CLUSTER to trigger the reactive boost.
+     * The smooth threshold is intentionally NOT affected — a real crash on a descent
+     * still triggers via the smooth path.
+     *
+     * Thread: Karoo SDK callback → [updateGrade] (Volatile read/write only).
+     */
+    @Volatile private var currentGrade = 0.0
+
+    /**
+     * Routing preference of the currently active Karoo ride profile.
+     * One of: "ROAD", "GRAVEL", "MTB" (matches [RideProfile.routingPreference]).
+     * Defaults to "ROAD" until the first [updateRideProfile] call.
+     *
+     * Logged in PERIODIC and IMPACT_ENTER rows so post-ride analysis can correlate
+     * false-positive rates with the type of riding the user was doing.
+     * Not used as a gate or threshold modifier — use the reactive TERRAIN_CLUSTER boost
+     * and grade-aware boost for real-time adaptation instead.
+     *
+     * Thread: Karoo SDK callback → [updateRideProfile] (Volatile read/write only).
+     */
+    @Volatile private var currentRoutingPreference = "ROAD"
+
+    /**
+     * Instantaneous deceleration in km/h per second — computed in [updateSpeed] from consecutive
+     * speed readings. Negative = braking / crash deceleration. Positive = accelerating.
+     *
+     * Not used as a gate (GPS speed updates are too infrequent at ~1 Hz for reliable decel
+     * estimation), but logged at every IMPACT_ENTER for post-ride calibration analysis.
+     * Large negative values (< −10 km/h/s) at impact confirm a genuine speed event.
+     */
+    @Volatile private var lastDecelerationKmhPerS = 0.0
+
     /**
      * Timestamp (ms) since which the accelerometer has been continuously below
      * [SILENCE_DEVIATION_MAX]. Reset to 0 whenever a sample exceeds the threshold.
@@ -241,7 +367,7 @@ class CrashDetectionManager(
     @Volatile private var lastGyroBlockedLogMs = 0L
     /** Last time a PERIODIC snapshot was logged — once per 5 min. */
     @Volatile private var lastPeriodicLogMs = 0L
-    private val PERIODIC_LOG_INTERVAL_MS = 300_000L  // 5 minutes
+    private val PERIODIC_LOG_INTERVAL_MS = 120_000L  // 2 minutes — finer timeline resolution
     /** Tracks the previous GPS-stale state to log only when the condition changes. */
     @Volatile private var lastGpsStaleState = false
     /** Tracks the last sensitivity preset to detect mid-ride config changes. */
@@ -306,12 +432,21 @@ class CrashDetectionManager(
     }
 
     fun updateSpeed(speedKmh: Double) {
+        val now = System.currentTimeMillis()
+        // Deceleration tracking: negative = braking/crash. Computed before we overwrite
+        // currentSpeedKmh so the delta is always (new − old). Only valid when a previous
+        // reading exists AND at least 200 ms have elapsed (avoids noisy near-zero Δt division).
+        val elapsed = if (speedLastUpdatedTime > 0) (now - speedLastUpdatedTime) / 1000.0 else 0.0
+        if (elapsed >= 0.2 && speedDataReceived) {
+            lastDecelerationKmhPerS = (speedKmh - currentSpeedKmh) / elapsed
+        }
+
         if (!speedDataReceived) {
             speedDataReceived = true
             Timber.d("Cold-start guard lifted: first speed data received (%.1f km/h)", speedKmh)
         }
         currentSpeedKmh = speedKmh
-        speedLastUpdatedTime = System.currentTimeMillis()
+        speedLastUpdatedTime = now
 
         if (config.speedDropDetectionEnabled) {
             if (speedKmh < SPEED_THRESHOLD_KMH) {
@@ -320,6 +455,38 @@ class CrashDetectionManager(
                 speedDropStartTime = 0L
             }
         }
+    }
+
+    /**
+     * Update the current pedalling cadence (RPM) from the Karoo SDK cadence stream.
+     * Call this whenever a new cadence data point arrives. The first call marks
+     * [cadenceDataReceived] = true, lifting the "no sensor present" guard.
+     */
+    fun updateCadence(cadenceRpm: Double) {
+        if (!cadenceDataReceived) {
+            cadenceDataReceived = true
+            Timber.d("Cadence sensor online: first reading %.0f RPM", cadenceRpm)
+        }
+        currentCadence = cadenceRpm
+    }
+
+    /**
+     * Update the current road grade (%) from the Karoo SDK elevation-grade stream.
+     * Negative = downhill, positive = uphill.
+     */
+    fun updateGrade(gradePercent: Double) {
+        currentGrade = gradePercent
+    }
+
+    /**
+     * Update the active Karoo ride profile routing preference.
+     * Call this whenever [streamRideProfile] emits.
+     *
+     * [routingPreference]: one of "ROAD", "GRAVEL", "MTB" from [RideProfile.routingPreference].
+     */
+    fun updateRideProfile(routingPreference: String) {
+        currentRoutingPreference = routingPreference
+        Timber.d("Ride profile routing preference updated: $routingPreference")
     }
 
     /**
@@ -422,6 +589,11 @@ class CrashDetectionManager(
         if (magnitudeBuffer.size > IMPACT_FILTER_WINDOW) magnitudeBuffer.removeFirst()
         val smoothedMagnitude = magnitudeBuffer.average().toFloat()
 
+        // Terrain-noise buffer: 250 samples (~5 s) for accel_variance (std-dev) logging.
+        // O(1) amortized — negligible hot-path cost. Std-dev is computed only when logging.
+        varianceBuffer.addLast(magnitude)
+        if (varianceBuffer.size > VARIANCE_WINDOW) varianceBuffer.removeFirst()
+
         val threshold = if (config.crashSensitivity == CrashSensitivity.CUSTOM)
             config.customCrashThreshold.toFloat().coerceIn(20f, 70f)
         else
@@ -434,7 +606,25 @@ class CrashDetectionManager(
         else
             peakImpactThresholds[config.crashSensitivity] ?: 60f
 
+        // Dynamic post-IMPACT_TMO boost: temporarily raises the effective peak threshold after a false
+        // alarm to suppress repeated triggers on the same rough terrain section.
+        // The smooth threshold is intentionally NOT boosted — a sustained real crash still fires.
         val now = System.currentTimeMillis()
+        val boostActive = now < postImpactBoostUntil
+
+        // Grade-aware proactive boost: on descents the road-surface noise floor (potholes, gravel,
+        // cobblestones) is elevated and single-frame peak spikes are common.  Pre-emptively raise
+        // the peak threshold based on slope so the FIRST TMO on a descent doesn't happen before
+        // the reactive cluster boost can take effect.  Only the peak path is raised; the smooth
+        // threshold is unaffected so a real crash on a descent still fires via the smooth detector.
+        val gradeBoost = when {
+            currentGrade < -10.0 -> 8f   // very steep descent (>10%): maximum terrain noise
+            currentGrade < -7.0  -> 5f   // steep descent (7–10%)
+            currentGrade < -4.0  -> 2f   // moderate descent (4–7%): slight uplift
+            else                 -> 0f   // flat or climbing: no adjustment
+        }
+        val effectivePeakThreshold = (if (boostActive) peakThreshold + POST_TMO_BOOST else peakThreshold) + gradeBoost
+
 
         // Periodic debug logging — only in debug builds (hot path: runs on every sensor event)
         if (BuildConfig.DEBUG && now - lastLogTime > LOG_INTERVAL_MS) {
@@ -464,23 +654,31 @@ class CrashDetectionManager(
                 // Dual detector: smoothed magnitude guards against terrain-edge noise;
                 // raw peak magnitude captures short rigid impacts the average would dilute.
                 // Either path is sufficient — both require the same settling sequence after.
-                val impactDetected = smoothedMagnitude > threshold || magnitude > peakThreshold
+                // effectivePeakThreshold may be raised by POST_TMO_BOOST during cooldown.
+                val impactDetected = smoothedMagnitude > threshold || magnitude > effectivePeakThreshold
                 when {
                     impactDetected && speedOk && cooldownOk -> {
                         state = CrashState.IMPACT
                         impactTime = now
                         val source = when {
-                            smoothedMagnitude > threshold && magnitude > peakThreshold -> "BOTH"
+                            smoothedMagnitude > threshold && magnitude > effectivePeakThreshold -> "BOTH"
                             smoothedMagnitude > threshold -> "SMOOTH"
                             else -> "PEAK"
                         }
-                        Timber.d(">>> IMPACT detected! raw=%.1f smooth=%.1fm/s² (thr=%.1f peak_thr=%.1f) speed=%.1fkm/h", magnitude, smoothedMagnitude, threshold, peakThreshold, currentSpeedKmh)
+                        // Initialise window-progress accumulators
+                        maxSmoothedInWindow  = smoothedMagnitude
+                        minSpeedInWindow     = currentSpeedKmh
+                        minDeviationInWindow = abs(magnitude - GRAVITY)
+                        gyroBlockedCnt       = 0
+                        speedReachedInWindow = false
+                        Timber.d(">>> IMPACT detected! raw=%.1f smooth=%.1fm/s² (thr=%.1f eff_peak_thr=%.1f boost=%b) speed=%.1fkm/h", magnitude, smoothedMagnitude, threshold, effectivePeakThreshold, boostActive, currentSpeedKmh)
                         // ── Calibration: which detector fired, at what levels, at what speed, gyro + buffer
                         // buf: the 3 sliding-window samples in chronological order — helps calibrate IMPACT_FILTER_WINDOW.
                         // gyro: rotation during impact — high gyro on real crashes vs. bike handling events.
+                        // boost_active: whether peak threshold was elevated by post-TMO cooldown.
                         calibLogger?.log(CalibrationLogger.Event.IMPACT_ENTER) {
                             val bufStr = magnitudeBuffer.joinToString("|") { "%.1f".format(it) }
-                            "source=$source,raw=%.1f,smooth=%.1f,thr=%.1f,pthr=%.1f,speed=%.1f,gyro=%.2f,buf=$bufStr,preset=${config.crashSensitivity}".format(magnitude, smoothedMagnitude, threshold, peakThreshold, currentSpeedKmh, lastGyroMag)
+                            "source=$source,raw=%.1f,smooth=%.1f,thr=%.1f,pthr=%.1f,eff_pthr=%.1f,speed=%.1f,decel=%.1f,grade=%.1f,grade_boost=%.0f,cadence=%.0f,gyro=%.2f,buf=$bufStr,noise=%.2f,profile=$currentRoutingPreference,preset=${config.crashSensitivity},boost_active=$boostActive".format(magnitude, smoothedMagnitude, threshold, peakThreshold, effectivePeakThreshold, currentSpeedKmh, lastDecelerationKmhPerS, currentGrade, gradeBoost, currentCadence, lastGyroMag, accelStdDev())
                         }
                     }
                     impactDetected && !speedOk && cooldownOk -> {
@@ -496,8 +694,8 @@ class CrashDetectionManager(
                         if ((now - lastHighMagLogMs) > CalibrationLogger.HIGH_MAG_INTERVAL_MS) {
                             lastHighMagLogMs = now
                             calibLogger?.log(CalibrationLogger.Event.HIGH_MAG_NORISING) {
-                                // gyro included: high gyro = device moving/handling = not terrain noise
-                                "raw=%.1f,smooth=%.1f,thr=%.1f,pthr=%.1f,speed=%.1f,gyro=%.2f,preset=${config.crashSensitivity}".format(magnitude, smoothedMagnitude, threshold, peakThreshold, currentSpeedKmh, lastGyroMag)
+                                // grade/grade_boost: terrain context for the noise distribution
+                                "raw=%.1f,smooth=%.1f,thr=%.1f,pthr=%.1f,eff_pthr=%.1f,speed=%.1f,gyro=%.2f,grade=%.1f,grade_boost=%.0f,preset=${config.crashSensitivity},boost=$boostActive".format(magnitude, smoothedMagnitude, threshold, peakThreshold, effectivePeakThreshold, currentSpeedKmh, lastGyroMag, currentGrade, gradeBoost)
                             }
                         }
                     }
@@ -509,6 +707,12 @@ class CrashDetectionManager(
                 val deviation = abs(magnitude - GRAVITY)
                 val windowMs  = impactWindowMs[config.crashSensitivity] ?: 20_000L
                 val speedHasDropped = isSpeedDropConfirmed()
+
+                // ── Update window-progress accumulators ───────────────────────
+                if (smoothedMagnitude > maxSmoothedInWindow) maxSmoothedInWindow = smoothedMagnitude
+                if (currentSpeedKmh  < minSpeedInWindow)    minSpeedInWindow     = currentSpeedKmh
+                if (deviation        < minDeviationInWindow) minDeviationInWindow = deviation
+                if (speedHasDropped) speedReachedInWindow = true
 
                 when {
                     deviation < SILENCE_DEVIATION_MAX && lastGyroMag < GYRO_MOVING_MAX && timeSince > 500 && speedHasDropped -> {
@@ -524,6 +728,7 @@ class CrashDetectionManager(
                     // Logged rate-limited (1/s) — key for calibrating GYRO_MOVING_MAX (2.0 rad/s).
                     // If this fires repeatedly on confirmed real crashes, GYRO_MOVING_MAX may be too strict.
                     deviation < SILENCE_DEVIATION_MAX && lastGyroMag >= GYRO_MOVING_MAX && timeSince > 500 && speedHasDropped -> {
+                        gyroBlockedCnt++
                         if ((now - lastGyroBlockedLogMs) > CalibrationLogger.GYRO_BLOCKED_INTERVAL_MS) {
                             lastGyroBlockedLogMs = now
                             calibLogger?.log(CalibrationLogger.Event.GYRO_BLOCKED) {
@@ -533,9 +738,38 @@ class CrashDetectionManager(
                     }
                     timeSince > windowMs -> {
                         Timber.d("Impact window timeout (%dms) → false alarm, resetting", windowMs)
-                        // ── Calibration: timeout — how long in IMPACT and why it didn't settle
+
+                        // ── Determine why SILENCE_CHECK was never reached ─────
+                        val whyNoSilence = when {
+                            !speedReachedInWindow                    -> "SPEED"   // speed never dropped
+                            minDeviationInWindow > SILENCE_DEVIATION_MAX -> "ACCEL"   // accel never settled
+                            gyroBlockedCnt > 0                       -> "GYRO"    // gyro was too high
+                            else                                     -> "UNKNOWN"
+                        }
+
+                        // ── Cluster detection: update rolling TMO queue ───────
+                        recentTmoTimestamps.addLast(now)
+                        while (recentTmoTimestamps.isNotEmpty() &&
+                               now - recentTmoTimestamps.first() > CLUSTER_WINDOW_MS) {
+                            recentTmoTimestamps.removeFirst()
+                        }
+                        val isCluster = recentTmoTimestamps.size >= CLUSTER_MIN_TMO
+                        val boostMs   = if (isCluster) POST_CLUSTER_COOLDOWN_MS else POST_TMO_COOLDOWN_MS
+                        postImpactBoostUntil = now + boostMs
+
+                        // ── Calibration: enriched IMPACT_TMO row ─────────────
                         calibLogger?.log(CalibrationLogger.Event.IMPACT_TIMEOUT) {
-                            "time_in_impact_ms=$timeSince,window_ms=$windowMs,speed=%.1f,gyro=%.2f,deviation=%.2f,preset=${config.crashSensitivity}".format(currentSpeedKmh, lastGyroMag, deviation)
+                            "time_in_impact_ms=$timeSince,window_ms=$windowMs,speed=%.1f,gyro=%.2f,deviation=%.2f,grade=%.1f,cadence=%.0f,preset=${config.crashSensitivity},why_no_silence=$whyNoSilence,max_smooth=%.1f,min_spd=%.1f,min_dev=%.2f,boost_s=%.0f,cluster=$isCluster".format(
+                                currentSpeedKmh, lastGyroMag, deviation,
+                                currentGrade, currentCadence,
+                                maxSmoothedInWindow, minSpeedInWindow, minDeviationInWindow,
+                                boostMs / 1000f, isCluster
+                            )
+                        }
+                        if (isCluster) {
+                            calibLogger?.log(CalibrationLogger.Event.TERRAIN_CLUSTER) {
+                                "count=${recentTmoTimestamps.size},window_s=${CLUSTER_WINDOW_MS / 1000},boost_s=${boostMs / 1000}"
+                            }
                         }
                         resetState()
                         // Schedule a post-reset snapshot 2s later.
@@ -550,6 +784,20 @@ class CrashDetectionManager(
                 val timeSinceImpact = now - impactTime
                 val windowMs = impactWindowMs[config.crashSensitivity] ?: 20_000L
 
+                // ── Cadence gate: if the rider is actively pedalling, it is definitively NOT
+                // a crash — an unconscious rider cannot maintain cadence.
+                // We only apply this gate when cadence data has been received at least once
+                // (sensor present), so a missing cadence sensor never causes false negatives.
+                val isClearlyPedaling = cadenceDataReceived && currentCadence > 20.0
+                if (isClearlyPedaling) {
+                    Timber.d("CADENCE gate: rider pedalling %.0f RPM during SILENCE_CHECK → not a crash, resetting", currentCadence)
+                    calibLogger?.log(CalibrationLogger.Event.CADENCE_GATE) {
+                        "cadence=%.0f,speed=%.1f,deviation=%.2f,grade=%.1f,time_since_impact_ms=${now - impactTime}".format(
+                            currentCadence, currentSpeedKmh, deviation, currentGrade)
+                    }
+                    resetState()
+                    return   // skip periodic log for this sample — negligible, timer-driven
+                }
                 // Stillness check: accel near gravity AND GPS speed low.
                 //
                 // NOTE: gyro is intentionally NOT part of the final SILENCE_CHECK condition.
@@ -589,7 +837,7 @@ class CrashDetectionManager(
                         // countdown_s: user has this many seconds to cancel before the emergency is sent.
                         // If the user cancels, CRASH_NO will follow → that row identifies this as a false positive.
                         calibLogger?.log(CalibrationLogger.Event.CRASH_CONFIRMED) {
-                            "total_ms=$totalMs,deviation=%.2f,speed=%.1f,confirm_spd_thr=${config.crashConfirmSpeedKmh},gps_stale=$gpsStale,preset=${config.crashSensitivity},effective_dev_max=$effectiveDeviationMax,effective_silence_ms=$effectiveSilenceMs,countdown_s=${config.countdownSeconds}".format(deviation, currentSpeedKmh)
+                            "total_ms=$totalMs,deviation=%.2f,speed=%.1f,confirm_spd_thr=${config.crashConfirmSpeedKmh},grade=%.1f,cadence=%.0f,gps_stale=$gpsStale,preset=${config.crashSensitivity},effective_dev_max=$effectiveDeviationMax,effective_silence_ms=$effectiveSilenceMs,countdown_s=${config.countdownSeconds}".format(deviation, currentSpeedKmh, currentGrade, currentCadence)
                         }
                         lastCrashTime = now
                         resetState()
@@ -635,18 +883,49 @@ class CrashDetectionManager(
             (now - lastPeriodicLogMs) > PERIODIC_LOG_INTERVAL_MS) {
             lastPeriodicLogMs = now
             calibLogger.log(CalibrationLogger.Event.PERIODIC) {
-                // thr/pthr: exact impact thresholds active right now (changes with preset/custom)
-                // min_spd: minimum speed configured for crash detection
-                "state=$state,speed=%.1f,accel_dev=%.2f,gyro=%.2f,preset=${config.crashSensitivity},thr=%.1f,pthr=%.1f,min_spd=${config.minSpeedForCrashKmh},gps_stale=$gpsCurrentlyStale".format(currentSpeedKmh, lastAccelDeviation, lastGyroMag, threshold, peakThreshold)
+                // grade/cadence: contextual data for this snapshot — helps correlate false alarms
+                // with terrain type (descent? climbing?) and rider activity (pedalling?)
+                // noise: accel_variance (std-dev over ~5s) — terrain roughness metric
+                // profile: Karoo routing preference (ROAD/GRAVEL/MTB) selected by user
+                val boostLeft = ((postImpactBoostUntil - now).coerceAtLeast(0L)) / 1000L
+                "state=$state,speed=%.1f,accel_dev=%.2f,gyro=%.2f,grade=%.1f,cadence=%.0f,noise=%.2f,profile=$currentRoutingPreference,preset=${config.crashSensitivity},thr=%.1f,pthr=%.1f,eff_pthr=%.1f,grade_boost=%.0f,min_spd=${config.minSpeedForCrashKmh},gps_stale=$gpsCurrentlyStale,boost_s_left=$boostLeft".format(currentSpeedKmh, lastAccelDeviation, lastGyroMag, currentGrade, currentCadence, accelStdDev(), threshold, peakThreshold, effectivePeakThreshold, gradeBoost)
             }
         }
     }
 
+    /**
+     * Computes the standard deviation of acceleration magnitudes in [varianceBuffer] (≈5 s window).
+     *
+     * Returns 0 if the buffer has fewer than 10 samples (not enough data yet).
+     * This is the terrain-noise metric: σ≈1–3 m/s² on smooth asphalt, 8–12+ on cobblestones.
+     * It is NOT redundant with [magnitudeBuffer] (3-sample smoother for impact detection):
+     *  - [magnitudeBuffer] averages out single-sample spikes to guard the impact gate
+     *  - [varianceBuffer] measures the statistical spread over 5 s to quantify terrain roughness
+     *
+     * Called ONLY from calibration log branches (PERIODIC, IMPACT_ENTER) — never on the hot path.
+     */
+    private fun accelStdDev(): Float {
+        val buf = varianceBuffer
+        if (buf.size < 10) return 0f
+        val mean = buf.average().toFloat()
+        var sumSq = 0f
+        for (v in buf) { val d = v - mean; sumSq += d * d }
+        return sqrt(sumSq / buf.size)
+    }
+
     private fun resetState() {
-        state = CrashState.MONITORING
         impactTime = 0L
         silenceStartTime = 0L
         magnitudeBuffer.clear()
+        // NOTE: varianceBuffer intentionally NOT cleared — it represents terrain roughness context
+        // that persists across false-alarm resets.  Clearing it here would cause an artificial
+        // low-noise reading immediately after every reset, masking the rough-terrain signature.
+        // Reset window-tracking accumulators
+        maxSmoothedInWindow  = 0f
+        minSpeedInWindow     = Double.MAX_VALUE
+        minDeviationInWindow = Float.MAX_VALUE
+        gyroBlockedCnt       = 0
+        speedReachedInWindow = false
     }
 
     /**

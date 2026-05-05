@@ -195,13 +195,22 @@ When enabled, KSafe records detailed sensor events to a local CSV file:
 | Gyroscope magnitude | `gyro=0.82 rad/s` |
 | GPS stale flag | `gps_stale=false` |
 | Elapsed ride time | `elapsed_s=1247.3` |
+| Road grade (slope) | `grade=-5.2` (% descent) |
+| Pedalling cadence | `cadence=82 RPM` |
+| Terrain noise level | `noise=2.4 m/s²` (std-dev over 5 s) |
+| Ride profile type | `profile=GRAVEL` (from Karoo profile) |
+| **Anonymous session ID** | `session=a3f9c2` (random, per-session) |
+| Device model | `device=Karoo-3` |
+| App version | `app_version=1.5.3` |
 
 #### What is NOT collected
 
 - ❌ GPS coordinates — no location data, no maps, no tracking
 - ❌ Emergency messages or contact information
-- ❌ Device identifiers, account data, or any user-identifiable information
-- ❌ Anything related to who you are or where you ride
+- ❌ Account data, email, phone number, or any personal identifier
+- ❌ Anything that reveals who you are, where you ride, or when
+
+**Session ID**: a random 6-character code (e.g. `a3f9c2`) generated fresh each time you enable logging. It contains no timestamp, no location, and no device fingerprint — it is a random discriminator so multiple logs sent to the developer can be told apart. Two sessions from the same device will have completely different IDs.
 
 The data consists exclusively of raw sensor readings and algorithm states — the same numbers the crash detection algorithm reads internally. It is not possible to identify you, your location, your route, or your contacts from this data.
 
@@ -212,6 +221,12 @@ The CSV file is sent automatically to the developer via Telegram (a private bot)
 - **Finish a ride** (if logging was active during the ride)
 
 You can also tap **Send now** to transmit the current log immediately. The file is typically 50–400 KB for a 2–4 hour ride session.
+
+Each file arrives in the developer's Telegram with:
+- A **descriptive filename** — e.g. `ksafe_v1.5.3_a3f9c2_Karoo-3.csv`
+- A **caption** in Telegram — e.g. `📊 kSafe Calibration Log | Session: a3f9c2 | Karoo 3 | v1.5.3 | 1247 rows`
+
+This makes it easy for the developer to identify and organise logs from multiple testers without any personal information.
 
 #### Why this helps
 
@@ -840,9 +855,11 @@ There are many conditions under which KSafe may fail to detect an incident or de
 
 ### Calibration logging (optional, disabled by default)
 
-If you enable the **"Send anonymous calibration data"** toggle in Settings, KSafe will record and transmit sensor data (accelerometer values, GPS speed, gyroscope readings, detection algorithm states) to the developer via a private Telegram bot. This data is used exclusively to improve and calibrate the crash detection algorithm.
+If you enable the **"Send anonymous calibration data"** toggle in Settings, KSafe will record and transmit sensor data (accelerometer values, GPS speed, gyroscope readings, road grade, terrain noise, detection algorithm states) to the developer via a private Telegram bot. This data is used exclusively to improve and calibrate the crash detection algorithm.
 
-**No personal information is ever included**: no GPS coordinates, no location data, no emergency messages, no contact information, no device identifiers. The data contains only raw sensor readings and algorithm states — it is not possible to identify you, your location, or your ride from it.
+**No personal information is ever included**: no GPS coordinates, no location data, no emergency messages, no contact information, no account identifiers. The data contains only raw sensor readings and algorithm states — it is not possible to identify you, your location, or your ride from it.
+
+Each log is tagged with a **random session ID** (e.g. `a3f9c2`) generated fresh each session. This ID contains no timestamp, no location, and no device fingerprint — it exists solely so the developer can tell multiple logs apart when several users send data at the same time. Two sessions from the same device will have different IDs.
 
 This feature is **disabled by default**. Enabling it is entirely voluntary and helps make KSafe more accurate for all riders.
 
