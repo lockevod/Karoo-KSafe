@@ -94,11 +94,9 @@ class EmergencyManager(
         _uiState.value = EmergencyState()
 
         // Persist to DataStore (async is fine here — UI already updated above).
+        configManager.saveEmergencyState(EmergencyState())
         if (config?.checkinEnabled == true) {
-            configManager.saveEmergencyState(EmergencyState())
             startCheckinJobs(config)
-        } else {
-            configManager.saveEmergencyState(EmergencyState())
         }
 
         Timber.d("Emergency cancelled by user (reason=$cancelledReason, after ${howLongMs}ms)")

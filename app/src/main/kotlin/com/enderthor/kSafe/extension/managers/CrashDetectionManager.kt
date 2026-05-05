@@ -244,6 +244,16 @@ class CrashDetectionManager(
     private val VARIANCE_WINDOW = 250  // ~5 s at 50 Hz
     private val varianceBuffer = ArrayDeque<Float>(VARIANCE_WINDOW)
 
+    // ─── Cached hot-path thresholds ───────────────────────────────────────────
+    //
+    // Threshold and impact-window values depend only on config, which changes rarely
+    // (user interaction only). Re-computing them from a HashMap + conditional on every
+    // 50 Hz sensor event wastes CPU.  These are updated once in start() / updateConfig()
+    // and read as cheap field reads on the hot path.
+    @Volatile private var cachedThreshold     = 45f
+    @Volatile private var cachedPeakThreshold = 60f
+    @Volatile private var cachedWindowMs      = 20_000L
+
     // ─── State ────────────────────────────────────────────────────────────────
     //
     // All fields below are read/written from multiple threads:
@@ -375,12 +385,30 @@ class CrashDetectionManager(
 
     // ─── Public API ───────────────────────────────────────────────────────────
 
+    /**
+     * Recomputes and caches the threshold constants derived from [cfg].
+     * Must be called whenever [config] changes (start / updateConfig) so the hot sensor
+     * path can read plain field values instead of doing HashMap lookups every 20 ms.
+     */
+    private fun updateCachedThresholds(cfg: KSafeConfig) {
+        cachedThreshold = if (cfg.crashSensitivity == CrashSensitivity.CUSTOM)
+            cfg.customCrashThreshold.toFloat().coerceIn(20f, 70f)
+        else
+            impactThresholds[cfg.crashSensitivity] ?: 45f
+        cachedPeakThreshold = if (cfg.crashSensitivity == CrashSensitivity.CUSTOM)
+            (cfg.customCrashThreshold.toFloat() * 1.3f).coerceIn(25f, 80f)
+        else
+            peakImpactThresholds[cfg.crashSensitivity] ?: 60f
+        cachedWindowMs = impactWindowMs[cfg.crashSensitivity] ?: 20_000L
+    }
+
     fun start(config: KSafeConfig) {
         this.config = config
         if (!config.crashDetectionEnabled) {
             Timber.d("CrashDetection disabled in config, skipping start")
             return
         }
+        updateCachedThresholds(config)
         resetState()
         speedDataReceived = false
         startTime = System.currentTimeMillis()
@@ -394,7 +422,7 @@ class CrashDetectionManager(
             ?: Timber.w("No accelerometer found on this device!")
         gyroscope?.let { sensorManager.registerListener(this, it, SensorManager.SENSOR_DELAY_GAME) }
 
-        Timber.d("CrashDetectionManager STARTED (sensitivity=${config.crashSensitivity}, threshold=${impactThresholds[config.crashSensitivity]}m/s²)")
+        Timber.d("CrashDetectionManager STARTED (sensitivity=${config.crashSensitivity}, threshold=${cachedThreshold}m/s²)")
 
         if (config.speedDropDetectionEnabled) startSpeedDropMonitor()
     }
@@ -411,6 +439,7 @@ class CrashDetectionManager(
         val oldSensitivity = this.config.crashSensitivity
         val oldCustomThr = this.config.customCrashThreshold
         this.config = config
+        updateCachedThresholds(config)
         // Log config change mid-ride so the CSV captures the exact moment thresholds shifted.
         // This is critical for calibration: events before and after must be analysed with
         // the thresholds that were active at the time.
@@ -503,15 +532,19 @@ class CrashDetectionManager(
 
     /**
      * True if the speed reading hasn't been refreshed for longer than [GPS_STALE_MS].
-     * When stale, the SDK is likely returning a frozen last-known value and the
-     * accelerometer must take over with a HARDENED threshold (see [GPS_STALE_DEVIATION_MAX]).
+     * Accepts [now] so callers that already hold `System.currentTimeMillis()` avoid a
+     * redundant JNI call.
      */
-    private fun isGpsStale(): Boolean =
+    private fun isGpsStale(now: Long = System.currentTimeMillis()): Boolean =
         speedLastUpdatedTime > 0 &&
-                (System.currentTimeMillis() - speedLastUpdatedTime) > GPS_STALE_MS
+                (now - speedLastUpdatedTime) > GPS_STALE_MS
 
     /**
      * Returns true if the rider's GPS speed is low enough to confirm a crash.
+     *
+     * Accepts [now] so callers that already hold `System.currentTimeMillis()` avoid extra
+     * JNI calls.  All decision logic is pure field reads + arithmetic — safe to call on
+     * the sensor thread at 50 Hz (IMPACT state only).
      *
      * Cold-start guard: blocks confirmation for [COLD_START_GUARD_MS] if no speed data has
      * been received yet — prevents false alarms caused by [currentSpeedKmh] defaulting to 0.0.
@@ -522,31 +555,14 @@ class CrashDetectionManager(
      * accelerometer alone can confirm the crash. The caller is responsible for hardening
      * the accel threshold accordingly (see SILENCE_CHECK).
      */
-    private fun isSpeedDropConfirmed(): Boolean {
+    private fun isSpeedDropConfirmed(now: Long = System.currentTimeMillis()): Boolean {
         // Guard: no data yet AND within the cold-start window → not safe to confirm
-        if (!speedDataReceived && (System.currentTimeMillis() - startTime) < COLD_START_GUARD_MS) {
-            Timber.d("Cold-start guard active — speed confirmation blocked (no data yet, %.1fs elapsed)",
-                (System.currentTimeMillis() - startTime) / 1000.0)
-            return false
-        }
-        // Stale GPS: SDK is returning a frozen last-known value. Bypass the GPS gate and
-        // let the accel decide — but the SILENCE_CHECK uses a stricter deviation threshold
-        // and a longer required duration when this happens (see GPS_STALE_DEVIATION_MAX
-        // and GPS_STALE_SILENCE_DURATION_MS).
-        if (isGpsStale()) {
-            Timber.w("GPS stale (%.1fs since last update) — speed gate bypassed, accel hardened",
-                (System.currentTimeMillis() - speedLastUpdatedTime) / 1000.0)
-            return true
-        }
-        // crashConfirmSpeedKmh is INDEPENDENT of minSpeedForCrashKmh — they serve different purposes:
-        //   minSpeedForCrashKmh = 0 → disable the IMPACT entrance gate (detect even when stationary/testing)
-        //   crashConfirmSpeedKmh = 5 → always require the device to be near-stopped at confirmation time
-        //
-        // Previously "minSpeed == 0" also bypassed the confirmation gate, causing FPs when a user
-        // set minSpeed=0 for testing and then cycled slowly uphill: between pedal strokes the
-        // accel quiet window could exceed 4.5s while speed was still 6–7 km/h.
-        //
-        // Fix: use crashConfirmSpeedKmh == 0 to explicitly disable the confirmation gate only.
+        if (!speedDataReceived && (now - startTime) < COLD_START_GUARD_MS) return false
+        // Stale GPS: let the accel decide — SILENCE_CHECK uses GPS_STALE_DEVIATION_MAX / GPS_STALE_SILENCE_DURATION_MS
+        // to compensate. The GPS-stale transition is already logged once via the gpsCurrentlyStale
+        // transition detector in processAccelerometer — no need to log here on every sensor event.
+        if (isGpsStale(now)) return true
+        // crashConfirmSpeedKmh == 0 → user explicitly disabled the confirmation speed gate
         return config.crashConfirmSpeedKmh == 0 || currentSpeedKmh < speedCrashConfirmKmh
     }
 
@@ -594,17 +610,10 @@ class CrashDetectionManager(
         varianceBuffer.addLast(magnitude)
         if (varianceBuffer.size > VARIANCE_WINDOW) varianceBuffer.removeFirst()
 
-        val threshold = if (config.crashSensitivity == CrashSensitivity.CUSTOM)
-            config.customCrashThreshold.toFloat().coerceIn(20f, 70f)
-        else
-            impactThresholds[config.crashSensitivity] ?: 45f
-
+        val threshold = cachedThreshold
         // Peak threshold: single-sample variant with a higher bar (see peakImpactThresholds).
         // Captures short-duration rigid impacts (10–20ms) that the sliding average would dilute.
-        val peakThreshold = if (config.crashSensitivity == CrashSensitivity.CUSTOM)
-            (config.customCrashThreshold.toFloat() * 1.3f).coerceIn(25f, 80f)
-        else
-            peakImpactThresholds[config.crashSensitivity] ?: 60f
+        val peakThreshold = cachedPeakThreshold
 
         // Dynamic post-IMPACT_TMO boost: temporarily raises the effective peak threshold after a false
         // alarm to suppress repeated triggers on the same rough terrain section.
@@ -635,7 +644,7 @@ class CrashDetectionManager(
         // ── GPS stale transition — log once when stale state changes ──────────
         // isGpsStale() is computed once here and reused throughout to avoid
         // multiple System.currentTimeMillis() calls on the hot sensor path.
-        val gpsCurrentlyStale = isGpsStale()
+        val gpsCurrentlyStale = isGpsStale(now)
         if (gpsCurrentlyStale != lastGpsStaleState) {
             lastGpsStaleState = gpsCurrentlyStale
             if (gpsCurrentlyStale) {
@@ -705,8 +714,8 @@ class CrashDetectionManager(
             CrashState.IMPACT -> {
                 val timeSince = now - impactTime
                 val deviation = abs(magnitude - GRAVITY)
-                val windowMs  = impactWindowMs[config.crashSensitivity] ?: 20_000L
-                val speedHasDropped = isSpeedDropConfirmed()
+                val windowMs  = cachedWindowMs
+                val speedHasDropped = isSpeedDropConfirmed(now)
 
                 // ── Update window-progress accumulators ───────────────────────
                 if (smoothedMagnitude > maxSmoothedInWindow) maxSmoothedInWindow = smoothedMagnitude
@@ -782,7 +791,7 @@ class CrashDetectionManager(
             CrashState.SILENCE_CHECK -> {
                 val deviation = abs(magnitude - GRAVITY)
                 val timeSinceImpact = now - impactTime
-                val windowMs = impactWindowMs[config.crashSensitivity] ?: 20_000L
+                val windowMs = cachedWindowMs
 
                 // ── Cadence gate: if the rider is actively pedalling, it is definitively NOT
                 // a crash — an unconscious rider cannot maintain cadence.
@@ -825,7 +834,7 @@ class CrashDetectionManager(
                 val gpsStale = gpsCurrentlyStale
                 val effectiveDeviationMax = if (gpsStale) GPS_STALE_DEVIATION_MAX else SILENCE_DEVIATION_MAX
                 val effectiveSilenceMs    = if (gpsStale) GPS_STALE_SILENCE_DURATION_MS else SILENCE_DURATION_MS
-                val speedStillOk = isSpeedDropConfirmed()
+                val speedStillOk = isSpeedDropConfirmed(now)
                 val isStill = deviation <= effectiveDeviationMax && speedStillOk
 
                 when {
@@ -914,6 +923,10 @@ class CrashDetectionManager(
     }
 
     private fun resetState() {
+        state = CrashState.MONITORING   // ← MUST be first: without this, the next sensor callback
+        // re-enters IMPACT/SILENCE_CHECK with impactTime=0 / silenceStartTime=0, creating an
+        // infinite fire-loop (IMPACT_TMO at 50 Hz) or an immediate crash re-trigger
+        // (silenceStartTime=0 → now−0 >> effectiveSilenceMs → crash auto-confirmed).
         impactTime = 0L
         silenceStartTime = 0L
         magnitudeBuffer.clear()
