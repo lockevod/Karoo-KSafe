@@ -1,7 +1,7 @@
 # KSafe - Safety Extension for Karoo
 
 > [!NOTE]
-> If you want to help improve crash detection, enable the anonymous calibration data toggle in the app (Settings tab) and send the data after your rides. The more data collected, the better the algorithm gets tuned for all users. See [Calibration Logging](#calibration-logging-optional) for details.
+> If you want to ** help improve crash detection **, enable the anonymous calibration data toggle in the app (Settings tab) and send the data after your rides. This data is completely anonymous. The more data collected, the better the algorithm gets tuned for all users. See [Calibration Logging](#calibration-logging-optional) for details.
 
 > [!WARNING]
 > This extension can send emergency alerts to your contacts. Please test it carefully before relying on it in real situations.
