@@ -17,7 +17,9 @@ import com.enderthor.kSafe.extension.managers.CrashDetectionManager
 import com.enderthor.kSafe.extension.managers.EmergencyManager
 import com.enderthor.kSafe.extension.managers.LocationManager
 import com.enderthor.kSafe.extension.managers.LogReporter
+import com.enderthor.kSafe.extension.managers.MedicalEpisodeDetector
 import com.enderthor.kSafe.extension.managers.WebhookManager
+import com.enderthor.kSafe.extension.managers.WellnessMonitor
 import io.hammerhead.karooext.KarooSystemService
 import io.hammerhead.karooext.extension.KarooExtension
 import io.hammerhead.karooext.models.RideState
@@ -50,6 +52,8 @@ class KSafeExtension : KarooExtension("ksafe", BuildConfig.VERSION_NAME), Corout
     private lateinit var sender: Sender
     private lateinit var calibLogger: CalibrationLogger
     private lateinit var webhookManager: WebhookManager
+    private lateinit var medicalDetector: MedicalEpisodeDetector
+    private lateinit var wellnessMonitor: WellnessMonitor
 
     private var activeConfig = KSafeConfig()
     private var currentRideState: RideState? = null
@@ -97,6 +101,24 @@ class KSafeExtension : KarooExtension("ksafe", BuildConfig.VERSION_NAME), Corout
                 emergencyManager.triggerEmergency(EmergencyReason.CRASH_DETECTED, activeConfig)
             }
         }, calibLogger)
+        medicalDetector = MedicalEpisodeDetector(
+            scope = this,
+            onIncident = { reason ->
+                launch {
+                    emergencyManager.handleIncident(reason, activeConfig.medicalResponseLevel, activeConfig)
+                }
+            },
+            calibLogger = calibLogger,
+        )
+        wellnessMonitor = WellnessMonitor(
+            scope = this,
+            onIncident = { reason ->
+                launch {
+                    emergencyManager.handleIncident(reason, activeConfig.wellnessResponseLevel, activeConfig)
+                }
+            },
+            calibLogger = calibLogger,
+        )
 
         karooSystem.connect { connected ->
             if (connected) {
@@ -115,6 +137,8 @@ class KSafeExtension : KarooExtension("ksafe", BuildConfig.VERSION_NAME), Corout
             configManager.loadConfigFlow().collect { config ->
                 activeConfig = config
                 crashManager.updateConfig(config)
+                medicalDetector.updateConfig(config)
+                wellnessMonitor.updateConfig(config)
                 // Toggle calibration logging based on config
                 if (config.calibrationLoggingEnabled && !calibLogger.isEnabled) {
                     calibLogger.enable()
@@ -157,6 +181,7 @@ class KSafeExtension : KarooExtension("ksafe", BuildConfig.VERSION_NAME), Corout
                 .collect { streamState ->
                     val speedKmh = streamState.speedKmh() ?: return@collect
                     crashManager.updateSpeed(speedKmh)
+                    medicalDetector.updateSpeed(speedKmh)
                 }
         }
 
@@ -193,6 +218,16 @@ class KSafeExtension : KarooExtension("ksafe", BuildConfig.VERSION_NAME), Corout
                     crashManager.updateRideProfile(profile.routingPreference)
                 }
         }
+
+        launch {
+            // HR stream (ANT+/BLE). Optional: silent when no sensor is paired.
+            karooSystem.streamDataFlow(io.hammerhead.karooext.models.DataType.Type.HEART_RATE)
+                .collect { streamState ->
+                    val hr = streamState.heartRateBpm() ?: return@collect
+                    medicalDetector.updateHr(hr)
+                    wellnessMonitor.updateHr(hr)
+                }
+        }
     }
 
     private fun handleRideState(state: RideState) {
@@ -202,6 +237,8 @@ class KSafeExtension : KarooExtension("ksafe", BuildConfig.VERSION_NAME), Corout
             is RideState.Recording -> {
                 if (activeConfig.isActive) {
                     crashManager.start(activeConfig)
+                    medicalDetector.start(activeConfig)
+                    wellnessMonitor.start(activeConfig)
                     emergencyManager.startCheckinTimer(activeConfig)
                     // Only send the start notification on the very first Recording event.
                     // Resuming from Pause also triggers Recording — we skip it there.
@@ -227,6 +264,8 @@ class KSafeExtension : KarooExtension("ksafe", BuildConfig.VERSION_NAME), Corout
                 val wasActive = rideWasActive
                 val wasLogging = calibLogger.isEnabled
                 emergencyManager.stopAll()
+                medicalDetector.stop()
+                wellnessMonitor.stop()
                 applyIdleMonitoring(activeConfig)
                 // Reset per-ride flags
                 rideStartNotificationSent = false
@@ -678,6 +717,8 @@ class KSafeExtension : KarooExtension("ksafe", BuildConfig.VERSION_NAME), Corout
 
     override fun onDestroy() {
         crashManager.stop()
+        medicalDetector.stop()
+        wellnessMonitor.stop()
         locationManager.stop()
         emergencyManager.stopAll()
         calibLogger.disable()
