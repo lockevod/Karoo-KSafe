@@ -58,4 +58,52 @@
         graphical="true"
         icon="@drawable/ic_ksafe"
         typeId="webhook-field-2" />
+    <DataType
+        description="@string/carb_log_datatype_desc"
+        displayName="@string/carb_log_1_datatype_name"
+        graphical="true"
+        icon="@drawable/ic_ksafe"
+        typeId="carb-log-1" />
+    <DataType
+        description="@string/carb_log_datatype_desc"
+        displayName="@string/carb_log_2_datatype_name"
+        graphical="true"
+        icon="@drawable/ic_ksafe"
+        typeId="carb-log-2" />
+    <DataType
+        description="@string/carb_log_datatype_desc"
+        displayName="@string/carb_log_3_datatype_name"
+        graphical="true"
+        icon="@drawable/ic_ksafe"
+        typeId="carb-log-3" />
+    <DataType
+        description="@string/carb_status_datatype_desc"
+        displayName="@string/carb_status_datatype_name"
+        graphical="true"
+        icon="@drawable/ic_ksafe"
+        typeId="carb-status" />
+    <DataType
+        description="@string/hyd_log_datatype_desc"
+        displayName="@string/hyd_log_1_datatype_name"
+        graphical="true"
+        icon="@drawable/ic_ksafe"
+        typeId="hyd-log-1" />
+    <DataType
+        description="@string/hyd_log_datatype_desc"
+        displayName="@string/hyd_log_2_datatype_name"
+        graphical="true"
+        icon="@drawable/ic_ksafe"
+        typeId="hyd-log-2" />
+    <DataType
+        description="@string/hyd_status_datatype_desc"
+        displayName="@string/hyd_status_datatype_name"
+        graphical="true"
+        icon="@drawable/ic_ksafe"
+        typeId="hyd-status" />
+    <BonusAction
+        actionId="log-carb-1"
+        displayName="@string/action_log_carb" />
+    <BonusAction
+        actionId="log-drink-1"
+        displayName="@string/action_log_drink" />
 </ExtensionInfo>
