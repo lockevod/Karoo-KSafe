@@ -121,3 +121,13 @@ fun StreamState.heartRateBpm(): Int? {
     return dataPoint.singleValue?.toInt()
 }
 
+/**
+ * Extracts cycling power in watts from a POWER [StreamState.Streaming] data point.
+ * Returns null when no power is being streamed (no power meter paired, sensor disconnected,
+ * or the SDK has not emitted yet). Mirrors [speedKmh] / [cadenceRpm] / [gradePercent] / [heartRateBpm].
+ */
+fun StreamState.powerW(): Int? {
+    if (this !is StreamState.Streaming) return null
+    return dataPoint.singleValue?.toInt()
+}
+
