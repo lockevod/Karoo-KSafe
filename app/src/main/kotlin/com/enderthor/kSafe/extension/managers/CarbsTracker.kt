@@ -190,7 +190,7 @@ class CarbsTracker(
         karooSystem.dispatch(InRideAlert(
             id = "ksafe-carb-alert-$source",
             icon = R.drawable.ic_ksafe,
-            title = "Eat something", // TODO: revert in Task 12 — fueling_carb_alert_title
+            title = context.getString(R.string.fueling_carb_alert_title),
             detail = detail,
             autoDismissMs = AUTO_DISMISS_MS,
             backgroundColor = ALERT_BG_COLOR,

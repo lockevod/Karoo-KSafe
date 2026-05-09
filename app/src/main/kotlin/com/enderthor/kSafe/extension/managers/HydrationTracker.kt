@@ -155,7 +155,7 @@ class HydrationTracker(
         karooSystem.dispatch(InRideAlert(
             id = "ksafe-hyd-alert-$source",
             icon = R.drawable.ic_ksafe,
-            title = "Drink something", // TODO: revert in Task 12 — fueling_hyd_alert_title
+            title = context.getString(R.string.fueling_hyd_alert_title),
             detail = detail,
             autoDismissMs = AUTO_DISMISS_MS,
             backgroundColor = ALERT_BG_COLOR,
