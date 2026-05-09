@@ -10,6 +10,7 @@ import com.enderthor.kSafe.data.KSafeConfig
 import com.enderthor.kSafe.extension.Sender
 import io.hammerhead.karooext.KarooSystemService
 import io.hammerhead.karooext.models.PlayBeepPattern
+import io.hammerhead.karooext.models.InRideAlert
 import io.hammerhead.karooext.models.SystemNotification
 import io.hammerhead.karooext.models.TurnScreenOn
 import kotlinx.coroutines.CoroutineScope
@@ -237,13 +238,15 @@ class EmergencyManager(
             }
             IncidentResponseLevel.WARNING -> {
                 karooSystem.dispatch(BEEP_LONG)
-                karooSystem.dispatch(
-                    SystemNotification(
-                        id = "ksafe-warning-${reason.name.lowercase()}",
-                        header = context.getString(R.string.app_name),
-                        message = warningMessageFor(reason),
-                    )
-                )
+                karooSystem.dispatch(InRideAlert(
+                    id = "ksafe-warning-${reason.name.lowercase()}",
+                    icon = com.enderthor.kSafe.R.drawable.ic_ksafe,
+                    title = warningTitleFor(reason),
+                    detail = warningMessageFor(reason),
+                    autoDismissMs = 10_000L,
+                    backgroundColor = 0xFFE65100.toInt(),
+                    textColor = 0xFFFFFFFF.toInt(),
+                ))
                 calibLogger?.log(CalibrationLogger.Event.INCIDENT_WARNING) { "reason=${reason.label}" }
                 Timber.d("Warning incident dispatched: $reason")
             }
@@ -251,6 +254,11 @@ class EmergencyManager(
                 triggerEmergency(reason, config)
             }
         }
+    }
+
+    private fun warningTitleFor(reason: EmergencyReason): String = when (reason) {
+        EmergencyReason.WELLNESS_HIGH_HR -> "Heart rate high"
+        else -> context.getString(R.string.app_name)
     }
 
     private fun warningMessageFor(reason: EmergencyReason): String = when (reason) {
