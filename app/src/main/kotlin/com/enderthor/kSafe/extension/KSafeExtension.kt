@@ -657,6 +657,10 @@ class KSafeExtension : KarooExtension("ksafe", BuildConfig.VERSION_NAME), Corout
         return if (result.success) result.message else "Failed: ${result.message}"
     }
 
+    // ─── Temporary stubs replaced by real wiring in Task 11 ──────────────────
+    fun carbsTrackerOrNull(): com.enderthor.kSafe.extension.managers.CarbsTracker? = null
+    fun hydrationTrackerOrNull(): com.enderthor.kSafe.extension.managers.HydrationTracker? = null
+
     fun handleSOSTap() {
         if (!activeConfig.isActive) return
         // Use in-memory currentStatus — reading DataStore here can race with
