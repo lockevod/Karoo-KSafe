@@ -7,5 +7,5 @@
 # Local machine configuration — contains SDK path and SECRET credentials (never commit)
 local.properties
 
-!/docs/superpowers/specs/2026-05-09-medical-wellness-detectors-design.md
-!/docs/superpowers/
+# Internal planning / design notes — kept local, not part of the public repo
+/docs/superpowers/
