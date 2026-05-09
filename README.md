@@ -21,6 +21,8 @@ Compatible with Karoo 3 running Karoo OS version 1.527 and later.
 - **Manual SOS**: Tap the SOS data field to trigger an emergency alert manually.
 - **Check-in timer**: Set a periodic check-in interval. If you don't tap "OK" before the timer expires, an alert is sent automatically. **The timer pauses automatically when the ride is paused** (coffee stop, etc.) and resets when you resume — no alerts during planned breaks.
 - **Speed drop detection**: Detects when your speed drops suddenly and remains low for a configurable time window.
+- **Medical episode detection** *(optional, requires HR sensor)*: Detects sudden heart-rate flatline (asystole / severe bradycardia) or HR collapse (vasovagal syncope) during a ride. Triggers the same emergency flow as a crash by default. Stays silent if no HR sensor is paired — no false alarms when you don't wear a chest strap.
+- **Wellness monitor** *(optional, requires HR sensor)*: On-screen warning when HR stays above a configurable threshold for a sustained period — useful for fatigue / heat-stress awareness on long rides. Sent to the rider only, never to emergency contacts (response level configurable).
 - **Emergency countdown with cancel**: All triggers start a configurable countdown (default 30s) so you can cancel false alarms before alerts are sent. A **red overlay with a Cancel button** appears on top of the ride screen — visible from any screen, no matter which data field is active.
 - **Location included**: Your GPS coordinates are automatically included in the alert message as a Google Maps link.
 - **Multiple messaging providers**: WhatsApp via CallMeBot (free), push notification via Pushover, free unlimited push via ntfy, or Telegram bot messages (free, unlimited).
@@ -146,11 +148,12 @@ Add one or more fields to your Karoo ride profile from the profile editor. Confi
 
 ## Configuration
 
-Open the KSafe app on your Karoo to configure it. The app has three tabs:
+Open the KSafe app on your Karoo to configure it. The app has four tabs:
 
 - **Provider** — select and configure the messaging provider (Telegram, ntfy, WhatsApp, Pushover).
 - **Settings** — all safety settings: crash detection, check-in timer, speed drop, emergency message, and calibration logging.
 - **Actions** — configure custom message buttons (slots 1–3) and webhook actions (slots 1–2) to trigger messages or HTTP endpoints from hardware buttons.
+- **Health** — HR-based incident detection: medical episodes and wellness monitor (both optional, both require a paired heart-rate sensor).
 
 ### Settings Tab
 
@@ -197,6 +200,7 @@ When enabled, KSafe records detailed sensor events to a local CSV file:
 | Elapsed ride time | `elapsed_s=1247.3` |
 | Road grade (slope) | `grade=-5.2` (% descent) |
 | Pedalling cadence | `cadence=82 RPM` |
+| Heart rate *(when paired)* | `bpm=152`, `avg5min=149` |
 | Terrain noise level | `noise=2.4 m/s²` (std-dev over 5 s) |
 | Ride profile type | `profile=GRAVEL` (from Karoo profile) |
 | **Anonymous session ID** | `session=a3f9c2` (random, per-session) |
@@ -238,6 +242,48 @@ Crash detection thresholds (impact magnitudes, silence durations, speed gates) n
 - Tune the SILENCE_CHECK duration and deviation thresholds to real post-crash physics
 
 This data is processed by the developer and never shared with third parties.
+
+### Health Tab
+
+The Health tab adds two **HR-based detectors** that complement the accelerometer-based crash detection. Both are **optional** and only fire when a heart-rate sensor (ANT+ or BLE) is paired to the Karoo. Without HR data the detectors stay completely silent — no false negatives, no false positives.
+
+> [!IMPORTANT]
+> A heart-rate sensor is **never required** for KSafe to work. Crash detection, manual SOS, check-in timer, speed drop, and webhook actions all work without HR. The Health tab is purely additive — turn it on if you ride with a chest strap or optical HR monitor and want the extra detection layer.
+
+#### Medical episode detection
+
+Watches the rider's HR for two patterns that strongly indicate a medical incident:
+
+- **Flatline** — HR drops below 30 bpm for 30 continuous seconds while the rider is active. Catches asystole and severe bradycardia.
+- **Collapse** — HR drops by ≥ 40% from the 5-minute rolling average within 10 seconds. Catches vasovagal syncope and other events where the heart keeps beating at a low rate (where flatline alone wouldn't fire).
+
+Both checks have built-in guards: HR data must be fresh (sensor connected within the last 15 s), and the rider must have been moving above 5 km/h within the last 60 seconds. This avoids spurious alerts when the Karoo is sitting on a desk with a paired strap nearby, or when the sensor briefly disconnects.
+
+**Default**: enabled. Response level **Emergency** — same flow as a crash detection (configurable countdown + alert to contacts). The alert message uses your standard emergency message template; the `{reason}` placeholder reads "Medical episode detected".
+
+#### Wellness monitor
+
+Watches for sustained high HR — useful as a fatigue / heat-stress reminder on long rides. Default threshold: **180 bpm sustained for 30 continuous minutes**. Both values are configurable per rider in the Health tab.
+
+The streak resets if HR drops below the threshold even briefly — only **continuous** sustained zones trigger the warning, not cumulative time. After firing, a cooldown of one streak-duration must elapse and HR must drop below the threshold and rise again before another warning can fire (no spam during long climbs or sustained interval workouts).
+
+**Default**: disabled (opt-in — the right thresholds depend strongly on rider age and fitness). Response level **Warning** by default — on-screen notification + beep, **never** sent to emergency contacts unless you explicitly raise the response level to Emergency.
+
+#### Response levels
+
+Each detector has a configurable response level:
+
+| Level | What happens |
+|-------|-------------|
+| **Silent** | Logged to calibration data only — useful for testing without producing UI noise |
+| **Warning** | On-screen notification + beep on the Karoo, no alert to emergency contacts |
+| **Emergency** | Full crash flow: countdown + alert to contacts |
+
+#### Privacy
+
+Heart-rate readings are consumed only by the on-device detectors. They are **never sent to your emergency contacts** unless a medical episode actually triggers an alert — and even then, the alert message is your standard emergency template. Your raw HR value itself is not included in the outgoing message.
+
+When calibration logging is enabled, anonymised HR data does appear in the local CSV (same handling as the accelerometer / cadence / grade data already collected) — see [Calibration Logging](#calibration-logging-optional).
 
 ### Provider Tab
 
