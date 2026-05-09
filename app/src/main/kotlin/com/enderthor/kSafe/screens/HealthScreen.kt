@@ -156,12 +156,17 @@ fun HealthScreen(vm: MainViewModel) {
                         }
                     )
                 }
+                // Persist only when the typed value lands in the valid range.
+                // Saving every keystroke through coerceIn would snap "1"→80, "15"→80, "150"→150
+                // while the user is mid-typing — the saved value would diverge from what's shown.
+                // With the in-range guard the field accepts free typing and only commits sensible values.
                 OutlinedTextField(
                     value = wellnessThreshold,
                     onValueChange = { v ->
                         wellnessThreshold = v.filter { it.isDigit() }.take(3)
-                        wellnessThreshold.toIntOrNull()?.let {
-                            vm.saveConfig(config.copy(wellnessHighHrThreshold = it.coerceIn(80, 250)))
+                        val parsed = wellnessThreshold.toIntOrNull()
+                        if (parsed != null && parsed in 80..250) {
+                            vm.saveConfig(config.copy(wellnessHighHrThreshold = parsed))
                         }
                     },
                     label = { Text(stringResource(R.string.health_wellness_threshold_label)) },
@@ -171,8 +176,9 @@ fun HealthScreen(vm: MainViewModel) {
                     value = wellnessDuration,
                     onValueChange = { v ->
                         wellnessDuration = v.filter { it.isDigit() }.take(3)
-                        wellnessDuration.toIntOrNull()?.let {
-                            vm.saveConfig(config.copy(wellnessHighHrDurationMinutes = it.coerceIn(5, 240)))
+                        val parsed = wellnessDuration.toIntOrNull()
+                        if (parsed != null && parsed in 5..240) {
+                            vm.saveConfig(config.copy(wellnessHighHrDurationMinutes = parsed))
                         }
                     },
                     label = { Text(stringResource(R.string.health_wellness_duration_label)) },
