@@ -111,3 +111,13 @@ fun StreamState.gradePercent(): Double? {
     return dataPoint.singleValue  // already in %
 }
 
+/**
+ * Extracts heart rate in bpm from a HEART_RATE [StreamState.Streaming] data point.
+ * Returns null when no rate is being streamed (no sensor paired, sensor disconnected,
+ * or the SDK has not emitted yet). Mirrors [speedKmh] / [cadenceRpm] / [gradePercent].
+ */
+fun StreamState.heartRateBpm(): Int? {
+    if (this !is StreamState.Streaming) return null
+    return dataPoint.singleValue?.toInt()
+}
+
