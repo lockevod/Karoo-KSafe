@@ -371,6 +371,7 @@ val defaultEmergencyStateJson: String = Json.encodeToString(EmergencyState())
  */
 fun KSafeConfig.migrateToLatest(): KSafeConfig {
     var c = this
+    val originalVersion = c.configVersion
 
     if (c.configVersion < 2) {
         val preset = c.crashSensitivity
@@ -381,14 +382,14 @@ fun KSafeConfig.migrateToLatest(): KSafeConfig {
             // If the user had already customised them, leave them alone.
             val newMin     = if (c.minSpeedForCrashKmh == 10)  canonMin     else c.minSpeedForCrashKmh
             val newConfirm = if (c.crashConfirmSpeedKmh == 5) canonConfirm else c.crashConfirmSpeedKmh
-            c = c.copy(minSpeedForCrashKmh = newMin, crashConfirmSpeedKmh = newConfirm, configVersion = CONFIG_VERSION)
+            c = c.copy(minSpeedForCrashKmh = newMin, crashConfirmSpeedKmh = newConfirm, configVersion = 2)
         } else {
-            c = c.copy(configVersion = CONFIG_VERSION)
+            c = c.copy(configVersion = 2)
         }
         if (c.minSpeedForCrashKmh != minSpeedForCrashKmh || c.crashConfirmSpeedKmh != crashConfirmSpeedKmh) {
             Timber.i(
-                "KSafeConfig migrated v%d→v%d: minSpeed %d→%d, confirmSpeed %d→%d (preset=%s)",
-                configVersion, CONFIG_VERSION,
+                "KSafeConfig migrated v%d→v2: minSpeed %d→%d, confirmSpeed %d→%d (preset=%s)",
+                originalVersion,
                 minSpeedForCrashKmh, c.minSpeedForCrashKmh,
                 crashConfirmSpeedKmh, c.crashConfirmSpeedKmh,
                 preset
@@ -399,8 +400,8 @@ fun KSafeConfig.migrateToLatest(): KSafeConfig {
     if (c.configVersion < 3) {
         // v2 → v3: new HR-based detector fields all carry safe defaults via the data class.
         // Only the version stamp needs updating; deserialization auto-fills missing fields.
-        c = c.copy(configVersion = CONFIG_VERSION)
-        Timber.i("KSafeConfig migrated v%d→v%d (medical/wellness fields added)", configVersion, CONFIG_VERSION)
+        c = c.copy(configVersion = 3)
+        Timber.i("KSafeConfig migrated v%d→v3 (medical/wellness fields added)", originalVersion)
     }
 
     return c
