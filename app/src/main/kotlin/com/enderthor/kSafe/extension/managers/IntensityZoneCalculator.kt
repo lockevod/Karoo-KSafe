@@ -20,12 +20,21 @@ object IntensityZoneCalculator {
 
     fun calculate(profile: UserProfile?, currentHr: Int?, currentPowerW: Int?): ZoneSnapshot {
         if (profile != null && currentPowerW != null && profile.powerZones.isNotEmpty()) {
-            val idx = profile.powerZones.indexOfFirst { currentPowerW in it.min..it.max }
-            if (idx >= 0) return snapshot(ZoneSource.POWER, idx, profile.powerZones.size)
+            val zones = profile.powerZones
+            val idx = zones.indexOfFirst { currentPowerW in it.min..it.max }
+            if (idx >= 0) return snapshot(ZoneSource.POWER, idx, zones.size)
+            // Out-of-range — clamp to nearest zone edge so a rider coasting below zone 1
+            // gets MIN_MULT (recovery) rather than the same neutral 1.0 we give to "no sensor".
+            // Source stays POWER so calibration analysis can distinguish "below range" from NONE.
+            val clamped = if (currentPowerW < zones[0].min) 0 else zones.size - 1
+            return snapshot(ZoneSource.POWER, clamped, zones.size)
         }
         if (profile != null && currentHr != null && profile.heartRateZones.isNotEmpty()) {
-            val idx = profile.heartRateZones.indexOfFirst { currentHr in it.min..it.max }
-            if (idx >= 0) return snapshot(ZoneSource.HR, idx, profile.heartRateZones.size)
+            val zones = profile.heartRateZones
+            val idx = zones.indexOfFirst { currentHr in it.min..it.max }
+            if (idx >= 0) return snapshot(ZoneSource.HR, idx, zones.size)
+            val clamped = if (currentHr < zones[0].min) 0 else zones.size - 1
+            return snapshot(ZoneSource.HR, clamped, zones.size)
         }
         return ZoneSnapshot(ZoneSource.NONE, -1, 0, 1.0f)
     }
