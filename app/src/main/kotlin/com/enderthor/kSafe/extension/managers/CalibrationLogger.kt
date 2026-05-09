@@ -102,6 +102,23 @@ class CalibrationLogger(
         PERIODIC("PERIODIC"),
         /** Marker written when logging is enabled — anchor for elapsed_s calculations. */
         LOGGER_START("LOG_START"),
+        // ─── Medical / wellness detectors (added 2026-05) ────────────────────
+        /** HR-flatline fired (bpm < HR_FLATLINE_MAX_BPM sustained for HR_FLATLINE_DURATION_SEC). */
+        HR_FLATLINE("HR_FLAT"),
+        /** HR-collapse fired (≥ HR_COLLAPSE_DROP_FRACTION drop within HR_COLLAPSE_WINDOW_SEC vs 5-min average). */
+        HR_COLLAPSE("HR_COLLAPSE"),
+        /** Periodic HR snapshot every 2 min, correlable by timestamp with PERIODIC. */
+        HR_PERIODIC("HR_PERIODIC"),
+        /** HR sensor went stale (no update for HR_STALE_MS) — once per fresh→stale transition. */
+        HR_STALE("HR_STALE"),
+        /** User cancelled a medical episode countdown (false-positive marker). */
+        MEDICAL_CANCELLED("MED_NO"),
+        /** Wellness monitor fired (sustained high HR over user-configured threshold). */
+        WELLNESS_FIRED("WLNS_HR"),
+        /** Generic WARNING-level incident dispatched by EmergencyManager.handleIncident. */
+        INCIDENT_WARNING("WARN"),
+        /** Generic SILENT-level incident dispatched by EmergencyManager.handleIncident. */
+        INCIDENT_SILENT("SILENT"),
         /** Marker written when logging is disabled — session end boundary. */
         LOG_END("LOG_END"),
     }
