@@ -6,6 +6,6 @@
   "latestVersion": "2.0.0",
   "latestVersionCode": 202605091,
   "developer": "github.com/lockevod",
-  "description": "Karoo safety extension: crash detection, manual SOS, check-in timer. Sends alerts via WhatsApp (CallMeBot), Telegram, Pushover or ntfy. Beta version, use with care.",
-  "releaseNotes": "Added wellness cheks. Added HR monitoring with alerts/emergency trigger"
+  "description": "Karoo safety extension: crash detection, manual SOS, check-in timer, plus optional HR-based medical episode and wellness detection. Sends alerts via WhatsApp (CallMeBot), Telegram, Pushover or ntfy. Beta version, use with care.",
+  "releaseNotes": "Added Health tab with HR-based detection (requires paired heart-rate sensor). Medical episode detection — HR flatline or sudden collapse — triggers an emergency alert to your contacts. Wellness monitor warns on-screen when HR stays high for a sustained period. Each detector has a configurable response level (silent / warning / emergency)."
 }
