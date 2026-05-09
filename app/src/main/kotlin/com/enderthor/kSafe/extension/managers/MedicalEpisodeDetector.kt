@@ -92,6 +92,14 @@ class MedicalEpisodeDetector(
     fun stop() {
         monitorJob?.cancel()
         monitorJob = null
+        // Clear cross-session state so a new ride starts with a fresh baseline.
+        // Otherwise a stop()→start() cycle can preserve stale HR samples that taint
+        // the 5-min rolling baseline and trigger a false MEDICAL_COLLAPSE EMERGENCY
+        // when the new ride starts at a much lower HR than the previous one ended.
+        hrSamples.clear()
+        hrDataReceived = false
+        currentHrBpm = 0
+        lastHrUpdateMs = 0L
         Timber.d("MedicalEpisodeDetector stopped")
     }
 
@@ -225,11 +233,16 @@ class MedicalEpisodeDetector(
     private fun computeAverageHr(now: Long): Int =
         computeAverageHrInWindow(now - HR_COLLAPSE_MIN_HISTORY_SEC * 1000L, now)
 
+    /**
+     * Average bpm over [fromMs, toMs) — half-open on the upper bound so a sample whose
+     * timestamp lands exactly on the boundary between the baseline and recent windows
+     * is counted in only one of them (the lower / earlier window).
+     */
     private fun computeAverageHrInWindow(fromMs: Long, toMs: Long): Int {
         var sum = 0L
         var count = 0
         for ((t, bpm) in hrSamples) {
-            if (t in fromMs..toMs) {
+            if (t in fromMs until toMs) {
                 sum += bpm
                 count++
             }
