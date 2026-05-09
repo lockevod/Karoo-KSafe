@@ -26,8 +26,12 @@ const val KAROO_LIVE_BASE_URL = "https://dashboard.hammerhead.io/live/"
  *                       generic Kotlin defaults (10 and 5) regardless of preset — migration
  *                       applies the correct canonical values if the stored value matches the
  *                       old generic default.
+ *  v2 → v3 : medicalEpisodeEnabled, medicalResponseLevel, wellnessEnabled, wellnessResponseLevel,
+ *            wellnessHighHrThreshold, wellnessHighHrDurationMinutes added. All have safe Kotlin
+ *            defaults; no field-rewriting needed during migration. The version bump alone marks
+ *            the config as current.
  */
-const val CONFIG_VERSION = 2
+const val CONFIG_VERSION = 3
 
 /**
  * Canonical minSpeedForCrashKmh value per preset.
@@ -75,12 +79,27 @@ enum class CrashSensitivity {
     CUSTOM  // User-defined threshold
 }
 
+/**
+ * How an incident detector's emission should be handled.
+ *
+ *  - [SILENT]    — log to calibration only; no UI, no notification, no contact alert.
+ *  - [WARNING]   — on-screen [SystemNotification] + beep. No countdown, no contact alert.
+ *  - [EMERGENCY] — full crash flow: countdown + contact alert.
+ */
+enum class IncidentResponseLevel { SILENT, WARNING, EMERGENCY }
+
 enum class EmergencyStatus { IDLE, COUNTDOWN, ALERTING }
 
 enum class EmergencyReason(val label: String) {
     MANUAL_SOS("Manual SOS"),
     CRASH_DETECTED("Crash detected"),
-    CHECKIN_EXPIRED("Check-in expired")
+    CHECKIN_EXPIRED("Check-in expired"),
+    /** HR-flatline sub-detector of [MedicalEpisodeDetector]. Same user-visible label as [MEDICAL_COLLAPSE]. */
+    MEDICAL_FLATLINE("Medical episode detected"),
+    /** HR-collapse sub-detector of [MedicalEpisodeDetector]. Same user-visible label as [MEDICAL_FLATLINE]. */
+    MEDICAL_COLLAPSE("Medical episode detected"),
+    /** Sustained HR over [KSafeConfig.wellnessHighHrThreshold] for [KSafeConfig.wellnessHighHrDurationMinutes]. */
+    WELLNESS_HIGH_HR("Sustained high heart rate"),
 }
 
 // ─── Config models ────────────────────────────────────────────────────────────
@@ -122,6 +141,20 @@ data class KSafeConfig(
     val customMessage3Enabled: Boolean = false,
     val customMessage3Title: String = "MSG3",
     val customMessage3: String = "",
+    // ─── Medical episode detector (HR-based) ──────────────────────────────────
+    /** Master toggle for [MedicalEpisodeDetector]. Default ON — self-gated by HR sensor presence. */
+    val medicalEpisodeEnabled: Boolean = true,
+    /** Response level for medical episodes. Default EMERGENCY (cardiac arrest = same severity as crash). */
+    val medicalResponseLevel: IncidentResponseLevel = IncidentResponseLevel.EMERGENCY,
+    // ─── Wellness monitor (sustained high HR) ────────────────────────────────
+    /** Master toggle for [WellnessMonitor]. Default OFF — opt-in: thresholds depend on user age/fitness. */
+    val wellnessEnabled: Boolean = false,
+    /** Response level for wellness alerts. Default WARNING — on-screen only, never to contacts. */
+    val wellnessResponseLevel: IncidentResponseLevel = IncidentResponseLevel.WARNING,
+    /** HR threshold for the wellness monitor (bpm). User-tunable in the Health tab. */
+    val wellnessHighHrThreshold: Int = 180,
+    /** How long HR must stay >= [wellnessHighHrThreshold] continuously before warning fires (minutes). */
+    val wellnessHighHrDurationMinutes: Int = 30,
     // Calibration logging — writes detailed sensor events to CSV for threshold tuning
     val calibrationLoggingEnabled: Boolean = false,
     // Field colours — idle/ready background for each ride-screen widget
@@ -361,6 +394,13 @@ fun KSafeConfig.migrateToLatest(): KSafeConfig {
                 preset
             )
         }
+    }
+
+    if (c.configVersion < 3) {
+        // v2 → v3: new HR-based detector fields all carry safe defaults via the data class.
+        // Only the version stamp needs updating; deserialization auto-fills missing fields.
+        c = c.copy(configVersion = CONFIG_VERSION)
+        Timber.i("KSafeConfig migrated v%d→v%d (medical/wellness fields added)", configVersion, CONFIG_VERSION)
     }
 
     return c
