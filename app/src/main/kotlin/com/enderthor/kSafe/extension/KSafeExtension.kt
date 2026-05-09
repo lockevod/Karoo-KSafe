@@ -1,6 +1,7 @@
 package com.enderthor.kSafe.extension
 
 import com.enderthor.kSafe.BuildConfig
+import com.enderthor.kSafe.R
 import com.enderthor.kSafe.data.EmergencyReason
 import com.enderthor.kSafe.data.EmergencyStatus
 import com.enderthor.kSafe.data.KSafeConfig
@@ -54,6 +55,8 @@ class KSafeExtension : KarooExtension("ksafe", BuildConfig.VERSION_NAME), Corout
     private lateinit var webhookManager: WebhookManager
     private lateinit var medicalDetector: MedicalEpisodeDetector
     private lateinit var wellnessMonitor: WellnessMonitor
+    private lateinit var carbsTracker: com.enderthor.kSafe.extension.managers.CarbsTracker
+    private lateinit var hydrationTracker: com.enderthor.kSafe.extension.managers.HydrationTracker
 
     private var activeConfig = KSafeConfig()
     private var currentRideState: RideState? = null
@@ -77,6 +80,13 @@ class KSafeExtension : KarooExtension("ksafe", BuildConfig.VERSION_NAME), Corout
             CustomMessageDataType("custom-message-field-3", applicationContext, karooSystem, slot = 3),
             WebhookDataType("webhook-field-1", applicationContext, karooSystem, slot = 1),
             WebhookDataType("webhook-field-2", applicationContext, karooSystem, slot = 2),
+            com.enderthor.kSafe.datatype.CarbLogDataType("carb-log-1", applicationContext, karooSystem, slot = 1),
+            com.enderthor.kSafe.datatype.CarbLogDataType("carb-log-2", applicationContext, karooSystem, slot = 2),
+            com.enderthor.kSafe.datatype.CarbLogDataType("carb-log-3", applicationContext, karooSystem, slot = 3),
+            com.enderthor.kSafe.datatype.CarbStatusDataType("carb-status", applicationContext, karooSystem),
+            com.enderthor.kSafe.datatype.HydrationLogDataType("hyd-log-1", applicationContext, karooSystem, slot = 1),
+            com.enderthor.kSafe.datatype.HydrationLogDataType("hyd-log-2", applicationContext, karooSystem, slot = 2),
+            com.enderthor.kSafe.datatype.HydrationStatusDataType("hyd-status", applicationContext, karooSystem),
         )
     }
 
@@ -119,6 +129,18 @@ class KSafeExtension : KarooExtension("ksafe", BuildConfig.VERSION_NAME), Corout
             },
             calibLogger = calibLogger,
         )
+        carbsTracker = com.enderthor.kSafe.extension.managers.CarbsTracker(
+            scope = this,
+            karooSystem = karooSystem,
+            context = applicationContext,
+            calibLogger = calibLogger,
+        )
+        hydrationTracker = com.enderthor.kSafe.extension.managers.HydrationTracker(
+            scope = this,
+            karooSystem = karooSystem,
+            context = applicationContext,
+            calibLogger = calibLogger,
+        )
 
         karooSystem.connect { connected ->
             if (connected) {
@@ -139,6 +161,8 @@ class KSafeExtension : KarooExtension("ksafe", BuildConfig.VERSION_NAME), Corout
                 crashManager.updateConfig(config)
                 medicalDetector.updateConfig(config)
                 wellnessMonitor.updateConfig(config)
+                carbsTracker.updateConfig(config)
+                hydrationTracker.updateConfig(config)
                 // Toggle calibration logging based on config
                 if (config.calibrationLoggingEnabled && !calibLogger.isEnabled) {
                     calibLogger.enable()
@@ -220,12 +244,30 @@ class KSafeExtension : KarooExtension("ksafe", BuildConfig.VERSION_NAME), Corout
         }
 
         launch {
+            // Power meter stream — optional. carbsTracker prefers POWER over HR for the zone multiplier.
+            karooSystem.streamDataFlow(io.hammerhead.karooext.models.DataType.Type.POWER)
+                .collect { streamState ->
+                    val w = streamState.powerW() ?: return@collect
+                    carbsTracker.updatePower(w)
+                }
+        }
+
+        launch {
+            // Rider profile (weight, max HR, FTP, HR zones, power zones). Read continuously —
+            // if the rider edits their profile in the Karoo settings mid-ride, the new values
+            // propagate immediately to the carb tracker.
+            karooSystem.streamUserProfile()
+                .collect { profile -> carbsTracker.updateUserProfile(profile) }
+        }
+
+        launch {
             // HR stream (ANT+/BLE). Optional: silent when no sensor is paired.
             karooSystem.streamDataFlow(io.hammerhead.karooext.models.DataType.Type.HEART_RATE)
                 .collect { streamState ->
                     val hr = streamState.heartRateBpm() ?: return@collect
                     medicalDetector.updateHr(hr)
                     wellnessMonitor.updateHr(hr)
+                    carbsTracker.updateHr(hr)
                 }
         }
     }
@@ -239,6 +281,8 @@ class KSafeExtension : KarooExtension("ksafe", BuildConfig.VERSION_NAME), Corout
                     crashManager.start(activeConfig)
                     medicalDetector.start(activeConfig)
                     wellnessMonitor.start(activeConfig)
+                    carbsTracker.start(activeConfig)
+                    hydrationTracker.start(activeConfig)
                     emergencyManager.startCheckinTimer(activeConfig)
                     // Only send the start notification on the very first Recording event.
                     // Resuming from Pause also triggers Recording — we skip it there.
@@ -264,8 +308,11 @@ class KSafeExtension : KarooExtension("ksafe", BuildConfig.VERSION_NAME), Corout
                 val wasActive = rideWasActive
                 val wasLogging = calibLogger.isEnabled
                 emergencyManager.stopAll()
+                if (wasActive) sendFuelingPostRideSummary()
                 medicalDetector.stop()
                 wellnessMonitor.stop()
+                carbsTracker.stop()
+                hydrationTracker.stop()
                 applyIdleMonitoring(activeConfig)
                 // Reset per-ride flags
                 rideStartNotificationSent = false
@@ -341,12 +388,49 @@ class KSafeExtension : KarooExtension("ksafe", BuildConfig.VERSION_NAME), Corout
                 Timber.d("BonusAction: trigger-webhook-2 triggered")
                 launch { handleWebhookTap(2) }
             }
+            "log-carb-1" -> {
+                Timber.d("BonusAction: log-carb-1 triggered")
+                handleCarbLogTap(1)
+            }
+            "log-drink-1" -> {
+                Timber.d("BonusAction: log-drink-1 triggered")
+                handleHydrationLogTap(1)
+            }
         }
     }
 
     /** Direct cancel — called from CancelEmergencyActivity. */
     fun cancelEmergency() {
         launch { emergencyManager.cancelEmergency(activeConfig) }
+    }
+
+    /**
+     * Dispatches an InRideAlert with the totals for any enabled fueling tracker.
+     * Called from the Idle branch of handleRideState before the trackers are stopped.
+     */
+    private fun sendFuelingPostRideSummary() {
+        val config = activeConfig
+        if (!config.fuelingPostRideSummaryEnabled) return
+        if (!this::carbsTracker.isInitialized || !this::hydrationTracker.isInitialized) return
+        val parts = mutableListOf<String>()
+        if (config.carbsTrackerEnabled) {
+            val s = carbsTracker.getSummary()
+            if (s.cumTargetG > 0) parts.add("Carbs: ${s.cumLoggedG}/${s.cumTargetG}g (${s.percentageHit}%)")
+        }
+        if (config.hydrationTrackerEnabled) {
+            val s = hydrationTracker.getSummary()
+            if (s.cumTargetMl > 0) parts.add("Hyd: ${s.cumLoggedMl}/${s.cumTargetMl}ml (${s.percentageHit}%)")
+        }
+        if (parts.isEmpty()) return
+        karooSystem.dispatch(io.hammerhead.karooext.models.InRideAlert(
+            id = "ksafe-fueling-summary",
+            icon = R.drawable.ic_ksafe,
+            title = "Ride finished",
+            detail = parts.joinToString(" • "),
+            autoDismissMs = 15_000L,
+            backgroundColor = 0xFF2E7D32.toInt(),
+            textColor = 0xFFFFFFFF.toInt(),
+        ))
     }
 
     /** Sends a ride-start notification with the Karoo Live link if the feature is enabled and a key is set. */
@@ -657,16 +741,37 @@ class KSafeExtension : KarooExtension("ksafe", BuildConfig.VERSION_NAME), Corout
         return if (result.success) result.message else "Failed: ${result.message}"
     }
 
-    // ─── Temporary stubs replaced by real wiring in Task 11 ──────────────────
-    fun carbsTrackerOrNull(): com.enderthor.kSafe.extension.managers.CarbsTracker? = null
-    fun hydrationTrackerOrNull(): com.enderthor.kSafe.extension.managers.HydrationTracker? = null
+    /** Returns the carbs tracker, or null if not yet initialised (called from data fields). */
+    fun carbsTrackerOrNull(): com.enderthor.kSafe.extension.managers.CarbsTracker? =
+        if (this::carbsTracker.isInitialized) carbsTracker else null
 
-    // ─── Temporary stubs replaced in Task 11 ─────────────────────────────────
+    /** Returns the hydration tracker, or null if not yet initialised. */
+    fun hydrationTrackerOrNull(): com.enderthor.kSafe.extension.managers.HydrationTracker? =
+        if (this::hydrationTracker.isInitialized) hydrationTracker else null
+
     fun handleCarbLogTap(slot: Int) {
-        Timber.d("handleCarbLogTap slot=$slot (stub — wiring lands in Task 11)")
+        Timber.d("handleCarbLogTap slot=$slot")
+        if (!activeConfig.carbsTrackerEnabled) return
+        if (!this::carbsTracker.isInitialized) return
+        carbsTracker.logEntry(slot)
+        // Brief on-field feedback then back to idle. Mirrors CustomMessage behaviour.
+        com.enderthor.kSafe.datatype.CarbLogState.update(slot, com.enderthor.kSafe.datatype.CarbLogState.LOGGED)
+        launch {
+            kotlinx.coroutines.delay(2_000L)
+            com.enderthor.kSafe.datatype.CarbLogState.update(slot, com.enderthor.kSafe.datatype.CarbLogState.IDLE)
+        }
     }
+
     fun handleHydrationLogTap(slot: Int) {
-        Timber.d("handleHydrationLogTap slot=$slot (stub — wiring lands in Task 11)")
+        Timber.d("handleHydrationLogTap slot=$slot")
+        if (!activeConfig.hydrationTrackerEnabled) return
+        if (!this::hydrationTracker.isInitialized) return
+        hydrationTracker.logEntry(slot)
+        com.enderthor.kSafe.datatype.HydrationLogState.update(slot, com.enderthor.kSafe.datatype.HydrationLogState.LOGGED)
+        launch {
+            kotlinx.coroutines.delay(2_000L)
+            com.enderthor.kSafe.datatype.HydrationLogState.update(slot, com.enderthor.kSafe.datatype.HydrationLogState.IDLE)
+        }
     }
 
     fun handleSOSTap() {
@@ -731,6 +836,8 @@ class KSafeExtension : KarooExtension("ksafe", BuildConfig.VERSION_NAME), Corout
         crashManager.stop()
         medicalDetector.stop()
         wellnessMonitor.stop()
+        carbsTracker.stop()
+        hydrationTracker.stop()
         locationManager.stop()
         emergencyManager.stopAll()
         calibLogger.disable()
