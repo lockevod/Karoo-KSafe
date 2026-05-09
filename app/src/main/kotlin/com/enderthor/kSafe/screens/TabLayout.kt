@@ -59,6 +59,7 @@ fun TabLayout(vm: MainViewModel = viewModel()) {
         stringResource(R.string.tab_provider),
         stringResource(R.string.tab_settings),
         stringResource(R.string.tab_actions),
+        stringResource(R.string.tab_health),
     )
     var selectedTab by remember { mutableIntStateOf(0) }
 
@@ -135,6 +136,7 @@ fun TabLayout(vm: MainViewModel = viewModel()) {
             0 -> ProviderScreen(vm)
             1 -> SettingsScreen(vm)
             2 -> ActionsScreen(vm)
+            3 -> HealthScreen(vm)
         }
     }
 }
