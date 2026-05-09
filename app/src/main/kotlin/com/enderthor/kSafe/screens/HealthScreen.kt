@@ -9,11 +9,11 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
-import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.ExposedDropdownMenuBox
 import androidx.compose.material3.ExposedDropdownMenuDefaults
+import androidx.compose.material3.MenuAnchorType
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Switch
@@ -36,8 +36,8 @@ import com.enderthor.kSafe.activity.MainViewModel
 import com.enderthor.kSafe.data.IncidentResponseLevel
 
 /**
- * Health monitoring tab — exposes the user-configurable knobs for [MedicalEpisodeDetector]
- * and [WellnessMonitor]. Internal thresholds (HR_FLATLINE_MAX_BPM, HR_COLLAPSE_DROP_FRACTION,
+ * Health monitoring tab — exposes the user-configurable knobs for MedicalEpisodeDetector
+ * and WellnessMonitor. Internal thresholds (HR_FLATLINE_MAX_BPM, HR_COLLAPSE_DROP_FRACTION,
  * etc.) are NOT exposed; they are calibrated in code from real ride data.
  */
 @Composable
@@ -207,33 +207,33 @@ private fun ResponseLevelDropdown(
     selected: IncidentResponseLevel,
     onSelected: (IncidentResponseLevel) -> Unit,
 ) {
-    var expanded by remember { mutableStateOf(false) }
+    val expandedState = remember { mutableStateOf(false) }
     val labels = mapOf(
         IncidentResponseLevel.SILENT    to stringResource(R.string.health_response_silent),
         IncidentResponseLevel.WARNING   to stringResource(R.string.health_response_warning),
         IncidentResponseLevel.EMERGENCY to stringResource(R.string.health_response_emergency),
     )
     ExposedDropdownMenuBox(
-        expanded = expanded,
-        onExpandedChange = { expanded = it },
+        expanded = expandedState.value,
+        onExpandedChange = { expandedState.value = it },
     ) {
         TextField(
             value = labels[selected] ?: selected.name,
             onValueChange = {},
             readOnly = true,
-            trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = expanded) },
-            modifier = Modifier.menuAnchor()
+            trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = expandedState.value) },
+            modifier = Modifier.menuAnchor(MenuAnchorType.PrimaryNotEditable)
         )
         ExposedDropdownMenu(
-            expanded = expanded,
-            onDismissRequest = { expanded = false },
+            expanded = expandedState.value,
+            onDismissRequest = { expandedState.value = false },
         ) {
             IncidentResponseLevel.entries.forEach { lvl ->
                 DropdownMenuItem(
                     text = { Text(labels[lvl] ?: lvl.name) },
                     onClick = {
                         onSelected(lvl)
-                        expanded = false
+                        expandedState.value = false
                     }
                 )
             }
