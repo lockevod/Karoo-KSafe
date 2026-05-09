@@ -661,6 +661,14 @@ class KSafeExtension : KarooExtension("ksafe", BuildConfig.VERSION_NAME), Corout
     fun carbsTrackerOrNull(): com.enderthor.kSafe.extension.managers.CarbsTracker? = null
     fun hydrationTrackerOrNull(): com.enderthor.kSafe.extension.managers.HydrationTracker? = null
 
+    // ─── Temporary stubs replaced in Task 11 ─────────────────────────────────
+    fun handleCarbLogTap(slot: Int) {
+        Timber.d("handleCarbLogTap slot=$slot (stub — wiring lands in Task 11)")
+    }
+    fun handleHydrationLogTap(slot: Int) {
+        Timber.d("handleHydrationLogTap slot=$slot (stub — wiring lands in Task 11)")
+    }
+
     fun handleSOSTap() {
         if (!activeConfig.isActive) return
         // Use in-memory currentStatus — reading DataStore here can race with
