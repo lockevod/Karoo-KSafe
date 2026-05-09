@@ -22,16 +22,15 @@ const val KAROO_LIVE_BASE_URL = "https://dashboard.hammerhead.io/live/"
  *
  * History:
  *  v0 (default) → v2 : minSpeedForCrashKmh and crashConfirmSpeedKmh gained preset-canonical
- *                       values (LOW=3/3, MEDIUM=10/5, HIGH=15/5). Old installs may have the
- *                       generic Kotlin defaults (10 and 5) regardless of preset — migration
- *                       applies the correct canonical values if the stored value matches the
- *                       old generic default.
+ *                       values (LOW=3/3, MEDIUM=10/5, HIGH=15/5).
  *  v2 → v3 : medicalEpisodeEnabled, medicalResponseLevel, wellnessEnabled, wellnessResponseLevel,
- *            wellnessHighHrThreshold, wellnessHighHrDurationMinutes added. All have safe Kotlin
- *            defaults; no field-rewriting needed during migration. The version bump alone marks
- *            the config as current.
+ *            wellnessHighHrThreshold, wellnessHighHrDurationMinutes added. Migration was a
+ *            pure version stamp.
+ *  v3 → v4 : carbs/hydration tracker fields (22 fields) added. Migration is a pure version stamp;
+ *            all fields auto-fill from Kotlin defaults via kotlinx.serialization with
+ *            ignoreUnknownKeys = true.
  */
-const val CONFIG_VERSION = 3
+const val CONFIG_VERSION = 4
 
 /**
  * Canonical minSpeedForCrashKmh value per preset.
@@ -196,6 +195,35 @@ data class KSafeConfig(
     val webhook1AlertText: String = "",
     val webhook2AlertEnabled: Boolean = false,
     val webhook2AlertText: String = "",
+    // ─── Carbs tracker (HR/power-aware nutrition) ───────────────────────────
+    /** Master toggle. Opt-in feature, off by default. */
+    val carbsTrackerEnabled: Boolean = false,
+    /** Base carb intake target (g/h). Modulated at runtime by the IntensityZoneCalculator. */
+    val carbTargetGperHour: Int = 60,
+    /** When true, alert when (cumulative target − cumulative logged) exceeds threshold. */
+    val carbDeficitAlertEnabled: Boolean = true,
+    val carbDeficitThresholdG: Int = 25,
+    /** When true, alert when too much time has passed since the last log. Combinable with deficit alert. */
+    val carbTimeAlertEnabled: Boolean = false,
+    val carbTimeIntervalMin: Int = 25,
+    /** Three logging slots, each user-configurable label + grams. */
+    val carb1Label: String = "Gel",      val carb1Grams: Int = 25,
+    val carb2Label: String = "Bar",      val carb2Grams: Int = 30,
+    val carb3Label: String = "Fruit",    val carb3Grams: Int = 20,
+
+    // ─── Hydration tracker (flat target by time, no sensor input) ───────────
+    val hydrationTrackerEnabled: Boolean = false,
+    val hydrationTargetMlPerHour: Int = 750,
+    val hydrationDeficitAlertEnabled: Boolean = true,
+    val hydrationDeficitThresholdMl: Int = 300,
+    val hydrationTimeAlertEnabled: Boolean = false,
+    val hydrationTimeIntervalMin: Int = 20,
+    val drink1Label: String = "Sip",     val drink1Ml: Int = 100,
+    val drink2Label: String = "Bottle",  val drink2Ml: Int = 500,
+
+    // ─── Post-ride summary ──────────────────────────────────────────────────
+    /** Show an InRideAlert with totals at the end of every ride. */
+    val fuelingPostRideSummaryEnabled: Boolean = true,
     /**
      * Config schema version — used to detect stale saved configs and apply migrations.
      * Default 0 ensures that any pre-versioning config (JSON without this field) triggers migration.
@@ -402,6 +430,13 @@ fun KSafeConfig.migrateToLatest(): KSafeConfig {
         // Only the version stamp needs updating; deserialization auto-fills missing fields.
         c = c.copy(configVersion = 3)
         Timber.i("KSafeConfig migrated v%d→v3 (medical/wellness fields added)", originalVersion)
+    }
+
+    if (c.configVersion < 4) {
+        // v3 → v4: fueling tracker fields all carry safe defaults via the data class.
+        // Only the version stamp needs updating; deserialization auto-fills missing fields.
+        c = c.copy(configVersion = 4)
+        Timber.i("KSafeConfig migrated v%d→v4 (fueling tracker fields added)", originalVersion)
     }
 
     return c
