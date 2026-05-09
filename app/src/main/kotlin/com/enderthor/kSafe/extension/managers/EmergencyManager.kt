@@ -5,6 +5,7 @@ import com.enderthor.kSafe.R
 import com.enderthor.kSafe.data.EmergencyReason
 import com.enderthor.kSafe.data.EmergencyState
 import com.enderthor.kSafe.data.EmergencyStatus
+import com.enderthor.kSafe.data.IncidentResponseLevel
 import com.enderthor.kSafe.data.KSafeConfig
 import com.enderthor.kSafe.extension.Sender
 import io.hammerhead.karooext.KarooSystemService
@@ -82,12 +83,17 @@ class EmergencyManager(
         countdownStartedAt = 0L
         sosOverlay.removeOverlay()
 
-        // If user cancelled a crash-triggered countdown → confirmed false positive.
-        // how_long_ms near 0 = immediate cancel (very obvious FP); longer = hesitation.
-        if (cancelledReason == EmergencyReason.CRASH_DETECTED) {
-            calibLogger?.log(CalibrationLogger.Event.CRASH_CANCELLED) {
+        // If the user cancelled a detector-triggered countdown → confirmed false positive.
+        // how_long_ms near 0 = immediate cancel (obvious FP); longer = hesitation.
+        when (cancelledReason) {
+            EmergencyReason.CRASH_DETECTED -> calibLogger?.log(CalibrationLogger.Event.CRASH_CANCELLED) {
                 "how_long_ms=$howLongMs,reason=${cancelledReason.label}"
             }
+            EmergencyReason.MEDICAL_FLATLINE,
+            EmergencyReason.MEDICAL_COLLAPSE -> calibLogger?.log(CalibrationLogger.Event.MEDICAL_CANCELLED) {
+                "how_long_ms=$howLongMs,subkind=${cancelledReason.name}"
+            }
+            else -> Unit
         }
 
         // Update UI state synchronously — DataTypes react immediately, no DataStore wait.
@@ -203,6 +209,53 @@ class EmergencyManager(
             scope.launch { configManager.saveEmergencyState(EmergencyState()) }
             Timber.d("Check-in emergency cancelled on ride pause")
         }
+    }
+
+    // ─── Incident dispatch (medical / wellness detectors) ────────────────────
+
+    /**
+     * Generic dispatcher for incidents emitted by [MedicalEpisodeDetector] and [WellnessMonitor].
+     *
+     * Behaviour by [level]:
+     *  - [IncidentResponseLevel.SILENT]    → log only.
+     *  - [IncidentResponseLevel.WARNING]   → on-screen [SystemNotification] + beep, no countdown.
+     *  - [IncidentResponseLevel.EMERGENCY] → delegates to [triggerEmergency], full countdown + alert.
+     *
+     * Drops the call (logs to Timber) if a previous emergency is already in progress —
+     * we don't want a wellness alert interrupting an active crash countdown, and the
+     * existing emergency's flow is already self-logged.
+     */
+    fun handleIncident(reason: EmergencyReason, level: IncidentResponseLevel, config: KSafeConfig) {
+        if (currentStatus != EmergencyStatus.IDLE) {
+            Timber.d("Incident $reason ignored — emergency already in progress (status=$currentStatus)")
+            return
+        }
+        when (level) {
+            IncidentResponseLevel.SILENT -> {
+                calibLogger?.log(CalibrationLogger.Event.INCIDENT_SILENT) { "reason=${reason.label}" }
+                Timber.d("Silent incident: $reason")
+            }
+            IncidentResponseLevel.WARNING -> {
+                karooSystem.dispatch(BEEP_LONG)
+                karooSystem.dispatch(
+                    SystemNotification(
+                        id = "ksafe-warning-${reason.name.lowercase()}",
+                        header = context.getString(R.string.app_name),
+                        message = warningMessageFor(reason),
+                    )
+                )
+                calibLogger?.log(CalibrationLogger.Event.INCIDENT_WARNING) { "reason=${reason.label}" }
+                Timber.d("Warning incident dispatched: $reason")
+            }
+            IncidentResponseLevel.EMERGENCY -> {
+                triggerEmergency(reason, config)
+            }
+        }
+    }
+
+    private fun warningMessageFor(reason: EmergencyReason): String = when (reason) {
+        EmergencyReason.WELLNESS_HIGH_HR -> "Heart rate high for a while — consider a break."
+        else -> reason.label
     }
 
     // ─── Countdown ────────────────────────────────────────────────────────────
