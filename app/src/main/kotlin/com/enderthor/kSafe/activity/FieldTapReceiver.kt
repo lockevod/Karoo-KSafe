@@ -60,6 +60,11 @@ class FieldTapReceiver : BroadcastReceiver() {
         const val ACTION_CUSTOM_MESSAGE_3 = "com.enderthor.kSafe.TAP_CUSTOM_MESSAGE_3"
         const val ACTION_WEBHOOK_1        = "com.enderthor.kSafe.TAP_WEBHOOK_1"
         const val ACTION_WEBHOOK_2        = "com.enderthor.kSafe.TAP_WEBHOOK_2"
+        const val ACTION_CARB_LOG_1       = "com.enderthor.kSafe.TAP_CARB_LOG_1"
+        const val ACTION_CARB_LOG_2       = "com.enderthor.kSafe.TAP_CARB_LOG_2"
+        const val ACTION_CARB_LOG_3       = "com.enderthor.kSafe.TAP_CARB_LOG_3"
+        const val ACTION_HYDRATION_LOG_1  = "com.enderthor.kSafe.TAP_HYDRATION_LOG_1"
+        const val ACTION_HYDRATION_LOG_2  = "com.enderthor.kSafe.TAP_HYDRATION_LOG_2"
     }
 }
 
