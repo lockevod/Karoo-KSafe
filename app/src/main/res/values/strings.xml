@@ -27,6 +27,45 @@
     <string name="tab_settings">Settings</string>
     <string name="tab_actions">Actions</string>
     <string name="tab_health">Health</string>
+    <string name="tab_fueling">Fueling</string>
+
+    <!-- Fueling screen -->
+    <string name="fueling_title">Fueling</string>
+    <string name="fueling_info_banner">Carbs use HR/power zones if available for intensity-aware targeting; without sensors the target is time-proportional. Hydration is always time-proportional — adjust target manually for hot days.</string>
+    <string name="fueling_carb_section">Carbs</string>
+    <string name="fueling_hyd_section">Hydration</string>
+    <string name="fueling_target_carb_label">Target (g/h)</string>
+    <string name="fueling_target_hyd_label">Target (ml/h)</string>
+    <string name="fueling_alert_deficit_label">Alert by deficit</string>
+    <string name="fueling_alert_time_label">Alert by time</string>
+    <string name="fueling_deficit_threshold_g_label">Threshold (g)</string>
+    <string name="fueling_deficit_threshold_ml_label">Threshold (ml)</string>
+    <string name="fueling_time_interval_label">Interval (min)</string>
+    <string name="fueling_enabled_label">Enabled</string>
+    <string name="fueling_items_section">Items</string>
+    <string name="fueling_slot_label_label">Label</string>
+    <string name="fueling_slot_grams_label">g</string>
+    <string name="fueling_slot_ml_label">ml</string>
+    <string name="fueling_post_ride_summary_label">Post-ride summary</string>
+    <string name="fueling_carb_alert_title">Eat something</string>
+    <string name="fueling_hyd_alert_title">Drink something</string>
+
+    <!-- Fueling BonusActions -->
+    <string name="action_log_carb">KSafe: Log Carb</string>
+    <string name="action_log_drink">KSafe: Log Drink</string>
+
+    <!-- Fueling DataType labels -->
+    <string name="carb_log_1_datatype_name">KSafe Carb 1</string>
+    <string name="carb_log_2_datatype_name">KSafe Carb 2</string>
+    <string name="carb_log_3_datatype_name">KSafe Carb 3</string>
+    <string name="carb_log_datatype_desc">Tap to log a configured carb item (e.g. gel, bar). Counts toward your hourly target.</string>
+    <string name="carb_status_datatype_name">KSafe Carb Status</string>
+    <string name="carb_status_datatype_desc">Shows current carb deficit relative to target. Color-coded by urgency.</string>
+    <string name="hyd_log_1_datatype_name">KSafe Drink 1</string>
+    <string name="hyd_log_2_datatype_name">KSafe Drink 2</string>
+    <string name="hyd_log_datatype_desc">Tap to log a configured drink item (e.g. sip, bottle). Counts toward your hourly target.</string>
+    <string name="hyd_status_datatype_name">KSafe Hydration Status</string>
+    <string name="hyd_status_datatype_desc">Shows current hydration deficit relative to target. Color-coded by urgency.</string>
 
     <!-- Health screen -->
     <string name="health_title">Health monitoring</string>
