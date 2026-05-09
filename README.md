@@ -6,9 +6,15 @@
 > [!WARNING]
 > This extension can send emergency alerts to your contacts. Please test it carefully before relying on it in real situations.
 
-KSafe is a free, open-source safety extension for Karoo GPS devices. It monitors your ride and automatically alerts your emergency contacts if something goes wrong — crash detected, no check-in, or speed suddenly drops — and allows you to manually trigger an SOS from your ride screen.
+KSafe is a free, open-source safety and notification extension for Karoo GPS devices. While you ride, it watches for any signal of trouble — **crash detected**, **sudden speed drop**, **missed check-in**, **heart-rate flatline or sudden collapse**, **sustained high heart rate** — and alerts your emergency contacts automatically. A manual **SOS button** on the ride screen is always one tap away.
 
-Beyond emergency alerts, KSafe can also notify your contacts when you **start or finish a ride**, optionally including a real-time Karoo Live tracking link. This is a better alternative to the default email notification that Karoo already offers: KSafe sends it via WhatsApp, Telegram, or push notification, directly to your contacts' phones.
+KSafe is more than crash detection. It also gives you:
+
+- **Ride start / end notifications** to your contacts, with an optional real-time Karoo Live tracking link — delivered directly to their phones via WhatsApp, Telegram, ntfy or Pushover. A faster and more reliable alternative to Karoo's default email notification.
+- **Custom message buttons** (up to three independent slots) — send *"I'm OK"*, *"Starting now"*, or any preset message in a single tap from a ride field or a hardware button. No countdown, no emergency.
+- **Webhook actions** — fire any HTTP endpoint from a Karoo button: open your garage door (Home Assistant, Shelly), trigger an IFTTT / n8n / Make automation, send a custom push notification, or call any REST API. Two independent slots with optional geo-fencing per slot (e.g. only open the garage when you are actually near home).
+
+The heart-rate-based detectors are **completely optional** — KSafe works fully without a chest strap. Pair one if you want the extra layer of medical-episode and wellness monitoring; otherwise the rest of the features run unchanged.
 
 Compatible with Karoo 3 running Karoo OS version 1.527 and later.
 
