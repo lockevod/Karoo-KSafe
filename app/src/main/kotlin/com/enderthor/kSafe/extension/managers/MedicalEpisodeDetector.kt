@@ -103,6 +103,7 @@ class MedicalEpisodeDetector(
         Timber.d("MedicalEpisodeDetector stopped")
     }
 
+    @Suppress("unused") // called from KSafeExtension.initializeSystem() config-change flow
     fun updateConfig(config: KSafeConfig) {
         val wasEnabled = this.config.medicalEpisodeEnabled
         this.config = config
