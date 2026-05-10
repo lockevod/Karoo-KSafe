@@ -219,7 +219,7 @@ class EmergencyManager(
      *
      * Behaviour by [level]:
      *  - [IncidentResponseLevel.SILENT]    → log only.
-     *  - [IncidentResponseLevel.WARNING]   → on-screen [SystemNotification] + beep, no countdown.
+     *  - [IncidentResponseLevel.WARNING]   → on-screen [InRideAlert] + beep, no countdown.
      *  - [IncidentResponseLevel.EMERGENCY] → delegates to [triggerEmergency], full countdown + alert.
      *
      * Drops the call (logs to Timber) if a previous emergency is already in progress —
