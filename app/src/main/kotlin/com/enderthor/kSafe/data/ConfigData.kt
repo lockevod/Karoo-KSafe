@@ -83,13 +83,15 @@ val PRESET_CONFIRM_SPEED = mapOf(
  *  bundling work.
  *
  *  The two palettes are deliberately disjoint and themed:
- *    - Carb palette = cyclist-typical solid food (gel, banana, bar, nuts, energy chew,
- *      bread/sandwich, fruit). 🧴 = squeeze-bottle gel pouch.
- *    - Drink palette = water / hydration / drink containers. 🧴 is NOT here so the
- *      same emoji can't appear in both pickers and confuse the rider.
+ *    - Carb palette = cyclist-typical solid food. 🍬 = energy gel pouch (Unicode has no
+ *      specific energy-gel emoji; "candy" matches the rectangular pouch with twisted
+ *      ends visually). 🍯 covers honey / sticky gel-style supplements separately.
+ *      🍫 is the energy / chocolate bar. 🍽 covers a proper combo plate at a long stop.
+ *    - Drink palette = water / hydration / drink containers. No emoji appears in both
+ *      pickers so the rider can't get confused which palette they're in.
  */
 val FUEL_EMOJI_CARB: List<String> = listOf(
-    "", "🧴", "🍌", "🥜", "🍫", "🍪", "🥨", "🍯", "⚡", "🍞", "🥪", "🍎", "🍇",
+    "", "🍬", "🍌", "🥜", "🍫", "🍪", "🥨", "🍯", "⚡", "🍞", "🥪", "🍽", "🍎", "🍇",
 )
 val FUEL_EMOJI_DRINK: List<String> = listOf(
     "", "💧", "🥤", "🍶", "🧃", "🧊", "☕", "🍵", "💦",
@@ -314,7 +316,7 @@ data class KSafeConfig(
     val carbAlertCustomDetail: String = "",
     /** Three logging slots, each user-configurable label + grams + idle background colour
      *  + optional emoji prefix. Empty `carbNIcon` = no emoji, label only. */
-    val carb1Label: String = "Gel",      val carb1Grams: Int = 25,    val carb1Color: Int = 0xFF1565C0.toInt(),    val carb1Icon: String = "🧴",
+    val carb1Label: String = "Gel",      val carb1Grams: Int = 25,    val carb1Color: Int = 0xFF1565C0.toInt(),    val carb1Icon: String = "🍬",
     val carb2Label: String = "Bar",      val carb2Grams: Int = 30,    val carb2Color: Int = 0xFF1565C0.toInt(),    val carb2Icon: String = "🍫",
     val carb3Label: String = "Fruit",    val carb3Grams: Int = 20,    val carb3Color: Int = 0xFF1565C0.toInt(),    val carb3Icon: String = "🍌",
 
