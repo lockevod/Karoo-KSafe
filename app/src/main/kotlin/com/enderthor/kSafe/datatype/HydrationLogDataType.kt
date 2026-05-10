@@ -7,6 +7,7 @@ import android.view.View
 import android.widget.RemoteViews
 import com.enderthor.kSafe.R
 import com.enderthor.kSafe.activity.FieldTapReceiver
+import com.enderthor.kSafe.data.FUEL_BOTTLE_DRAWABLE
 import com.enderthor.kSafe.data.KSafeConfig
 import com.enderthor.kSafe.extension.managers.ConfigurationManager
 import io.hammerhead.karooext.KarooSystemService
@@ -25,15 +26,10 @@ import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.launch
 import timber.log.Timber
 
-private const val COLOR_SENDING = 0xFFE65100.toInt()
-private const val COLOR_SENT    = 0xFF1B5E20.toInt()
-private const val COLOR_ERROR   = 0xFFB71C1C.toInt()
-private const val COLOR_OFF     = 0xFF424242.toInt()  // gray — slot disabled in Settings
+private const val COLOR_LOGGED = 0xFF1B5E20.toInt()
+private const val COLOR_OFF    = 0xFF424242.toInt()
 
-/**
- * @param slot 1, 2 or 3 — determines which state flow and PendingIntent to use.
- */
-class CustomMessageDataType(
+class HydrationLogDataType(
     datatype: String,
     private val context: Context,
     private val karooSystem: KarooSystemService,
@@ -41,40 +37,61 @@ class CustomMessageDataType(
 ) : DataTypeImpl("ksafe", datatype) {
 
     private val tapAction = when (slot) {
-        2 -> FieldTapReceiver.ACTION_CUSTOM_MESSAGE_2
-        3 -> FieldTapReceiver.ACTION_CUSTOM_MESSAGE_3
-        else -> FieldTapReceiver.ACTION_CUSTOM_MESSAGE
+        2 -> FieldTapReceiver.ACTION_HYDRATION_LOG_2
+        else -> FieldTapReceiver.ACTION_HYDRATION_LOG_1
     }
-    // requestCode: 103 = slot1, 104 = slot2, 105 = slot3
-    private val requestCode = 102 + slot
+    // requestCode: 120, 121
+    private val requestCode = 119 + slot
 
     private val configManager = ConfigurationManager(context)
 
-    private fun titleFromConfig(config: KSafeConfig) = when (slot) {
-        2 -> config.customMessage2Title.take(7).ifBlank { "MSG2" }
-        3 -> config.customMessage3Title.take(7).ifBlank { "MSG3" }
-        else -> config.customMessageTitle.take(7).ifBlank { "MSG" }
+    private fun iconFromConfig(c: KSafeConfig): String = when (slot) {
+        2 -> c.drink2Icon
+        else -> c.drink1Icon
     }
 
-    private fun idleColorFromConfig(config: KSafeConfig) = when (slot) {
-        2 -> config.customMsg2Color
-        3 -> config.customMsg3Color
-        else -> config.customMsg1Color
+    private fun labelFromConfig(c: KSafeConfig): String {
+        val raw = when (slot) {
+            2 -> c.drink2Label.take(7).ifBlank { "Drink 2" }
+            else -> c.drink1Label.take(7).ifBlank { "Drink 1" }
+        }
+        val icon = iconFromConfig(c)
+        // FUEL_BOTTLE_DRAWABLE renders as a left compound drawable on the TextView
+        // (handled in buildView), so we must NOT prefix the label with the sentinel.
+        return when {
+            icon.isBlank()                      -> raw
+            icon == FUEL_BOTTLE_DRAWABLE        -> raw
+            else                                -> "$icon $raw"
+        }
     }
 
-    private fun enabledFromConfig(config: KSafeConfig) = when (slot) {
-        2 -> config.customMessage2Enabled
-        3 -> config.customMessage3Enabled
-        else -> config.customMessageEnabled
+    private fun mlFromConfig(c: KSafeConfig): Int = when (slot) {
+        2 -> c.drink2Ml
+        else -> c.drink1Ml
     }
 
-    /** Builds a field view with optional click PendingIntent. */
-    private fun buildView(context: Context, viewConfig: ViewConfig, bgColor: Int, main: String, hint: String = "", clickable: Boolean = true): RemoteViews {
+    private fun idleColorFromConfig(c: KSafeConfig): Int = when (slot) {
+        2 -> c.drink2Color
+        else -> c.drink1Color
+    }
+
+    private fun buildView(
+        context: Context,
+        viewConfig: ViewConfig,
+        bgColor: Int,
+        main: String,
+        hint: String = "",
+        clickable: Boolean = true,
+        leftDrawableRes: Int = 0,   // 0 = no compound drawable
+    ): RemoteViews {
         val content = RemoteViews(context.packageName, R.layout.field_view).apply {
             setInt(R.id.field_container, "setBackgroundColor", bgColor)
-            setTextViewText(R.id.field_text_main, main.take(9))   // hard cap — autoSize needs room
+            setTextViewText(R.id.field_text_main, main.take(9))
             setTextViewText(R.id.field_text_hint, hint.take(9))
             setViewVisibility(R.id.field_text_hint, if (hint.isEmpty()) View.GONE else View.VISIBLE)
+            // Compound drawable on the main TextView. Setting all four to 0 explicitly
+            // CLEARS any drawable from a previous LOGGED → IDLE transition.
+            setTextViewCompoundDrawables(R.id.field_text_main, leftDrawableRes, 0, 0, 0)
         }
         if (!viewConfig.preview && clickable) {
             val pi = PendingIntent.getBroadcast(
@@ -103,26 +120,27 @@ class CustomMessageDataType(
         val viewJob = scope.launch {
             try {
                 combine(
-                    CustomMessageState.flowForSlot(slot),
+                    HydrationLogState.flowForSlot(slot),
                     configManager.loadConfigFlow()
                 ) { state, ksafeConfig ->
-                    val title = titleFromConfig(ksafeConfig)
-                    val idleColor = idleColorFromConfig(ksafeConfig)
-                    if (!enabledFromConfig(ksafeConfig)) {
-                        buildView(context, config, COLOR_OFF, title, "OFF", clickable = false)
+                    val label = labelFromConfig(ksafeConfig)
+                    val ml = mlFromConfig(ksafeConfig)
+                    val leftDrawable = if (iconFromConfig(ksafeConfig) == FUEL_BOTTLE_DRAWABLE) {
+                        R.drawable.ic_fuel_bottle
+                    } else 0
+                    if (!ksafeConfig.hydrationTrackerEnabled) {
+                        // Slot disabled — no drawable, just the OFF label.
+                        buildView(context, config, COLOR_OFF, label, "OFF", clickable = false)
                     } else when (state) {
-                        CustomMessageState.IDLE    -> buildView(context, config, idleColor, title, "tap=send")
-                        CustomMessageState.SENDING -> buildView(context, config, COLOR_SENDING, title, "Sending…", clickable = false)
-                        CustomMessageState.SENT    -> buildView(context, config, COLOR_SENT, title, "SENT ✓", clickable = false)
-                        CustomMessageState.ERROR   -> buildView(context, config, COLOR_ERROR, title, "ERR retry")
+                        HydrationLogState.IDLE   -> buildView(context, config, idleColorFromConfig(ksafeConfig), label, "${ml}ml", leftDrawableRes = leftDrawable)
+                        // LOGGED is the brief green "+500ml ✓" success flash — no drawable.
+                        HydrationLogState.LOGGED -> buildView(context, config, COLOR_LOGGED, "+${ml}ml", "✓", clickable = false)
                     }
-                }.collect { view ->
-                    emitter.updateView(view)
-                }
+                }.collect { view -> emitter.updateView(view) }
             } catch (_: CancellationException) {
                 // normal
             } catch (e: Exception) {
-                Timber.e(e, "CustomMessageDataType slot=$slot error: ${e.message}")
+                Timber.e(e, "HydrationLogDataType slot=$slot error: ${e.message}")
             }
         }
 

@@ -1,0 +1,41 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Cyclist water bottle (bidón) icon — used as a special drink-slot "icon" via the
+  {bottle} sentinel (FUEL_BOTTLE_DRAWABLE in data/ConfigData.kt) because the closest
+  emojis (🥤 cup-with-straw, 🍶 sake bottle) don't read as a sports bidón.
+
+  Design: tall body with rounded shoulders, narrower cap collar, push-pull spout
+  on top, rounded bottom, horizontal label band across the body. White silhouette
+  so it reads on every coloured field background; the band uses overlaid darker
+  tone for depth, same convention as ic_fuel_gel.
+-->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp"
+    android:height="24dp"
+    android:viewportWidth="24"
+    android:viewportHeight="24">
+
+    <!-- Push-pull spout (the tip you bite to drink) -->
+    <path
+        android:fillColor="#FFFFFFFF"
+        android:pathData="M10.5,1.5 L13.5,1.5 L13.5,3 L10.5,3 Z" />
+
+    <!-- Cap collar — narrower than the body to give the silhouette a clear
+         "bottle" reading rather than just a rounded rectangle. -->
+    <path
+        android:fillColor="#FFFFFFFF"
+        android:pathData="M9.5,3 L14.5,3 L14.5,5 L9.5,5 Z" />
+
+    <!-- Body: rounded shoulders flaring out from the cap, straight sides,
+         rounded bottom. -->
+    <path
+        android:fillColor="#FFFFFFFF"
+        android:pathData="M9.5,5 L14.5,5 A2,2 0 0 1 16.5,7 L16.5,20.5 A1.5,1.5 0 0 1 15,22 L9,22 A1.5,1.5 0 0 1 7.5,20.5 L7.5,7 A2,2 0 0 1 9.5,5 Z" />
+
+    <!-- Label band across the body — disambiguates the icon from a generic
+         flask / pill / column. -->
+    <path
+        android:fillColor="#000000"
+        android:fillAlpha="0.25"
+        android:pathData="M8,11 L16,11 L16,15 L8,15 Z" />
+</vector>

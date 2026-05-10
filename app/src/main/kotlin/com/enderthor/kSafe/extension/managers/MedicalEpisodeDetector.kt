@@ -34,7 +34,7 @@ import timber.log.Timber
  */
 class MedicalEpisodeDetector(
     private val scope: CoroutineScope,
-    private val onIncident: (EmergencyReason) -> Unit,
+    private val onIncident: (EmergencyReason, Map<String, String>) -> Unit,
     private val calibLogger: CalibrationLogger? = null,
 ) {
 
@@ -42,7 +42,12 @@ class MedicalEpisodeDetector(
     private val HR_FLATLINE_MAX_BPM        = 30
     private val HR_FLATLINE_DURATION_SEC   = 30
     private val HR_COLLAPSE_DROP_FRACTION  = 0.40f
-    private val HR_COLLAPSE_WINDOW_SEC     = 10
+    /** Recent window for the collapse detector. 15 s (was 10 s) — extending this requires the
+     *  drop to be sustained for the full window before triggering, which filters out brief
+     *  HR-strap artefacts (1–3 bad readings due to sweat / contact loss) that would otherwise
+     *  pull a 10 s average down enough to cross 40 %. Detection latency for a real cardiac
+     *  event grows by 5 s, which is negligible for the emergency response timeline. */
+    private val HR_COLLAPSE_WINDOW_SEC     = 15
     private val HR_COLLAPSE_MIN_HISTORY_SEC = 240   // 4 min — cold-start guard for the rolling baseline
     private val HR_STALE_MS                = 15_000L
     private val ACTIVE_RECENT_MS           = 60_000L
@@ -189,7 +194,7 @@ class MedicalEpisodeDetector(
                     "bpm=$currentHrBpm,duration_s=${durationMs / 1000},speed=%.1f,threshold=$HR_FLATLINE_MAX_BPM".format(lastSpeedKmh)
                 }
                 flatlineSinceMs = 0L  // re-arm: requires HR to rise above threshold then fall again
-                onIncident(EmergencyReason.MEDICAL_FLATLINE)
+                onIncident(EmergencyReason.MEDICAL_FLATLINE, mapOf("bpm" to currentHrBpm.toString()))
             }
         } else {
             flatlineSinceMs = 0L
@@ -219,7 +224,10 @@ class MedicalEpisodeDetector(
                 "bpm=$currentHrBpm,avg5min=$baseline,drop_pct=%.1f,window_s=$HR_COLLAPSE_WINDOW_SEC,speed=%.1f".format(drop * 100f, lastSpeedKmh)
             }
             collapseCooldownUntilMs = now + HR_COLLAPSE_MIN_HISTORY_SEC * 1000L
-            onIncident(EmergencyReason.MEDICAL_COLLAPSE)
+            onIncident(EmergencyReason.MEDICAL_COLLAPSE, mapOf(
+                "bpm" to currentHrBpm.toString(),
+                "baseline" to baseline.toString(),
+            ))
         }
     }
 

@@ -10,6 +10,7 @@ import com.enderthor.kSafe.data.KSafeConfig
 import com.enderthor.kSafe.extension.Sender
 import io.hammerhead.karooext.KarooSystemService
 import io.hammerhead.karooext.models.PlayBeepPattern
+import io.hammerhead.karooext.models.InRideAlert
 import io.hammerhead.karooext.models.SystemNotification
 import io.hammerhead.karooext.models.TurnScreenOn
 import kotlinx.coroutines.CoroutineScope
@@ -218,14 +219,19 @@ class EmergencyManager(
      *
      * Behaviour by [level]:
      *  - [IncidentResponseLevel.SILENT]    → log only.
-     *  - [IncidentResponseLevel.WARNING]   → on-screen [SystemNotification] + beep, no countdown.
+     *  - [IncidentResponseLevel.WARNING]   → on-screen [InRideAlert] + beep, no countdown.
      *  - [IncidentResponseLevel.EMERGENCY] → delegates to [triggerEmergency], full countdown + alert.
      *
      * Drops the call (logs to Timber) if a previous emergency is already in progress —
      * we don't want a wellness alert interrupting an active crash countdown, and the
      * existing emergency's flow is already self-logged.
      */
-    fun handleIncident(reason: EmergencyReason, level: IncidentResponseLevel, config: KSafeConfig) {
+    fun handleIncident(
+        reason: EmergencyReason,
+        level: IncidentResponseLevel,
+        config: KSafeConfig,
+        tokens: Map<String, String> = emptyMap(),
+    ) {
         if (currentStatus != EmergencyStatus.IDLE) {
             Timber.d("Incident $reason ignored — emergency already in progress (status=$currentStatus)")
             return
@@ -236,14 +242,18 @@ class EmergencyManager(
                 Timber.d("Silent incident: $reason")
             }
             IncidentResponseLevel.WARNING -> {
+                val titleTemplate = customTitleFor(reason, config).ifBlank { defaultTitleFor(reason) }
+                val detailTemplate = customDetailFor(reason, config).ifBlank { defaultDetailFor(reason) }
                 karooSystem.dispatch(BEEP_LONG)
-                karooSystem.dispatch(
-                    SystemNotification(
-                        id = "ksafe-warning-${reason.name.lowercase()}",
-                        header = context.getString(R.string.app_name),
-                        message = warningMessageFor(reason),
-                    )
-                )
+                karooSystem.dispatch(InRideAlert(
+                    id = "ksafe-warning-${reason.name.lowercase()}",
+                    icon = com.enderthor.kSafe.R.drawable.ic_ksafe,
+                    title = renderAlertText(titleTemplate, tokens, maxLength = ALERT_TITLE_MAX_CHARS),
+                    detail = renderAlertText(detailTemplate, tokens, maxLength = ALERT_DETAIL_MAX_CHARS),
+                    autoDismissMs = 10_000L,
+                    backgroundColor = 0xFFE65100.toInt(),
+                    textColor = 0xFFFFFFFF.toInt(),
+                ))
                 calibLogger?.log(CalibrationLogger.Event.INCIDENT_WARNING) { "reason=${reason.label}" }
                 Timber.d("Warning incident dispatched: $reason")
             }
@@ -253,8 +263,39 @@ class EmergencyManager(
         }
     }
 
-    private fun warningMessageFor(reason: EmergencyReason): String = when (reason) {
-        EmergencyReason.WELLNESS_HIGH_HR -> "Heart rate high for a while — consider a break."
+    private fun customTitleFor(reason: EmergencyReason, c: KSafeConfig): String = when (reason) {
+        EmergencyReason.MEDICAL_FLATLINE,
+        EmergencyReason.MEDICAL_COLLAPSE      -> c.medicalCustomTitle
+        EmergencyReason.WELLNESS_HIGH_HR      -> c.wellnessSustainedCustomTitle
+        EmergencyReason.WELLNESS_CRITICAL_HR  -> c.wellnessCriticalCustomTitle
+        EmergencyReason.WELLNESS_DECOUPLING   -> c.wellnessDecouplingCustomTitle
+        else -> ""
+    }
+
+    private fun customDetailFor(reason: EmergencyReason, c: KSafeConfig): String = when (reason) {
+        EmergencyReason.MEDICAL_FLATLINE,
+        EmergencyReason.MEDICAL_COLLAPSE      -> c.medicalCustomDetail
+        EmergencyReason.WELLNESS_HIGH_HR      -> c.wellnessSustainedCustomDetail
+        EmergencyReason.WELLNESS_CRITICAL_HR  -> c.wellnessCriticalCustomDetail
+        EmergencyReason.WELLNESS_DECOUPLING   -> c.wellnessDecouplingCustomDetail
+        else -> ""
+    }
+
+    private fun defaultTitleFor(reason: EmergencyReason): String = when (reason) {
+        EmergencyReason.WELLNESS_HIGH_HR     -> context.getString(R.string.warning_wellness_high_hr_title)
+        EmergencyReason.WELLNESS_CRITICAL_HR -> context.getString(R.string.warning_wellness_critical_hr_title)
+        EmergencyReason.WELLNESS_DECOUPLING  -> context.getString(R.string.warning_wellness_decoupling_title)
+        EmergencyReason.MEDICAL_FLATLINE,
+        EmergencyReason.MEDICAL_COLLAPSE     -> context.getString(R.string.warning_medical_title)
+        else -> context.getString(R.string.app_name)
+    }
+
+    private fun defaultDetailFor(reason: EmergencyReason): String = when (reason) {
+        EmergencyReason.WELLNESS_HIGH_HR     -> context.getString(R.string.warning_wellness_high_hr_detail)
+        EmergencyReason.WELLNESS_CRITICAL_HR -> context.getString(R.string.warning_wellness_critical_hr_detail)
+        EmergencyReason.WELLNESS_DECOUPLING  -> context.getString(R.string.warning_wellness_decoupling_detail)
+        EmergencyReason.MEDICAL_FLATLINE,
+        EmergencyReason.MEDICAL_COLLAPSE     -> context.getString(R.string.warning_medical_detail)
         else -> reason.label
     }
 
