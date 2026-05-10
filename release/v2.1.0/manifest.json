@@ -1,0 +1,11 @@
+{
+  "label": "KSafe",
+  "packageName": "com.enderthor.kSafe",
+  "latestApkUrl": "https://github.com/lockevod/Karoo-KSafe/releases/latest/download/ksafe.apk",
+  "iconUrl": "https://github.com/lockevod/Karoo-KSafe/releases/latest/download/ksage.png",
+  "latestVersion": "2.1.0",
+  "latestVersionCode": 202605102,
+  "developer": "github.com/lockevod",
+  "description": "Karoo safety extension: crash detection, manual SOS, check-in timer, HR-based medical & wellness monitor, carb & hydration tracker with FIT export. Alerts via WhatsApp (CallMeBot), Telegram, Pushover or ntfy.",
+  "releaseNotes": "v2.1.0 — Health tab: HR-based medical episode detection (flatline + collapse) and three-tier wellness monitor (critical HR, sustained HR, cardiac decoupling). Fueling tab: carb and hydration tracker with adaptive intensity zones, up to 3 carb + 2 drink log slots as tappable data fields with custom colour and icon (emoji or bundled vector for gel pouch / bidón), two combinable alert modes (deficit / time) with customisable title and detail templates and token substitution. Cumulative carbs (g) and hydration (ml) written into the FIT file as float32 developer fields — graphs appear alongside HR / power in Strava / Intervals.icu / TrainingPeaks. Robust DataStore decode that no longer wipes existing rider configs on schema changes. ProGuard rules refreshed."
+}
