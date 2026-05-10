@@ -257,7 +257,7 @@ class EmergencyManager(
     }
 
     private fun warningTitleFor(reason: EmergencyReason): String = when (reason) {
-        EmergencyReason.WELLNESS_HIGH_HR -> "Heart rate high"
+        EmergencyReason.WELLNESS_HIGH_HR -> context.getString(R.string.warning_wellness_high_hr_title)
         else -> context.getString(R.string.app_name)
     }
 

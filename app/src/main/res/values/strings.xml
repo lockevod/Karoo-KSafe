@@ -3,6 +3,9 @@
     <string name="app_name">KSafe</string>
     <string name="extension_name">KSafe</string>
 
+    <!-- Warning-level incident titles (used by EmergencyManager.handleIncident.WARNING) -->
+    <string name="warning_wellness_high_hr_title">Heart rate high</string>
+
     <!-- BonusAction labels -->
     <string name="action_cancel_emergency">KSafe: Cancel Emergency</string>
     <string name="action_send_custom_message">KSafe: Send Custom Message</string>

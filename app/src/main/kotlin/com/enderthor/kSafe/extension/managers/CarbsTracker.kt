@@ -9,10 +9,8 @@ import io.hammerhead.karooext.models.PlayBeepPattern
 import io.hammerhead.karooext.models.UserProfile
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.delay
-import kotlinx.coroutines.flow.MutableStateFlow
-import kotlinx.coroutines.flow.StateFlow
-import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 import timber.log.Timber
 
@@ -62,10 +60,6 @@ class CarbsTracker(
     @Volatile private var lastZoneSnapshot = ZoneSnapshot(ZoneSource.NONE, -1, 0, 1f)
     @Volatile private var lastPeriodicLogMs = 0L
 
-    // ─── Status flow consumed by CarbStatusDataType ──────────────────────────
-    private val _statusFlow = MutableStateFlow(CarbStatus(0, 0, 0, 25, lastZoneSnapshot))
-    val statusFlow: StateFlow<CarbStatus> = _statusFlow.asStateFlow()
-
     @Volatile private var config = KSafeConfig()
     private var monitorJob: Job? = null
 
@@ -74,7 +68,11 @@ class CarbsTracker(
     fun start(config: KSafeConfig) {
         this.config = config
         if (!config.carbsTrackerEnabled) return
-        monitorJob?.cancel()
+        // Snapshot the previous monitor before resetting state so we can join() it inside
+        // the new coroutine — guarantees the old tick loop is fully gone before the new one
+        // runs, eliminating the late-tick race that could otherwise emit a spurious PERIODIC
+        // log row with all-zero state right after a restart.
+        val oldJob = monitorJob
         val now = System.currentTimeMillis()
         cumTargetG = 0f
         cumLoggedG = 0
@@ -84,8 +82,8 @@ class CarbsTracker(
         lastAlertMs = 0L
         lastPeriodicLogMs = 0L
         lastZoneSnapshot = ZoneSnapshot(ZoneSource.NONE, -1, 0, 1f)
-        publishStatus()
         monitorJob = scope.launch {
+            oldJob?.cancelAndJoin()
             while (true) { delay(MONITOR_TICK_MS); tick() }
         }
         Timber.d("CarbsTracker started, target=${config.carbTargetGperHour} g/h")
@@ -95,7 +93,7 @@ class CarbsTracker(
         monitorJob?.cancel()
         monitorJob = null
         Timber.d("CarbsTracker stopped")
-        // State is intentionally retained so getSummary() / statusFlow remain readable
+        // State is intentionally retained so getSummary() / getStatus() remain readable
         // for the post-ride summary. Reset happens on the next start().
     }
 
@@ -120,13 +118,23 @@ class CarbsTracker(
         }
         cumLoggedG += grams
         lastLogMs = System.currentTimeMillis()
-        publishStatus()
         calibLogger?.log(CalibrationLogger.Event.FUELING_CARB_LOGGED) {
             "slot=$slot,grams=$grams,cum_logged=$cumLoggedG,cum_target=${cumTargetG.toInt()}"
         }
     }
 
-    fun getStatus(): CarbStatus = _statusFlow.value
+    /**
+     * Builds an immutable snapshot of the current tracker state. Each field is read once;
+     * because the underlying fields are @Volatile, the snapshot is internally consistent
+     * to within one tick's worth of integration (well under UX tolerance).
+     */
+    fun getStatus(): CarbStatus = CarbStatus(
+        cumTargetG = cumTargetG.toInt(),
+        cumLoggedG = cumLoggedG,
+        deficitG = (cumTargetG - cumLoggedG).toInt(),
+        deficitThresholdG = config.carbDeficitThresholdG,
+        zoneSnapshot = lastZoneSnapshot,
+    )
 
     fun getSummary(): CarbSummary = CarbSummary(
         cumTargetG = cumTargetG.toInt(),
@@ -149,20 +157,9 @@ class CarbsTracker(
         }
         lastTickMs = now
 
-        publishStatus()
         evaluateDeficitAlert(now)
         evaluateTimeAlert(now)
         maybePeriodicLog(now)
-    }
-
-    private fun publishStatus() {
-        _statusFlow.value = CarbStatus(
-            cumTargetG = cumTargetG.toInt(),
-            cumLoggedG = cumLoggedG,
-            deficitG = (cumTargetG - cumLoggedG).toInt(),
-            deficitThresholdG = config.carbDeficitThresholdG,
-            zoneSnapshot = lastZoneSnapshot,
-        )
     }
 
     private fun evaluateDeficitAlert(now: Long) {
@@ -214,8 +211,8 @@ class CarbsTracker(
 }
 
 /**
- * Snapshot of the carb tracker state, published on every tick and on every logEntry.
- * The status data field collects [CarbsTracker.statusFlow] and renders accordingly.
+ * Snapshot of the carb tracker state. The status data field polls [CarbsTracker.getStatus]
+ * once per second; it is also safe to read on demand from any thread (Volatile field reads).
  */
 data class CarbStatus(
     val cumTargetG: Int,

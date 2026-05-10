@@ -8,10 +8,8 @@ import io.hammerhead.karooext.models.InRideAlert
 import io.hammerhead.karooext.models.PlayBeepPattern
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.delay
-import kotlinx.coroutines.flow.MutableStateFlow
-import kotlinx.coroutines.flow.StateFlow
-import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 import timber.log.Timber
 
@@ -27,6 +25,7 @@ class HydrationTracker(
     private val calibLogger: CalibrationLogger? = null,
 ) {
 
+    // ─── Constants ───────────────────────────────────────────────────────────
     private val MONITOR_TICK_MS         = 5_000L
     private val ALERT_COOLDOWN_MS       = 5L * 60_000L
     private val PERIODIC_LOG_INTERVAL_MS = 120_000L
@@ -34,10 +33,11 @@ class HydrationTracker(
     private val BEEP_LONG = PlayBeepPattern(listOf(
         PlayBeepPattern.Tone(frequency = 880, durationMs = 800)
     ))
-    private val ALERT_BG_COLOR = 0xFFE65100.toInt()
-    private val ALERT_TX_COLOR = 0xFFFFFFFF.toInt()
+    private val ALERT_BG_COLOR = 0xFFE65100.toInt()  // amber
+    private val ALERT_TX_COLOR = 0xFFFFFFFF.toInt()  // white
     private val AUTO_DISMISS_MS = 10_000L
 
+    // ─── Session state (reset by start()) ────────────────────────────────────
     @Volatile private var cumTargetMl = 0f
     @Volatile private var cumLoggedMl = 0
     @Volatile private var sessionStartMs = 0L
@@ -46,16 +46,17 @@ class HydrationTracker(
     @Volatile private var lastAlertMs = 0L
     @Volatile private var lastPeriodicLogMs = 0L
 
-    private val _statusFlow = MutableStateFlow(HydrationStatus(0, 0, 0, 300))
-    val statusFlow: StateFlow<HydrationStatus> = _statusFlow.asStateFlow()
-
     @Volatile private var config = KSafeConfig()
     private var monitorJob: Job? = null
+
+    // ─── Public API ──────────────────────────────────────────────────────────
 
     fun start(config: KSafeConfig) {
         this.config = config
         if (!config.hydrationTrackerEnabled) return
-        monitorJob?.cancel()
+        // Same restart pattern as CarbsTracker — wait for the previous monitor to fully
+        // stop inside the new coroutine to avoid late ticks producing spurious log rows.
+        val oldJob = monitorJob
         val now = System.currentTimeMillis()
         cumTargetMl = 0f
         cumLoggedMl = 0
@@ -64,8 +65,8 @@ class HydrationTracker(
         lastLogMs = now
         lastAlertMs = 0L
         lastPeriodicLogMs = 0L
-        publishStatus()
         monitorJob = scope.launch {
+            oldJob?.cancelAndJoin()
             while (true) { delay(MONITOR_TICK_MS); tick() }
         }
         Timber.d("HydrationTracker started, target=${config.hydrationTargetMlPerHour} ml/h")
@@ -75,6 +76,8 @@ class HydrationTracker(
         monitorJob?.cancel()
         monitorJob = null
         Timber.d("HydrationTracker stopped")
+        // State is intentionally retained so getSummary() / getStatus() remain readable
+        // for the post-ride summary.
     }
 
     fun updateConfig(config: KSafeConfig) {
@@ -84,6 +87,7 @@ class HydrationTracker(
         else if (wasEnabled && !config.hydrationTrackerEnabled) stop()
     }
 
+    /** Log a single tap on slot 1 or 2. Adds the configured millilitres to the cumulative log. */
     fun logEntry(slot: Int) {
         val ml = when (slot) {
             1 -> config.drink1Ml
@@ -92,13 +96,21 @@ class HydrationTracker(
         }
         cumLoggedMl += ml
         lastLogMs = System.currentTimeMillis()
-        publishStatus()
         calibLogger?.log(CalibrationLogger.Event.FUELING_HYDRATION_LOGGED) {
             "slot=$slot,ml=$ml,cum_logged=$cumLoggedMl,cum_target=${cumTargetMl.toInt()}"
         }
     }
 
-    fun getStatus(): HydrationStatus = _statusFlow.value
+    /**
+     * Builds an immutable snapshot of the current tracker state. Volatile field reads make
+     * the snapshot internally consistent to within one tick's worth of integration.
+     */
+    fun getStatus(): HydrationStatus = HydrationStatus(
+        cumTargetMl = cumTargetMl.toInt(),
+        cumLoggedMl = cumLoggedMl,
+        deficitMl = (cumTargetMl - cumLoggedMl).toInt(),
+        deficitThresholdMl = config.hydrationDeficitThresholdMl,
+    )
 
     fun getSummary(): HydrationSummary = HydrationSummary(
         cumTargetMl = cumTargetMl.toInt(),
@@ -106,6 +118,8 @@ class HydrationTracker(
         deficitMl = (cumTargetMl - cumLoggedMl).toInt(),
         percentageHit = if (cumTargetMl > 0f) ((cumLoggedMl / cumTargetMl) * 100f).toInt() else 0,
     )
+
+    // ─── Internals ───────────────────────────────────────────────────────────
 
     private fun tick() {
         val now = System.currentTimeMillis()
@@ -116,19 +130,9 @@ class HydrationTracker(
         }
         lastTickMs = now
 
-        publishStatus()
         evaluateDeficitAlert(now)
         evaluateTimeAlert(now)
         maybePeriodicLog(now)
-    }
-
-    private fun publishStatus() {
-        _statusFlow.value = HydrationStatus(
-            cumTargetMl = cumTargetMl.toInt(),
-            cumLoggedMl = cumLoggedMl,
-            deficitMl = (cumTargetMl - cumLoggedMl).toInt(),
-            deficitThresholdMl = config.hydrationDeficitThresholdMl,
-        )
     }
 
     private fun evaluateDeficitAlert(now: Long) {
@@ -178,6 +182,10 @@ class HydrationTracker(
     }
 }
 
+/**
+ * Snapshot of the hydration tracker state. The status data field polls [HydrationTracker.getStatus]
+ * once per second; it is also safe to read on demand from any thread (Volatile field reads).
+ */
 data class HydrationStatus(
     val cumTargetMl: Int,
     val cumLoggedMl: Int,
@@ -185,6 +193,7 @@ data class HydrationStatus(
     val deficitThresholdMl: Int,
 )
 
+/** Totals captured at end-of-ride for the post-ride summary InRideAlert. */
 data class HydrationSummary(
     val cumTargetMl: Int,
     val cumLoggedMl: Int,
