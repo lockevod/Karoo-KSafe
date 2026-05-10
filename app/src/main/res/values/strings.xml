@@ -44,6 +44,10 @@
     <string name="fueling_deficit_threshold_g_label">Threshold (g)</string>
     <string name="fueling_deficit_threshold_ml_label">Threshold (ml)</string>
     <string name="fueling_time_interval_label">Interval (min)</string>
+    <string name="fueling_initial_delay_label">Initial delay (min, 0 = off)</string>
+    <string name="fueling_custom_title_label">Custom alert title (optional)</string>
+    <string name="fueling_custom_title_carb_placeholder">Default: Eat something</string>
+    <string name="fueling_custom_title_hyd_placeholder">Default: Drink something</string>
     <string name="fueling_enabled_label">Enabled</string>
     <string name="fueling_items_section">Items</string>
     <string name="fueling_slot_label_label">Label</string>
@@ -80,9 +84,9 @@
     <string name="health_wellness_hint">Warns when HR stays above the threshold for a sustained period. Sent on-screen only — never to emergency contacts unless you change the response level.</string>
     <string name="health_enabled_label">Enabled</string>
     <string name="health_response_level_label">Response level</string>
-    <string name="health_response_silent">Silent (log only)</string>
-    <string name="health_response_warning">Warning (on-screen)</string>
-    <string name="health_response_emergency">Emergency (alert contacts)</string>
+    <string name="health_response_silent">Silent</string>
+    <string name="health_response_warning">Warning</string>
+    <string name="health_response_emergency">Emergency</string>
     <string name="health_wellness_threshold_label">HR threshold (bpm)</string>
     <string name="health_wellness_duration_label">Sustained minutes</string>
 
