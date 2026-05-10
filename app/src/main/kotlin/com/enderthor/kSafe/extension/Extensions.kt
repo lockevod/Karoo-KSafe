@@ -16,7 +16,26 @@ import kotlinx.coroutines.flow.callbackFlow
 import kotlinx.coroutines.flow.first
 import kotlinx.serialization.json.Json
 
-val jsonWithUnknownKeys = Json { ignoreUnknownKeys = true }
+/**
+ * Tolerant Json instance used everywhere we decode user-saved config from DataStore.
+ *  - [ignoreUnknownKeys] = true  → fields removed from the schema (e.g. legacy
+ *    `senderConfigs` nested inside [KSafeConfig], or enum values dropped from the API)
+ *    are silently skipped instead of throwing a `SerializationException` that would
+ *    wipe the whole config back to defaults.
+ *  - [coerceInputValues] = true  → if a JSON value doesn't match the current type
+ *    (e.g. an enum value that was removed without a migration substitution, or a `null`
+ *    where a non-nullable property is expected), the constructor default is used for
+ *    just that field rather than aborting the whole decode. This is the load-side
+ *    safety net for data preservation across version upgrades — without it a single
+ *    stale enum value buried deep in the JSON could erase every other field the rider
+ *    spent time setting up.
+ *  - [isLenient] = true          → tolerate minor JSON syntax quirks; cheap insurance.
+ */
+val jsonWithUnknownKeys = Json {
+    ignoreUnknownKeys = true
+    coerceInputValues = true
+    isLenient = true
+}
 
 /** Json instance for exporting config files.
  *  - [encodeDefaults] = true  → ALL fields appear in the output, even those with default values,

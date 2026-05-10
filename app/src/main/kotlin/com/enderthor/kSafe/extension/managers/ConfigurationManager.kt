@@ -35,14 +35,23 @@ class ConfigurationManager(private val context: Context) {
 
     fun loadConfigFlow(): Flow<KSafeConfig> {
         return context.dataStore.data.map { prefs ->
+            val raw = (prefs[configKey] ?: defaultKSafeConfigJson)
+                .replace("\"SIMPLEPUSH\"", "\"NTFY\"") // migration: SIMPLEPUSH renamed to NTFY
             try {
-                val raw = (prefs[configKey] ?: defaultKSafeConfigJson)
-                    .replace("\"SIMPLEPUSH\"", "\"NTFY\"") // migration: SIMPLEPUSH renamed to NTFY
                 (jsonWithUnknownKeys.decodeFromString<List<KSafeConfig>>(raw)
                     .firstOrNull() ?: KSafeConfig())
                     .migrateToLatest()
             } catch (e: Throwable) {
-                Timber.e(e, "Failed to read KSafeConfig")
+                // The catch block is the LAST resort — `jsonWithUnknownKeys` is configured
+                // with `coerceInputValues = true` and `ignoreUnknownKeys = true`, so a
+                // single stale enum value or removed field can no longer wipe the whole
+                // config to defaults. Anything that still throws here is a structural JSON
+                // problem (malformed bytes, type-of-collection change, etc.) that we
+                // genuinely cannot recover from automatically. Log enough detail to
+                // diagnose without dumping potentially-personal contact info.
+                val snippet = raw.take(200).replace("\n", " ")
+                Timber.e(e, "Failed to read KSafeConfig (%s: %s) — raw[0..200] = %s",
+                    e.javaClass.simpleName, e.message, snippet)
                 KSafeConfig()
             }
         }.distinctUntilChanged()
@@ -58,12 +67,14 @@ class ConfigurationManager(private val context: Context) {
 
     fun loadSenderConfigFlow(): Flow<List<SenderConfig>> {
         return context.dataStore.data.map { prefs ->
+            val raw = (prefs[senderConfigKey] ?: defaultSenderConfigJson)
+                .replace("\"SIMPLEPUSH\"", "\"NTFY\"") // migration: SIMPLEPUSH renamed to NTFY
             try {
-                val raw = (prefs[senderConfigKey] ?: defaultSenderConfigJson)
-                    .replace("\"SIMPLEPUSH\"", "\"NTFY\"") // migration: SIMPLEPUSH renamed to NTFY
                 jsonWithUnknownKeys.decodeFromString<List<SenderConfig>>(raw)
             } catch (e: Throwable) {
-                Timber.e(e, "Failed to read SenderConfig")
+                val snippet = raw.take(200).replace("\n", " ")
+                Timber.e(e, "Failed to read SenderConfig (%s: %s) — raw[0..200] = %s",
+                    e.javaClass.simpleName, e.message, snippet)
                 emptyList()
             }
         }.distinctUntilChanged()
@@ -82,12 +93,13 @@ class ConfigurationManager(private val context: Context) {
         // missing an IDLE emission (e.g. due to a concurrent DataStore write) would
         // leave the data fields stuck showing the last countdown value.
         return context.dataStore.data.map { prefs ->
+            val raw = prefs[emergencyStateKey] ?: defaultEmergencyStateJson
             try {
-                jsonWithUnknownKeys.decodeFromString<EmergencyState>(
-                    prefs[emergencyStateKey] ?: defaultEmergencyStateJson
-                )
+                jsonWithUnknownKeys.decodeFromString<EmergencyState>(raw)
             } catch (e: Throwable) {
-                Timber.e(e, "Failed to read EmergencyState")
+                val snippet = raw.take(200).replace("\n", " ")
+                Timber.e(e, "Failed to read EmergencyState (%s: %s) — raw[0..200] = %s",
+                    e.javaClass.simpleName, e.message, snippet)
                 EmergencyState()
             }
         }
