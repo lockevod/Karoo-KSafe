@@ -115,13 +115,15 @@ fun HealthScreen(vm: MainViewModel) {
                         vm.saveConfig(config.copy(medicalEpisodeEnabled = it))
                     },
                 )
-                ResponseLevelChips(
-                    selected = medicalResponseLevel,
-                    onSelected = {
-                        medicalResponseLevel = it
-                        vm.saveConfig(config.copy(medicalResponseLevel = it))
-                    },
-                )
+                DependentSection(enabled = medicalEnabled) {
+                    ResponseLevelChips(
+                        selected = medicalResponseLevel,
+                        onSelected = {
+                            medicalResponseLevel = it
+                            vm.saveConfig(config.copy(medicalResponseLevel = it))
+                        },
+                    )
+                }
             }
         }
 
@@ -140,6 +142,7 @@ fun HealthScreen(vm: MainViewModel) {
                         vm.saveConfig(config.copy(wellnessEnabled = it))
                     },
                 )
+                DependentSection(enabled = wellnessEnabled) {
                 ResponseLevelChips(
                     selected = wellnessResponseLevel,
                     onSelected = {
@@ -166,6 +169,7 @@ fun HealthScreen(vm: MainViewModel) {
                         vm.saveConfig(config.copy(wellnessCriticalEnabled = it))
                     },
                 )
+                DependentSection(enabled = wCriticalOn) {
                 if (wellnessUseMaxHrPercent) {
                     OutlinedTextField(
                         value = wCriticalThresholdPct,
@@ -205,6 +209,7 @@ fun HealthScreen(vm: MainViewModel) {
                     modifier = Modifier.fillMaxWidth(),
                     singleLine = true,
                 )
+                }  // end DependentSection (wCriticalOn)
 
                 // ── Tier 2: Sustained HR ────────────────────────────────────
                 androidx.compose.material3.HorizontalDivider()
@@ -216,6 +221,7 @@ fun HealthScreen(vm: MainViewModel) {
                         vm.saveConfig(config.copy(wellnessSustainedEnabled = it))
                     },
                 )
+                DependentSection(enabled = wSustainedOn) {
                 if (wellnessUseMaxHrPercent) {
                     OutlinedTextField(
                         value = wSustainedThresholdPct,
@@ -255,6 +261,7 @@ fun HealthScreen(vm: MainViewModel) {
                     modifier = Modifier.fillMaxWidth(),
                     singleLine = true,
                 )
+                }  // end DependentSection (wSustainedOn)
 
                 // ── Tier 3: Cardiac decoupling (requires power) ─────────────
                 androidx.compose.material3.HorizontalDivider()
@@ -266,6 +273,7 @@ fun HealthScreen(vm: MainViewModel) {
                         vm.saveConfig(config.copy(wellnessDecouplingEnabled = it))
                     },
                 )
+                DependentSection(enabled = wDecouplingOn) {
                 Text(
                     text = stringResource(R.string.health_wellness_decoupling_hint),
                     style = MaterialTheme.typography.bodySmall,
@@ -295,6 +303,8 @@ fun HealthScreen(vm: MainViewModel) {
                     modifier = Modifier.fillMaxWidth(),
                     singleLine = true,
                 )
+                }  // end DependentSection (wDecouplingOn)
+                }  // end DependentSection (wellnessEnabled)
             }
         }
     }

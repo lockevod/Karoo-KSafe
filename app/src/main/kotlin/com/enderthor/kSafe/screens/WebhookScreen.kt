@@ -202,7 +202,7 @@ fun ActionsScreen(vm: MainViewModel) {
                 ActionSettingRow(label = stringResource(R.string.custom_message_label)) {
                     Switch(checked = customMessageEnabled, onCheckedChange = { customMessageEnabled = it })
                 }
-                if (customMessageEnabled) {
+                DependentSection(enabled = customMessageEnabled) {
                     OutlinedTextField(
                         value = customMessageTitle,
                         onValueChange = { if (it.length <= 7) customMessageTitle = it },
@@ -248,7 +248,7 @@ fun ActionsScreen(vm: MainViewModel) {
                             color = if (customMsgIsError) Color(0xFFB71C1C) else Color(0xFF2E7D32)
                         )
                     }
-                }
+                }  // end DependentSection (customMessageEnabled)
 
                 HorizontalDivider(modifier = Modifier.padding(vertical = 2.dp))
 
@@ -256,7 +256,7 @@ fun ActionsScreen(vm: MainViewModel) {
                 ActionSettingRow(label = stringResource(R.string.custom_message_2_label)) {
                     Switch(checked = customMessage2Enabled, onCheckedChange = { customMessage2Enabled = it })
                 }
-                if (customMessage2Enabled) {
+                DependentSection(enabled = customMessage2Enabled) {
                     OutlinedTextField(
                         value = customMessage2Title,
                         onValueChange = { if (it.length <= 7) customMessage2Title = it },
@@ -302,7 +302,7 @@ fun ActionsScreen(vm: MainViewModel) {
                             color = if (customMsg2IsError) Color(0xFFB71C1C) else Color(0xFF2E7D32)
                         )
                     }
-                }
+                }  // end DependentSection (customMessage2Enabled)
 
                 HorizontalDivider(modifier = Modifier.padding(vertical = 2.dp))
 
@@ -310,7 +310,7 @@ fun ActionsScreen(vm: MainViewModel) {
                 ActionSettingRow(label = stringResource(R.string.custom_message_3_label)) {
                     Switch(checked = customMessage3Enabled, onCheckedChange = { customMessage3Enabled = it })
                 }
-                if (customMessage3Enabled) {
+                DependentSection(enabled = customMessage3Enabled) {
                     OutlinedTextField(
                         value = customMessage3Title,
                         onValueChange = { if (it.length <= 7) customMessage3Title = it },
@@ -356,7 +356,7 @@ fun ActionsScreen(vm: MainViewModel) {
                             color = if (customMsg3IsError) Color(0xFFB71C1C) else Color(0xFF2E7D32)
                         )
                     }
-                }
+                }  // end DependentSection (customMessage3Enabled)
             }
         }
 
@@ -527,7 +527,7 @@ private fun WebhookSlotFields(
     ActionSettingRow(label = enableLabel) {
         Switch(checked = enabled, onCheckedChange = onEnabledChange)
     }
-    if (enabled) {
+    DependentSection(enabled = enabled) {
         OutlinedTextField(
             value = label,
             onValueChange = onLabelChange,
@@ -571,7 +571,7 @@ private fun WebhookSlotFields(
         ActionSettingRow(label = stringResource(R.string.webhook_geo_label)) {
             Switch(checked = geoEnabled, onCheckedChange = onGeoEnabledChange)
         }
-        if (geoEnabled) {
+        DependentSection(enabled = geoEnabled) {
             Text(
                 text = stringResource(R.string.webhook_geo_hint),
                 style = MaterialTheme.typography.bodySmall,
@@ -639,7 +639,7 @@ private fun WebhookSlotFields(
                     color = MaterialTheme.colorScheme.primary
                 )
             }
-        }
+        }  // end DependentSection (geoEnabled)
         // ─────────────────────────────────────────────────────────────────
 
         // ── Ride alert ────────────────────────────────────────────────────
@@ -647,7 +647,7 @@ private fun WebhookSlotFields(
         ActionSettingRow(label = stringResource(R.string.webhook_alert_label)) {
             Switch(checked = alertEnabled, onCheckedChange = onAlertEnabledChange)
         }
-        if (alertEnabled) {
+        DependentSection(enabled = alertEnabled) {
             OutlinedTextField(
                 value = alertText,
                 onValueChange = onAlertTextChange,
@@ -657,7 +657,7 @@ private fun WebhookSlotFields(
                 singleLine = true,
                 supportingText = { Text(stringResource(R.string.webhook_alert_text_desc)) }
             )
-        }
+        }  // end DependentSection (alertEnabled)
         // ─────────────────────────────────────────────────────────────────
 
         FieldColorPicker(
@@ -674,7 +674,7 @@ private fun WebhookSlotFields(
                 color = if (testIsError) Color(0xFFB71C1C) else Color(0xFF2E7D32)
             )
         }
-    }
+    }  // end DependentSection (webhook master)
 }
 
 @Composable
