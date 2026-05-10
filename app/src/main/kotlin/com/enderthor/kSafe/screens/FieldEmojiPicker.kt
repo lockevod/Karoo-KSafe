@@ -45,13 +45,12 @@ fun FieldEmojiPicker(
     selected: String,
     emojis: List<String>,
     onSelected: (String) -> Unit,
+    modifier: Modifier = Modifier.fillMaxWidth(),
 ) {
     var dialogOpen by remember { mutableStateOf(false) }
 
     FilledTonalButton(
-        modifier = Modifier
-            .fillMaxWidth()
-            .height(52.dp),
+        modifier = modifier.height(52.dp),
         onClick = { dialogOpen = true },
     ) {
         Box(

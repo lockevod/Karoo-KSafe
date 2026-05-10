@@ -80,12 +80,19 @@ val PRESET_CONFIRM_SPEED = mapOf(
  *  picked by riders who only want the label text — see [FieldEmojiPicker]. The Android
  *  system renders these in colour even when the surrounding TextView is white, which
  *  gives them visual punch on the coloured field backgrounds without any drawable
- *  bundling work. */
+ *  bundling work.
+ *
+ *  The two palettes are deliberately disjoint and themed:
+ *    - Carb palette = cyclist-typical solid food (gel, banana, bar, nuts, energy chew,
+ *      bread/sandwich, fruit). 🧴 = squeeze-bottle gel pouch.
+ *    - Drink palette = water / hydration / drink containers. 🧴 is NOT here so the
+ *      same emoji can't appear in both pickers and confuse the rider.
+ */
 val FUEL_EMOJI_CARB: List<String> = listOf(
-    "", "🍫", "🍌", "🍪", "🥨", "🥯", "🍙", "🥜", "⚡", "🍯", "🧴", "🍞",
+    "", "🧴", "🍌", "🥜", "🍫", "🍪", "🥨", "🍯", "⚡", "🍞", "🥪", "🍎", "🍇",
 )
 val FUEL_EMOJI_DRINK: List<String> = listOf(
-    "", "💧", "🥤", "🧃", "🧊", "☕", "🍵", "🥛", "🧴",
+    "", "💧", "🥤", "🍶", "🧃", "🧊", "☕", "🍵", "💦",
 )
 
 val FIELD_COLOR_PALETTE: List<Int> = listOf(
