@@ -255,9 +255,13 @@ class KSafeExtension : KarooExtension("ksafe", BuildConfig.VERSION_NAME), Corout
         launch {
             // Rider profile (weight, max HR, FTP, HR zones, power zones). Read continuously —
             // if the rider edits their profile in the Karoo settings mid-ride, the new values
-            // propagate immediately to the carb tracker.
+            // propagate immediately. Both the carb tracker (for HR/power zone multiplier) and
+            // the wellness monitor (for the optional % of max HR threshold mode) consume it.
             karooSystem.streamUserProfile()
-                .collect { profile -> carbsTracker.updateUserProfile(profile) }
+                .collect { profile ->
+                    carbsTracker.updateUserProfile(profile)
+                    wellnessMonitor.updateUserProfile(profile)
+                }
         }
 
         launch {

@@ -88,6 +88,8 @@
     <string name="health_response_warning">Warning</string>
     <string name="health_response_emergency">Emergency</string>
     <string name="health_wellness_threshold_label">HR threshold (bpm)</string>
+    <string name="health_wellness_threshold_pct_label">HR threshold (% of max HR)</string>
+    <string name="health_wellness_use_pct_label">Use % of max HR (from Karoo profile)</string>
     <string name="health_wellness_duration_label">Sustained minutes</string>
 
     <!-- Provider screen -->
