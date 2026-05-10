@@ -51,10 +51,21 @@ fun HealthScreen(vm: MainViewModel) {
 
     var wellnessEnabled         by remember(config.wellnessEnabled)              { mutableStateOf(config.wellnessEnabled) }
     var wellnessResponseLevel   by remember(config.wellnessResponseLevel)        { mutableStateOf(coerceVisible(config.wellnessResponseLevel, IncidentResponseLevel.WARNING)) }
-    var wellnessThreshold       by remember(config.wellnessHighHrThreshold)      { mutableStateOf(config.wellnessHighHrThreshold.toString()) }
     var wellnessUseMaxHrPercent by remember(config.wellnessUseMaxHrPercent)      { mutableStateOf(config.wellnessUseMaxHrPercent) }
-    var wellnessHrPercent       by remember(config.wellnessHighHrPercent)        { mutableStateOf(config.wellnessHighHrPercent.toString()) }
-    var wellnessDuration        by remember(config.wellnessHighHrDurationMinutes){ mutableStateOf(config.wellnessHighHrDurationMinutes.toString()) }
+    // Sustained tier (existing fields)
+    var wSustainedOn            by remember(config.wellnessSustainedEnabled)     { mutableStateOf(config.wellnessSustainedEnabled) }
+    var wSustainedThresholdBpm  by remember(config.wellnessHighHrThreshold)      { mutableStateOf(config.wellnessHighHrThreshold.toString()) }
+    var wSustainedThresholdPct  by remember(config.wellnessHighHrPercent)        { mutableStateOf(config.wellnessHighHrPercent.toString()) }
+    var wSustainedDuration      by remember(config.wellnessHighHrDurationMinutes){ mutableStateOf(config.wellnessHighHrDurationMinutes.toString()) }
+    // Critical tier
+    var wCriticalOn             by remember(config.wellnessCriticalEnabled)         { mutableStateOf(config.wellnessCriticalEnabled) }
+    var wCriticalThresholdBpm   by remember(config.wellnessCriticalThresholdBpm)    { mutableStateOf(config.wellnessCriticalThresholdBpm.toString()) }
+    var wCriticalThresholdPct   by remember(config.wellnessCriticalThresholdPct)    { mutableStateOf(config.wellnessCriticalThresholdPct.toString()) }
+    var wCriticalDuration       by remember(config.wellnessCriticalDurationMinutes) { mutableStateOf(config.wellnessCriticalDurationMinutes.toString()) }
+    // Decoupling tier
+    var wDecouplingOn           by remember(config.wellnessDecouplingEnabled)        { mutableStateOf(config.wellnessDecouplingEnabled) }
+    var wDecouplingThreshold    by remember(config.wellnessDecouplingThresholdPct)   { mutableStateOf(config.wellnessDecouplingThresholdPct.toString()) }
+    var wDecouplingDuration     by remember(config.wellnessDecouplingDurationMinutes){ mutableStateOf(config.wellnessDecouplingDurationMinutes.toString()) }
 
     Column(
         modifier = Modifier
@@ -114,7 +125,7 @@ fun HealthScreen(vm: MainViewModel) {
             }
         }
 
-        // ── Wellness monitor ─────────────────────────────────────────────────
+        // ── Wellness monitor (three-tier model) ──────────────────────────────
         Card(elevation = CardDefaults.cardElevation(defaultElevation = 2.dp)) {
             Column(
                 modifier = Modifier.padding(10.dp),
@@ -144,14 +155,74 @@ fun HealthScreen(vm: MainViewModel) {
                         vm.saveConfig(config.copy(wellnessUseMaxHrPercent = it))
                     },
                 )
+
+                // ── Tier 1: Critical HR ─────────────────────────────────────
+                androidx.compose.material3.HorizontalDivider()
+                EnableRow(
+                    label = stringResource(R.string.health_wellness_tier_critical),
+                    checked = wCriticalOn,
+                    onCheckedChange = {
+                        wCriticalOn = it
+                        vm.saveConfig(config.copy(wellnessCriticalEnabled = it))
+                    },
+                )
                 if (wellnessUseMaxHrPercent) {
                     OutlinedTextField(
-                        value = wellnessHrPercent,
+                        value = wCriticalThresholdPct,
                         onValueChange = { v ->
-                            wellnessHrPercent = v.filter { it.isDigit() }.take(3)
-                            val parsed = wellnessHrPercent.toIntOrNull()
-                            if (parsed != null && parsed in 60..100) {
-                                vm.saveConfig(config.copy(wellnessHighHrPercent = parsed))
+                            wCriticalThresholdPct = v.filter { it.isDigit() }.take(3)
+                            wCriticalThresholdPct.toIntOrNull()?.let { p ->
+                                if (p in 60..100) vm.saveConfig(config.copy(wellnessCriticalThresholdPct = p))
+                            }
+                        },
+                        label = { Text(stringResource(R.string.health_wellness_critical_threshold_pct_label)) },
+                        modifier = Modifier.fillMaxWidth(),
+                        singleLine = true,
+                    )
+                } else {
+                    OutlinedTextField(
+                        value = wCriticalThresholdBpm,
+                        onValueChange = { v ->
+                            wCriticalThresholdBpm = v.filter { it.isDigit() }.take(3)
+                            wCriticalThresholdBpm.toIntOrNull()?.let { p ->
+                                if (p in 80..250) vm.saveConfig(config.copy(wellnessCriticalThresholdBpm = p))
+                            }
+                        },
+                        label = { Text(stringResource(R.string.health_wellness_critical_threshold_bpm_label)) },
+                        modifier = Modifier.fillMaxWidth(),
+                        singleLine = true,
+                    )
+                }
+                OutlinedTextField(
+                    value = wCriticalDuration,
+                    onValueChange = { v ->
+                        wCriticalDuration = v.filter { it.isDigit() }.take(3)
+                        wCriticalDuration.toIntOrNull()?.let { p ->
+                            if (p in 1..60) vm.saveConfig(config.copy(wellnessCriticalDurationMinutes = p))
+                        }
+                    },
+                    label = { Text(stringResource(R.string.health_wellness_critical_duration_label)) },
+                    modifier = Modifier.fillMaxWidth(),
+                    singleLine = true,
+                )
+
+                // ── Tier 2: Sustained HR ────────────────────────────────────
+                androidx.compose.material3.HorizontalDivider()
+                EnableRow(
+                    label = stringResource(R.string.health_wellness_tier_sustained),
+                    checked = wSustainedOn,
+                    onCheckedChange = {
+                        wSustainedOn = it
+                        vm.saveConfig(config.copy(wellnessSustainedEnabled = it))
+                    },
+                )
+                if (wellnessUseMaxHrPercent) {
+                    OutlinedTextField(
+                        value = wSustainedThresholdPct,
+                        onValueChange = { v ->
+                            wSustainedThresholdPct = v.filter { it.isDigit() }.take(3)
+                            wSustainedThresholdPct.toIntOrNull()?.let { p ->
+                                if (p in 60..100) vm.saveConfig(config.copy(wellnessHighHrPercent = p))
                             }
                         },
                         label = { Text(stringResource(R.string.health_wellness_threshold_pct_label)) },
@@ -160,12 +231,11 @@ fun HealthScreen(vm: MainViewModel) {
                     )
                 } else {
                     OutlinedTextField(
-                        value = wellnessThreshold,
+                        value = wSustainedThresholdBpm,
                         onValueChange = { v ->
-                            wellnessThreshold = v.filter { it.isDigit() }.take(3)
-                            val parsed = wellnessThreshold.toIntOrNull()
-                            if (parsed != null && parsed in 80..250) {
-                                vm.saveConfig(config.copy(wellnessHighHrThreshold = parsed))
+                            wSustainedThresholdBpm = v.filter { it.isDigit() }.take(3)
+                            wSustainedThresholdBpm.toIntOrNull()?.let { p ->
+                                if (p in 80..250) vm.saveConfig(config.copy(wellnessHighHrThreshold = p))
                             }
                         },
                         label = { Text(stringResource(R.string.health_wellness_threshold_label)) },
@@ -174,15 +244,54 @@ fun HealthScreen(vm: MainViewModel) {
                     )
                 }
                 OutlinedTextField(
-                    value = wellnessDuration,
+                    value = wSustainedDuration,
                     onValueChange = { v ->
-                        wellnessDuration = v.filter { it.isDigit() }.take(3)
-                        val parsed = wellnessDuration.toIntOrNull()
-                        if (parsed != null && parsed in 5..240) {
-                            vm.saveConfig(config.copy(wellnessHighHrDurationMinutes = parsed))
+                        wSustainedDuration = v.filter { it.isDigit() }.take(3)
+                        wSustainedDuration.toIntOrNull()?.let { p ->
+                            if (p in 5..240) vm.saveConfig(config.copy(wellnessHighHrDurationMinutes = p))
                         }
                     },
                     label = { Text(stringResource(R.string.health_wellness_duration_label)) },
+                    modifier = Modifier.fillMaxWidth(),
+                    singleLine = true,
+                )
+
+                // ── Tier 3: Cardiac decoupling (requires power) ─────────────
+                androidx.compose.material3.HorizontalDivider()
+                EnableRow(
+                    label = stringResource(R.string.health_wellness_tier_decoupling),
+                    checked = wDecouplingOn,
+                    onCheckedChange = {
+                        wDecouplingOn = it
+                        vm.saveConfig(config.copy(wellnessDecouplingEnabled = it))
+                    },
+                )
+                Text(
+                    text = stringResource(R.string.health_wellness_decoupling_hint),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                OutlinedTextField(
+                    value = wDecouplingThreshold,
+                    onValueChange = { v ->
+                        wDecouplingThreshold = v.filter { it.isDigit() }.take(2)
+                        wDecouplingThreshold.toIntOrNull()?.let { p ->
+                            if (p in 3..30) vm.saveConfig(config.copy(wellnessDecouplingThresholdPct = p))
+                        }
+                    },
+                    label = { Text(stringResource(R.string.health_wellness_decoupling_threshold_label)) },
+                    modifier = Modifier.fillMaxWidth(),
+                    singleLine = true,
+                )
+                OutlinedTextField(
+                    value = wDecouplingDuration,
+                    onValueChange = { v ->
+                        wDecouplingDuration = v.filter { it.isDigit() }.take(3)
+                        wDecouplingDuration.toIntOrNull()?.let { p ->
+                            if (p in 1..60) vm.saveConfig(config.copy(wellnessDecouplingDurationMinutes = p))
+                        }
+                    },
+                    label = { Text(stringResource(R.string.health_wellness_decoupling_duration_label)) },
                     modifier = Modifier.fillMaxWidth(),
                     singleLine = true,
                 )

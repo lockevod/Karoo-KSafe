@@ -123,47 +123,123 @@ Without **A**, vasovagal events go undetected for up to 5 minutes (until the spe
 
 ## Wellness Monitor
 
-`WellnessMonitor.kt` watches for **sustained high HR** — useful as a fatigue / heat-stress / overtraining flag on long rides. It is informational, not a medical alert: the rider sees a notification on the Karoo and decides what to do.
+`WellnessMonitor.kt` is a **three-tier system** built around the observation that a single sustained-HR rule is not enough to reliably warn the rider *before* complications appear:
 
-### Algorithm
+- A 30-minute sustained-HR alert fires when fatigue is already setting in.
+- An acute overexertion (very high HR for ~5 min) is a different physiological signal and deserves an earlier dedicated alert.
+- The textbook clinical indicator of dehydration / heat stress is **cardiac drift** — the HR / power ratio rising over time even at constant effort. This requires a power meter but is more meaningful than any absolute-threshold rule.
 
-Single rule:
+The monitor therefore implements three independent tiers, each with its own enable toggle. The master `wellnessEnabled` switch gates all three.
+
+### Tier 1 — Critical HR (early warning)
+
+Acute overexertion. Fires earlier and at a higher threshold than the sustained tier.
 
 ```
-HR has stayed >= effectiveThreshold() continuously for
+condition = (currentHrBpm >= effectiveCriticalThreshold)
+            AND sustained for wellnessCriticalDurationMinutes minutes
+            AND cooldown elapsed (= the duration setting itself, same convention as before)
+```
+
+| Default | Value | Rationale |
+|---|---|---|
+| `wellnessCriticalThresholdBpm` | 175 | When `wellnessUseMaxHrPercent = false`. |
+| `wellnessCriticalThresholdPct` | 95 % | When `wellnessUseMaxHrPercent = true` — top of zone 5 (VO2max → anaerobic). |
+| `wellnessCriticalDurationMinutes` | 5 | Sustained 5 min above 95 % maxHR is real overexertion / cardiac risk. Shorter than the sustained tier on purpose. |
+
+### Tier 2 — Sustained HR (long-tail fatigue)
+
+The original tier — preserved for back-compat. Fires when HR is **moderately** elevated for a **long** time. Single rule:
+
+```
+HR has stayed >= effectiveSustainedThreshold continuously for
    wellnessHighHrDurationMinutes minutes
 AND cooldown of duration_minutes has elapsed since the last fire
 ```
 
 The streak resets on **any** drop below the effective threshold. It is **continuous, not cumulative** — interval workouts with brief valleys don't accumulate towards the trigger.
 
-| Constant | Default | Rationale |
+| Default | Value | Rationale |
 |---|---|---|
-| `wellnessHighHrDurationMinutes` | 30 | Long enough to reject hard interval work (rarely sustains >30 min uninterrupted at the top zone), short enough to be actionable advice. |
-| `MONITOR_TICK_MS` | 30 000 | Wellness is not time-critical; checking every 30 s is plenty. |
-| `HR_STALE_MS` | 15 000 | Same as medical — sensor disconnect skips evaluation. |
+| `wellnessHighHrThreshold` | 180 bpm | Absolute mode default. |
+| `wellnessHighHrPercent` | 92 % | When `wellnessUseMaxHrPercent = true` — top of zone 5 (VO2max boundary). |
+| `wellnessHighHrDurationMinutes` | 30 | Long enough to reject hard interval work; short enough to be actionable advice. |
 
-### Effective threshold — two modes
+### Tier 3 — Cardiac Decoupling (heat stress / dehydration)
 
-The threshold against which the streak is computed depends on `wellnessUseMaxHrPercent`:
+The clinically meaningful early-warning of dehydration / heat stress / endurance fatigue is **cardiac drift**: at constant power output, HR rises over time as the rider becomes physiologically stressed. This tier requires a paired power meter; it auto-skips when power data is absent.
+
+#### Algorithm
+
+```
+Phase 1 — Baseline establishment (only once per session):
+  Wait until session has been active >= 10 min AND we have >= 8 valid samples
+  (samples are only collected when power >= 50 W, to skip coasting / descents).
+  baseline = average HR/W ratio over the rolling 5-min window at that moment.
+  Logged as a calibration event with subkind = decoupling_baseline.
+
+Phase 2 — Drift evaluation (every tick, after baseline):
+  current = average HR/W ratio over the rolling 5-min window
+  drift_pct = (current / baseline - 1) × 100
+
+  If drift_pct >= wellnessDecouplingThresholdPct:
+    if streak just started: decouplingExceededSinceMs = now
+    if streak duration >= wellnessDecouplingDurationMinutes minutes
+        AND cooldown of 30 min elapsed since last decoupling fire:
+      → fire WELLNESS_DECOUPLING
+  Else:
+    streak resets (decouplingExceededSinceMs = 0)
+```
+
+#### Constants
+
+| Name | Value | Rationale |
+|---|---|---|
+| `DECOUPLING_BASELINE_WAIT_MS` | 10 min | Wait long enough for the rider to settle into a stable effort and for the rolling window to be representative. |
+| `DECOUPLING_ROLLING_WINDOW_MS` | 5 min | Smooths over short power variations (sprints, surges, traffic lights) while still being responsive to a multi-minute drift. |
+| `DECOUPLING_MIN_POWER_W` | 50 W | Skip coasting / descending samples — including them would flood the average with high HR/W ratios that don't reflect cardiac state. |
+| `DECOUPLING_MIN_SAMPLES` | 8 | Need at least 8 samples in the rolling buffer to compute a meaningful average. With a 30 s tick, that's 4 minutes of stable riding. |
+| `DECOUPLING_COOLDOWN_MS` | 30 min | Once decoupling fires, heat stress / dehydration doesn't go away in 5 minutes. Long cooldown prevents re-firing in spam. |
+
+#### Defaults
+
+| Default | Value | Rationale |
+|---|---|---|
+| `wellnessDecouplingThresholdPct` | 7 % | Sport science: drift > 5 % over an hour = mild dehydration, > 10 % = significant. 7 % at 10 min sustained catches the early window before it becomes critical. |
+| `wellnessDecouplingDurationMinutes` | 10 | Sustained drift for 10 min rules out transient causes (steep climb, brief surge) — by then the drift is real. |
+
+#### Edge Cases
+
+| Scenario | Behaviour |
+|---|---|
+| No power meter paired | `lastPowerW = null` → tier auto-skips. No false fires. |
+| Long descent / stop | Power < 50 W → samples are not collected; the rolling window naturally ages out. Tier doesn't fire on coasting. |
+| Steep climb causing temporary spike | Drift might briefly exceed 7 %, but the 10-minute sustained window rules out short bursts. |
+| Power meter glitch | A single bad reading is averaged across the rolling 5-min window — minimal impact on the current avg. |
+| Rider starts cold and warms up gradually | Baseline is established at minute 10, by which point HR/W has stabilised. Drift is measured against this warm-baseline. |
+| Long ride with no rest stops | Cooldown of 30 min between fires; rider could see 1-2 alerts on a 4-hour ride if drift is really severe. Acceptable. |
+
+### Effective threshold — two modes (Critical & Sustained tiers)
+
+The HR threshold for tiers 1 and 2 depends on `wellnessUseMaxHrPercent`:
 
 ```kotlin
 private fun effectiveThreshold(): Int {
     if (wellnessUseMaxHrPercent && profile != null && profile.maxHr > 0) {
-        return (profile.maxHr * wellnessHighHrPercent) / 100
+        return (profile.maxHr * percent) / 100
     }
-    return wellnessHighHrThreshold   // absolute bpm fallback
+    return absoluteBpm                                // back-compat fallback
 }
 ```
 
-| Mode | When to use | Default |
-|---|---|---|
-| **Absolute bpm** *(default)* | Rider knows their max HR and prefers a fixed number | 180 bpm |
-| **% of max HR** | Auto-scale across riders / no manual tuning | 92 % of `userProfile.maxHr` |
+| Mode | When to use |
+|---|---|
+| **Absolute bpm** *(default)* | Rider knows their max HR and prefers a fixed number |
+| **% of max HR** | Auto-scale across riders / no manual tuning. Reads `userProfile.maxHr` from the Karoo — no biometric entry in our config. |
 
-The percent mode reads `userProfile.maxHr` from the Karoo — no manual entry required, no biometric data in our config. If the profile isn't available yet (first seconds of an extension restart), the algorithm falls back to the absolute value so the feature can't silently disable itself.
+If the profile isn't available yet (first seconds of an extension restart), the algorithm falls back to the absolute value so the feature can't silently disable itself.
 
-**92 % corresponds to the upper boundary of zone 5** for the typical 5-zone HR model (`60 / 70 / 80 / 90 / 95`). Above this for 30+ min is genuinely worth flagging on most rides.
+**Tier 3 (decoupling) does NOT use this**: drift is a relative measurement against the rider's own ride-specific baseline, so the absolute / % toggle does not apply.
 
 ### Cooldown semantics
 
@@ -211,7 +287,8 @@ When `calibrationLoggingEnabled` is on, the detectors emit timestamped CSV rows 
 | `HR_PERIODIC` | `bpm, avg5min, speed, active_recent, flatline_for_s, collapse_armed` (every 2 min) |
 | `HR_STALE` | `last_bpm, since_ms` (once per fresh→stale transition) |
 | `MEDICAL_CANCELLED` | `how_long_ms, subkind` (FP marker — paired with the original CRASH_OK-like fire) |
-| `WELLNESS_FIRED` | `bpm, threshold, mode (abs|pct), sustained_min, duration_setting` |
+| `WELLNESS_FIRED` | `tier (critical|sustained|decoupling), bpm, threshold, mode (abs|pct), sustained_min, duration_setting` |
+| `WELLNESS_DECOUPLING_BASELINE` | `baseline_hr_per_w, samples, elapsed_min` (one-shot, when baseline established) |
 
 The lambdas passed to `calibLogger?.log { ... }` are inert (no allocation, no string formatting) when calibration logging is disabled. Zero hot-path cost.
 
@@ -239,13 +316,42 @@ All config fields live in `KSafeConfig` (`data/ConfigData.kt`).
 
 Internal thresholds (`HR_FLATLINE_MAX_BPM`, `HR_COLLAPSE_DROP_FRACTION`, etc.) are NOT exposed. Calibrated in code from spec-defined values.
 
-### Wellness
+### Wellness — Master & shared
 
 | Field | Default | UI exposed |
 |---|---|---|
-| `wellnessEnabled` | `false` (opt-in) | ✅ |
+| `wellnessEnabled` | `false` (opt-in master switch — gates all three tiers) | ✅ |
 | `wellnessResponseLevel` | `WARNING` | ✅ |
-| `wellnessUseMaxHrPercent` | `false` | ✅ |
+| `wellnessUseMaxHrPercent` | `false` (applies to tiers 1 & 2; tier 3 ignores) | ✅ |
+
+### Wellness — Tier 1 (Critical HR)
+
+| Field | Default | UI exposed |
+|---|---|---|
+| `wellnessCriticalEnabled` | `true` | ✅ Sub-switch (only when master on) |
+| `wellnessCriticalThresholdBpm` | 175 bpm | ✅ (when % mode off) |
+| `wellnessCriticalThresholdPct` | 95 % | ✅ (when % mode on) |
+| `wellnessCriticalDurationMinutes` | 5 min | ✅ |
+
+### Wellness — Tier 2 (Sustained HR)
+
+| Field | Default | UI exposed |
+|---|---|---|
+| `wellnessSustainedEnabled` | `true` | ✅ Sub-switch (only when master on) |
 | `wellnessHighHrThreshold` | 180 bpm | ✅ (when % mode off) |
 | `wellnessHighHrPercent` | 92 % | ✅ (when % mode on) |
 | `wellnessHighHrDurationMinutes` | 30 min | ✅ |
+
+### Wellness — Tier 3 (Cardiac Decoupling)
+
+| Field | Default | UI exposed |
+|---|---|---|
+| `wellnessDecouplingEnabled` | `true` | ✅ Sub-switch (only when master on) |
+| `wellnessDecouplingThresholdPct` | 7 % | ✅ |
+| `wellnessDecouplingDurationMinutes` | 10 min | ✅ |
+
+Decoupling internal constants (`DECOUPLING_BASELINE_WAIT_MS`, `DECOUPLING_ROLLING_WINDOW_MS`, `DECOUPLING_MIN_POWER_W`, `DECOUPLING_MIN_SAMPLES`, `DECOUPLING_COOLDOWN_MS`) are NOT exposed.
+
+### Migration
+
+`CONFIG_VERSION = 7` adds the eight new wellness fields. Riders upgrading from v6 (single-tier wellness) get the new tiers enabled by default but the master switch retains their existing `wellnessEnabled` value — opt-in stays opt-in.

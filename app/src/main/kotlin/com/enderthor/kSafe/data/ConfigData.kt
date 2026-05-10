@@ -34,8 +34,11 @@ const val KAROO_LIVE_BASE_URL = "https://dashboard.hammerhead.io/live/"
  *            added. Pure version stamp.
  *  v5 → v6 : wellness can be configured by % of the rider's Karoo-profile maxHr instead of absolute bpm
  *            (wellnessUseMaxHrPercent / wellnessHighHrPercent). Pure version stamp.
+ *  v6 → v7 : three-tier wellness model — critical-HR tier (early warning) + cardiac-decoupling tier
+ *            (HR / power ratio drift, requires power meter) added alongside the existing sustained-HR
+ *            tier. Each tier has its own enable + parameters. Pure version stamp.
  */
-const val CONFIG_VERSION = 6
+const val CONFIG_VERSION = 7
 
 /**
  * Canonical minSpeedForCrashKmh value per preset.
@@ -102,8 +105,16 @@ enum class EmergencyReason(val label: String) {
     MEDICAL_FLATLINE("Medical episode detected"),
     /** HR-collapse sub-detector of [MedicalEpisodeDetector]. Same user-visible label as [MEDICAL_FLATLINE]. */
     MEDICAL_COLLAPSE("Medical episode detected"),
-    /** Sustained HR over [KSafeConfig.wellnessHighHrThreshold] for [KSafeConfig.wellnessHighHrDurationMinutes]. */
+    /** Sustained HR over [KSafeConfig.wellnessHighHrThreshold] for [KSafeConfig.wellnessHighHrDurationMinutes].
+     *  Originally the only wellness reason; semantically kept as the "sustained tier" of the
+     *  three-tier wellness model introduced in revision 3 of the algorithm. */
     WELLNESS_HIGH_HR("Sustained high heart rate"),
+    /** Critical-tier wellness alert: HR over [KSafeConfig.wellnessCriticalThresholdBpm] (or % equivalent)
+     *  for [KSafeConfig.wellnessCriticalDurationMinutes]. Earlier-warning tier than WELLNESS_HIGH_HR. */
+    WELLNESS_CRITICAL_HR("Heart rate critical"),
+    /** Cardiac decoupling: HR/power ratio drift > [KSafeConfig.wellnessDecouplingThresholdPct] sustained
+     *  for [KSafeConfig.wellnessDecouplingDurationMinutes]. Clinical indicator of dehydration / heat stress. */
+    WELLNESS_DECOUPLING("Heart rate drift detected"),
 }
 
 // ─── Config models ────────────────────────────────────────────────────────────
@@ -167,6 +178,28 @@ data class KSafeConfig(
     /** Percent of max HR used as the wellness threshold when [wellnessUseMaxHrPercent] is true. 92%
      *  sits at the top of zone 5 (VO2max) for most riders — sustained > 30 min is genuinely worth flagging. */
     val wellnessHighHrPercent: Int = 92,
+    /** Sub-toggle for the sustained tier (the rule above). Allows the rider to disable just the
+     *  sustained tier while keeping critical / decoupling on. Gated behind the [wellnessEnabled] master. */
+    val wellnessSustainedEnabled: Boolean = true,
+    // ─── Critical HR tier (tier 1 — early warning) ───────────────────────────
+    /** Sub-toggle for the critical-HR tier. Fires earlier than the sustained tier — high HR for short time. */
+    val wellnessCriticalEnabled: Boolean = true,
+    /** Critical HR threshold in absolute bpm, used when [wellnessUseMaxHrPercent] is false. */
+    val wellnessCriticalThresholdBpm: Int = 175,
+    /** Critical HR threshold as % of max HR, used when [wellnessUseMaxHrPercent] is true. 95 % is the
+     *  top of zone 5 (VO2max → anaerobic) — sustained more than a few minutes is real overexertion. */
+    val wellnessCriticalThresholdPct: Int = 95,
+    /** How long HR must stay above the critical threshold before the tier fires (minutes). */
+    val wellnessCriticalDurationMinutes: Int = 5,
+    // ─── Cardiac decoupling tier (tier 3 — heat stress / dehydration) ────────
+    /** Sub-toggle for the cardiac-decoupling tier. Auto-disabled at runtime if the rider has no
+     *  power meter paired (the algorithm needs HR / power ratio). Master switch must also be on. */
+    val wellnessDecouplingEnabled: Boolean = true,
+    /** Drift threshold as a % above the rider's baseline HR / power ratio. 7 % = early heat-stress
+     *  indicator; 10 %+ = significant. Sustained drift above the threshold for [wellnessDecouplingDurationMinutes]. */
+    val wellnessDecouplingThresholdPct: Int = 7,
+    /** How long the drift must stay above the threshold before the tier fires (minutes). */
+    val wellnessDecouplingDurationMinutes: Int = 10,
     // Calibration logging — writes detailed sensor events to CSV for threshold tuning
     val calibrationLoggingEnabled: Boolean = false,
     // Field colours — idle/ready background for each ride-screen widget
@@ -477,6 +510,13 @@ fun KSafeConfig.migrateToLatest(): KSafeConfig {
         // behaviour (UseMaxHrPercent = false → still uses the absolute wellnessHighHrThreshold).
         c = c.copy(configVersion = 6)
         Timber.i("KSafeConfig migrated v%d→v6 (wellness % of max HR)", originalVersion)
+    }
+
+    if (c.configVersion < 7) {
+        // v6 → v7: critical-HR + cardiac-decoupling tiers added to wellness. Sustained tier
+        // unchanged; the new tiers default to enabled with conservative parameters.
+        c = c.copy(configVersion = 7)
+        Timber.i("KSafeConfig migrated v%d→v7 (wellness three-tier model)", originalVersion)
     }
 
     return c

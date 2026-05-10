@@ -5,6 +5,8 @@
 
     <!-- Warning-level incident titles (used by EmergencyManager.handleIncident.WARNING) -->
     <string name="warning_wellness_high_hr_title">Heart rate high</string>
+    <string name="warning_wellness_critical_hr_title">HR critical — slow down</string>
+    <string name="warning_wellness_decoupling_title">HR drift detected</string>
 
     <!-- BonusAction labels -->
     <string name="action_cancel_emergency">KSafe: Cancel Emergency</string>
@@ -91,6 +93,16 @@
     <string name="health_wellness_threshold_pct_label">HR threshold (% of max HR)</string>
     <string name="health_wellness_use_pct_label">Use % of max HR (from Karoo profile)</string>
     <string name="health_wellness_duration_label">Sustained minutes</string>
+    <!-- Wellness three-tier model -->
+    <string name="health_wellness_tier_critical">Critical HR (early warning)</string>
+    <string name="health_wellness_tier_sustained">Sustained HR (long fatigue)</string>
+    <string name="health_wellness_tier_decoupling">Cardiac decoupling (heat / hydration)</string>
+    <string name="health_wellness_critical_threshold_bpm_label">Critical threshold (bpm)</string>
+    <string name="health_wellness_critical_threshold_pct_label">Critical threshold (% of max HR)</string>
+    <string name="health_wellness_critical_duration_label">Sustained minutes</string>
+    <string name="health_wellness_decoupling_threshold_label">Drift threshold (%)</string>
+    <string name="health_wellness_decoupling_duration_label">Sustained minutes</string>
+    <string name="health_wellness_decoupling_hint">Requires a paired power meter. Compares current HR/W ratio against the baseline established in the first 10 min of each ride.</string>
 
     <!-- Provider screen -->
     <string name="provider_title">Message Provider</string>
