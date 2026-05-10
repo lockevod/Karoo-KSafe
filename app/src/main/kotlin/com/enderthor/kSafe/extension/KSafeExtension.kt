@@ -857,9 +857,11 @@ class KSafeExtension : KarooExtension("ksafe", BuildConfig.VERSION_NAME), Corout
      * Two channels written:
      *  - **Record messages** (per-second) while `RideState.Recording` → step curves
      *    over the ride's timeline. Aligned with native HR / power samples.
-     *  - **Session message** (whole-ride summary) updated on every tick → final
-     *    totals appear in the activity summary (e.g. Strava's ride header) when
-     *    the FIT closes at ride end.
+     *  - **Session message** (whole-ride summary) updated on every Recording tick
+     *    → whichever value is current when the ride closes becomes the activity
+     *    summary header in Strava / Intervals.icu / TrainingPeaks. Written from
+     *    the Recording branch (NOT Paused) because the ELAPSED_TIME stream stops
+     *    emitting while paused, so a Paused-only write would never actually fire.
      *
      * Both fields use `fitBaseTypeId = 136` (= `0x88` = float32). Float gives
      * room for future enhancements like fractional values (e.g. carb burn rate)
@@ -879,7 +881,10 @@ class KSafeExtension : KarooExtension("ksafe", BuildConfig.VERSION_NAME), Corout
      *
      * Toggleable via `KSafeConfig.fuelingFitExportEnabled` (default ON). The cost
      * is negligible (~0.05 % battery over a 5 h ride, no perceptible CPU) but
-     * riders who don't want extra columns in their FIT can opt out.
+     * riders who don't want extra columns in their FIT can opt out. The toggle
+     * is sampled once at FIT-pipeline start (typically next ride start); changes
+     * made mid-ride don't take effect until the next ride. A hot-toggle would
+     * be premature complexity for a setting riders almost never flip mid-ride.
      */
     override fun startFit(emitter: Emitter<FitEffect>) {
         if (!activeConfig.fuelingFitExportEnabled) {
@@ -915,13 +920,19 @@ class KSafeExtension : KarooExtension("ksafe", BuildConfig.VERSION_NAME), Corout
                         FieldValue(hydField,  hydMl),
                     )
                     when (currentRideState) {
-                        // Per-second record sample — joins HR/power/cadence in the timeline
-                        is RideState.Recording -> emitter.onNext(WriteToRecordMesg(values))
-                        // Session totals — every tick overwrites; only the last write before
-                        // FIT close matters. ELAPSED_TIME usually doesn't emit during Paused
-                        // but we keep the branch as cheap defensive coverage.
-                        is RideState.Paused    -> emitter.onNext(WriteToSessionMesg(values))
-                        else                   -> { /* Idle or null: don't emit */ }
+                        is RideState.Recording -> {
+                            // Per-second record sample — lands on the same FIT timestamp as
+                            // the native HR / power / cadence sample for that tick.
+                            emitter.onNext(WriteToRecordMesg(values))
+                            // Session totals — every Recording tick overwrites the running
+                            // value; whatever is current when the ride ends becomes the
+                            // activity summary header in Strava etc. Must be written here
+                            // (not in the Paused branch as nomride does) because
+                            // ELAPSED_TIME stops emitting while the ride is paused, so a
+                            // Paused-only write would never actually fire.
+                            emitter.onNext(WriteToSessionMesg(values))
+                        }
+                        else -> { /* Paused / Idle / null: don't emit */ }
                     }
                 }
         }
