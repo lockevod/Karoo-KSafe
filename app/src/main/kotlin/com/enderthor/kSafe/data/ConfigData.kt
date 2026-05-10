@@ -76,6 +76,16 @@ val PRESET_CONFIRM_SPEED = mapOf(
  *    - 0xFF1B5E20 green   — CarbLog / HydrationLog LOGGED, CustomMessage SENT (success flash)
  *    - 0xFF424242 grey    — every field's OFF / disabled state
  */
+/** Sentinel value identifying the "real" sports-gel-pouch icon in the carb palette.
+ *  Riders pick this entry to render `R.drawable.ic_fuel_gel` (a vector drawable) as
+ *  the slot field's left compound drawable instead of an emoji prefix. Used because
+ *  Unicode has no emoji that looks like a sports gel pouch — every food emoji we
+ *  tried (🧴 lotion, 🍬 candy) read as something else. The sentinel string is angle-
+ *  bracketed so it can never collide with a real emoji codepoint sequence and so
+ *  the existing `String.replace("{$k}", v)` token substitution can't accidentally
+ *  consume it. */
+const val FUEL_GEL_DRAWABLE = "<gel>"
+
 /** Emoji palettes for the per-slot icon picker. The first entry is `""` (no icon),
  *  picked by riders who only want the label text — see [FieldEmojiPicker]. The Android
  *  system renders these in colour even when the surrounding TextView is white, which
@@ -83,15 +93,15 @@ val PRESET_CONFIRM_SPEED = mapOf(
  *  bundling work.
  *
  *  The two palettes are deliberately disjoint and themed:
- *    - Carb palette = cyclist-typical solid food. 🍬 = energy gel pouch (Unicode has no
- *      specific energy-gel emoji; "candy" matches the rectangular pouch with twisted
- *      ends visually). 🍯 covers honey / sticky gel-style supplements separately.
- *      🍫 is the energy / chocolate bar. 🍽 covers a proper combo plate at a long stop.
- *    - Drink palette = water / hydration / drink containers. No emoji appears in both
- *      pickers so the rider can't get confused which palette they're in.
+ *    - Carb palette = cyclist-typical solid food. The first non-empty entry is the
+ *      [FUEL_GEL_DRAWABLE] sentinel — a real gel pouch vector drawable rather than
+ *      an emoji approximation. Then 🍯 for honey / sticky gel substitutes, 🍫 for
+ *      energy bars, 🍽 for a proper combo plate at a long stop, etc.
+ *    - Drink palette = water / hydration / drink containers. No entry appears in
+ *      both pickers so the rider can't get confused which palette they're in.
  */
 val FUEL_EMOJI_CARB: List<String> = listOf(
-    "", "🍬", "🍌", "🥜", "🍫", "🍪", "🥨", "🍯", "⚡", "🍞", "🥪", "🍽", "🍎", "🍇",
+    "", FUEL_GEL_DRAWABLE, "🍌", "🥜", "🍫", "🍪", "🥨", "🍯", "⚡", "🍞", "🥪", "🍽", "🍎", "🍇",
 )
 val FUEL_EMOJI_DRINK: List<String> = listOf(
     "", "💧", "🥤", "🍶", "🧃", "🧊", "☕", "🍵", "💦",
@@ -316,7 +326,7 @@ data class KSafeConfig(
     val carbAlertCustomDetail: String = "",
     /** Three logging slots, each user-configurable label + grams + idle background colour
      *  + optional emoji prefix. Empty `carbNIcon` = no emoji, label only. */
-    val carb1Label: String = "Gel",      val carb1Grams: Int = 25,    val carb1Color: Int = 0xFF1565C0.toInt(),    val carb1Icon: String = "🍬",
+    val carb1Label: String = "Gel",      val carb1Grams: Int = 25,    val carb1Color: Int = 0xFF1565C0.toInt(),    val carb1Icon: String = FUEL_GEL_DRAWABLE,
     val carb2Label: String = "Bar",      val carb2Grams: Int = 30,    val carb2Color: Int = 0xFF1565C0.toInt(),    val carb2Icon: String = "🍫",
     val carb3Label: String = "Fruit",    val carb3Grams: Int = 20,    val carb3Color: Int = 0xFF1565C0.toInt(),    val carb3Icon: String = "🍌",
 

@@ -3,6 +3,7 @@ package com.enderthor.kSafe.screens
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -13,6 +14,10 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.ui.graphics.ColorFilter
+import androidx.compose.ui.res.painterResource
+import com.enderthor.kSafe.R
+import com.enderthor.kSafe.data.FUEL_GEL_DRAWABLE
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.FilledTonalButton
@@ -63,10 +68,15 @@ fun FieldEmojiPicker(
                 .border(1.dp, MaterialTheme.colorScheme.outline, RoundedCornerShape(6.dp)),
             contentAlignment = Alignment.Center,
         ) {
-            if (selected.isBlank()) {
-                Text("—", fontSize = 14.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
-            } else {
-                Text(selected, fontSize = 16.sp)
+            when {
+                selected.isBlank()                  -> Text("—", fontSize = 14.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                selected == FUEL_GEL_DRAWABLE       -> Image(
+                    painter = painterResource(R.drawable.ic_fuel_gel),
+                    contentDescription = "Sports gel",
+                    modifier = Modifier.size(18.dp),
+                    colorFilter = ColorFilter.tint(MaterialTheme.colorScheme.onSurface),
+                )
+                else                                -> Text(selected, fontSize = 16.sp)
             }
         }
         Spacer(Modifier.width(6.dp))
@@ -110,10 +120,15 @@ fun FieldEmojiPicker(
                                         },
                                     contentAlignment = Alignment.Center,
                                 ) {
-                                    if (e.isBlank()) {
-                                        Text("—", fontSize = 22.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                                    } else {
-                                        Text(e, fontSize = 24.sp)
+                                    when {
+                                        e.isBlank()              -> Text("—", fontSize = 22.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                        e == FUEL_GEL_DRAWABLE   -> Image(
+                                            painter = painterResource(R.drawable.ic_fuel_gel),
+                                            contentDescription = "Sports gel",
+                                            modifier = Modifier.size(28.dp),
+                                            colorFilter = ColorFilter.tint(MaterialTheme.colorScheme.onSurface),
+                                        )
+                                        else                     -> Text(e, fontSize = 24.sp)
                                     }
                                 }
                             }

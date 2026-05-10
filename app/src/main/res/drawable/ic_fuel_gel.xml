@@ -1,0 +1,38 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Sports gel pouch icon — used as a special carb-slot "icon" via the {gel} sentinel
+  (FUEL_GEL_DRAWABLE in data/ConfigData.kt) because Unicode has no specific energy-gel
+  emoji. Renders as the field_text_main TextView's left compound drawable on the
+  Karoo data field, alongside the slot label.
+
+  Design: tall rectangular pouch with a tear corner at top-right and a horizontal
+  label band. White silhouette so it reads on every coloured field background; the
+  band and tear notch use overlaid darker tone for depth.
+-->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp"
+    android:height="24dp"
+    android:viewportWidth="24"
+    android:viewportHeight="24">
+
+    <!-- Main pouch body: top-left at (7,3), top-right at (15,3) where the tear
+         starts, slanting up to (17,5), straight down to (17,20), rounded corners
+         at the bottom (radius 2), back up the left side. -->
+    <path
+        android:fillColor="#FFFFFFFF"
+        android:pathData="M7,3 L15,3 L17,5 L17,20 A2,2 0 0 1 15,22 L9,22 A2,2 0 0 1 7,20 Z" />
+
+    <!-- Tear-corner accent (darker triangle) so the silhouette reads as 'pouch
+         with notched top' rather than a flat rectangle. -->
+    <path
+        android:fillColor="#000000"
+        android:fillAlpha="0.35"
+        android:pathData="M15,3 L17,5 L15,5 Z" />
+
+    <!-- Horizontal label band across the middle — the visual that disambiguates
+         the icon from a generic bottle / pill / candy. -->
+    <path
+        android:fillColor="#000000"
+        android:fillAlpha="0.25"
+        android:pathData="M7.5,11 L16.5,11 L16.5,14 L7.5,14 Z" />
+</vector>
