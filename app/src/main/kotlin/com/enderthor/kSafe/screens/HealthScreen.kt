@@ -9,9 +9,12 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
-import androidx.compose.material3.FilterChip
+import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.SegmentedButton
+import androidx.compose.material3.SegmentedButtonDefaults
+import androidx.compose.material3.SingleChoiceSegmentedButtonRow
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -210,31 +213,41 @@ private fun EnableRow(label: String, checked: Boolean, onCheckedChange: (Boolean
 }
 
 /**
- * Compact horizontal chip row for picking response level. Only WARNING / EMERGENCY are
- * exposed — SILENT does not make sense for an enabled detector and would confuse users.
+ * Compact horizontal segmented selector for response level. Only WARNING / EMERGENCY are
+ * exposed — SILENT does not make sense for an enabled detector.
+ *
+ * `SingleChoiceSegmentedButtonRow` is preferred over `FilterChip` because:
+ *  - the buttons share width equally without any internal checkmark padding shifting the label,
+ *  - the click target is the full button bounds (FilterChip's icon padding can cause the user
+ *    to click on what looks like one chip but registers on the other),
+ *  - the typography is naturally tighter, so labels like "Emergency" fit in one line on the
+ *    Karoo's narrow screen without wrapping.
  */
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun ResponseLevelChips(
     selected: IncidentResponseLevel,
     onSelected: (IncidentResponseLevel) -> Unit,
 ) {
-    Row(
-        modifier = Modifier.fillMaxWidth(),
-        horizontalArrangement = Arrangement.spacedBy(6.dp),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        FilterChip(
-            selected = selected == IncidentResponseLevel.WARNING,
-            onClick = { onSelected(IncidentResponseLevel.WARNING) },
-            label = { Text(stringResource(R.string.health_response_warning)) },
-            modifier = Modifier.weight(1f),
-        )
-        FilterChip(
-            selected = selected == IncidentResponseLevel.EMERGENCY,
-            onClick = { onSelected(IncidentResponseLevel.EMERGENCY) },
-            label = { Text(stringResource(R.string.health_response_emergency)) },
-            modifier = Modifier.weight(1f),
-        )
+    val options = listOf(IncidentResponseLevel.WARNING, IncidentResponseLevel.EMERGENCY)
+    val labels = mapOf(
+        IncidentResponseLevel.WARNING   to stringResource(R.string.health_response_warning),
+        IncidentResponseLevel.EMERGENCY to stringResource(R.string.health_response_emergency),
+    )
+    SingleChoiceSegmentedButtonRow(modifier = Modifier.fillMaxWidth()) {
+        options.forEachIndexed { index, level ->
+            SegmentedButton(
+                selected = selected == level,
+                onClick = { onSelected(level) },
+                shape = SegmentedButtonDefaults.itemShape(index = index, count = options.size),
+            ) {
+                Text(
+                    text = labels[level] ?: level.name,
+                    style = MaterialTheme.typography.bodySmall,
+                    maxLines = 1,
+                )
+            }
+        }
     }
 }
 
