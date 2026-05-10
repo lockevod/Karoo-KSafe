@@ -4,9 +4,13 @@
 -keep class com.enderthor.kSafe.activity.MainActivity { *; }
 -keep class com.enderthor.kSafe.activity.CancelEmergencyActivity { *; }
 -keep class com.enderthor.kSafe.activity.FieldTapReceiver { *; }
--keep class com.enderthor.kSafe.datatype.SOSDataType { *; }
--keep class com.enderthor.kSafe.datatype.SafetyTimerDataType { *; }
--keep class com.enderthor.kSafe.datatype.CustomMessageDataType { *; }
+
+# ─── DataTypes registered via extension_info.xml ─────────────────────────────
+# All seven DataTypes that appear in res/xml/extension_info.xml plus the two
+# Status fields that the Karoo OS instantiates via the extension's type list.
+# The wildcard covers slot variants (custom-message-field-2/3, carb-log-1/2/3,
+# webhook-field-1/2, etc.) so adding a new slot does not require a new rule.
+-keep class com.enderthor.kSafe.datatype.** { *; }
 
 # ─── Glance ActionCallbacks (referenced by class name via actionRunCallback) ──
 -keep class * extends androidx.glance.appwidget.action.ActionCallback { *; }
@@ -30,6 +34,16 @@
 }
 -keep class com.enderthor.kSafe.**$$serializer { *; }
 -dontwarn kotlinx.serialization.**
+
+# Standard enum rule — kotlinx.serialization's auto-generated enum serializers and the
+# `coerceInputValues = true` fallback (Json instance in extension/Extensions.kt) both
+# need these to map JSON strings to enum constants and to enumerate valid values when
+# coercing an unknown input back to the constructor default. Applies project-wide rather
+# than just to com.enderthor.kSafe.** so SDK enums passed across IPC are also safe.
+-keepclassmembers enum * {
+    public static **[] values();
+    public static ** valueOf(java.lang.String);
+}
 
 # ─── Hammerhead karoo-ext — AIDL stubs (IPC with Karoo system) ───────────────
 # Small package (~5 interfaces), safe to keep entirely
