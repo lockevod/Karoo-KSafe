@@ -16,8 +16,6 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.ui.graphics.ColorFilter
 import androidx.compose.ui.res.painterResource
-import com.enderthor.kSafe.R
-import com.enderthor.kSafe.data.FUEL_GEL_DRAWABLE
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.FilledTonalButton
@@ -35,6 +33,18 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.enderthor.kSafe.R
+import com.enderthor.kSafe.data.FUEL_BOTTLE_DRAWABLE
+import com.enderthor.kSafe.data.FUEL_GEL_DRAWABLE
+
+/** Maps a sentinel string from a fuel-icon palette to its drawable resource id, or `null`
+ *  if the entry is just an emoji. Centralises the mapping so both the trigger preview and
+ *  the dialog grid render bundled drawables consistently. */
+private fun drawableForSentinel(s: String): Int? = when (s) {
+    FUEL_GEL_DRAWABLE    -> R.drawable.ic_fuel_gel
+    FUEL_BOTTLE_DRAWABLE -> R.drawable.ic_fuel_bottle
+    else -> null
+}
 
 /**
  * Compact emoji picker — same compact-button-opens-dialog pattern as [FieldColorPicker].
@@ -68,15 +78,16 @@ fun FieldEmojiPicker(
                 .border(1.dp, MaterialTheme.colorScheme.outline, RoundedCornerShape(6.dp)),
             contentAlignment = Alignment.Center,
         ) {
+            val sentinelDrawable = drawableForSentinel(selected)
             when {
-                selected.isBlank()                  -> Text("—", fontSize = 14.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                selected == FUEL_GEL_DRAWABLE       -> Image(
-                    painter = painterResource(R.drawable.ic_fuel_gel),
-                    contentDescription = "Sports gel",
+                selected.isBlank()        -> Text("—", fontSize = 14.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                sentinelDrawable != null  -> Image(
+                    painter = painterResource(sentinelDrawable),
+                    contentDescription = null,
                     modifier = Modifier.size(18.dp),
                     colorFilter = ColorFilter.tint(MaterialTheme.colorScheme.onSurface),
                 )
-                else                                -> Text(selected, fontSize = 16.sp)
+                else                      -> Text(selected, fontSize = 16.sp)
             }
         }
         Spacer(Modifier.width(6.dp))
@@ -120,11 +131,12 @@ fun FieldEmojiPicker(
                                         },
                                     contentAlignment = Alignment.Center,
                                 ) {
+                                    val cellDrawable = drawableForSentinel(e)
                                     when {
                                         e.isBlank()              -> Text("—", fontSize = 22.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                                        e == FUEL_GEL_DRAWABLE   -> Image(
-                                            painter = painterResource(R.drawable.ic_fuel_gel),
-                                            contentDescription = "Sports gel",
+                                        cellDrawable != null     -> Image(
+                                            painter = painterResource(cellDrawable),
+                                            contentDescription = null,
                                             modifier = Modifier.size(28.dp),
                                             colorFilter = ColorFilter.tint(MaterialTheme.colorScheme.onSurface),
                                         )
