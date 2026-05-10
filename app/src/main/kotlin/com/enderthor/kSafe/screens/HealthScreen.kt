@@ -46,10 +46,12 @@ fun HealthScreen(vm: MainViewModel) {
     var medicalEnabled       by remember(config.medicalEpisodeEnabled)        { mutableStateOf(config.medicalEpisodeEnabled) }
     var medicalResponseLevel by remember(config.medicalResponseLevel)         { mutableStateOf(coerceVisible(config.medicalResponseLevel, IncidentResponseLevel.EMERGENCY)) }
 
-    var wellnessEnabled        by remember(config.wellnessEnabled)              { mutableStateOf(config.wellnessEnabled) }
-    var wellnessResponseLevel  by remember(config.wellnessResponseLevel)        { mutableStateOf(coerceVisible(config.wellnessResponseLevel, IncidentResponseLevel.WARNING)) }
-    var wellnessThreshold      by remember(config.wellnessHighHrThreshold)      { mutableStateOf(config.wellnessHighHrThreshold.toString()) }
-    var wellnessDuration       by remember(config.wellnessHighHrDurationMinutes){ mutableStateOf(config.wellnessHighHrDurationMinutes.toString()) }
+    var wellnessEnabled         by remember(config.wellnessEnabled)              { mutableStateOf(config.wellnessEnabled) }
+    var wellnessResponseLevel   by remember(config.wellnessResponseLevel)        { mutableStateOf(coerceVisible(config.wellnessResponseLevel, IncidentResponseLevel.WARNING)) }
+    var wellnessThreshold       by remember(config.wellnessHighHrThreshold)      { mutableStateOf(config.wellnessHighHrThreshold.toString()) }
+    var wellnessUseMaxHrPercent by remember(config.wellnessUseMaxHrPercent)      { mutableStateOf(config.wellnessUseMaxHrPercent) }
+    var wellnessHrPercent       by remember(config.wellnessHighHrPercent)        { mutableStateOf(config.wellnessHighHrPercent.toString()) }
+    var wellnessDuration        by remember(config.wellnessHighHrDurationMinutes){ mutableStateOf(config.wellnessHighHrDurationMinutes.toString()) }
 
     Column(
         modifier = Modifier
@@ -131,19 +133,43 @@ fun HealthScreen(vm: MainViewModel) {
                         vm.saveConfig(config.copy(wellnessResponseLevel = it))
                     },
                 )
-                OutlinedTextField(
-                    value = wellnessThreshold,
-                    onValueChange = { v ->
-                        wellnessThreshold = v.filter { it.isDigit() }.take(3)
-                        val parsed = wellnessThreshold.toIntOrNull()
-                        if (parsed != null && parsed in 80..250) {
-                            vm.saveConfig(config.copy(wellnessHighHrThreshold = parsed))
-                        }
+                EnableRow(
+                    label = stringResource(R.string.health_wellness_use_pct_label),
+                    checked = wellnessUseMaxHrPercent,
+                    onCheckedChange = {
+                        wellnessUseMaxHrPercent = it
+                        vm.saveConfig(config.copy(wellnessUseMaxHrPercent = it))
                     },
-                    label = { Text(stringResource(R.string.health_wellness_threshold_label)) },
-                    modifier = Modifier.fillMaxWidth(),
-                    singleLine = true,
                 )
+                if (wellnessUseMaxHrPercent) {
+                    OutlinedTextField(
+                        value = wellnessHrPercent,
+                        onValueChange = { v ->
+                            wellnessHrPercent = v.filter { it.isDigit() }.take(3)
+                            val parsed = wellnessHrPercent.toIntOrNull()
+                            if (parsed != null && parsed in 60..100) {
+                                vm.saveConfig(config.copy(wellnessHighHrPercent = parsed))
+                            }
+                        },
+                        label = { Text(stringResource(R.string.health_wellness_threshold_pct_label)) },
+                        modifier = Modifier.fillMaxWidth(),
+                        singleLine = true,
+                    )
+                } else {
+                    OutlinedTextField(
+                        value = wellnessThreshold,
+                        onValueChange = { v ->
+                            wellnessThreshold = v.filter { it.isDigit() }.take(3)
+                            val parsed = wellnessThreshold.toIntOrNull()
+                            if (parsed != null && parsed in 80..250) {
+                                vm.saveConfig(config.copy(wellnessHighHrThreshold = parsed))
+                            }
+                        },
+                        label = { Text(stringResource(R.string.health_wellness_threshold_label)) },
+                        modifier = Modifier.fillMaxWidth(),
+                        singleLine = true,
+                    )
+                }
                 OutlinedTextField(
                     value = wellnessDuration,
                     onValueChange = { v ->

@@ -32,8 +32,10 @@ const val KAROO_LIVE_BASE_URL = "https://dashboard.hammerhead.io/live/"
  *  v4 → v5 : per-tracker time-alert initial delay (carbTimeInitialDelayMin / hydrationTimeInitialDelayMin)
  *            and per-tracker custom alert title (carbAlertCustomTitle / hydrationAlertCustomTitle) fields
  *            added. Pure version stamp.
+ *  v5 → v6 : wellness can be configured by % of the rider's Karoo-profile maxHr instead of absolute bpm
+ *            (wellnessUseMaxHrPercent / wellnessHighHrPercent). Pure version stamp.
  */
-const val CONFIG_VERSION = 5
+const val CONFIG_VERSION = 6
 
 /**
  * Canonical minSpeedForCrashKmh value per preset.
@@ -153,10 +155,18 @@ data class KSafeConfig(
     val wellnessEnabled: Boolean = false,
     /** Response level for wellness alerts. Default WARNING — on-screen only, never to contacts. */
     val wellnessResponseLevel: IncidentResponseLevel = IncidentResponseLevel.WARNING,
-    /** HR threshold for the wellness monitor (bpm). User-tunable in the Health tab. */
+    /** HR threshold for the wellness monitor (bpm). User-tunable in the Health tab.
+     *  Used when [wellnessUseMaxHrPercent] = false (default). */
     val wellnessHighHrThreshold: Int = 180,
-    /** How long HR must stay >= [wellnessHighHrThreshold] continuously before warning fires (minutes). */
+    /** How long HR must stay above the effective threshold continuously before warning fires (minutes). */
     val wellnessHighHrDurationMinutes: Int = 30,
+    /** When true, the wellness threshold is derived as `userProfile.maxHr * wellnessHighHrPercent / 100`
+     *  instead of using the absolute [wellnessHighHrThreshold]. Auto-scales with the rider's Karoo
+     *  profile so the threshold matches their age / fitness without manual tuning. */
+    val wellnessUseMaxHrPercent: Boolean = false,
+    /** Percent of max HR used as the wellness threshold when [wellnessUseMaxHrPercent] is true. 92%
+     *  sits at the top of zone 5 (VO2max) for most riders — sustained > 30 min is genuinely worth flagging. */
+    val wellnessHighHrPercent: Int = 92,
     // Calibration logging — writes detailed sensor events to CSV for threshold tuning
     val calibrationLoggingEnabled: Boolean = false,
     // Field colours — idle/ready background for each ride-screen widget
@@ -460,6 +470,13 @@ fun KSafeConfig.migrateToLatest(): KSafeConfig {
         // All carry safe defaults; pure version stamp.
         c = c.copy(configVersion = 5)
         Timber.i("KSafeConfig migrated v%d→v5 (initial delay + custom title)", originalVersion)
+    }
+
+    if (c.configVersion < 6) {
+        // v5 → v6: wellnessUseMaxHrPercent + wellnessHighHrPercent. Defaults preserve previous
+        // behaviour (UseMaxHrPercent = false → still uses the absolute wellnessHighHrThreshold).
+        c = c.copy(configVersion = 6)
+        Timber.i("KSafeConfig migrated v%d→v6 (wellness % of max HR)", originalVersion)
     }
 
     return c
