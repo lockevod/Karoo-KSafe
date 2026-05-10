@@ -6,6 +6,7 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -50,25 +51,30 @@ fun FieldEmojiPicker(
     var dialogOpen by remember { mutableStateOf(false) }
 
     FilledTonalButton(
-        modifier = modifier.height(52.dp),
+        modifier = modifier.height(48.dp),
         onClick = { dialogOpen = true },
+        contentPadding = PaddingValues(horizontal = 10.dp, vertical = 4.dp),
     ) {
         Box(
             modifier = Modifier
-                .size(28.dp)
+                .size(24.dp)
                 .clip(RoundedCornerShape(6.dp))
                 .background(MaterialTheme.colorScheme.surface)
                 .border(1.dp, MaterialTheme.colorScheme.outline, RoundedCornerShape(6.dp)),
             contentAlignment = Alignment.Center,
         ) {
             if (selected.isBlank()) {
-                Text("—", fontSize = 18.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Text("—", fontSize = 14.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
             } else {
-                Text(selected, fontSize = 20.sp)
+                Text(selected, fontSize = 16.sp)
             }
         }
-        Spacer(Modifier.width(10.dp))
-        Text(label, style = MaterialTheme.typography.bodyMedium)
+        Spacer(Modifier.width(6.dp))
+        Text(
+            label,
+            style = MaterialTheme.typography.bodySmall,
+            maxLines = 1,
+        )
     }
 
     if (dialogOpen) {
