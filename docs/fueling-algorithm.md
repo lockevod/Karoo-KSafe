@@ -258,13 +258,31 @@ Each of the three carb slots and two hydration slots carries an idle background 
 | Config field | Default | Used by |
 |---|---|---|
 | `carbNColor` (N=1..3) | `0xFF1565C0` (palette dark blue) | `CarbLogDataType.idleColorFromConfig` for the `IDLE` state's background. |
-| `carbNIcon` (N=1..3) | `🧴`, `🍫`, `🍌` | Prepended to the field's main label (`"$emoji $label"`); empty string = no prefix. |
+| `carbNIcon` (N=1..3) | `FUEL_GEL_DRAWABLE`, `🍫`, `🍌` | Prepended to the field's main label (`"$emoji $label"`); empty string = no prefix; the `FUEL_GEL_DRAWABLE` sentinel renders as a real vector drawable instead — see below. |
 | `drinkNColor` (N=1..2) | `0xFF1565C0` | `HydrationLogDataType.idleColorFromConfig`. |
-| `drinkNIcon` (N=1..2) | `💧`, `🥤` | Same prefix logic. |
+| `drinkNIcon` (N=1..2) | `💧`, `FUEL_BOTTLE_DRAWABLE` | Same prefix logic, with the bottle sentinel rendering the bidón vector drawable. |
 
 The colour palette is shared across the whole app (`FIELD_COLOR_PALETTE`, 12 dark hues organised as 6 families × 2 shades). The reserved state colours (bright red / orange / amber / bright dark green / mid grey — used by SOS, Timer, CustomMessage's SENT/SENDING/ERROR/OFF flashes and the `LOGGED` flash here) are deliberately excluded so a rider's idle pick can never collide with a state-machine signal.
 
 The emoji palettes (`FUEL_EMOJI_CARB`, `FUEL_EMOJI_DRINK`) sit in `data/ConfigData.kt` and start with `""` so riders can opt out of the prefix entirely. Emojis render in colour even though the surrounding TextView is white, so they pop against the coloured background without drawable bundling.
+
+#### Bundled drawables (the two exceptions)
+
+Unicode has no emoji that resembles a sports gel pouch or a cyclist's bidón, so KSafe ships two custom vector drawables for those specific shapes — the only items in the palette that aren't standard emoji:
+
+| Sentinel constant | Resource | Default for | Rendered |
+|---|---|---|---|
+| `FUEL_GEL_DRAWABLE = "<gel>"` | `res/drawable/ic_fuel_gel.xml` | `carb1Icon` (slot label "Gel") | First entry of `FUEL_EMOJI_CARB` after `""`. |
+| `FUEL_BOTTLE_DRAWABLE = "<bottle>"` | `res/drawable/ic_fuel_bottle.xml` | `drink2Icon` (slot label "Bottle") | First entry of `FUEL_EMOJI_DRINK` after `""`. |
+
+Mechanism: when `iconFromConfig(c)` returns one of the sentinels:
+1. `labelFromConfig` skips the emoji prefix — the drawable is the icon, not text.
+2. `buildView` sets the corresponding drawable as the main `TextView`'s left compound drawable via `RemoteViews.setTextViewCompoundDrawables(R.id.field_text_main, leftDrawableRes, 0, 0, 0)`. Setting all four sides explicitly clears any drawable carried over from a previous IDLE→LOGGED transition, so the green "+25g ✓" flash never carries the gel icon along.
+3. The IDLE state passes the drawable resource id; the OFF and LOGGED states pass `0`.
+
+In `screens/FieldEmojiPicker`, a private `drawableForSentinel(s: String): Int?` helper centralises the sentinel→resource mapping, so both the trigger preview and the dialog grid render the bundled drawables consistently. Adding a third bundled icon later (e.g. a real granola bar shape) is a one-line `when` extension plus the new SVG.
+
+The sentinel strings are angle-bracketed (`<gel>`, `<bottle>`) so they can never collide with a real emoji codepoint sequence and so the alert-text token-substitution renderer (`extension/managers/AlertTextRenderer.renderAlertText`, which does `String.replace("{$k}", v)`) cannot accidentally consume them as tokens. Once shipped these strings are saved verbatim into rider DataStore configs — they MUST NOT change in future versions or existing riders' slot icons would silently revert to the default.
 
 When the master tracker toggle is off, `CarbLogDataType` / `HydrationLogDataType` short-circuit the state machine and render a gray `OFF` non-clickable view — the rider sees that the field exists but cannot interact with it, and the in-app Fueling settings collapse the now-irrelevant sub-fields. This matches the same disabled-state pattern used by Custom Messages and Webhook fields.
 
@@ -350,6 +368,105 @@ When `RideState` transitions to `Idle`, KSafe captures totals (before stopping t
 - Auto-dismiss after 15 s.
 
 > **Open question:** the `InRideAlert` SDK class name suggests in-ride use. Whether the alert reliably renders during the brief Recording → Idle transition is verified by on-device testing. If on-device testing shows the summary is sometimes dropped, the fallback is to use a `SystemNotification` for the summary specifically (during-ride alerts continue to use `InRideAlert`).
+
+---
+
+## FIT export — cumulative carbs and hydration in the ride file
+
+KSafe writes per-second cumulative carbohydrates (g) and hydration (ml) into the Karoo's FIT file as developer fields, so the rider's activity in Strava / Intervals.icu / TrainingPeaks carries native graphs of fueling alongside HR / power / cadence — coaches can correlate fueling with effort directly without exporting a separate CSV.
+
+### SDK surface
+
+The `karoo-ext` SDK exposes `KarooExtension.startFit(emitter: Emitter<FitEffect>)`. The Karoo OS calls this once at FIT-pipeline start (typically a moment before `RideState.Recording`); the extension keeps emitting `FitEffect` instances for as long as the ride lives, and registers a cancellation hook for tear-down. Two effect types are used:
+
+| Effect | When | Lands in |
+|---|---|---|
+| `WriteToRecordMesg(values)` | Each Recording tick | A FIT `record` message — the per-second sample alongside HR / power |
+| `WriteToSessionMesg(values)` | Each Recording tick (overwriting) | The FIT `session` message — the activity's headline / summary entry |
+
+Both take a `List<FieldValue>`, where each `FieldValue(developerField, value: Double)` pairs a custom field with its current value.
+
+### Developer fields
+
+```kotlin
+val carbField = DeveloperField(
+    fieldDefinitionNumber = 0,
+    fitBaseTypeId = 136,        // float32 (= 0x88) — same convention as nomride
+    fieldName = "ksafe_carbs_g",
+    units = "g",
+    nativeFieldNum = null,
+    developerDataIndex = 0,
+)
+val hydField = DeveloperField(
+    fieldDefinitionNumber = 1,
+    fitBaseTypeId = 136,
+    fieldName = "ksafe_hyd_ml",
+    units = "ml",
+    nativeFieldNum = null,
+    developerDataIndex = 0,
+)
+```
+
+Notes:
+- **Float32** rather than uint16 so future enhancements (running burn-rate average, fractional values) don't need a schema migration. Integer values up to a single ride's load (~1500 g, ~65 L) convert to float32 exactly.
+- Field definition numbers are stable identifiers within KSafe's developer-data namespace. They MUST NOT change once shipped — riders' historical FIT files would otherwise become uninterpretable to tools that learned the names from earlier rides.
+- `nativeFieldNum = null` because no native FIT field carries "carbs eaten" / "fluid drunk" semantics; these are pure developer fields.
+
+### Cadence: ELAPSED_TIME stream, not a `delay()` loop
+
+The collector pulses on the Karoo's `DataType.Type.ELAPSED_TIME` stream:
+
+```kotlin
+karooSystem.streamDataFlow(DataType.Type.ELAPSED_TIME)
+    .mapNotNull { (it as? StreamState.Streaming)?.dataPoint?.singleValue }
+    .collect { … }
+```
+
+This is the same pattern used by the official Hammerhead sample app and by `nomride`. Two reasons it beats a `delay(1_000L)` loop:
+
+1. **Aligns with native FIT 1 Hz** — the Karoo's ride app writes a record message each second; ELAPSED_TIME emits on the same tick, so our developer-field values land in the same record as the native HR / power sample. Zero drift over a multi-hour ride.
+2. **Auto-pauses with the ride** — ELAPSED_TIME stops emitting while `RideState.Paused`. A naive `delay()` loop would continue ticking and either accumulate phantom record samples during the pause or have to gate on `currentRideState` itself with the same timing risk. The stream-driven approach removes the question entirely.
+
+A side benefit: when the Karoo sits idle on a desk between rides, no work happens at all. The previous `delay(1000L)` loop ran ~86k iterations/day even outside a ride.
+
+### State branch: emit only on Recording
+
+```kotlin
+when (currentRideState) {
+    is RideState.Recording -> {
+        emitter.onNext(WriteToRecordMesg(values))     // per-second timeline
+        emitter.onNext(WriteToSessionMesg(values))    // running session totals
+    }
+    else -> { /* Paused / Idle / null: don't emit */ }
+}
+```
+
+The session message is written **from the Recording branch, not the Paused branch**. This is contrary to a naive reading of nomride (which has a Paused branch for `WriteToSessionMesg`) but it's the one that actually works: ELAPSED_TIME stops emitting while Paused, so a Paused-only session write would never fire. Writing on every Recording tick is cheap (one extra IPC per second alongside the Record write) and means whatever value is current at FIT close becomes the activity summary header in Strava etc.
+
+### Tracker null-safety
+
+`startFit` may be called before the rider opted into fueling — the `CarbsTracker` and `HydrationTracker` are still null in that case. The collector reads via the existing `carbsTrackerOrNull()` / `hydrationTrackerOrNull()` accessors with `?: 0` fallback:
+
+```kotlin
+val carbsG = (carbsTrackerOrNull()?.getStatus()?.cumLoggedG ?: 0).toDouble()
+val hydMl  = (hydrationTrackerOrNull()?.getStatus()?.cumLoggedMl ?: 0).toDouble()
+```
+
+A flat-zero column in the FIT is honest data ("no fueling logged") and lets a rider who enables fueling mid-season backfill cleanly without a config drift.
+
+### Toggle and hot-toggle limitation
+
+`KSafeConfig.fuelingFitExportEnabled` (default `true`) gates the writer. When false, `startFit` calls `setCancellable { }` and returns immediately — no coroutine spawned. The toggle is sampled once at FIT-pipeline start; flipping it mid-ride takes effect only on the next ride. A hot-toggle would be premature complexity for a setting riders almost never flip mid-ride.
+
+### Cost
+
+| Concept | Per ride (5 h) |
+|---|---|
+| 7200 record IPCs + 7200 session IPCs × ~0.1 ms CPU | ~1.5 s CPU total |
+| Disk: ~8 bytes extra per FIT record (two float32) | ~28 KB |
+| Battery overhead | <0.05 % (imperceptible) |
+
+Negligible against the ride app's own write throughput. The toggle exists for riders who don't want extra developer columns in their FIT, not for battery reasons.
 
 ---
 
@@ -454,6 +571,14 @@ All config fields live in `KSafeConfig` (`data/ConfigData.kt`).
 
 | Field | Default | UI exposed |
 |---|---|---|
-| `fuelingPostRideSummaryEnabled` | `true` | ✅ |
+| `fuelingPostRideSummaryEnabled` | `true` | ✅ Switch — Fueling tab |
+
+### FIT export
+
+| Field | Default | UI exposed |
+|---|---|---|
+| `fuelingFitExportEnabled` | `true` | ✅ Switch — Fueling tab. Sampled once at FIT-pipeline start; mid-ride toggle takes effect on the next ride. |
+
+Internal: developer-field definitions and pacing live in `extension/KSafeExtension.startFit`. Field names `ksafe_carbs_g` / `ksafe_hyd_ml` and field definition numbers `0` / `1` are stable identifiers — do not change once shipped.
 
 Internal constants (`MIN_MULT`, `MAX_MULT`, `ALERT_COOLDOWN_MS`, `MONITOR_TICK_MS`, `PERIODIC_LOG_INTERVAL_MS`, etc.) are NOT exposed. Calibrated in code from the spec-defined values described above.

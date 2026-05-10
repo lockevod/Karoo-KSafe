@@ -33,7 +33,7 @@ Compatible with Karoo 3 running Karoo OS version 1.527 and later.
 - **Speed drop detection**: Detects when your speed drops suddenly and remains low for a configurable time window.
 - **Medical episode detection** *(optional, requires HR sensor)*: Detects sudden heart-rate flatline (asystole / severe bradycardia) or HR collapse (vasovagal syncope) during a ride. Triggers the same emergency flow as a crash by default. Stays silent if no HR sensor is paired — no false alarms when you don't wear a chest strap.
 - **Wellness monitor** *(optional, requires HR sensor)*: On-screen warning when HR stays above a configurable threshold for a sustained period — useful for fatigue / heat-stress awareness on long rides. Sent to the rider only, never to emergency contacts (response level configurable).
-- **Nutrition & hydration tracker** *(preventive safety, optional)*: Watches your carb and fluid intake during the ride and reminds you to eat / drink **before** depletion impairs your judgment on the bike. Carb target adapts in real time to your effort using the Karoo's own HR or power zones (5 / 7 zones). Hydration target is per-hour, you raise it for hot days. Up to **3 carb slots and 2 drink slots** as data fields (each pre-configured with a label and amount, one tap = one log) and 2 SRAM AXS hardware buttons. Two combinable alert modes — by **deficit** (you're behind your target) or by **time** (X minutes since last log) — appearing as a full-screen `InRideAlert` overlay. Post-ride summary shows totals vs target.
+- **Nutrition & hydration tracker** *(preventive safety, optional)*: Watches your carb and fluid intake during the ride and reminds you to eat / drink **before** depletion impairs your judgment on the bike. Carb target adapts in real time to your effort using the Karoo's own HR or power zones (5 / 7 zones). Hydration target is per-hour, you raise it for hot days. Up to **3 carb slots and 2 drink slots** as data fields (each pre-configured with a label, amount, idle colour and icon — emoji or bundled vector drawable, one tap = one log) and 2 SRAM AXS hardware buttons. Two combinable alert modes — by **deficit** (you're behind your target) or by **time** (X minutes since last log) — appearing as a full-screen `InRideAlert` overlay with customisable title and detail templates. Post-ride summary shows totals vs target. **Cumulative carbs (g) and hydration (ml) are also written into the FIT file as developer fields**, so the activity in Strava / Intervals.icu / TrainingPeaks shows your fueling as graphs alongside HR / power / cadence — coaches can correlate fueling with effort directly.
 - **Emergency countdown with cancel**: All triggers start a configurable countdown (default 30s) so you can cancel false alarms before alerts are sent. A **red overlay with a Cancel button** appears on top of the ride screen — visible from any screen, no matter which data field is active.
 - **Location included**: Your GPS coordinates are automatically included in the alert message as a Google Maps link.
 - **Multiple messaging providers**: WhatsApp via CallMeBot (free), push notification via Pushover, free unlimited push via ntfy, or Telegram bot messages (free, unlimited).
@@ -44,7 +44,7 @@ Compatible with Karoo 3 running Karoo OS version 1.527 and later.
 - **Webhook geo-fence** *(optional)*: Restrict each webhook so it only fires when the device is within a configurable radius of a saved GPS point. Prevents accidental triggers — e.g. your garage door only opens when you are actually near home.
 - **Webhook ride alert** *(optional)*: Show a configurable on-screen notification every time a webhook fires — useful to notice accidental button presses immediately.
 - **Five data fields**: SOS field, Safety Timer field, and up to three Custom Message fields — add any combination to your ride profile.
-- **Custom field colours**: Each ride field (SOS, Safety Timer, Custom Messages and Webhooks) can be assigned an independent idle background colour from a preset palette of eight dark colours. State-driven colours (countdown, error, sent…) are always preserved regardless of your choice.
+- **Custom field colours**: Each ride field (SOS, Safety Timer, Custom Messages, Webhooks, and the fueling slots) can be assigned an independent idle background colour from a preset palette of twelve dark hues organised as 6 families × 2 shades. Reserved state colours (red error, orange countdown, amber warning, green success flash, grey OFF) are deliberately excluded so your idle pick can never collide with a state-machine signal.
 - **Help improve KSafe** *(optional)*: Enable anonymous calibration data sending to help tune the crash detection algorithm. See [Calibration Logging](#calibration-logging-optional) for details.
 
 ## Requirements
@@ -364,7 +364,7 @@ For example, a custom carb detail of `"You're {deficit}g down — eat now ({elap
 
 Two complementary mechanisms:
 
-- **Data fields**: 3 carb log slots + 2 drink log slots, each with its own configurable **label** (e.g. *"Gel"*, *"Bar"*, *"Bottle"*), **amount** (g or ml), **idle background colour** (palette of 12 dark hues) and **emoji icon** (e.g. 🍫 / 🥤 / 💧, or none). One tap = one log. The slot flashes green for 2 seconds as confirmation, then returns to its idle label. Add as many or as few slots to your ride profile as you want.
+- **Data fields**: 3 carb log slots + 2 drink log slots, each with its own configurable **label** (e.g. *"Gel"*, *"Bar"*, *"Bottle"*), **amount** (g or ml), **idle background colour** (palette of 12 dark hues) and **icon** (emoji like 🍫 / 🥤 / 💧, or one of the two bundled vector drawables for sports gel pouch and cyclist bidón — Unicode has no good emoji for those shapes). One tap = one log. The slot flashes green for 2 seconds as confirmation, then returns to its idle label. Add as many or as few slots to your ride profile as you want.
 - **Hardware buttons (BonusActions, SRAM AXS only)**: KSafe registers two extra actions, *"KSafe: Log Carb"* and *"KSafe: Log Drink"*, both wired to slot 1 of each category. Map them to your AXS shifter buttons so you can log without looking at the screen.
 
 When the master Carb / Hydration toggle is off, the corresponding log fields render in grey with `OFF` and tap is disabled — the data field is still visible on the ride profile but clearly inactive, so a stray tap does nothing instead of silently no-op'ing. Re-enable the master in the Fueling tab and the colour / emoji come back.
@@ -375,6 +375,21 @@ There are also two **status data fields** (carb status and hydration status) tha
 
 When you stop the recording, KSafe shows an `InRideAlert` with totals: *"Carbs: 85/120g (71%) • Hyd: 1100/1500ml (73%)"*. Configurable on/off; nothing is sent to your contacts.
 
+#### Carbs and hydration in your FIT file (Strava / Intervals.icu / TrainingPeaks)
+
+KSafe writes the cumulative carbohydrates and hydration you log into the Karoo's FIT file as developer fields. When you upload the activity to Strava / Intervals.icu / TrainingPeaks, your fueling appears as **two extra graphs alongside HR / power / cadence** — coaches can correlate fueling with effort, and you can answer questions like *"I bonked at hour 4 → looking at the FIT, I had 0 g carbs that hour"* from the data instead of guessing.
+
+| Field | Type | Where in the FIT |
+|---|---|---|
+| `ksafe_carbs_g` | float32, units `"g"` | Per-second `record` (timeline graph) + `session` summary (activity header) |
+| `ksafe_hyd_ml`  | float32, units `"ml"` | Same |
+
+The values are cumulative — a step curve growing across the ride. Tools that prefer rate (g/h) can derive it locally with whatever averaging window suits the analysis.
+
+Toggleable via the **"Write to FIT"** switch in the Fueling tab. Default ON because the cost is negligible (~0.05 % battery over a 5 h ride, no perceptible CPU). Riders who don't want extra developer columns in their FIT can opt out cleanly.
+
+Pacing aligns with the Karoo's native 1 Hz Record sampling, so the developer fields land on the same timestamps as HR / power. Outside `Recording` (Idle / Paused) nothing is written.
+
 #### What you configure
 
 Per category (Carbs, Hydration) the Fueling tab lets you:
@@ -383,7 +398,8 @@ Per category (Carbs, Hydration) the Fueling tab lets you:
 - Toggle the deficit alert + threshold
 - Toggle the time alert + interval + initial delay
 - Customise the alert **title** and **detail** templates (optional — placeholder shows the default; leave blank to use it, or write your own with `{deficit}` / `{elapsed}` / `{target}` tokens)
-- Configure each slot's label, amount, idle background colour, and emoji icon
+- Configure each slot's label, amount, idle background colour, and icon (emoji or one of the bundled vector drawables for sports gel and bidón)
+- Toggle FIT export (default on; controls whether your fueling appears as developer fields in the Karoo's FIT file)
 
 That's it — no biometric data, no FTP, no zone numbers, no max HR. KSafe reads all of that from the Karoo profile.
 
