@@ -3,6 +3,19 @@
     <string name="app_name">KSafe</string>
     <string name="extension_name">KSafe</string>
 
+    <!-- Warning-level incident titles (used by EmergencyManager.handleIncident.WARNING).
+         Each is paired with a `_detail` template; both are overridable per-rider via the
+         medical*Custom* / wellness*Custom* config fields. Tokens substituted at runtime
+         where they appear: {bpm}, {threshold}, {minutes}, {drift}. -->
+    <string name="warning_wellness_high_hr_title">Heart rate high</string>
+    <string name="warning_wellness_high_hr_detail">HR {bpm} bpm above {threshold} for {minutes} min — consider a break.</string>
+    <string name="warning_wellness_critical_hr_title">HR critical — slow down</string>
+    <string name="warning_wellness_critical_hr_detail">HR at {bpm} bpm (over {threshold} for {minutes} min) — slow down now.</string>
+    <string name="warning_wellness_decoupling_title">HR drift detected</string>
+    <string name="warning_wellness_decoupling_detail">HR drift {drift}% sustained {minutes} min — cool down and hydrate.</string>
+    <string name="warning_medical_title">Medical alert</string>
+    <string name="warning_medical_detail">HR at {bpm} bpm — possible medical episode, check on the rider.</string>
+
     <!-- BonusAction labels -->
     <string name="action_cancel_emergency">KSafe: Cancel Emergency</string>
     <string name="action_send_custom_message">KSafe: Send Custom Message</string>
@@ -27,6 +40,54 @@
     <string name="tab_settings">Settings</string>
     <string name="tab_actions">Actions</string>
     <string name="tab_health">Health</string>
+    <string name="tab_fueling">Fueling</string>
+
+    <!-- Fueling screen -->
+    <string name="fueling_title">Fueling</string>
+    <string name="fueling_info_banner">Carbs use HR/power zones if available for intensity-aware targeting; without sensors the target is time-proportional. Hydration is always time-proportional — adjust target manually for hot days.</string>
+    <string name="fueling_carb_section">Carbs</string>
+    <string name="fueling_hyd_section">Hydration</string>
+    <string name="fueling_target_carb_label">Target (g/h)</string>
+    <string name="fueling_target_hyd_label">Target (ml/h)</string>
+    <string name="fueling_alert_deficit_label">Alert by deficit</string>
+    <string name="fueling_alert_time_label">Alert by time</string>
+    <string name="fueling_deficit_threshold_g_label">Threshold (g)</string>
+    <string name="fueling_deficit_threshold_ml_label">Threshold (ml)</string>
+    <string name="fueling_time_interval_label">Interval (min)</string>
+    <string name="fueling_initial_delay_label">Initial delay (min, 0 = off)</string>
+    <string name="fueling_custom_title_label">Custom alert title (optional)</string>
+    <string name="fueling_custom_title_carb_placeholder">Default: Eat something</string>
+    <string name="fueling_custom_title_hyd_placeholder">Default: Drink something</string>
+    <string name="fueling_enabled_label">Enabled</string>
+    <string name="fueling_items_section">Items</string>
+    <string name="fueling_slot_label_label">Label</string>
+    <string name="fueling_slot_grams_label">g</string>
+    <string name="fueling_slot_ml_label">ml</string>
+    <string name="fueling_post_ride_summary_label">Post-ride summary</string>
+    <string name="fueling_fit_export_label">Write to FIT (Strava / Intervals.icu)</string>
+    <string name="fueling_carb_alert_title">Eat something</string>
+    <string name="fueling_carb_alert_detail_deficit">Behind by {deficit}g — eat something now (target {target} g/h).</string>
+    <string name="fueling_carb_alert_detail_time">{elapsed} min since last log — time to eat (target {target} g/h).</string>
+    <string name="fueling_hyd_alert_title">Drink something</string>
+    <string name="fueling_hyd_alert_detail_deficit">Behind by {deficit}ml — drink now (target {target} ml/h).</string>
+    <string name="fueling_hyd_alert_detail_time">{elapsed} min since last log — drink (target {target} ml/h).</string>
+
+    <!-- Fueling BonusActions -->
+    <string name="action_log_carb">KSafe: Log Carb</string>
+    <string name="action_log_drink">KSafe: Log Drink</string>
+
+    <!-- Fueling DataType labels -->
+    <string name="carb_log_1_datatype_name">KSafe Carb 1</string>
+    <string name="carb_log_2_datatype_name">KSafe Carb 2</string>
+    <string name="carb_log_3_datatype_name">KSafe Carb 3</string>
+    <string name="carb_log_datatype_desc">Tap to log a configured carb item (e.g. gel, bar). Counts toward your hourly target.</string>
+    <string name="carb_status_datatype_name">KSafe Carb Status</string>
+    <string name="carb_status_datatype_desc">Shows current carb deficit relative to target. Color-coded by urgency.</string>
+    <string name="hyd_log_1_datatype_name">KSafe Drink 1</string>
+    <string name="hyd_log_2_datatype_name">KSafe Drink 2</string>
+    <string name="hyd_log_datatype_desc">Tap to log a configured drink item (e.g. sip, bottle). Counts toward your hourly target.</string>
+    <string name="hyd_status_datatype_name">KSafe Hydration Status</string>
+    <string name="hyd_status_datatype_desc">Shows current hydration deficit relative to target. Color-coded by urgency.</string>
 
     <!-- Health screen -->
     <string name="health_title">Health monitoring</string>
@@ -38,11 +99,23 @@
     <string name="health_wellness_hint">Warns when HR stays above the threshold for a sustained period. Sent on-screen only — never to emergency contacts unless you change the response level.</string>
     <string name="health_enabled_label">Enabled</string>
     <string name="health_response_level_label">Response level</string>
-    <string name="health_response_silent">Silent (log only)</string>
-    <string name="health_response_warning">Warning (on-screen)</string>
-    <string name="health_response_emergency">Emergency (alert contacts)</string>
+    <string name="health_response_silent">Silent</string>
+    <string name="health_response_warning">Warning</string>
+    <string name="health_response_emergency">Emergency</string>
     <string name="health_wellness_threshold_label">HR threshold (bpm)</string>
+    <string name="health_wellness_threshold_pct_label">HR threshold (% of max HR)</string>
+    <string name="health_wellness_use_pct_label">Use % of max HR (from Karoo profile)</string>
     <string name="health_wellness_duration_label">Sustained minutes</string>
+    <!-- Wellness three-tier model -->
+    <string name="health_wellness_tier_critical">Critical HR (early warning)</string>
+    <string name="health_wellness_tier_sustained">Sustained HR (long fatigue)</string>
+    <string name="health_wellness_tier_decoupling">Cardiac decoupling (heat / hydration)</string>
+    <string name="health_wellness_critical_threshold_bpm_label">Critical threshold (bpm)</string>
+    <string name="health_wellness_critical_threshold_pct_label">Critical threshold (% of max HR)</string>
+    <string name="health_wellness_critical_duration_label">Sustained minutes</string>
+    <string name="health_wellness_decoupling_threshold_label">Drift threshold (%)</string>
+    <string name="health_wellness_decoupling_duration_label">Sustained minutes</string>
+    <string name="health_wellness_decoupling_hint">Requires a paired power meter. Compares current HR/W ratio against the baseline established in the first 10 min of each ride.</string>
 
     <!-- Provider screen -->
     <string name="provider_title">Message Provider</string>

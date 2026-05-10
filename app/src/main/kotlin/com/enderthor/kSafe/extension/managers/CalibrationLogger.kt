@@ -119,6 +119,19 @@ class CalibrationLogger(
         INCIDENT_WARNING("WARN"),
         /** Generic SILENT-level incident dispatched by EmergencyManager.handleIncident. */
         INCIDENT_SILENT("SILENT"),
+        // ─── Fueling tracker (added 2026-05) ─────────────────────────────────
+        /** User logged a carb intake via tap or BonusAction. */
+        FUELING_CARB_LOGGED("CARB_LOG"),
+        /** Carb tracker fired an alert (deficit or time-interval). */
+        FUELING_CARB_FIRED("CARB_FIRE"),
+        /** Periodic 2-minute snapshot of carb tracker state, correlable with PERIODIC by timestamp. */
+        FUELING_CARB_PERIODIC("CARB_PERIODIC"),
+        /** User logged a hydration intake via tap or BonusAction. */
+        FUELING_HYDRATION_LOGGED("HYD_LOG"),
+        /** Hydration tracker fired an alert (deficit or time-interval). */
+        FUELING_HYDRATION_FIRED("HYD_FIRE"),
+        /** Periodic 2-minute snapshot of hydration tracker state. */
+        FUELING_HYDRATION_PERIODIC("HYD_PERIODIC"),
         /** Marker written when logging is disabled — session end boundary. */
         LOG_END("LOG_END"),
     }
