@@ -42,6 +42,7 @@ fun FuelingScreen(vm: MainViewModel) {
     var carbTimeInterval     by remember(config.carbTimeIntervalMin)        { mutableStateOf(config.carbTimeIntervalMin.toString()) }
     var carbTimeInitialDelay by remember(config.carbTimeInitialDelayMin)    { mutableStateOf(config.carbTimeInitialDelayMin.toString()) }
     var carbCustomTitle      by remember(config.carbAlertCustomTitle)        { mutableStateOf(config.carbAlertCustomTitle) }
+    var carbCustomDetail     by remember(config.carbAlertCustomDetail)       { mutableStateOf(config.carbAlertCustomDetail) }
     var carb1Label           by remember(config.carb1Label)                  { mutableStateOf(config.carb1Label) }
     var carb1Grams           by remember(config.carb1Grams)                  { mutableStateOf(config.carb1Grams.toString()) }
     var carb1Color           by remember(config.carb1Color)                  { mutableStateOf(config.carb1Color) }
@@ -64,6 +65,7 @@ fun FuelingScreen(vm: MainViewModel) {
     var hydTimeInterval      by remember(config.hydrationTimeIntervalMin)       { mutableStateOf(config.hydrationTimeIntervalMin.toString()) }
     var hydTimeInitialDelay  by remember(config.hydrationTimeInitialDelayMin)   { mutableStateOf(config.hydrationTimeInitialDelayMin.toString()) }
     var hydCustomTitle       by remember(config.hydrationAlertCustomTitle)      { mutableStateOf(config.hydrationAlertCustomTitle) }
+    var hydCustomDetail      by remember(config.hydrationAlertCustomDetail)     { mutableStateOf(config.hydrationAlertCustomDetail) }
     var drink1Label          by remember(config.drink1Label)                     { mutableStateOf(config.drink1Label) }
     var drink1Ml             by remember(config.drink1Ml)                        { mutableStateOf(config.drink1Ml.toString()) }
     var drink1Color          by remember(config.drink1Color)                     { mutableStateOf(config.drink1Color) }
@@ -169,17 +171,22 @@ fun FuelingScreen(vm: MainViewModel) {
                     onCommit = { carbTimeInitialDelay = it; vm.saveConfig(config.copy(carbTimeInitialDelayMin = it.toInt())) },
                     onTextChange = { carbTimeInitialDelay = it },
                 )
-                OutlinedTextField(
+                CustomAlertField(
+                    label = "Carb alert title",
                     value = carbCustomTitle,
-                    onValueChange = { v ->
-                        val trimmed = v.take(30)
-                        carbCustomTitle = trimmed
-                        vm.saveConfig(config.copy(carbAlertCustomTitle = trimmed))
-                    },
-                    label = { Text(stringResource(R.string.fueling_custom_title_label)) },
-                    placeholder = { Text(stringResource(R.string.fueling_custom_title_carb_placeholder)) },
-                    singleLine = true,
-                    modifier = Modifier.fillMaxWidth(),
+                    onCommit = { v -> carbCustomTitle = v; vm.saveConfig(config.copy(carbAlertCustomTitle = v)) },
+                    defaultPlaceholder = stringResource(R.string.fueling_carb_alert_title),
+                    tokensHint = "",
+                    maxLength = 30,
+                )
+                CustomAlertField(
+                    label = "Carb alert detail",
+                    value = carbCustomDetail,
+                    onCommit = { v -> carbCustomDetail = v; vm.saveConfig(config.copy(carbAlertCustomDetail = v)) },
+                    defaultPlaceholder = "Behind by {deficit}g  /  {elapsed} min since last log",
+                    tokensHint = "Tokens: {deficit}, {elapsed}, {target}",
+                    maxLength = 80,
+                    singleLine = false,
                 )
                 HorizontalDivider()
                 Text(text = stringResource(R.string.fueling_items_section), style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.Bold)
@@ -283,17 +290,22 @@ fun FuelingScreen(vm: MainViewModel) {
                     onCommit = { hydTimeInitialDelay = it; vm.saveConfig(config.copy(hydrationTimeInitialDelayMin = it.toInt())) },
                     onTextChange = { hydTimeInitialDelay = it },
                 )
-                OutlinedTextField(
+                CustomAlertField(
+                    label = "Hydration alert title",
                     value = hydCustomTitle,
-                    onValueChange = { v ->
-                        val trimmed = v.take(30)
-                        hydCustomTitle = trimmed
-                        vm.saveConfig(config.copy(hydrationAlertCustomTitle = trimmed))
-                    },
-                    label = { Text(stringResource(R.string.fueling_custom_title_label)) },
-                    placeholder = { Text(stringResource(R.string.fueling_custom_title_hyd_placeholder)) },
-                    singleLine = true,
-                    modifier = Modifier.fillMaxWidth(),
+                    onCommit = { v -> hydCustomTitle = v; vm.saveConfig(config.copy(hydrationAlertCustomTitle = v)) },
+                    defaultPlaceholder = stringResource(R.string.fueling_hyd_alert_title),
+                    tokensHint = "",
+                    maxLength = 30,
+                )
+                CustomAlertField(
+                    label = "Hydration alert detail",
+                    value = hydCustomDetail,
+                    onCommit = { v -> hydCustomDetail = v; vm.saveConfig(config.copy(hydrationAlertCustomDetail = v)) },
+                    defaultPlaceholder = "Behind by {deficit}ml  /  {elapsed} min since last log",
+                    tokensHint = "Tokens: {deficit}, {elapsed}, {target}",
+                    maxLength = 80,
+                    singleLine = false,
                 )
                 HorizontalDivider()
                 Text(text = stringResource(R.string.fueling_items_section), style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.Bold)

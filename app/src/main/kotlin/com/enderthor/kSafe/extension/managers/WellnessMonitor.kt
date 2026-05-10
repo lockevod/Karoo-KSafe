@@ -33,7 +33,7 @@ import timber.log.Timber
  */
 class WellnessMonitor(
     private val scope: CoroutineScope,
-    private val onIncident: (EmergencyReason) -> Unit,
+    private val onIncident: (EmergencyReason, Map<String, String>) -> Unit,
     private val calibLogger: CalibrationLogger? = null,
 ) {
 
@@ -231,7 +231,10 @@ class WellnessMonitor(
                 }
                 lastDecouplingTriggerMs = now
                 decouplingExceededSinceMs = 0L
-                onIncident(EmergencyReason.WELLNESS_DECOUPLING)
+                onIncident(EmergencyReason.WELLNESS_DECOUPLING, mapOf(
+                    "drift" to "%.1f".format(driftPct),
+                    "minutes" to (sustainedMs / 60_000L).toString(),
+                ))
             }
         } else {
             decouplingExceededSinceMs = 0L
@@ -275,6 +278,10 @@ class WellnessMonitor(
         calibLogger?.log(CalibrationLogger.Event.WELLNESS_FIRED) {
             "subkind=$tierName,bpm=$bpm,threshold=$threshold,mode=${if (config.wellnessUseMaxHrPercent) "pct" else "abs"},sustained_min=$sustainedMin"
         }
-        onIncident(reason)
+        onIncident(reason, mapOf(
+            "bpm" to bpm.toString(),
+            "threshold" to threshold.toString(),
+            "minutes" to sustainedMin.toString(),
+        ))
     }
 }

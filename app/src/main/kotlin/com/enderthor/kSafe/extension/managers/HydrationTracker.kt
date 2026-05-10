@@ -159,9 +159,20 @@ class HydrationTracker(
 
     private fun fireAlert(source: String, deficitMl: Int, elapsedMin: Long) {
         lastAlertMs = System.currentTimeMillis()
-        val detail = if (source == "deficit") "Behind by ${deficitMl}ml"
-                     else                     "$elapsedMin min since last log"
-        val title = config.hydrationAlertCustomTitle.ifBlank { context.getString(R.string.fueling_hyd_alert_title) }
+        val tokens = mapOf(
+            "deficit" to deficitMl.toString(),
+            "elapsed" to elapsedMin.toString(),
+            "target"  to config.hydrationTargetMlPerHour.toString(),
+        )
+        val detailTemplate = config.hydrationAlertCustomDetail.ifBlank {
+            if (source == "deficit") context.getString(R.string.fueling_hyd_alert_detail_deficit)
+            else                     context.getString(R.string.fueling_hyd_alert_detail_time)
+        }
+        val detail = renderAlertText(detailTemplate, tokens)
+        val title = renderAlertText(
+            config.hydrationAlertCustomTitle.ifBlank { context.getString(R.string.fueling_hyd_alert_title) },
+            tokens,
+        )
         karooSystem.dispatch(BEEP_LONG)
         karooSystem.dispatch(InRideAlert(
             id = "ksafe-hyd-alert-$source",

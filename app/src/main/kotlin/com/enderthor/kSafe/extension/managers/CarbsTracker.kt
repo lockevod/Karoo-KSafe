@@ -189,9 +189,20 @@ class CarbsTracker(
 
     private fun fireAlert(source: String, deficit: Int, elapsedMin: Long) {
         lastAlertMs = System.currentTimeMillis()
-        val detail = if (source == "deficit") "Behind by ${deficit}g"
-                     else                     "$elapsedMin min since last log"
-        val title = config.carbAlertCustomTitle.ifBlank { context.getString(R.string.fueling_carb_alert_title) }
+        val tokens = mapOf(
+            "deficit" to deficit.toString(),
+            "elapsed" to elapsedMin.toString(),
+            "target"  to config.carbTargetGperHour.toString(),
+        )
+        val detailTemplate = config.carbAlertCustomDetail.ifBlank {
+            if (source == "deficit") context.getString(R.string.fueling_carb_alert_detail_deficit)
+            else                     context.getString(R.string.fueling_carb_alert_detail_time)
+        }
+        val detail = renderAlertText(detailTemplate, tokens)
+        val title = renderAlertText(
+            config.carbAlertCustomTitle.ifBlank { context.getString(R.string.fueling_carb_alert_title) },
+            tokens,
+        )
         karooSystem.dispatch(BEEP_LONG)
         karooSystem.dispatch(InRideAlert(
             id = "ksafe-carb-alert-$source",

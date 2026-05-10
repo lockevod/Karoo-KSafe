@@ -189,6 +189,9 @@ data class KSafeConfig(
     val medicalEpisodeEnabled: Boolean = true,
     /** Response level for medical episodes. Default EMERGENCY (cardiac arrest = same severity as crash). */
     val medicalResponseLevel: IncidentResponseLevel = IncidentResponseLevel.EMERGENCY,
+    /** Custom InRideAlert title/detail for medical incidents. Empty → built-in defaults. */
+    val medicalCustomTitle: String = "",
+    val medicalCustomDetail: String = "",
     // ─── Wellness monitor (sustained high HR) ────────────────────────────────
     /** Master toggle for [WellnessMonitor]. Default OFF — opt-in: thresholds depend on user age/fitness. */
     val wellnessEnabled: Boolean = false,
@@ -199,6 +202,9 @@ data class KSafeConfig(
     val wellnessHighHrThreshold: Int = 180,
     /** How long HR must stay above the effective threshold continuously before warning fires (minutes). */
     val wellnessHighHrDurationMinutes: Int = 30,
+    /** Custom InRideAlert title/detail for the SUSTAINED HR tier. Empty → built-in defaults. */
+    val wellnessSustainedCustomTitle: String = "",
+    val wellnessSustainedCustomDetail: String = "",
     /** When true, the wellness threshold is derived as `userProfile.maxHr * wellnessHighHrPercent / 100`
      *  instead of using the absolute [wellnessHighHrThreshold]. Auto-scales with the rider's Karoo
      *  profile so the threshold matches their age / fitness without manual tuning. */
@@ -219,6 +225,9 @@ data class KSafeConfig(
     val wellnessCriticalThresholdPct: Int = 95,
     /** How long HR must stay above the critical threshold before the tier fires (minutes). */
     val wellnessCriticalDurationMinutes: Int = 5,
+    /** Custom InRideAlert title/detail for the CRITICAL HR tier. Empty → built-in defaults. */
+    val wellnessCriticalCustomTitle: String = "",
+    val wellnessCriticalCustomDetail: String = "",
     // ─── Cardiac decoupling tier (tier 3 — heat stress / dehydration) ────────
     /** Sub-toggle for the cardiac-decoupling tier. Auto-disabled at runtime if the rider has no
      *  power meter paired (the algorithm needs HR / power ratio). Master switch must also be on. */
@@ -228,6 +237,9 @@ data class KSafeConfig(
     val wellnessDecouplingThresholdPct: Int = 7,
     /** How long the drift must stay above the threshold before the tier fires (minutes). */
     val wellnessDecouplingDurationMinutes: Int = 10,
+    /** Custom InRideAlert title/detail for the cardiac DECOUPLING tier. Empty → built-in defaults. */
+    val wellnessDecouplingCustomTitle: String = "",
+    val wellnessDecouplingCustomDetail: String = "",
     // Calibration logging — writes detailed sensor events to CSV for threshold tuning
     val calibrationLoggingEnabled: Boolean = false,
     // Field colours — idle/ready background for each ride-screen widget
@@ -286,8 +298,13 @@ data class KSafeConfig(
      *  time alert fires after `carbTimeIntervalMin` from session start, original behaviour). */
     val carbTimeInitialDelayMin: Int = 30,
     /** Optional custom title shown in the InRideAlert overlay. Empty = use the default
-     *  `R.string.fueling_carb_alert_title` ("Eat something"). */
+     *  `R.string.fueling_carb_alert_title` ("Eat something"). Same for both deficit and time
+     *  alert sources — pair with [carbAlertCustomDetail] for the full message. */
     val carbAlertCustomTitle: String = "",
+    /** Optional custom detail template. Empty = use source-specific defaults
+     *  (`fueling_carb_alert_detail_deficit` / `_time`). When set, the same template is used
+     *  for both alert sources; tokens `{deficit}`, `{elapsed}`, `{target}` substituted at runtime. */
+    val carbAlertCustomDetail: String = "",
     /** Three logging slots, each user-configurable label + grams + idle background colour
      *  + optional emoji prefix. Empty `carbNIcon` = no emoji, label only. */
     val carb1Label: String = "Gel",      val carb1Grams: Int = 25,    val carb1Color: Int = 0xFF1565C0.toInt(),    val carb1Icon: String = "🧴",
@@ -304,8 +321,11 @@ data class KSafeConfig(
     /** Same semantics as `carbTimeInitialDelayMin`. 0 = disabled. */
     val hydrationTimeInitialDelayMin: Int = 30,
     /** Optional custom title shown in the InRideAlert overlay. Empty = use the default
-     *  `R.string.fueling_hyd_alert_title` ("Drink something"). */
+     *  `R.string.fueling_hyd_alert_title` ("Drink something"). Pair with [hydrationAlertCustomDetail]. */
     val hydrationAlertCustomTitle: String = "",
+    /** Optional custom detail template. Empty = use source-specific defaults
+     *  (`fueling_hyd_alert_detail_deficit` / `_time`). Tokens `{deficit}`, `{elapsed}`, `{target}`. */
+    val hydrationAlertCustomDetail: String = "",
     val drink1Label: String = "Sip",     val drink1Ml: Int = 100,    val drink1Color: Int = 0xFF1565C0.toInt(),    val drink1Icon: String = "💧",
     val drink2Label: String = "Bottle",  val drink2Ml: Int = 500,    val drink2Color: Int = 0xFF1565C0.toInt(),    val drink2Icon: String = "🥤",
 
