@@ -149,17 +149,18 @@ fun FuelingScreen(vm: MainViewModel) {
                 )
                 HorizontalDivider()
                 Text(text = stringResource(R.string.fueling_items_section), style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.Bold)
-                SlotRow(label = "Slot 1", labelText = carb1Label, amountText = carb1Grams, range = 0..100,
+                val gLabel = stringResource(R.string.fueling_slot_grams_label)
+                SlotRow(label = "Slot 1", labelText = carb1Label, amountText = carb1Grams, unitLabel = gLabel, range = 0..100,
                     onLabel = { v -> carb1Label = v.take(8); vm.saveConfig(config.copy(carb1Label = v.take(8))) },
                     onAmountCommit = { v -> carb1Grams = v; vm.saveConfig(config.copy(carb1Grams = v.toInt())) },
                     onAmountText = { carb1Grams = it },
                 )
-                SlotRow(label = "Slot 2", labelText = carb2Label, amountText = carb2Grams, range = 0..100,
+                SlotRow(label = "Slot 2", labelText = carb2Label, amountText = carb2Grams, unitLabel = gLabel, range = 0..100,
                     onLabel = { v -> carb2Label = v.take(8); vm.saveConfig(config.copy(carb2Label = v.take(8))) },
                     onAmountCommit = { v -> carb2Grams = v; vm.saveConfig(config.copy(carb2Grams = v.toInt())) },
                     onAmountText = { carb2Grams = it },
                 )
-                SlotRow(label = "Slot 3", labelText = carb3Label, amountText = carb3Grams, range = 0..100,
+                SlotRow(label = "Slot 3", labelText = carb3Label, amountText = carb3Grams, unitLabel = gLabel, range = 0..100,
                     onLabel = { v -> carb3Label = v.take(8); vm.saveConfig(config.copy(carb3Label = v.take(8))) },
                     onAmountCommit = { v -> carb3Grams = v; vm.saveConfig(config.copy(carb3Grams = v.toInt())) },
                     onAmountText = { carb3Grams = it },
@@ -229,12 +230,13 @@ fun FuelingScreen(vm: MainViewModel) {
                 )
                 HorizontalDivider()
                 Text(text = stringResource(R.string.fueling_items_section), style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.Bold)
-                SlotRow(label = "Slot 1", labelText = drink1Label, amountText = drink1Ml, range = 0..1000,
+                val mlLabel = stringResource(R.string.fueling_slot_ml_label)
+                SlotRow(label = "Slot 1", labelText = drink1Label, amountText = drink1Ml, unitLabel = mlLabel, range = 0..1000,
                     onLabel = { v -> drink1Label = v.take(8); vm.saveConfig(config.copy(drink1Label = v.take(8))) },
                     onAmountCommit = { v -> drink1Ml = v; vm.saveConfig(config.copy(drink1Ml = v.toInt())) },
                     onAmountText = { drink1Ml = it },
                 )
-                SlotRow(label = "Slot 2", labelText = drink2Label, amountText = drink2Ml, range = 0..1000,
+                SlotRow(label = "Slot 2", labelText = drink2Label, amountText = drink2Ml, unitLabel = mlLabel, range = 0..1000,
                     onLabel = { v -> drink2Label = v.take(8); vm.saveConfig(config.copy(drink2Label = v.take(8))) },
                     onAmountCommit = { v -> drink2Ml = v; vm.saveConfig(config.copy(drink2Ml = v.toInt())) },
                     onAmountText = { drink2Ml = it },
@@ -294,12 +296,17 @@ private fun IntField(
     )
 }
 
-/** A row with a slot name, the label text input, and the amount input. */
+/**
+ * A row with a slot name, the label text input, and the amount input. Both text fields use
+ * `label = { … }` so they have the same vertical alignment — without a label the right field
+ * would render slightly higher than the left because the floating-label area would be missing.
+ */
 @Composable
 private fun SlotRow(
     label: String,
     labelText: String,
     amountText: String,
+    unitLabel: String,
     range: IntRange,
     onLabel: (String) -> Unit,
     onAmountCommit: (String) -> Unit,
@@ -310,6 +317,7 @@ private fun SlotRow(
         Row(
             modifier = Modifier.fillMaxWidth(),
             horizontalArrangement = Arrangement.spacedBy(8.dp),
+            verticalAlignment = Alignment.CenterVertically,
         ) {
             OutlinedTextField(
                 value = labelText,
@@ -326,6 +334,7 @@ private fun SlotRow(
                     val parsed = filtered.toIntOrNull()
                     if (parsed != null && parsed in range) onAmountCommit(filtered)
                 },
+                label = { Text(unitLabel) },
                 modifier = Modifier.weight(1f),
                 singleLine = true,
             )
