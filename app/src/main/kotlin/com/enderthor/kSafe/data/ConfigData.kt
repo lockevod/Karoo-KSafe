@@ -65,12 +65,17 @@ val PRESET_CONFIRM_SPEED = mapOf(
 /** Dark colours that look good with white text on a Karoo ride field.
  *
  *  Twelve hues organised as 6 families × 2 shades (lighter / darker), inspired by
- *  timklge/karoo-reminder's palette. Excluded on purpose:
- *    - bright greens like 0xFF1B5E20 — used for SENT / LOGGED state flashes
- *    - oranges like 0xFFE65100 — used for SENDING
- *    - bright reds like 0xFFB71C1C — used for ERROR
- *    - mid greys like 0xFF424242 — used for OFF (slot disabled)
- *  Letting riders pick those would conflict with the state-machine signalling. */
+ *  timklge/karoo-reminder's palette.
+ *
+ *  Reserved colours — deliberately NOT in this palette because each is hard-wired to a
+ *  state in one or more DataTypes; letting riders pick them would collide with the
+ *  state-machine signalling and the rider could not tell idle from alert at a glance:
+ *    - 0xFFE65100 orange  — SOS COUNTDOWN, Safety Timer CANCEL, CustomMessage SENDING
+ *    - 0xFFB71C1C red     — SOS ALERTING, Safety Timer EXPIRED, CustomMessage ERROR
+ *    - 0xFFF57F17 amber   — Safety Timer WARNING
+ *    - 0xFF1B5E20 green   — CarbLog / HydrationLog LOGGED, CustomMessage SENT (success flash)
+ *    - 0xFF424242 grey    — every field's OFF / disabled state
+ */
 val FIELD_COLOR_PALETTE: List<Int> = listOf(
     0xFF1565C0.toInt(),  // Blue            (default actions / webhooks)
     0xFF0D47A1.toInt(),  // Deep Blue
