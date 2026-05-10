@@ -76,6 +76,18 @@ val PRESET_CONFIRM_SPEED = mapOf(
  *    - 0xFF1B5E20 green   — CarbLog / HydrationLog LOGGED, CustomMessage SENT (success flash)
  *    - 0xFF424242 grey    — every field's OFF / disabled state
  */
+/** Emoji palettes for the per-slot icon picker. The first entry is `""` (no icon),
+ *  picked by riders who only want the label text — see [FieldEmojiPicker]. The Android
+ *  system renders these in colour even when the surrounding TextView is white, which
+ *  gives them visual punch on the coloured field backgrounds without any drawable
+ *  bundling work. */
+val FUEL_EMOJI_CARB: List<String> = listOf(
+    "", "🍫", "🍌", "🍪", "🥨", "🥯", "🍙", "🥜", "⚡", "🍯", "🧴", "🍞",
+)
+val FUEL_EMOJI_DRINK: List<String> = listOf(
+    "", "💧", "🥤", "🧃", "🧊", "☕", "🍵", "🥛", "🧴",
+)
+
 val FIELD_COLOR_PALETTE: List<Int> = listOf(
     0xFF1565C0.toInt(),  // Blue            (default actions / webhooks)
     0xFF0D47A1.toInt(),  // Deep Blue
@@ -276,10 +288,11 @@ data class KSafeConfig(
     /** Optional custom title shown in the InRideAlert overlay. Empty = use the default
      *  `R.string.fueling_carb_alert_title` ("Eat something"). */
     val carbAlertCustomTitle: String = "",
-    /** Three logging slots, each user-configurable label + grams + idle background colour. */
-    val carb1Label: String = "Gel",      val carb1Grams: Int = 25,    val carb1Color: Int = 0xFF1565C0.toInt(),
-    val carb2Label: String = "Bar",      val carb2Grams: Int = 30,    val carb2Color: Int = 0xFF1565C0.toInt(),
-    val carb3Label: String = "Fruit",    val carb3Grams: Int = 20,    val carb3Color: Int = 0xFF1565C0.toInt(),
+    /** Three logging slots, each user-configurable label + grams + idle background colour
+     *  + optional emoji prefix. Empty `carbNIcon` = no emoji, label only. */
+    val carb1Label: String = "Gel",      val carb1Grams: Int = 25,    val carb1Color: Int = 0xFF1565C0.toInt(),    val carb1Icon: String = "🧴",
+    val carb2Label: String = "Bar",      val carb2Grams: Int = 30,    val carb2Color: Int = 0xFF1565C0.toInt(),    val carb2Icon: String = "🍫",
+    val carb3Label: String = "Fruit",    val carb3Grams: Int = 20,    val carb3Color: Int = 0xFF1565C0.toInt(),    val carb3Icon: String = "🍌",
 
     // ─── Hydration tracker (flat target by time, no sensor input) ───────────
     val hydrationTrackerEnabled: Boolean = false,
@@ -293,8 +306,8 @@ data class KSafeConfig(
     /** Optional custom title shown in the InRideAlert overlay. Empty = use the default
      *  `R.string.fueling_hyd_alert_title` ("Drink something"). */
     val hydrationAlertCustomTitle: String = "",
-    val drink1Label: String = "Sip",     val drink1Ml: Int = 100,    val drink1Color: Int = 0xFF1565C0.toInt(),
-    val drink2Label: String = "Bottle",  val drink2Ml: Int = 500,    val drink2Color: Int = 0xFF1565C0.toInt(),
+    val drink1Label: String = "Sip",     val drink1Ml: Int = 100,    val drink1Color: Int = 0xFF1565C0.toInt(),    val drink1Icon: String = "💧",
+    val drink2Label: String = "Bottle",  val drink2Ml: Int = 500,    val drink2Color: Int = 0xFF1565C0.toInt(),    val drink2Icon: String = "🥤",
 
     // ─── Post-ride summary ──────────────────────────────────────────────────
     /** Show an InRideAlert with totals at the end of every ride. */
@@ -525,7 +538,7 @@ fun KSafeConfig.migrateToLatest(): KSafeConfig {
         // v5 → v6: wellnessUseMaxHrPercent + wellnessHighHrPercent. Defaults preserve previous
         // behaviour (UseMaxHrPercent = false → still uses the absolute wellnessHighHrThreshold).
         c = c.copy(configVersion = 6)
-        Timber.i("KSafeConfig migrated v%d→v6 (wellness % of max HR)", originalVersion)
+        Timber.i("KSafeConfig migrated v%d→v6 (wellness %% of max HR)", originalVersion)
     }
 
     if (c.configVersion < 7) {

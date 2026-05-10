@@ -44,9 +44,16 @@ class HydrationLogDataType(
 
     private val configManager = ConfigurationManager(context)
 
-    private fun labelFromConfig(c: KSafeConfig): String = when (slot) {
-        2 -> c.drink2Label.take(7).ifBlank { "Drink 2" }
-        else -> c.drink1Label.take(7).ifBlank { "Drink 1" }
+    private fun labelFromConfig(c: KSafeConfig): String {
+        val raw = when (slot) {
+            2 -> c.drink2Label.take(7).ifBlank { "Drink 2" }
+            else -> c.drink1Label.take(7).ifBlank { "Drink 1" }
+        }
+        val emoji = when (slot) {
+            2 -> c.drink2Icon
+            else -> c.drink1Icon
+        }
+        return if (emoji.isBlank()) raw else "$emoji $raw"
     }
 
     private fun mlFromConfig(c: KSafeConfig): Int = when (slot) {

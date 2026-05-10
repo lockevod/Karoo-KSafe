@@ -45,12 +45,15 @@ fun FuelingScreen(vm: MainViewModel) {
     var carb1Label           by remember(config.carb1Label)                  { mutableStateOf(config.carb1Label) }
     var carb1Grams           by remember(config.carb1Grams)                  { mutableStateOf(config.carb1Grams.toString()) }
     var carb1Color           by remember(config.carb1Color)                  { mutableStateOf(config.carb1Color) }
+    var carb1Icon            by remember(config.carb1Icon)                   { mutableStateOf(config.carb1Icon) }
     var carb2Label           by remember(config.carb2Label)                  { mutableStateOf(config.carb2Label) }
     var carb2Grams           by remember(config.carb2Grams)                  { mutableStateOf(config.carb2Grams.toString()) }
     var carb2Color           by remember(config.carb2Color)                  { mutableStateOf(config.carb2Color) }
+    var carb2Icon            by remember(config.carb2Icon)                   { mutableStateOf(config.carb2Icon) }
     var carb3Label           by remember(config.carb3Label)                  { mutableStateOf(config.carb3Label) }
     var carb3Grams           by remember(config.carb3Grams)                  { mutableStateOf(config.carb3Grams.toString()) }
     var carb3Color           by remember(config.carb3Color)                  { mutableStateOf(config.carb3Color) }
+    var carb3Icon            by remember(config.carb3Icon)                   { mutableStateOf(config.carb3Icon) }
 
     // Hydration state
     var hydEnabled           by remember(config.hydrationTrackerEnabled)        { mutableStateOf(config.hydrationTrackerEnabled) }
@@ -64,9 +67,11 @@ fun FuelingScreen(vm: MainViewModel) {
     var drink1Label          by remember(config.drink1Label)                     { mutableStateOf(config.drink1Label) }
     var drink1Ml             by remember(config.drink1Ml)                        { mutableStateOf(config.drink1Ml.toString()) }
     var drink1Color          by remember(config.drink1Color)                     { mutableStateOf(config.drink1Color) }
+    var drink1Icon           by remember(config.drink1Icon)                      { mutableStateOf(config.drink1Icon) }
     var drink2Label          by remember(config.drink2Label)                     { mutableStateOf(config.drink2Label) }
     var drink2Ml             by remember(config.drink2Ml)                        { mutableStateOf(config.drink2Ml.toString()) }
     var drink2Color          by remember(config.drink2Color)                     { mutableStateOf(config.drink2Color) }
+    var drink2Icon           by remember(config.drink2Icon)                      { mutableStateOf(config.drink2Icon) }
 
     // Post-ride summary state
     var summaryEnabled by remember(config.fuelingPostRideSummaryEnabled) { mutableStateOf(config.fuelingPostRideSummaryEnabled) }
@@ -186,6 +191,8 @@ fun FuelingScreen(vm: MainViewModel) {
                 )
                 FieldColorPicker(label = "Slot 1 colour", selected = carb1Color,
                     onSelected = { v -> carb1Color = v; vm.saveConfig(config.copy(carb1Color = v)) })
+                FieldEmojiPicker(label = "Slot 1 icon", selected = carb1Icon, emojis = com.enderthor.kSafe.data.FUEL_EMOJI_CARB,
+                    onSelected = { v -> carb1Icon = v; vm.saveConfig(config.copy(carb1Icon = v)) })
                 SlotRow(label = "Slot 2", labelText = carb2Label, amountText = carb2Grams, unitLabel = gLabel, range = 0..100,
                     onLabel = { v -> carb2Label = v.take(8); vm.saveConfig(config.copy(carb2Label = v.take(8))) },
                     onAmountCommit = { v -> carb2Grams = v; vm.saveConfig(config.copy(carb2Grams = v.toInt())) },
@@ -193,6 +200,8 @@ fun FuelingScreen(vm: MainViewModel) {
                 )
                 FieldColorPicker(label = "Slot 2 colour", selected = carb2Color,
                     onSelected = { v -> carb2Color = v; vm.saveConfig(config.copy(carb2Color = v)) })
+                FieldEmojiPicker(label = "Slot 2 icon", selected = carb2Icon, emojis = com.enderthor.kSafe.data.FUEL_EMOJI_CARB,
+                    onSelected = { v -> carb2Icon = v; vm.saveConfig(config.copy(carb2Icon = v)) })
                 SlotRow(label = "Slot 3", labelText = carb3Label, amountText = carb3Grams, unitLabel = gLabel, range = 0..100,
                     onLabel = { v -> carb3Label = v.take(8); vm.saveConfig(config.copy(carb3Label = v.take(8))) },
                     onAmountCommit = { v -> carb3Grams = v; vm.saveConfig(config.copy(carb3Grams = v.toInt())) },
@@ -200,6 +209,8 @@ fun FuelingScreen(vm: MainViewModel) {
                 )
                 FieldColorPicker(label = "Slot 3 colour", selected = carb3Color,
                     onSelected = { v -> carb3Color = v; vm.saveConfig(config.copy(carb3Color = v)) })
+                FieldEmojiPicker(label = "Slot 3 icon", selected = carb3Icon, emojis = com.enderthor.kSafe.data.FUEL_EMOJI_CARB,
+                    onSelected = { v -> carb3Icon = v; vm.saveConfig(config.copy(carb3Icon = v)) })
                 }  // end if (carbsEnabled)
             }
         }
@@ -294,6 +305,8 @@ fun FuelingScreen(vm: MainViewModel) {
                 )
                 FieldColorPicker(label = "Slot 1 colour", selected = drink1Color,
                     onSelected = { v -> drink1Color = v; vm.saveConfig(config.copy(drink1Color = v)) })
+                FieldEmojiPicker(label = "Slot 1 icon", selected = drink1Icon, emojis = com.enderthor.kSafe.data.FUEL_EMOJI_DRINK,
+                    onSelected = { v -> drink1Icon = v; vm.saveConfig(config.copy(drink1Icon = v)) })
                 SlotRow(label = "Slot 2", labelText = drink2Label, amountText = drink2Ml, unitLabel = mlLabel, range = 0..1000,
                     onLabel = { v -> drink2Label = v.take(8); vm.saveConfig(config.copy(drink2Label = v.take(8))) },
                     onAmountCommit = { v -> drink2Ml = v; vm.saveConfig(config.copy(drink2Ml = v.toInt())) },
@@ -301,6 +314,8 @@ fun FuelingScreen(vm: MainViewModel) {
                 )
                 FieldColorPicker(label = "Slot 2 colour", selected = drink2Color,
                     onSelected = { v -> drink2Color = v; vm.saveConfig(config.copy(drink2Color = v)) })
+                FieldEmojiPicker(label = "Slot 2 icon", selected = drink2Icon, emojis = com.enderthor.kSafe.data.FUEL_EMOJI_DRINK,
+                    onSelected = { v -> drink2Icon = v; vm.saveConfig(config.copy(drink2Icon = v)) })
                 }  // end if (hydEnabled)
             }
         }

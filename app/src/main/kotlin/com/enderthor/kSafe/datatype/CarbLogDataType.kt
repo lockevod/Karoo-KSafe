@@ -45,10 +45,18 @@ class CarbLogDataType(
 
     private val configManager = ConfigurationManager(context)
 
-    private fun labelFromConfig(c: KSafeConfig): String = when (slot) {
-        2 -> c.carb2Label.take(7).ifBlank { "Carb 2" }
-        3 -> c.carb3Label.take(7).ifBlank { "Carb 3" }
-        else -> c.carb1Label.take(7).ifBlank { "Carb 1" }
+    private fun labelFromConfig(c: KSafeConfig): String {
+        val raw = when (slot) {
+            2 -> c.carb2Label.take(7).ifBlank { "Carb 2" }
+            3 -> c.carb3Label.take(7).ifBlank { "Carb 3" }
+            else -> c.carb1Label.take(7).ifBlank { "Carb 1" }
+        }
+        val emoji = when (slot) {
+            2 -> c.carb2Icon
+            3 -> c.carb3Icon
+            else -> c.carb1Icon
+        }
+        return if (emoji.isBlank()) raw else "$emoji $raw"
     }
 
     private fun gramsFromConfig(c: KSafeConfig): Int = when (slot) {
