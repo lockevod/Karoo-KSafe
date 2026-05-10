@@ -237,7 +237,7 @@ private fun effectiveThreshold(): Int {
 | **Absolute bpm** *(default)* | Rider knows their max HR and prefers a fixed number |
 | **% of max HR** | Auto-scale across riders / no manual tuning. Reads `userProfile.maxHr` from the Karoo — no biometric entry in our config. |
 
-If the profile isn't available yet (first seconds of an extension restart), the algorithm falls back to the absolute value so the feature can't silently disable itself.
+If `wellnessUseMaxHrPercent = true` but the profile isn't available yet (first seconds of an extension restart, or no profile configured on the Karoo), `effectiveCriticalThreshold()` / `effectiveSustainedThreshold()` return `Int.MAX_VALUE` — the tier silently waits and cannot fire until the profile arrives. We deliberately do NOT fall back to the absolute `*Threshold` value in pct mode, because a rider who configured 95 % of max HR expects scaling with their max HR; using the unrelated bpm fallback would produce a wrong threshold without warning. Absolute mode (the default) has no profile dependency.
 
 **Tier 3 (decoupling) does NOT use this**: drift is a relative measurement against the rider's own ride-specific baseline, so the absolute / % toggle does not apply.
 

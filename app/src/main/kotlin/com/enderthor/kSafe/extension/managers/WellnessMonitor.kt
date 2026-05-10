@@ -9,6 +9,7 @@ import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import timber.log.Timber
+import java.util.Locale
 
 /**
  * Wellness monitor with three independent tiers, each addressing a distinct physiological signal:
@@ -207,9 +208,9 @@ class WellnessMonitor(
                 val sum = ratioSamples.sumOf { it.second.toDouble() }
                 decouplingBaselineHrPerW = (sum / ratioSamples.size).toFloat()
                 calibLogger?.log(CalibrationLogger.Event.WELLNESS_FIRED) {
-                    "subkind=decoupling_baseline,baseline_hr_per_w=%.4f,samples=${ratioSamples.size}".format(decouplingBaselineHrPerW)
+                    String.format(Locale.US, "subkind=decoupling_baseline,baseline_hr_per_w=%.4f,samples=%d", decouplingBaselineHrPerW, ratioSamples.size)
                 }
-                Timber.d("WellnessMonitor: decoupling baseline established hr/w=%.4f from ${ratioSamples.size} samples".format(decouplingBaselineHrPerW))
+                Timber.d(String.format(Locale.US, "WellnessMonitor: decoupling baseline established hr/w=%.4f from %d samples", decouplingBaselineHrPerW, ratioSamples.size))
             }
             return
         }
@@ -225,15 +226,16 @@ class WellnessMonitor(
             val sustainedMs = now - decouplingExceededSinceMs
             val needMs = config.wellnessDecouplingDurationMinutes * 60_000L
             if (sustainedMs >= needMs && now - lastDecouplingTriggerMs >= DECOUPLING_COOLDOWN_MS) {
-                Timber.d(">>> WELLNESS_DECOUPLING fired: drift=%.1f%% (current=%.4f / baseline=%.4f), sustained=${sustainedMs/60_000L}min".format(driftPct, currentAvg, decouplingBaselineHrPerW))
+                val sustainedMin = sustainedMs / 60_000L
+                Timber.d(String.format(Locale.US, ">>> WELLNESS_DECOUPLING fired: drift=%.1f%% (current=%.4f / baseline=%.4f), sustained=%dmin", driftPct, currentAvg, decouplingBaselineHrPerW, sustainedMin))
                 calibLogger?.log(CalibrationLogger.Event.WELLNESS_FIRED) {
-                    "subkind=decoupling,drift_pct=%.1f,current_hr_per_w=%.4f,baseline_hr_per_w=%.4f,sustained_min=${sustainedMs/60_000L},hr=$hr,power=$w".format(driftPct, currentAvg, decouplingBaselineHrPerW)
+                    String.format(Locale.US, "subkind=decoupling,drift_pct=%.1f,current_hr_per_w=%.4f,baseline_hr_per_w=%.4f,sustained_min=%d,hr=%d,power=%d", driftPct, currentAvg, decouplingBaselineHrPerW, sustainedMin, hr, w)
                 }
                 lastDecouplingTriggerMs = now
                 decouplingExceededSinceMs = 0L
                 onIncident(EmergencyReason.WELLNESS_DECOUPLING, mapOf(
-                    "drift" to "%.1f".format(driftPct),
-                    "minutes" to (sustainedMs / 60_000L).toString(),
+                    "drift" to String.format(Locale.US, "%.1f", driftPct),
+                    "minutes" to sustainedMin.toString(),
                 ))
             }
         } else {
@@ -243,23 +245,31 @@ class WellnessMonitor(
 
     // ─── Helpers ─────────────────────────────────────────────────────────────
 
-    /** Threshold (bpm) for the critical tier, accounting for the absolute-vs-% mode. */
+    /** Threshold (bpm) for the critical tier, accounting for the absolute-vs-% mode.
+     *
+     *  In percent mode, requires `lastUserProfile.maxHr` to be available — without it, the
+     *  rider's intended scaling cannot be honoured. Returns [Int.MAX_VALUE] in that case so
+     *  no HR reading can ever exceed the threshold (tier silently waits for the profile to
+     *  arrive). The previous behaviour of falling back to `wellnessCriticalThresholdBpm`
+     *  was surprising for riders who configured 95 % expecting it to scale with their max HR.
+     *  In absolute mode (the default) there is no profile dependency, so the threshold is
+     *  always available. */
     private fun effectiveCriticalThreshold(): Int {
-        if (config.wellnessUseMaxHrPercent) {
-            val maxHr = lastUserProfile?.maxHr ?: 0
-            if (maxHr > 0) return (maxHr * config.wellnessCriticalThresholdPct) / 100
-        }
-        return config.wellnessCriticalThresholdBpm
+        if (!config.wellnessUseMaxHrPercent) return config.wellnessCriticalThresholdBpm
+        val maxHr = lastUserProfile?.maxHr ?: 0
+        if (maxHr <= 0) return Int.MAX_VALUE
+        return (maxHr * config.wellnessCriticalThresholdPct) / 100
     }
 
     /** Threshold (bpm) for the sustained tier — keeps using the existing
-     *  wellnessHighHrThreshold / wellnessHighHrPercent fields for back-compat. */
+     *  wellnessHighHrThreshold / wellnessHighHrPercent fields for back-compat. Same
+     *  profile-missing semantics as [effectiveCriticalThreshold]: in pct mode without a
+     *  profile, returns [Int.MAX_VALUE] to prevent firing with the wrong threshold. */
     private fun effectiveSustainedThreshold(): Int {
-        if (config.wellnessUseMaxHrPercent) {
-            val maxHr = lastUserProfile?.maxHr ?: 0
-            if (maxHr > 0) return (maxHr * config.wellnessHighHrPercent) / 100
-        }
-        return config.wellnessHighHrThreshold
+        if (!config.wellnessUseMaxHrPercent) return config.wellnessHighHrThreshold
+        val maxHr = lastUserProfile?.maxHr ?: 0
+        if (maxHr <= 0) return Int.MAX_VALUE
+        return (maxHr * config.wellnessHighHrPercent) / 100
     }
 
     /** Per-tier cooldown — keeps the existing convention that the cooldown matches the duration
