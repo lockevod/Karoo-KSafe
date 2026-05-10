@@ -29,8 +29,11 @@ const val KAROO_LIVE_BASE_URL = "https://dashboard.hammerhead.io/live/"
  *  v3 → v4 : carbs/hydration tracker fields (22 fields) added. Migration is a pure version stamp;
  *            all fields auto-fill from Kotlin defaults via kotlinx.serialization with
  *            ignoreUnknownKeys = true.
+ *  v4 → v5 : per-tracker time-alert initial delay (carbTimeInitialDelayMin / hydrationTimeInitialDelayMin)
+ *            and per-tracker custom alert title (carbAlertCustomTitle / hydrationAlertCustomTitle) fields
+ *            added. Pure version stamp.
  */
-const val CONFIG_VERSION = 4
+const val CONFIG_VERSION = 5
 
 /**
  * Canonical minSpeedForCrashKmh value per preset.
@@ -206,6 +209,14 @@ data class KSafeConfig(
     /** When true, alert when too much time has passed since the last log. Combinable with deficit alert. */
     val carbTimeAlertEnabled: Boolean = false,
     val carbTimeIntervalMin: Int = 25,
+    /** Initial grace period (minutes) before the time-based alert can fire for the first time
+     *  in a session — most riders don't eat in the first 20 minutes of a ride. After the first
+     *  alert fires or the first log, normal interval logic resumes. 0 = disabled (the first
+     *  time alert fires after `carbTimeIntervalMin` from session start, original behaviour). */
+    val carbTimeInitialDelayMin: Int = 30,
+    /** Optional custom title shown in the InRideAlert overlay. Empty = use the default
+     *  `R.string.fueling_carb_alert_title` ("Eat something"). */
+    val carbAlertCustomTitle: String = "",
     /** Three logging slots, each user-configurable label + grams. */
     val carb1Label: String = "Gel",      val carb1Grams: Int = 25,
     val carb2Label: String = "Bar",      val carb2Grams: Int = 30,
@@ -218,6 +229,11 @@ data class KSafeConfig(
     val hydrationDeficitThresholdMl: Int = 300,
     val hydrationTimeAlertEnabled: Boolean = false,
     val hydrationTimeIntervalMin: Int = 20,
+    /** Same semantics as `carbTimeInitialDelayMin`. 0 = disabled. */
+    val hydrationTimeInitialDelayMin: Int = 30,
+    /** Optional custom title shown in the InRideAlert overlay. Empty = use the default
+     *  `R.string.fueling_hyd_alert_title` ("Drink something"). */
+    val hydrationAlertCustomTitle: String = "",
     val drink1Label: String = "Sip",     val drink1Ml: Int = 100,
     val drink2Label: String = "Bottle",  val drink2Ml: Int = 500,
 
@@ -437,6 +453,13 @@ fun KSafeConfig.migrateToLatest(): KSafeConfig {
         // Only the version stamp needs updating; deserialization auto-fills missing fields.
         c = c.copy(configVersion = 4)
         Timber.i("KSafeConfig migrated v%d→v4 (fueling tracker fields added)", originalVersion)
+    }
+
+    if (c.configVersion < 5) {
+        // v4 → v5: per-tracker time-alert initial delay + custom alert title fields added.
+        // All carry safe defaults; pure version stamp.
+        c = c.copy(configVersion = 5)
+        Timber.i("KSafeConfig migrated v%d→v5 (initial delay + custom title)", originalVersion)
     }
 
     return c

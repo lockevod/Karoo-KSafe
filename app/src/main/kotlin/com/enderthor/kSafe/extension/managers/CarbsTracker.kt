@@ -172,6 +172,14 @@ class CarbsTracker(
 
     private fun evaluateTimeAlert(now: Long) {
         if (!config.carbTimeAlertEnabled) return
+        // Initial-delay grace period — only applies to the FIRST alert in the session and only
+        // if the user hasn't logged anything yet. Once any alert fires or the user logs an item,
+        // the regular interval logic takes over.
+        val isFirstAlert = lastAlertMs == 0L && cumLoggedG == 0
+        if (isFirstAlert && config.carbTimeInitialDelayMin > 0) {
+            val initialDelayMs = config.carbTimeInitialDelayMin * 60_000L
+            if (now - sessionStartMs < initialDelayMs) return
+        }
         val intervalMs = config.carbTimeIntervalMin * 60_000L
         if (now - lastLogMs < intervalMs) return
         if (now - lastAlertMs < ALERT_COOLDOWN_MS) return
@@ -183,11 +191,12 @@ class CarbsTracker(
         lastAlertMs = System.currentTimeMillis()
         val detail = if (source == "deficit") "Behind by ${deficit}g"
                      else                     "$elapsedMin min since last log"
+        val title = config.carbAlertCustomTitle.ifBlank { context.getString(R.string.fueling_carb_alert_title) }
         karooSystem.dispatch(BEEP_LONG)
         karooSystem.dispatch(InRideAlert(
             id = "ksafe-carb-alert-$source",
             icon = R.drawable.ic_ksafe,
-            title = context.getString(R.string.fueling_carb_alert_title),
+            title = title,
             detail = detail,
             autoDismissMs = AUTO_DISMISS_MS,
             backgroundColor = ALERT_BG_COLOR,

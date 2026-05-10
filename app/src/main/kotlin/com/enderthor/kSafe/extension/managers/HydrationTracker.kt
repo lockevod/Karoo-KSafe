@@ -145,6 +145,12 @@ class HydrationTracker(
 
     private fun evaluateTimeAlert(now: Long) {
         if (!config.hydrationTimeAlertEnabled) return
+        // Initial-delay grace period — same semantics as CarbsTracker.evaluateTimeAlert.
+        val isFirstAlert = lastAlertMs == 0L && cumLoggedMl == 0
+        if (isFirstAlert && config.hydrationTimeInitialDelayMin > 0) {
+            val initialDelayMs = config.hydrationTimeInitialDelayMin * 60_000L
+            if (now - sessionStartMs < initialDelayMs) return
+        }
         val intervalMs = config.hydrationTimeIntervalMin * 60_000L
         if (now - lastLogMs < intervalMs) return
         if (now - lastAlertMs < ALERT_COOLDOWN_MS) return
@@ -155,11 +161,12 @@ class HydrationTracker(
         lastAlertMs = System.currentTimeMillis()
         val detail = if (source == "deficit") "Behind by ${deficitMl}ml"
                      else                     "$elapsedMin min since last log"
+        val title = config.hydrationAlertCustomTitle.ifBlank { context.getString(R.string.fueling_hyd_alert_title) }
         karooSystem.dispatch(BEEP_LONG)
         karooSystem.dispatch(InRideAlert(
             id = "ksafe-hyd-alert-$source",
             icon = R.drawable.ic_ksafe,
-            title = context.getString(R.string.fueling_hyd_alert_title),
+            title = title,
             detail = detail,
             autoDismissMs = AUTO_DISMISS_MS,
             backgroundColor = ALERT_BG_COLOR,
