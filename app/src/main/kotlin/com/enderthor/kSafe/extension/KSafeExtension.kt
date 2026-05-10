@@ -23,11 +23,18 @@ import com.enderthor.kSafe.extension.managers.WebhookManager
 import com.enderthor.kSafe.extension.managers.WellnessMonitor
 import io.hammerhead.karooext.KarooSystemService
 import io.hammerhead.karooext.extension.KarooExtension
+import io.hammerhead.karooext.internal.Emitter
+import io.hammerhead.karooext.models.DeveloperField
+import io.hammerhead.karooext.models.FieldValue
+import io.hammerhead.karooext.models.FitEffect
 import io.hammerhead.karooext.models.RideState
 import io.hammerhead.karooext.models.SystemNotification
+import io.hammerhead.karooext.models.WriteToRecordMesg
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.launch
 import timber.log.Timber
@@ -837,6 +844,60 @@ class KSafeExtension : KarooExtension("ksafe", BuildConfig.VERSION_NAME), Corout
                 cos(lat1 * PI / 180.0) * cos(lat2 * PI / 180.0) * sin(dLon / 2).pow(2)
         val c = 2 * atan2(sqrt(a), sqrt(1 - a))
         return earthRadius * c
+    }
+
+    /**
+     * Writes per-second cumulative carbs (g) and hydration (ml) values into the FIT
+     * record messages so the rider's activity in Strava / Intervals.icu / TrainingPeaks
+     * carries native graphs of fueling alongside HR / power / cadence.
+     *
+     * Both fields are unsigned-16 (`fitBaseTypeId = 0x84`, range 0..65535) — comfortable
+     * for a single ride's carb load (rarely > 1500 g) and fluid intake (< 65 L). Cumulative
+     * rather than rate so analysis tools can derive g/h locally without us having to pick
+     * an averaging window upstream.
+     *
+     * Cadence: 1 Hz while `RideState.Recording`. The Karoo's ride app writes a Record
+     * message every second; emitting at the same cadence aligns our values with the
+     * native HR / power samples in the FIT timeline. Outside Recording (Idle / Paused)
+     * we don't emit — paused minutes shouldn't count.
+     *
+     * Trackers may not be initialised when the FIT pipeline starts (the rider has the
+     * extension installed but never enabled fueling). We safely return 0 then — the
+     * column appears in the FIT but stays flat at zero, which is honest data ("no
+     * fueling logged") and lets a future ride-with-fueling backfill seamlessly.
+     */
+    override fun startFit(emitter: Emitter<FitEffect>) {
+        val carbField = DeveloperField(
+            fieldDefinitionNumber = 0,
+            fitBaseTypeId = 0x84,           // uint16
+            fieldName = "ksafe_carbs_g",
+            units = "g",
+            nativeFieldNum = null,
+            developerDataIndex = 0,
+        )
+        val hydField = DeveloperField(
+            fieldDefinitionNumber = 1,
+            fitBaseTypeId = 0x84,
+            fieldName = "ksafe_hyd_ml",
+            units = "ml",
+            nativeFieldNum = null,
+            developerDataIndex = 0,
+        )
+
+        val job: Job = launch {
+            while (true) {
+                if (currentRideState is RideState.Recording) {
+                    val carbsG = carbsTrackerOrNull()?.getStatus()?.cumLoggedG ?: 0
+                    val hydMl  = hydrationTrackerOrNull()?.getStatus()?.cumLoggedMl ?: 0
+                    emitter.onNext(WriteToRecordMesg(listOf(
+                        FieldValue(carbField, carbsG.toDouble()),
+                        FieldValue(hydField,  hydMl.toDouble()),
+                    )))
+                }
+                delay(1_000L)
+            }
+        }
+        emitter.setCancellable { job.cancel() }
     }
 
     override fun onDestroy() {
