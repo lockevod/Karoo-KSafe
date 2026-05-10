@@ -237,6 +237,8 @@ Both the **title** and the **detail line** of the `InRideAlert` are per-rider cu
 
 The renderer substitutes `{token}` placeholders with current data when the alert fires. Tokens not supplied are left literal so a typo is visible to the rider rather than silently blanked.
 
+After substitution, the rendered string is capped at the call site so the popup cannot run off the Karoo screen: titles at `ALERT_TITLE_MAX_CHARS = 40` and details at `ALERT_DETAIL_MAX_CHARS = 90` (defined in `extension/managers/AlertTextRenderer.kt`). When the cap kicks in the last visible char is replaced with `…`. The cap applies only to the on-screen `InRideAlert` — the outgoing emergency message sent through the configured provider (Pushover / Telegram / ntfy / CallMeBot) uses its own separate template (`config.message` etc.) and has no such limit.
+
 | Token | Substituted with |
 |---|---|
 | `{deficit}` | Current carb deficit in grams (`cumTargetG − cumLoggedG`, integer) |
