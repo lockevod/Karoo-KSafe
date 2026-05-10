@@ -198,10 +198,11 @@ class CarbsTracker(
             if (source == "deficit") context.getString(R.string.fueling_carb_alert_detail_deficit)
             else                     context.getString(R.string.fueling_carb_alert_detail_time)
         }
-        val detail = renderAlertText(detailTemplate, tokens)
+        val detail = renderAlertText(detailTemplate, tokens, maxLength = ALERT_DETAIL_MAX_CHARS)
         val title = renderAlertText(
             config.carbAlertCustomTitle.ifBlank { context.getString(R.string.fueling_carb_alert_title) },
             tokens,
+            maxLength = ALERT_TITLE_MAX_CHARS,
         )
         karooSystem.dispatch(BEEP_LONG)
         karooSystem.dispatch(InRideAlert(

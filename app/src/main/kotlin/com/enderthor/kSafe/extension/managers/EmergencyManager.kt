@@ -248,8 +248,8 @@ class EmergencyManager(
                 karooSystem.dispatch(InRideAlert(
                     id = "ksafe-warning-${reason.name.lowercase()}",
                     icon = com.enderthor.kSafe.R.drawable.ic_ksafe,
-                    title = renderAlertText(titleTemplate, tokens),
-                    detail = renderAlertText(detailTemplate, tokens),
+                    title = renderAlertText(titleTemplate, tokens, maxLength = ALERT_TITLE_MAX_CHARS),
+                    detail = renderAlertText(detailTemplate, tokens, maxLength = ALERT_DETAIL_MAX_CHARS),
                     autoDismissMs = 10_000L,
                     backgroundColor = 0xFFE65100.toInt(),
                     textColor = 0xFFFFFFFF.toInt(),
