@@ -183,7 +183,7 @@ fun FuelingScreen(vm: MainViewModel) {
                     label = "Carb alert detail",
                     value = carbCustomDetail,
                     onCommit = { v -> carbCustomDetail = v; vm.saveConfig(config.copy(carbAlertCustomDetail = v)) },
-                    defaultPlaceholder = "Behind by {deficit}g  /  {elapsed} min since last log",
+                    defaultPlaceholder = stringResource(R.string.fueling_carb_alert_detail_deficit),
                     tokensHint = "Tokens: {deficit}, {elapsed}, {target}",
                     maxLength = 80,
                     singleLine = false,
@@ -196,28 +196,34 @@ fun FuelingScreen(vm: MainViewModel) {
                     onAmountCommit = { v -> carb1Grams = v; vm.saveConfig(config.copy(carb1Grams = v.toInt())) },
                     onAmountText = { carb1Grams = it },
                 )
-                FieldColorPicker(label = "Slot 1 colour", selected = carb1Color,
-                    onSelected = { v -> carb1Color = v; vm.saveConfig(config.copy(carb1Color = v)) })
-                FieldEmojiPicker(label = "Slot 1 icon", selected = carb1Icon, emojis = com.enderthor.kSafe.data.FUEL_EMOJI_CARB,
-                    onSelected = { v -> carb1Icon = v; vm.saveConfig(config.copy(carb1Icon = v)) })
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    FieldColorPicker(label = "Colour", selected = carb1Color, modifier = Modifier.weight(1f),
+                        onSelected = { v -> carb1Color = v; vm.saveConfig(config.copy(carb1Color = v)) })
+                    FieldEmojiPicker(label = "Icon", selected = carb1Icon, emojis = com.enderthor.kSafe.data.FUEL_EMOJI_CARB, modifier = Modifier.weight(1f),
+                        onSelected = { v -> carb1Icon = v; vm.saveConfig(config.copy(carb1Icon = v)) })
+                }
                 SlotRow(label = "Slot 2", labelText = carb2Label, amountText = carb2Grams, unitLabel = gLabel, range = 0..100,
                     onLabel = { v -> carb2Label = v.take(8); vm.saveConfig(config.copy(carb2Label = v.take(8))) },
                     onAmountCommit = { v -> carb2Grams = v; vm.saveConfig(config.copy(carb2Grams = v.toInt())) },
                     onAmountText = { carb2Grams = it },
                 )
-                FieldColorPicker(label = "Slot 2 colour", selected = carb2Color,
-                    onSelected = { v -> carb2Color = v; vm.saveConfig(config.copy(carb2Color = v)) })
-                FieldEmojiPicker(label = "Slot 2 icon", selected = carb2Icon, emojis = com.enderthor.kSafe.data.FUEL_EMOJI_CARB,
-                    onSelected = { v -> carb2Icon = v; vm.saveConfig(config.copy(carb2Icon = v)) })
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    FieldColorPicker(label = "Colour", selected = carb2Color, modifier = Modifier.weight(1f),
+                        onSelected = { v -> carb2Color = v; vm.saveConfig(config.copy(carb2Color = v)) })
+                    FieldEmojiPicker(label = "Icon", selected = carb2Icon, emojis = com.enderthor.kSafe.data.FUEL_EMOJI_CARB, modifier = Modifier.weight(1f),
+                        onSelected = { v -> carb2Icon = v; vm.saveConfig(config.copy(carb2Icon = v)) })
+                }
                 SlotRow(label = "Slot 3", labelText = carb3Label, amountText = carb3Grams, unitLabel = gLabel, range = 0..100,
                     onLabel = { v -> carb3Label = v.take(8); vm.saveConfig(config.copy(carb3Label = v.take(8))) },
                     onAmountCommit = { v -> carb3Grams = v; vm.saveConfig(config.copy(carb3Grams = v.toInt())) },
                     onAmountText = { carb3Grams = it },
                 )
-                FieldColorPicker(label = "Slot 3 colour", selected = carb3Color,
-                    onSelected = { v -> carb3Color = v; vm.saveConfig(config.copy(carb3Color = v)) })
-                FieldEmojiPicker(label = "Slot 3 icon", selected = carb3Icon, emojis = com.enderthor.kSafe.data.FUEL_EMOJI_CARB,
-                    onSelected = { v -> carb3Icon = v; vm.saveConfig(config.copy(carb3Icon = v)) })
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    FieldColorPicker(label = "Colour", selected = carb3Color, modifier = Modifier.weight(1f),
+                        onSelected = { v -> carb3Color = v; vm.saveConfig(config.copy(carb3Color = v)) })
+                    FieldEmojiPicker(label = "Icon", selected = carb3Icon, emojis = com.enderthor.kSafe.data.FUEL_EMOJI_CARB, modifier = Modifier.weight(1f),
+                        onSelected = { v -> carb3Icon = v; vm.saveConfig(config.copy(carb3Icon = v)) })
+                }
                 }  // end if (carbsEnabled)
             }
         }
@@ -302,7 +308,7 @@ fun FuelingScreen(vm: MainViewModel) {
                     label = "Hydration alert detail",
                     value = hydCustomDetail,
                     onCommit = { v -> hydCustomDetail = v; vm.saveConfig(config.copy(hydrationAlertCustomDetail = v)) },
-                    defaultPlaceholder = "Behind by {deficit}ml  /  {elapsed} min since last log",
+                    defaultPlaceholder = stringResource(R.string.fueling_hyd_alert_detail_deficit),
                     tokensHint = "Tokens: {deficit}, {elapsed}, {target}",
                     maxLength = 80,
                     singleLine = false,
@@ -315,19 +321,23 @@ fun FuelingScreen(vm: MainViewModel) {
                     onAmountCommit = { v -> drink1Ml = v; vm.saveConfig(config.copy(drink1Ml = v.toInt())) },
                     onAmountText = { drink1Ml = it },
                 )
-                FieldColorPicker(label = "Slot 1 colour", selected = drink1Color,
-                    onSelected = { v -> drink1Color = v; vm.saveConfig(config.copy(drink1Color = v)) })
-                FieldEmojiPicker(label = "Slot 1 icon", selected = drink1Icon, emojis = com.enderthor.kSafe.data.FUEL_EMOJI_DRINK,
-                    onSelected = { v -> drink1Icon = v; vm.saveConfig(config.copy(drink1Icon = v)) })
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    FieldColorPicker(label = "Colour", selected = drink1Color, modifier = Modifier.weight(1f),
+                        onSelected = { v -> drink1Color = v; vm.saveConfig(config.copy(drink1Color = v)) })
+                    FieldEmojiPicker(label = "Icon", selected = drink1Icon, emojis = com.enderthor.kSafe.data.FUEL_EMOJI_DRINK, modifier = Modifier.weight(1f),
+                        onSelected = { v -> drink1Icon = v; vm.saveConfig(config.copy(drink1Icon = v)) })
+                }
                 SlotRow(label = "Slot 2", labelText = drink2Label, amountText = drink2Ml, unitLabel = mlLabel, range = 0..1000,
                     onLabel = { v -> drink2Label = v.take(8); vm.saveConfig(config.copy(drink2Label = v.take(8))) },
                     onAmountCommit = { v -> drink2Ml = v; vm.saveConfig(config.copy(drink2Ml = v.toInt())) },
                     onAmountText = { drink2Ml = it },
                 )
-                FieldColorPicker(label = "Slot 2 colour", selected = drink2Color,
-                    onSelected = { v -> drink2Color = v; vm.saveConfig(config.copy(drink2Color = v)) })
-                FieldEmojiPicker(label = "Slot 2 icon", selected = drink2Icon, emojis = com.enderthor.kSafe.data.FUEL_EMOJI_DRINK,
-                    onSelected = { v -> drink2Icon = v; vm.saveConfig(config.copy(drink2Icon = v)) })
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    FieldColorPicker(label = "Colour", selected = drink2Color, modifier = Modifier.weight(1f),
+                        onSelected = { v -> drink2Color = v; vm.saveConfig(config.copy(drink2Color = v)) })
+                    FieldEmojiPicker(label = "Icon", selected = drink2Icon, emojis = com.enderthor.kSafe.data.FUEL_EMOJI_DRINK, modifier = Modifier.weight(1f),
+                        onSelected = { v -> drink2Icon = v; vm.saveConfig(config.copy(drink2Icon = v)) })
+                }
                 }  // end if (hydEnabled)
             }
         }

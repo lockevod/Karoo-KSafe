@@ -8,13 +8,13 @@
          medical*Custom* / wellness*Custom* config fields. Tokens substituted at runtime
          where they appear: {bpm}, {threshold}, {minutes}, {drift}. -->
     <string name="warning_wellness_high_hr_title">Heart rate high</string>
-    <string name="warning_wellness_high_hr_detail">Heart rate high for a while — consider a break.</string>
+    <string name="warning_wellness_high_hr_detail">HR {bpm} bpm above {threshold} for {minutes} min — consider a break.</string>
     <string name="warning_wellness_critical_hr_title">HR critical — slow down</string>
-    <string name="warning_wellness_critical_hr_detail">HR at {bpm} bpm — slow down.</string>
+    <string name="warning_wellness_critical_hr_detail">HR at {bpm} bpm (over {threshold} for {minutes} min) — slow down now.</string>
     <string name="warning_wellness_decoupling_title">HR drift detected</string>
-    <string name="warning_wellness_decoupling_detail">HR drift {drift}% — cool down and hydrate.</string>
+    <string name="warning_wellness_decoupling_detail">HR drift {drift}% sustained {minutes} min — cool down and hydrate.</string>
     <string name="warning_medical_title">Medical alert</string>
-    <string name="warning_medical_detail">Possible medical episode — check on the rider.</string>
+    <string name="warning_medical_detail">HR at {bpm} bpm — possible medical episode, check on the rider.</string>
 
     <!-- BonusAction labels -->
     <string name="action_cancel_emergency">KSafe: Cancel Emergency</string>
@@ -65,11 +65,11 @@
     <string name="fueling_slot_ml_label">ml</string>
     <string name="fueling_post_ride_summary_label">Post-ride summary</string>
     <string name="fueling_carb_alert_title">Eat something</string>
-    <string name="fueling_carb_alert_detail_deficit">Behind by {deficit}g</string>
-    <string name="fueling_carb_alert_detail_time">{elapsed} min since last log</string>
+    <string name="fueling_carb_alert_detail_deficit">Behind by {deficit}g — eat something now (target {target} g/h).</string>
+    <string name="fueling_carb_alert_detail_time">{elapsed} min since last log — time to eat (target {target} g/h).</string>
     <string name="fueling_hyd_alert_title">Drink something</string>
-    <string name="fueling_hyd_alert_detail_deficit">Behind by {deficit}ml</string>
-    <string name="fueling_hyd_alert_detail_time">{elapsed} min since last log</string>
+    <string name="fueling_hyd_alert_detail_deficit">Behind by {deficit}ml — drink now (target {target} ml/h).</string>
+    <string name="fueling_hyd_alert_detail_time">{elapsed} min since last log — drink (target {target} ml/h).</string>
 
     <!-- Fueling BonusActions -->
     <string name="action_log_carb">KSafe: Log Carb</string>
