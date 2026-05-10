@@ -26,7 +26,7 @@ import kotlinx.coroutines.launch
 import timber.log.Timber
 
 private const val COLOR_LOGGED = 0xFF1B5E20.toInt()  // green confirmation flash
-private const val COLOR_IDLE   = 0xFF1565C0.toInt()  // blue (default — palette dark blue)
+private const val COLOR_OFF    = 0xFF424242.toInt()  // gray — master tracker disabled
 
 class CarbLogDataType(
     datatype: String,
@@ -55,6 +55,12 @@ class CarbLogDataType(
         2 -> c.carb2Grams
         3 -> c.carb3Grams
         else -> c.carb1Grams
+    }
+
+    private fun idleColorFromConfig(c: KSafeConfig): Int = when (slot) {
+        2 -> c.carb2Color
+        3 -> c.carb3Color
+        else -> c.carb1Color
     }
 
     private fun buildView(
@@ -103,8 +109,10 @@ class CarbLogDataType(
                 ) { state, ksafeConfig ->
                     val label = labelFromConfig(ksafeConfig)
                     val grams = gramsFromConfig(ksafeConfig)
-                    when (state) {
-                        CarbLogState.IDLE   -> buildView(context, config, COLOR_IDLE, label, "${grams}g")
+                    if (!ksafeConfig.carbsTrackerEnabled) {
+                        buildView(context, config, COLOR_OFF, label, "OFF", clickable = false)
+                    } else when (state) {
+                        CarbLogState.IDLE   -> buildView(context, config, idleColorFromConfig(ksafeConfig), label, "${grams}g")
                         CarbLogState.LOGGED -> buildView(context, config, COLOR_LOGGED, "+${grams}g", "✓", clickable = false)
                     }
                 }.collect { view -> emitter.updateView(view) }
