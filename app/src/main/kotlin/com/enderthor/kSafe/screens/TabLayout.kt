@@ -161,6 +161,17 @@ private fun ScrollableTabRowWithIndicators(
     tabs: List<String>,
     onTabSelected: (Int) -> Unit,
 ) {
+    // Cache the gradient brushes — without remember() they would be re-allocated on every
+    // recomposition (i.e. on every tab-switch click). Re-keyed on the surface colour so a
+    // theme change still updates them.
+    val surface = MaterialTheme.colorScheme.surface
+    val leftFadeBrush = remember(surface) {
+        Brush.horizontalGradient(listOf(surface, Color.Transparent))
+    }
+    val rightFadeBrush = remember(surface) {
+        Brush.horizontalGradient(listOf(Color.Transparent, surface))
+    }
+
     Box {
         ScrollableTabRow(
             selectedTabIndex = selectedTabIndex,
@@ -208,14 +219,7 @@ private fun ScrollableTabRowWithIndicators(
             modifier = Modifier
                 .height(48.dp)
                 .width(24.dp)
-                .background(
-                    Brush.horizontalGradient(
-                        colors = listOf(
-                            MaterialTheme.colorScheme.surface,
-                            Color.Transparent,
-                        ),
-                    ),
-                ),
+                .background(leftFadeBrush),
         )
 
         // Right edge fade — hints that there is content beyond the visible area.
@@ -224,14 +228,7 @@ private fun ScrollableTabRowWithIndicators(
                 .height(48.dp)
                 .width(24.dp)
                 .align(Alignment.TopEnd)
-                .background(
-                    Brush.horizontalGradient(
-                        colors = listOf(
-                            Color.Transparent,
-                            MaterialTheme.colorScheme.surface,
-                        ),
-                    ),
-                ),
+                .background(rightFadeBrush),
         )
 
         Icon(
