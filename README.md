@@ -6,15 +6,19 @@
 > [!WARNING]
 > This extension can send emergency alerts to your contacts. Please test it carefully before relying on it in real situations.
 
-KSafe is a free, open-source safety and notification extension for Karoo GPS devices. While you ride, it watches for any signal of trouble — **crash detected**, **sudden speed drop**, **missed check-in**, **heart-rate flatline or sudden collapse**, **sustained high heart rate** — and alerts your emergency contacts automatically. A manual **SOS button** on the ride screen is always one tap away.
+KSafe is a free, open-source safety and notification extension for Karoo GPS devices. It works on **two complementary layers**:
 
-KSafe is more than crash detection. It also gives you:
+**1) Reactive layer — detect when something goes wrong.** While you ride, KSafe watches for any signal of trouble — **crash detected**, **sudden speed drop**, **missed check-in**, **heart-rate flatline or sudden collapse**, **sustained high heart rate** — and alerts your emergency contacts automatically. A manual **SOS button** on the ride screen is always one tap away.
+
+**2) Preventive layer — avoid the conditions that cause incidents.** Many cycling accidents have an underlying cause that is entirely preventable: **bonking** (carb depletion impairs cognition, balance and reaction time), **dehydration** (fatigue, cramps, heat stress, loss of focus), **overtraining** (sustained high HR leading to errors). KSafe's nutrition and hydration tracker monitors your intake during the ride and proactively reminds you to eat and drink before these conditions degrade your judgment on the bike. Lower your odds of needing the reactive layer in the first place.
+
+KSafe also gives you:
 
 - **Ride start / end notifications** to your contacts, with an optional real-time Karoo Live tracking link — delivered directly to their phones via WhatsApp, Telegram, ntfy or Pushover. A faster and more reliable alternative to Karoo's default email notification.
 - **Custom message buttons** (up to three independent slots) — send *"I'm OK"*, *"Starting now"*, or any preset message in a single tap from a ride field or a hardware button. No countdown, no emergency.
 - **Webhook actions** — fire any HTTP endpoint from a Karoo button: open your garage door (Home Assistant, Shelly), trigger an IFTTT / n8n / Make automation, send a custom push notification, or call any REST API. Two independent slots with optional geo-fencing per slot (e.g. only open the garage when you are actually near home).
 
-The heart-rate-based detectors are **completely optional** — KSafe works fully without a chest strap. Pair one if you want the extra layer of medical-episode and wellness monitoring; otherwise the rest of the features run unchanged.
+The heart-rate-based detectors and the nutrition / hydration tracker are **completely optional** — KSafe works fully without a chest strap or a power meter. Pair one if you want the extra layer of medical-episode monitoring or sensor-aware fueling targets; otherwise the rest of the features run unchanged.
 
 Compatible with Karoo 3 running Karoo OS version 1.527 and later.
 
@@ -29,6 +33,7 @@ Compatible with Karoo 3 running Karoo OS version 1.527 and later.
 - **Speed drop detection**: Detects when your speed drops suddenly and remains low for a configurable time window.
 - **Medical episode detection** *(optional, requires HR sensor)*: Detects sudden heart-rate flatline (asystole / severe bradycardia) or HR collapse (vasovagal syncope) during a ride. Triggers the same emergency flow as a crash by default. Stays silent if no HR sensor is paired — no false alarms when you don't wear a chest strap.
 - **Wellness monitor** *(optional, requires HR sensor)*: On-screen warning when HR stays above a configurable threshold for a sustained period — useful for fatigue / heat-stress awareness on long rides. Sent to the rider only, never to emergency contacts (response level configurable).
+- **Nutrition & hydration tracker** *(preventive safety, optional)*: Watches your carb and fluid intake during the ride and reminds you to eat / drink **before** depletion impairs your judgment on the bike. Carb target adapts in real time to your effort using the Karoo's own HR or power zones (5 / 7 zones). Hydration target is per-hour, you raise it for hot days. Up to **3 carb slots and 2 drink slots** as data fields (each pre-configured with a label and amount, one tap = one log) and 2 SRAM AXS hardware buttons. Two combinable alert modes — by **deficit** (you're behind your target) or by **time** (X minutes since last log) — appearing as a full-screen `InRideAlert` overlay. Post-ride summary shows totals vs target.
 - **Emergency countdown with cancel**: All triggers start a configurable countdown (default 30s) so you can cancel false alarms before alerts are sent. A **red overlay with a Cancel button** appears on top of the ride screen — visible from any screen, no matter which data field is active.
 - **Location included**: Your GPS coordinates are automatically included in the alert message as a Google Maps link.
 - **Multiple messaging providers**: WhatsApp via CallMeBot (free), push notification via Pushover, free unlimited push via ntfy, or Telegram bot messages (free, unlimited).
@@ -154,12 +159,13 @@ Add one or more fields to your Karoo ride profile from the profile editor. Confi
 
 ## Configuration
 
-Open the KSafe app on your Karoo to configure it. The app has four tabs:
+Open the KSafe app on your Karoo to configure it. The app has five tabs:
 
 - **Provider** — select and configure the messaging provider (Telegram, ntfy, WhatsApp, Pushover).
 - **Settings** — all safety settings: crash detection, check-in timer, speed drop, emergency message, and calibration logging.
 - **Actions** — configure custom message buttons (slots 1–3) and webhook actions (slots 1–2) to trigger messages or HTTP endpoints from hardware buttons.
 - **Health** — HR-based incident detection: medical episodes and wellness monitor (both optional, both require a paired heart-rate sensor).
+- **Fueling** — preventive safety layer: carb and hydration tracking with sensor-aware targets, deficit and time-based reminders, post-ride summary.
 
 ### Settings Tab
 
@@ -290,6 +296,63 @@ Each detector has a configurable response level:
 Heart-rate readings are consumed only by the on-device detectors. They are **never sent to your emergency contacts** unless a medical episode actually triggers an alert — and even then, the alert message is your standard emergency template. Your raw HR value itself is not included in the outgoing message.
 
 When calibration logging is enabled, anonymised HR data does appear in the local CSV (same handling as the accelerometer / cadence / grade data already collected) — see [Calibration Logging](#calibration-logging-optional).
+
+### Fueling Tab
+
+> [!TIP]
+> The Fueling tab is KSafe's **preventive safety layer**. The other safety features (crash detection, medical episodes, SOS) react *after* something has gone wrong. Fueling tries to keep things from going wrong in the first place: a rider who is properly fueled and hydrated has clearer judgment, faster reaction time, and fewer mistakes — and is much less likely to crash, blow up, or need to be rescued. Bonking and dehydration are real, common causes of cycling incidents, not just performance problems.
+
+The Fueling tab is **fully optional**. It is **disabled by default** because the right targets depend on each rider. When you enable it, KSafe begins integrating a per-second carb and fluid target while you ride, watches what you log, and warns you when you fall behind.
+
+#### How the carb target adapts to your effort
+
+Carb burning depends heavily on intensity. KSafe reads your **HR zones** (5 zones, configured in your Karoo) and **power zones** (7 zones) directly from the Karoo's user profile — no manual entry of weight, FTP, max HR or anything else. From those zones it derives a real-time multiplier between **0.7×** (recovery / Z1) and **1.3×** (top zone) and applies it to your configured base target (e.g. 60 g/h):
+
+| Setup | Multiplier | Notes |
+|-------|------------|-------|
+| Power meter + power zones configured | 0.7..1.3 from your power zone | Most accurate — power is the cleanest intensity proxy |
+| HR sensor + HR zones configured (no power) | 0.7..1.3 from your HR zone | Good fallback |
+| Out-of-range readings (below Z1 or above the last zone) | Clamped to nearest edge | Coasting at low HR → recovery rate; sprinting above last zone → top rate |
+| Neither sensor present | 1.0 (neutral) | Tracker reverts to flat target × time — equivalent to "remind me every X min based on g/h" |
+
+Hydration uses a **flat per-hour target** because temperature (the main driver of sweat rate) isn't exposed to the SDK. You raise the target manually for hot days.
+
+#### Two combinable alert modes
+
+For each category (carbs, hydration) independently:
+
+- **Alert by deficit**: silent until `(target_so_far − logged) > threshold` (e.g. >25 g for carbs, >300 ml for hydration). Then beep + on-screen `InRideAlert` (full-screen overlay, auto-dismissable in 10 s).
+- **Alert by time**: silent until `time_since_last_log > interval` (e.g. >25 min for carbs, >20 min for hydration). Same alert UX.
+
+Both can be on at the same time. A 5-minute cooldown prevents the two from firing within seconds of each other; once one fires, neither will fire again until the cooldown elapses.
+
+#### Logging in-ride
+
+Two complementary mechanisms:
+
+- **Data fields**: 3 carb log slots + 2 drink log slots, each with its own configurable **label** (e.g. *"Gel"*, *"Bar"*, *"Bottle"*) and **amount** (g or ml). One tap = one log. The slot's status flashes green for 2 seconds as confirmation, then returns to its idle label. Add as many or as few slots to your ride profile as you want; you don't need all of them visible.
+- **Hardware buttons (BonusActions, SRAM AXS only)**: KSafe registers two extra actions, *"KSafe: Log Carb"* and *"KSafe: Log Drink"*, both wired to slot 1 of each category. Map them to your AXS shifter buttons so you can log without looking at the screen.
+
+There are also two **status data fields** (carb status and hydration status) that show your current deficit at a glance, color-coded green / amber / red. Optional — if you don't add them to your ride profile, they don't appear.
+
+#### Post-ride summary
+
+When you stop the recording, KSafe shows an `InRideAlert` with totals: *"Carbs: 85/120g (71%) • Hyd: 1100/1500ml (73%)"*. Configurable on/off; nothing is sent to your contacts.
+
+#### What you configure
+
+Per category (Carbs, Hydration) the Fueling tab lets you:
+- Enable / disable the tracker
+- Set the per-hour target
+- Toggle the deficit alert + threshold
+- Toggle the time alert + interval
+- Configure each slot's label + amount
+
+That's it — no biometric data, no FTP, no zone numbers, no max HR. KSafe reads all of that from the Karoo profile.
+
+#### Privacy
+
+Carb and hydration logs **never leave your Karoo** unless calibration logging is enabled (in which case anonymised counters and HR/power zone snapshots appear in the local CSV — same handling as the existing crash and HR data).
 
 ### Provider Tab
 
