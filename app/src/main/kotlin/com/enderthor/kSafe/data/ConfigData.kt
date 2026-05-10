@@ -353,6 +353,11 @@ data class KSafeConfig(
     // ─── Post-ride summary ──────────────────────────────────────────────────
     /** Show an InRideAlert with totals at the end of every ride. */
     val fuelingPostRideSummaryEnabled: Boolean = true,
+    /** Write per-second cumulative carbs (g) and hydration (ml) into the FIT file as
+     *  developer fields, plus the totals into the session message. Default ON because
+     *  the cost is negligible (~0.05% battery over 5 h, no perceptible CPU). Riders
+     *  who don't want extra columns in their FIT can turn it off. */
+    val fuelingFitExportEnabled: Boolean = true,
     /**
      * Config schema version — used to detect stale saved configs and apply migrations.
      * Default 0 ensures that any pre-versioning config (JSON without this field) triggers migration.
