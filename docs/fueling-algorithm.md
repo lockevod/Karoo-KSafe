@@ -224,11 +224,47 @@ The grace period only applies to the **first** alert in a session. Once any aler
 | `carbTimeInitialDelayMin = 30` | First time-alert can't fire before minute 30 of the session |
 | `carbTimeInitialDelayMin = 0` | Disabled — first alert fires after `carbTimeIntervalMin` from session start (original behaviour) |
 
-### Custom alert title
+### Custom alert title and detail
 
-The title shown in the `InRideAlert` overlay is per-rider customisable via `carbAlertCustomTitle` (default empty = use the `R.string.fueling_carb_alert_title` default *"Eat something"*). Useful for personalisation across languages or the rider's own conventions (e.g. *"Snack time!"*, *"Fuel up!"*). Capped at 30 chars.
+Both the **title** and the **detail line** of the `InRideAlert` are per-rider customisable, with the rider's templates rendered through `extension/managers/AlertTextRenderer.renderAlertText` at fire time:
 
-The **detail line** (*"Behind by 25g"* / *"30 min since last log"*) stays dynamic and is not customisable — it carries the live state.
+| Config field | Default | Purpose |
+|---|---|---|
+| `carbAlertCustomTitle` | `""` → `R.string.fueling_carb_alert_title` (*"Eat something"*) | Title shown at the top of the popup. |
+| `carbAlertCustomDetail` | `""` → source-specific defaults (`fueling_carb_alert_detail_deficit` *"Behind by {deficit}g"* / `fueling_carb_alert_detail_time` *"{elapsed} min since last log"*) | Detail line. When the rider sets a custom template it is used for **both** alert sources (deficit and time); the source-specific defaults only apply when the field is empty. |
+
+#### Tokens
+
+The renderer substitutes `{token}` placeholders with current data when the alert fires. Tokens not supplied are left literal so a typo is visible to the rider rather than silently blanked.
+
+| Token | Substituted with |
+|---|---|
+| `{deficit}` | Current carb deficit in grams (`cumTargetG − cumLoggedG`, integer) |
+| `{elapsed}` | Minutes since last log entry |
+| `{target}` | Configured `carbTargetGperHour` |
+
+Examples:
+- Default deficit alert at 35 g behind → *"Behind by 35g"*.
+- Custom template `"You're {deficit}g down — eat something now"` at 25 g behind → *"You're 25g down — eat something now"*.
+
+The same pattern applies to hydration via `hydrationAlertCustomTitle` / `hydrationAlertCustomDetail` with the same token vocabulary (`{deficit}` in ml, `{elapsed}` in min, `{target}` in ml/h).
+
+### Per-slot field appearance — colour and icon
+
+Each of the three carb slots and two hydration slots carries an idle background colour and an optional emoji icon prefix, both customisable in the Fueling tab via `screens/FieldColorPicker` and `screens/FieldEmojiPicker`:
+
+| Config field | Default | Used by |
+|---|---|---|
+| `carbNColor` (N=1..3) | `0xFF1565C0` (palette dark blue) | `CarbLogDataType.idleColorFromConfig` for the `IDLE` state's background. |
+| `carbNIcon` (N=1..3) | `🧴`, `🍫`, `🍌` | Prepended to the field's main label (`"$emoji $label"`); empty string = no prefix. |
+| `drinkNColor` (N=1..2) | `0xFF1565C0` | `HydrationLogDataType.idleColorFromConfig`. |
+| `drinkNIcon` (N=1..2) | `💧`, `🥤` | Same prefix logic. |
+
+The colour palette is shared across the whole app (`FIELD_COLOR_PALETTE`, 12 dark hues organised as 6 families × 2 shades). The reserved state colours (bright red / orange / amber / bright dark green / mid grey — used by SOS, Timer, CustomMessage's SENT/SENDING/ERROR/OFF flashes and the `LOGGED` flash here) are deliberately excluded so a rider's idle pick can never collide with a state-machine signal.
+
+The emoji palettes (`FUEL_EMOJI_CARB`, `FUEL_EMOJI_DRINK`) sit in `data/ConfigData.kt` and start with `""` so riders can opt out of the prefix entirely. Emojis render in colour even though the surrounding TextView is white, so they pop against the coloured background without drawable bundling.
+
+When the master tracker toggle is off, `CarbLogDataType` / `HydrationLogDataType` short-circuit the state machine and render a gray `OFF` non-clickable view — the rider sees that the field exists but cannot interact with it, and the in-app Fueling settings collapse the now-irrelevant sub-fields. This matches the same disabled-state pattern used by Custom Messages and Webhook fields.
 
 ### Logging API
 
@@ -383,7 +419,7 @@ All config fields live in `KSafeConfig` (`data/ConfigData.kt`).
 
 | Field | Default | UI exposed |
 |---|---|---|
-| `carbsTrackerEnabled` | `false` (opt-in) | ✅ |
+| `carbsTrackerEnabled` | `false` (opt-in master — gates all sub-fields and collapses them when off) | ✅ |
 | `carbTargetGperHour` | 60 | ✅ |
 | `carbDeficitAlertEnabled` | `true` | ✅ |
 | `carbDeficitThresholdG` | 25 g | ✅ |
@@ -391,15 +427,16 @@ All config fields live in `KSafeConfig` (`data/ConfigData.kt`).
 | `carbTimeIntervalMin` | 25 | ✅ |
 | `carbTimeInitialDelayMin` | 30 | ✅ (0 = off) |
 | `carbAlertCustomTitle` | `""` (use default) | ✅ |
-| `carb1Label` / `carb1Grams` | "Gel" / 25 | ✅ |
-| `carb2Label` / `carb2Grams` | "Bar" / 30 | ✅ |
-| `carb3Label` / `carb3Grams` | "Fruit" / 20 | ✅ |
+| `carbAlertCustomDetail` | `""` (use source-specific default) | ✅ — supports `{deficit}`, `{elapsed}`, `{target}` |
+| `carb1Label` / `carb1Grams` / `carb1Color` / `carb1Icon` | "Gel" / 25 / palette-blue / 🧴 | ✅ (per-slot row + colour & icon pickers) |
+| `carb2Label` / `carb2Grams` / `carb2Color` / `carb2Icon` | "Bar" / 30 / palette-blue / 🍫 | ✅ |
+| `carb3Label` / `carb3Grams` / `carb3Color` / `carb3Icon` | "Fruit" / 20 / palette-blue / 🍌 | ✅ |
 
 ### Hydration tracker
 
 | Field | Default | UI exposed |
 |---|---|---|
-| `hydrationTrackerEnabled` | `false` (opt-in) | ✅ |
+| `hydrationTrackerEnabled` | `false` (opt-in master — same gating as carbs) | ✅ |
 | `hydrationTargetMlPerHour` | 750 | ✅ |
 | `hydrationDeficitAlertEnabled` | `true` | ✅ |
 | `hydrationDeficitThresholdMl` | 300 ml | ✅ |
@@ -407,8 +444,9 @@ All config fields live in `KSafeConfig` (`data/ConfigData.kt`).
 | `hydrationTimeIntervalMin` | 20 | ✅ |
 | `hydrationTimeInitialDelayMin` | 30 | ✅ (0 = off) |
 | `hydrationAlertCustomTitle` | `""` | ✅ |
-| `drink1Label` / `drink1Ml` | "Sip" / 100 | ✅ |
-| `drink2Label` / `drink2Ml` | "Bottle" / 500 | ✅ |
+| `hydrationAlertCustomDetail` | `""` (use source-specific default) | ✅ — supports `{deficit}`, `{elapsed}`, `{target}` |
+| `drink1Label` / `drink1Ml` / `drink1Color` / `drink1Icon` | "Sip" / 100 / palette-blue / 💧 | ✅ |
+| `drink2Label` / `drink2Ml` / `drink2Color` / `drink2Icon` | "Bottle" / 500 / palette-blue / 🥤 | ✅ |
 
 ### Post-ride summary
 

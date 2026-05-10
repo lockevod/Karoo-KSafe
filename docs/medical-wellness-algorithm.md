@@ -241,6 +241,27 @@ If the profile isn't available yet (first seconds of an extension restart), the 
 
 **Tier 3 (decoupling) does NOT use this**: drift is a relative measurement against the rider's own ride-specific baseline, so the absolute / % toggle does not apply.
 
+### Custom title and detail templates
+
+Every `WARNING`-level `InRideAlert` from the medical detector and from each wellness tier can have its title and detail string overridden per rider. Empty config field → built-in default (the strings under `R.string.warning_*`); non-empty field → rider's template, rendered through `extension/managers/AlertTextRenderer.renderAlertText` at fire time so `{token}` placeholders are substituted with the data the alert is reporting.
+
+| Reason | Custom-title field | Custom-detail field | Tokens available |
+|---|---|---|---|
+| `MEDICAL_FLATLINE` / `MEDICAL_COLLAPSE` | `medicalCustomTitle` | `medicalCustomDetail` | `{bpm}` |
+| `WELLNESS_CRITICAL_HR` | `wellnessCriticalCustomTitle` | `wellnessCriticalCustomDetail` | `{bpm}`, `{threshold}`, `{minutes}` |
+| `WELLNESS_HIGH_HR` (Sustained) | `wellnessSustainedCustomTitle` | `wellnessSustainedCustomDetail` | `{bpm}`, `{threshold}`, `{minutes}` |
+| `WELLNESS_DECOUPLING` | `wellnessDecouplingCustomTitle` | `wellnessDecouplingCustomDetail` | `{drift}` (% drift, 1 decimal), `{minutes}` |
+
+Tokens are supplied at the fire site:
+
+- `MedicalEpisodeDetector` passes `{bpm}` as the current HR reading on flatline / collapse.
+- `WellnessMonitor.fireTier` passes `{bpm}`, `{threshold}` and `{minutes}` for the critical and sustained tiers.
+- The decoupling fire site passes `{drift}` (formatted to 1 decimal place) and `{minutes}` (sustained streak).
+
+The medical default strings now use a dedicated `R.string.warning_medical_title` ("Medical alert") and `R.string.warning_medical_detail` rather than the generic `R.string.app_name` they used before. Riders who have set a custom override are unaffected.
+
+Tokens that appear in a template but are not in the supplied map are kept literal (e.g. `{nonsense}` stays as `{nonsense}`) — this surfaces typos to the rider rather than producing oddly-blanked strings.
+
 ### Cooldown semantics
 
 The cooldown (= `wellnessHighHrDurationMinutes`) and the re-arm rule (`hrAboveThresholdSinceMs = 0L` after firing, requires HR to fall below the threshold and rise again) together produce this behaviour:
@@ -313,6 +334,8 @@ All config fields live in `KSafeConfig` (`data/ConfigData.kt`).
 |---|---|---|
 | `medicalEpisodeEnabled` | `true` | ✅ Switch — Health tab |
 | `medicalResponseLevel` | `EMERGENCY` | ✅ Chips (Warning / Emergency) — Health tab |
+| `medicalCustomTitle` | `""` (use `warning_medical_title`) | ✅ |
+| `medicalCustomDetail` | `""` (use `warning_medical_detail`) | ✅ — token `{bpm}` |
 
 Internal thresholds (`HR_FLATLINE_MAX_BPM`, `HR_COLLAPSE_DROP_FRACTION`, etc.) are NOT exposed. Calibrated in code from spec-defined values.
 
@@ -332,6 +355,8 @@ Internal thresholds (`HR_FLATLINE_MAX_BPM`, `HR_COLLAPSE_DROP_FRACTION`, etc.) a
 | `wellnessCriticalThresholdBpm` | 175 bpm | ✅ (when % mode off) |
 | `wellnessCriticalThresholdPct` | 95 % | ✅ (when % mode on) |
 | `wellnessCriticalDurationMinutes` | 5 min | ✅ |
+| `wellnessCriticalCustomTitle` | `""` (use `warning_wellness_critical_hr_title`) | ✅ |
+| `wellnessCriticalCustomDetail` | `""` (use `warning_wellness_critical_hr_detail`) | ✅ — tokens `{bpm}`, `{threshold}`, `{minutes}` |
 
 ### Wellness — Tier 2 (Sustained HR)
 
@@ -341,6 +366,8 @@ Internal thresholds (`HR_FLATLINE_MAX_BPM`, `HR_COLLAPSE_DROP_FRACTION`, etc.) a
 | `wellnessHighHrThreshold` | 180 bpm | ✅ (when % mode off) |
 | `wellnessHighHrPercent` | 92 % | ✅ (when % mode on) |
 | `wellnessHighHrDurationMinutes` | 30 min | ✅ |
+| `wellnessSustainedCustomTitle` | `""` (use `warning_wellness_high_hr_title`) | ✅ |
+| `wellnessSustainedCustomDetail` | `""` (use `warning_wellness_high_hr_detail`) | ✅ — tokens `{bpm}`, `{threshold}`, `{minutes}` |
 
 ### Wellness — Tier 3 (Cardiac Decoupling)
 
@@ -349,6 +376,8 @@ Internal thresholds (`HR_FLATLINE_MAX_BPM`, `HR_COLLAPSE_DROP_FRACTION`, etc.) a
 | `wellnessDecouplingEnabled` | `true` | ✅ Sub-switch (only when master on) |
 | `wellnessDecouplingThresholdPct` | 7 % | ✅ |
 | `wellnessDecouplingDurationMinutes` | 10 min | ✅ |
+| `wellnessDecouplingCustomTitle` | `""` (use `warning_wellness_decoupling_title`) | ✅ |
+| `wellnessDecouplingCustomDetail` | `""` (use `warning_wellness_decoupling_detail`) | ✅ — tokens `{drift}`, `{minutes}` |
 
 Decoupling internal constants (`DECOUPLING_BASELINE_WAIT_MS`, `DECOUPLING_ROLLING_WINDOW_MS`, `DECOUPLING_MIN_POWER_W`, `DECOUPLING_MIN_SAMPLES`, `DECOUPLING_COOLDOWN_MS`) are NOT exposed.
 
