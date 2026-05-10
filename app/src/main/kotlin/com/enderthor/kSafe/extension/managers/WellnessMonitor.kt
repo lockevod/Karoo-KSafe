@@ -5,21 +5,31 @@ import com.enderthor.kSafe.data.KSafeConfig
 import io.hammerhead.karooext.models.UserProfile
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import timber.log.Timber
 
 /**
- * Sustained-high-HR monitor. Single rule:
+ * Wellness monitor with three independent tiers, each addressing a distinct physiological signal:
  *
- *   HR has stayed >= [KSafeConfig.wellnessHighHrThreshold] continuously for at least
- *   [KSafeConfig.wellnessHighHrDurationMinutes] minutes. Any drop below the threshold
- *   resets the streak (continuous, not cumulative).
+ *  1. **Critical HR** — HR > [KSafeConfig.wellnessCriticalThresholdBpm] (or % equivalent) sustained
+ *     for [KSafeConfig.wellnessCriticalDurationMinutes]. Catches acute overexertion early
+ *     (default: 95 % maxHR / 5 min).
+ *  2. **Sustained HR** — the original tier — HR > [KSafeConfig.wellnessHighHrThreshold] (or %
+ *     equivalent) sustained for [KSafeConfig.wellnessHighHrDurationMinutes]. Catches long-tail
+ *     fatigue (default: 92 % maxHR / 30 min).
+ *  3. **Cardiac decoupling** — HR / power ratio drift > [KSafeConfig.wellnessDecouplingThresholdPct]
+ *     vs the baseline established in the first 10 min of stable riding, sustained for
+ *     [KSafeConfig.wellnessDecouplingDurationMinutes]. Catches dehydration / heat stress / fatigue
+ *     before either of the absolute-threshold tiers fires (default: 7 % drift / 10 min).
+ *     Requires a power meter; auto-skipped if power data is absent.
  *
- * Cooldown after firing is `wellnessHighHrDurationMinutes` (one mental model — the
- * configured duration drives both the streak length and the inter-alert gap). The
- * re-arm rule (`hrAboveThresholdSinceMs = 0L` after firing) further requires HR to
- * fall below the threshold and rise again before another alert can accumulate.
+ * Each tier has its own enable toggle. The master [KSafeConfig.wellnessEnabled] gates all three
+ * — when off, the monitor doesn't run at all.
+ *
+ * All three tiers fire as `WARNING`-level [InRideAlert]s via the dispatcher in EmergencyManager.
+ * Each tier emits a distinct [EmergencyReason] so the user-visible title differs.
  */
 class WellnessMonitor(
     private val scope: CoroutineScope,
@@ -27,34 +37,61 @@ class WellnessMonitor(
     private val calibLogger: CalibrationLogger? = null,
 ) {
 
-    private val HR_STALE_MS    = 15_000L
-    private val MONITOR_TICK_MS = 30_000L
+    // ─── Constants ──────────────────────────────────────────────────────────
+    private val HR_STALE_MS                  = 15_000L
+    private val MONITOR_TICK_MS              = 30_000L
+    private val DECOUPLING_BASELINE_WAIT_MS  = 10L * 60_000L   // wait 10 min before establishing baseline
+    private val DECOUPLING_ROLLING_WINDOW_MS = 5L  * 60_000L   // 5 min rolling avg
+    private val DECOUPLING_MIN_POWER_W       = 50              // skip coasting / descending samples
+    private val DECOUPLING_MIN_SAMPLES       = 8               // need at least 8 samples in the buffer to evaluate
+    private val DECOUPLING_COOLDOWN_MS       = 30L * 60_000L   // once decoupling fires, wait 30 min before re-fire
 
-    @Volatile private var currentHrBpm           = 0
-    @Volatile private var lastHrUpdateMs         = 0L
-    @Volatile private var hrAboveThresholdSinceMs = 0L
-    @Volatile private var lastTriggerMs          = 0L
-    /** Latest Karoo user profile — needed when [KSafeConfig.wellnessUseMaxHrPercent] is true so
-     *  the threshold can be computed as a percentage of the rider's max HR. */
+    // ─── Live data (push from KSafeExtension) ────────────────────────────────
+    @Volatile private var lastHrBpm: Int? = null
+    @Volatile private var lastPowerW: Int? = null
+    @Volatile private var lastHrUpdateMs = 0L
     @Volatile private var lastUserProfile: UserProfile? = null
 
-    private var monitorJob: Job? = null
+    // ─── Session state (reset by start()) ────────────────────────────────────
+    @Volatile private var sessionStartMs = 0L
+    // Critical tier
+    @Volatile private var criticalSinceMs = 0L
+    @Volatile private var lastCriticalTriggerMs = 0L
+    // Sustained tier
+    @Volatile private var sustainedSinceMs = 0L
+    @Volatile private var lastSustainedTriggerMs = 0L
+    // Decoupling tier
+    @Volatile private var decouplingBaselineHrPerW = 0f          // 0 = not yet established
+    @Volatile private var decouplingExceededSinceMs = 0L
+    @Volatile private var lastDecouplingTriggerMs = 0L
+    private val ratioSamples = ArrayDeque<Pair<Long, Float>>()    // (timestamp, hr/w)
+
     @Volatile private var config = KSafeConfig()
+    private var monitorJob: Job? = null
+
+    // ─── Public API ──────────────────────────────────────────────────────────
 
     fun start(config: KSafeConfig) {
         this.config = config
         if (!config.wellnessEnabled) return
-        monitorJob?.cancel()
-        hrAboveThresholdSinceMs = 0L
-        lastTriggerMs = 0L
+        // Same cancelAndJoin pattern as the other trackers — guarantees the previous monitor
+        // is fully gone before the new one runs.
+        val oldJob = monitorJob
+        val now = System.currentTimeMillis()
+        sessionStartMs = now
+        criticalSinceMs = 0L
+        sustainedSinceMs = 0L
+        decouplingBaselineHrPerW = 0f
+        decouplingExceededSinceMs = 0L
+        lastCriticalTriggerMs = 0L
+        lastSustainedTriggerMs = 0L
+        lastDecouplingTriggerMs = 0L
+        ratioSamples.clear()
         monitorJob = scope.launch {
-            while (true) {
-                delay(MONITOR_TICK_MS)
-                tick()
-            }
+            oldJob?.cancelAndJoin()
+            while (true) { delay(MONITOR_TICK_MS); tick() }
         }
-        val mode = if (config.wellnessUseMaxHrPercent) "%maxHr=${config.wellnessHighHrPercent}" else "abs=${config.wellnessHighHrThreshold}"
-        Timber.d("WellnessMonitor started ($mode, duration=${config.wellnessHighHrDurationMinutes}min)")
+        Timber.d("WellnessMonitor started — tiers: critical=${config.wellnessCriticalEnabled}, sustained=${config.wellnessSustainedEnabled}, decoupling=${config.wellnessDecouplingEnabled}")
     }
 
     fun stop() {
@@ -70,57 +107,174 @@ class WellnessMonitor(
         else if (wasEnabled && !config.wellnessEnabled) stop()
     }
 
-    /** Latest Karoo profile — pushed from KSafeExtension's streamUserProfile() collector. */
+    fun updateHr(bpm: Int) {
+        lastHrBpm = bpm
+        lastHrUpdateMs = System.currentTimeMillis()
+    }
+
+    fun updatePower(w: Int) { lastPowerW = w }
     fun updateUserProfile(p: UserProfile) { lastUserProfile = p }
 
-    fun updateHr(bpm: Int) {
+    // ─── Per-tier evaluation (runs on `scope`, every MONITOR_TICK_MS) ────────
+
+    private fun tick() {
         val now = System.currentTimeMillis()
-        currentHrBpm = bpm
-        lastHrUpdateMs = now
-        // Maintain the streak start. Reset when HR drops below threshold.
-        if (bpm >= effectiveThreshold()) {
-            if (hrAboveThresholdSinceMs == 0L) hrAboveThresholdSinceMs = now
+        if (now - lastHrUpdateMs > HR_STALE_MS) {
+            // Sensor silent — every per-tier evaluation will return early. Reset the streak
+            // accumulators so a transient disconnect doesn't carry forward stale state.
+            criticalSinceMs = 0L
+            sustainedSinceMs = 0L
+            decouplingExceededSinceMs = 0L
+            return
+        }
+        evaluateCriticalTier(now)
+        evaluateSustainedTier(now)
+        evaluateDecouplingTier(now)
+    }
+
+    // ── Tier 1 — Critical HR ────────────────────────────────────────────────
+
+    private fun evaluateCriticalTier(now: Long) {
+        if (!config.wellnessCriticalEnabled) return
+        val bpm = lastHrBpm ?: return
+        val threshold = effectiveCriticalThreshold()
+        if (bpm >= threshold) {
+            if (criticalSinceMs == 0L) criticalSinceMs = now
+            val sustainedMs = now - criticalSinceMs
+            val needMs = config.wellnessCriticalDurationMinutes * 60_000L
+            if (sustainedMs >= needMs && now - lastCriticalTriggerMs >= cooldownForTier(config.wellnessCriticalDurationMinutes)) {
+                fireTier(now,
+                    reason = EmergencyReason.WELLNESS_CRITICAL_HR,
+                    bpm = bpm,
+                    threshold = threshold,
+                    sustainedMin = sustainedMs / 60_000L,
+                    tierName = "critical",
+                )
+                lastCriticalTriggerMs = now
+                criticalSinceMs = 0L  // re-arm: HR must drop below threshold and rise again
+            }
         } else {
-            hrAboveThresholdSinceMs = 0L
+            criticalSinceMs = 0L
         }
     }
 
-    /**
-     * Computes the threshold (bpm) that the streak compares against. Either:
-     *  - `userProfile.maxHr * wellnessHighHrPercent / 100` when `wellnessUseMaxHrPercent` is true
-     *    AND the profile is available with a valid maxHr (> 0)
-     *  - the absolute `wellnessHighHrThreshold` otherwise (back-compat default).
-     *
-     * Falls back to the absolute value if the profile is missing — avoids "feature silently
-     * disabled" when the SDK profile stream hasn't emitted yet.
-     */
-    private fun effectiveThreshold(): Int {
-        if (config.wellnessUseMaxHrPercent) {
-            val profile = lastUserProfile
-            if (profile != null && profile.maxHr > 0) {
-                return (profile.maxHr * config.wellnessHighHrPercent) / 100
+    // ── Tier 2 — Sustained HR (existing tier, semantically) ─────────────────
+
+    private fun evaluateSustainedTier(now: Long) {
+        if (!config.wellnessSustainedEnabled) return
+        val bpm = lastHrBpm ?: return
+        val threshold = effectiveSustainedThreshold()
+        if (bpm >= threshold) {
+            if (sustainedSinceMs == 0L) sustainedSinceMs = now
+            val sustainedMs = now - sustainedSinceMs
+            val needMs = config.wellnessHighHrDurationMinutes * 60_000L
+            if (sustainedMs >= needMs && now - lastSustainedTriggerMs >= cooldownForTier(config.wellnessHighHrDurationMinutes)) {
+                fireTier(now,
+                    reason = EmergencyReason.WELLNESS_HIGH_HR,
+                    bpm = bpm,
+                    threshold = threshold,
+                    sustainedMin = sustainedMs / 60_000L,
+                    tierName = "sustained",
+                )
+                lastSustainedTriggerMs = now
+                sustainedSinceMs = 0L
             }
+        } else {
+            sustainedSinceMs = 0L
+        }
+    }
+
+    // ── Tier 3 — Cardiac decoupling (HR / power drift) ──────────────────────
+
+    private fun evaluateDecouplingTier(now: Long) {
+        if (!config.wellnessDecouplingEnabled) return
+        val hr = lastHrBpm ?: return
+        val w = lastPowerW ?: return                 // no power → silently skip (decoupling impossible)
+        if (w < DECOUPLING_MIN_POWER_W) return       // skip coasting / descents (would dilute the avg)
+
+        val ratio = hr.toFloat() / w.toFloat()
+
+        // Maintain a rolling 5-min window of HR/W samples, taken once per tick (every 30 s).
+        ratioSamples.addLast(now to ratio)
+        while (ratioSamples.isNotEmpty() && now - ratioSamples.first().first > DECOUPLING_ROLLING_WINDOW_MS) {
+            ratioSamples.removeFirst()
+        }
+
+        // Establish baseline ONCE per session — after BASELINE_WAIT_MS of riding accumulated
+        // enough samples in the rolling window. Captures the rider's "fresh" ratio.
+        if (decouplingBaselineHrPerW == 0f) {
+            if (now - sessionStartMs >= DECOUPLING_BASELINE_WAIT_MS && ratioSamples.size >= DECOUPLING_MIN_SAMPLES) {
+                val sum = ratioSamples.sumOf { it.second.toDouble() }
+                decouplingBaselineHrPerW = (sum / ratioSamples.size).toFloat()
+                calibLogger?.log(CalibrationLogger.Event.WELLNESS_FIRED) {
+                    "subkind=decoupling_baseline,baseline_hr_per_w=%.4f,samples=${ratioSamples.size}".format(decouplingBaselineHrPerW)
+                }
+                Timber.d("WellnessMonitor: decoupling baseline established hr/w=%.4f from ${ratioSamples.size} samples".format(decouplingBaselineHrPerW))
+            }
+            return
+        }
+
+        if (ratioSamples.size < DECOUPLING_MIN_SAMPLES) return  // not enough current data
+
+        val currentSum = ratioSamples.sumOf { it.second.toDouble() }
+        val currentAvg = (currentSum / ratioSamples.size).toFloat()
+        val driftPct = ((currentAvg / decouplingBaselineHrPerW) - 1f) * 100f
+
+        if (driftPct >= config.wellnessDecouplingThresholdPct.toFloat()) {
+            if (decouplingExceededSinceMs == 0L) decouplingExceededSinceMs = now
+            val sustainedMs = now - decouplingExceededSinceMs
+            val needMs = config.wellnessDecouplingDurationMinutes * 60_000L
+            if (sustainedMs >= needMs && now - lastDecouplingTriggerMs >= DECOUPLING_COOLDOWN_MS) {
+                Timber.d(">>> WELLNESS_DECOUPLING fired: drift=%.1f%% (current=%.4f / baseline=%.4f), sustained=${sustainedMs/60_000L}min".format(driftPct, currentAvg, decouplingBaselineHrPerW))
+                calibLogger?.log(CalibrationLogger.Event.WELLNESS_FIRED) {
+                    "subkind=decoupling,drift_pct=%.1f,current_hr_per_w=%.4f,baseline_hr_per_w=%.4f,sustained_min=${sustainedMs/60_000L},hr=$hr,power=$w".format(driftPct, currentAvg, decouplingBaselineHrPerW)
+                }
+                lastDecouplingTriggerMs = now
+                decouplingExceededSinceMs = 0L
+                onIncident(EmergencyReason.WELLNESS_DECOUPLING)
+            }
+        } else {
+            decouplingExceededSinceMs = 0L
+        }
+    }
+
+    // ─── Helpers ─────────────────────────────────────────────────────────────
+
+    /** Threshold (bpm) for the critical tier, accounting for the absolute-vs-% mode. */
+    private fun effectiveCriticalThreshold(): Int {
+        if (config.wellnessUseMaxHrPercent) {
+            val maxHr = lastUserProfile?.maxHr ?: 0
+            if (maxHr > 0) return (maxHr * config.wellnessCriticalThresholdPct) / 100
+        }
+        return config.wellnessCriticalThresholdBpm
+    }
+
+    /** Threshold (bpm) for the sustained tier — keeps using the existing
+     *  wellnessHighHrThreshold / wellnessHighHrPercent fields for back-compat. */
+    private fun effectiveSustainedThreshold(): Int {
+        if (config.wellnessUseMaxHrPercent) {
+            val maxHr = lastUserProfile?.maxHr ?: 0
+            if (maxHr > 0) return (maxHr * config.wellnessHighHrPercent) / 100
         }
         return config.wellnessHighHrThreshold
     }
 
-    private fun tick() {
-        val now = System.currentTimeMillis()
-        if (now - lastHrUpdateMs > HR_STALE_MS) return        // sensor silent
-        if (hrAboveThresholdSinceMs == 0L) return             // no active streak
-        val cooldownMs = config.wellnessHighHrDurationMinutes * 60_000L
-        if (now - lastTriggerMs < cooldownMs) return          // cooldown active
-        val sustainedFor = now - hrAboveThresholdSinceMs
-        if (sustainedFor < cooldownMs) return                 // duration not reached
+    /** Per-tier cooldown — keeps the existing convention that the cooldown matches the duration
+     *  setting, so the rider's "alert me every X min if still high" mental model is preserved. */
+    private fun cooldownForTier(durationMinutes: Int): Long = durationMinutes * 60_000L
 
-        val sustainedMin = sustainedFor / 60_000L
-        val effective = effectiveThreshold()
-        Timber.d(">>> WELLNESS_HIGH_HR fired: bpm=$currentHrBpm sustained=${sustainedMin}min")
+    private fun fireTier(
+        now: Long,
+        reason: EmergencyReason,
+        bpm: Int,
+        threshold: Int,
+        sustainedMin: Long,
+        tierName: String,
+    ) {
+        Timber.d(">>> Wellness tier=$tierName fired: bpm=$bpm threshold=$threshold sustained=${sustainedMin}min")
         calibLogger?.log(CalibrationLogger.Event.WELLNESS_FIRED) {
-            "bpm=$currentHrBpm,threshold=$effective,mode=${if (config.wellnessUseMaxHrPercent) "pct" else "abs"},sustained_min=$sustainedMin,duration_setting=${config.wellnessHighHrDurationMinutes}"
+            "subkind=$tierName,bpm=$bpm,threshold=$threshold,mode=${if (config.wellnessUseMaxHrPercent) "pct" else "abs"},sustained_min=$sustainedMin"
         }
-        lastTriggerMs = now
-        hrAboveThresholdSinceMs = 0L  // re-arm
-        onIncident(EmergencyReason.WELLNESS_HIGH_HR)
+        onIncident(reason)
     }
 }

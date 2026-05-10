@@ -244,11 +244,14 @@ class KSafeExtension : KarooExtension("ksafe", BuildConfig.VERSION_NAME), Corout
         }
 
         launch {
-            // Power meter stream — optional. carbsTracker prefers POWER over HR for the zone multiplier.
+            // Power meter stream — optional. carbsTracker uses it for the zone multiplier; the
+            // wellnessMonitor's cardiac-decoupling tier uses it for the HR/W ratio. If absent,
+            // the carb tracker falls back to HR zones and decoupling auto-skips.
             karooSystem.streamDataFlow(io.hammerhead.karooext.models.DataType.Type.POWER)
                 .collect { streamState ->
                     val w = streamState.powerW() ?: return@collect
                     carbsTracker.updatePower(w)
+                    wellnessMonitor.updatePower(w)
                 }
         }
 

@@ -257,12 +257,16 @@ class EmergencyManager(
     }
 
     private fun warningTitleFor(reason: EmergencyReason): String = when (reason) {
-        EmergencyReason.WELLNESS_HIGH_HR -> context.getString(R.string.warning_wellness_high_hr_title)
+        EmergencyReason.WELLNESS_HIGH_HR     -> context.getString(R.string.warning_wellness_high_hr_title)
+        EmergencyReason.WELLNESS_CRITICAL_HR -> context.getString(R.string.warning_wellness_critical_hr_title)
+        EmergencyReason.WELLNESS_DECOUPLING  -> context.getString(R.string.warning_wellness_decoupling_title)
         else -> context.getString(R.string.app_name)
     }
 
     private fun warningMessageFor(reason: EmergencyReason): String = when (reason) {
-        EmergencyReason.WELLNESS_HIGH_HR -> "Heart rate high for a while — consider a break."
+        EmergencyReason.WELLNESS_HIGH_HR     -> "Heart rate high for a while — consider a break."
+        EmergencyReason.WELLNESS_CRITICAL_HR -> "HR critical — slow down."
+        EmergencyReason.WELLNESS_DECOUPLING  -> "HR drift detected — cool down and hydrate."
         else -> reason.label
     }
 
