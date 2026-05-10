@@ -7,6 +7,7 @@ import android.view.View
 import android.widget.RemoteViews
 import com.enderthor.kSafe.R
 import com.enderthor.kSafe.activity.FieldTapReceiver
+import com.enderthor.kSafe.data.FUEL_BOTTLE_DRAWABLE
 import com.enderthor.kSafe.data.KSafeConfig
 import com.enderthor.kSafe.extension.managers.ConfigurationManager
 import io.hammerhead.karooext.KarooSystemService
@@ -44,16 +45,24 @@ class HydrationLogDataType(
 
     private val configManager = ConfigurationManager(context)
 
+    private fun iconFromConfig(c: KSafeConfig): String = when (slot) {
+        2 -> c.drink2Icon
+        else -> c.drink1Icon
+    }
+
     private fun labelFromConfig(c: KSafeConfig): String {
         val raw = when (slot) {
             2 -> c.drink2Label.take(7).ifBlank { "Drink 2" }
             else -> c.drink1Label.take(7).ifBlank { "Drink 1" }
         }
-        val emoji = when (slot) {
-            2 -> c.drink2Icon
-            else -> c.drink1Icon
+        val icon = iconFromConfig(c)
+        // FUEL_BOTTLE_DRAWABLE renders as a left compound drawable on the TextView
+        // (handled in buildView), so we must NOT prefix the label with the sentinel.
+        return when {
+            icon.isBlank()                      -> raw
+            icon == FUEL_BOTTLE_DRAWABLE        -> raw
+            else                                -> "$icon $raw"
         }
-        return if (emoji.isBlank()) raw else "$emoji $raw"
     }
 
     private fun mlFromConfig(c: KSafeConfig): Int = when (slot) {
@@ -73,12 +82,16 @@ class HydrationLogDataType(
         main: String,
         hint: String = "",
         clickable: Boolean = true,
+        leftDrawableRes: Int = 0,   // 0 = no compound drawable
     ): RemoteViews {
         val content = RemoteViews(context.packageName, R.layout.field_view).apply {
             setInt(R.id.field_container, "setBackgroundColor", bgColor)
             setTextViewText(R.id.field_text_main, main.take(9))
             setTextViewText(R.id.field_text_hint, hint.take(9))
             setViewVisibility(R.id.field_text_hint, if (hint.isEmpty()) View.GONE else View.VISIBLE)
+            // Compound drawable on the main TextView. Setting all four to 0 explicitly
+            // CLEARS any drawable from a previous LOGGED → IDLE transition.
+            setTextViewCompoundDrawables(R.id.field_text_main, leftDrawableRes, 0, 0, 0)
         }
         if (!viewConfig.preview && clickable) {
             val pi = PendingIntent.getBroadcast(
@@ -112,10 +125,15 @@ class HydrationLogDataType(
                 ) { state, ksafeConfig ->
                     val label = labelFromConfig(ksafeConfig)
                     val ml = mlFromConfig(ksafeConfig)
+                    val leftDrawable = if (iconFromConfig(ksafeConfig) == FUEL_BOTTLE_DRAWABLE) {
+                        R.drawable.ic_fuel_bottle
+                    } else 0
                     if (!ksafeConfig.hydrationTrackerEnabled) {
+                        // Slot disabled — no drawable, just the OFF label.
                         buildView(context, config, COLOR_OFF, label, "OFF", clickable = false)
                     } else when (state) {
-                        HydrationLogState.IDLE   -> buildView(context, config, idleColorFromConfig(ksafeConfig), label, "${ml}ml")
+                        HydrationLogState.IDLE   -> buildView(context, config, idleColorFromConfig(ksafeConfig), label, "${ml}ml", leftDrawableRes = leftDrawable)
+                        // LOGGED is the brief green "+500ml ✓" success flash — no drawable.
                         HydrationLogState.LOGGED -> buildView(context, config, COLOR_LOGGED, "+${ml}ml", "✓", clickable = false)
                     }
                 }.collect { view -> emitter.updateView(view) }

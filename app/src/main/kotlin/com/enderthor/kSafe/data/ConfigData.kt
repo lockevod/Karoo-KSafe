@@ -76,15 +76,15 @@ val PRESET_CONFIRM_SPEED = mapOf(
  *    - 0xFF1B5E20 green   — CarbLog / HydrationLog LOGGED, CustomMessage SENT (success flash)
  *    - 0xFF424242 grey    — every field's OFF / disabled state
  */
-/** Sentinel value identifying the "real" sports-gel-pouch icon in the carb palette.
- *  Riders pick this entry to render `R.drawable.ic_fuel_gel` (a vector drawable) as
- *  the slot field's left compound drawable instead of an emoji prefix. Used because
- *  Unicode has no emoji that looks like a sports gel pouch — every food emoji we
- *  tried (🧴 lotion, 🍬 candy) read as something else. The sentinel string is angle-
- *  bracketed so it can never collide with a real emoji codepoint sequence and so
- *  the existing `String.replace("{$k}", v)` token substitution can't accidentally
- *  consume it. */
-const val FUEL_GEL_DRAWABLE = "<gel>"
+/** Sentinel values identifying bundled vector drawables in the icon palettes.
+ *  Riders pick one of these entries to render the matching `R.drawable.ic_fuel_*`
+ *  resource as the slot field's left compound drawable instead of an emoji prefix.
+ *  Used for shapes Unicode has no good emoji for — sports gel pouches and cyclist
+ *  bidón bottles. Both sentinel strings are angle-bracketed so they can never
+ *  collide with a real emoji codepoint sequence and so the existing
+ *  `String.replace("{$k}", v)` token substitution can't accidentally consume them. */
+const val FUEL_GEL_DRAWABLE    = "<gel>"
+const val FUEL_BOTTLE_DRAWABLE = "<bottle>"
 
 /** Emoji palettes for the per-slot icon picker. The first entry is `""` (no icon),
  *  picked by riders who only want the label text — see [FieldEmojiPicker]. The Android
@@ -97,14 +97,16 @@ const val FUEL_GEL_DRAWABLE = "<gel>"
  *      [FUEL_GEL_DRAWABLE] sentinel — a real gel pouch vector drawable rather than
  *      an emoji approximation. Then 🍯 for honey / sticky gel substitutes, 🍫 for
  *      energy bars, 🍽 for a proper combo plate at a long stop, etc.
- *    - Drink palette = water / hydration / drink containers. No entry appears in
- *      both pickers so the rider can't get confused which palette they're in.
+ *    - Drink palette = water / hydration / drink containers. The first non-empty
+ *      entry is the [FUEL_BOTTLE_DRAWABLE] sentinel — a real cyclist bidón vector
+ *      drawable rather than a generic 🥤 / 🍶. No entry appears in both pickers
+ *      so the rider can't get confused which palette they're in.
  */
 val FUEL_EMOJI_CARB: List<String> = listOf(
     "", FUEL_GEL_DRAWABLE, "🍌", "🥜", "🍫", "🍪", "🥨", "🍯", "⚡", "🍞", "🥪", "🍽", "🍎", "🍇",
 )
 val FUEL_EMOJI_DRINK: List<String> = listOf(
-    "", "💧", "🥤", "🍶", "🧃", "🧊", "☕", "🍵", "💦",
+    "", FUEL_BOTTLE_DRAWABLE, "💧", "🥤", "🍶", "🧃", "🧊", "☕", "🍵", "💦",
 )
 
 val FIELD_COLOR_PALETTE: List<Int> = listOf(
@@ -346,7 +348,7 @@ data class KSafeConfig(
      *  (`fueling_hyd_alert_detail_deficit` / `_time`). Tokens `{deficit}`, `{elapsed}`, `{target}`. */
     val hydrationAlertCustomDetail: String = "",
     val drink1Label: String = "Sip",     val drink1Ml: Int = 100,    val drink1Color: Int = 0xFF1565C0.toInt(),    val drink1Icon: String = "💧",
-    val drink2Label: String = "Bottle",  val drink2Ml: Int = 500,    val drink2Color: Int = 0xFF1565C0.toInt(),    val drink2Icon: String = "🥤",
+    val drink2Label: String = "Bottle",  val drink2Ml: Int = 500,    val drink2Color: Int = 0xFF1565C0.toInt(),    val drink2Icon: String = FUEL_BOTTLE_DRAWABLE,
 
     // ─── Post-ride summary ──────────────────────────────────────────────────
     /** Show an InRideAlert with totals at the end of every ride. */
