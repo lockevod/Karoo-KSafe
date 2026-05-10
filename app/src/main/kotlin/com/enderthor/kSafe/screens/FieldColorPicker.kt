@@ -14,6 +14,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.MaterialTheme
@@ -53,19 +54,24 @@ fun FieldColorPicker(
     var dialogOpen by remember { mutableStateOf(false) }
 
     FilledTonalButton(
-        modifier = modifier.height(52.dp),
+        modifier = modifier.height(48.dp),
         onClick = { dialogOpen = true },
+        contentPadding = PaddingValues(horizontal = 10.dp, vertical = 4.dp),
     ) {
         Box(
             modifier = Modifier
-                .size(28.dp)
-                .shadow(4.dp, CircleShape)
+                .size(22.dp)
+                .shadow(3.dp, CircleShape)
                 .clip(CircleShape)
                 .background(Color(selected))
                 .border(1.dp, Color(0x66FFFFFF), CircleShape)
         )
-        Spacer(Modifier.width(10.dp))
-        Text(label, style = MaterialTheme.typography.bodyMedium)
+        Spacer(Modifier.width(6.dp))
+        Text(
+            label,
+            style = MaterialTheme.typography.bodySmall,
+            maxLines = 1,
+        )
     }
 
     if (dialogOpen) {
