@@ -26,7 +26,7 @@ import kotlinx.coroutines.launch
 import timber.log.Timber
 
 private const val COLOR_LOGGED = 0xFF1B5E20.toInt()
-private const val COLOR_IDLE   = 0xFF1565C0.toInt()
+private const val COLOR_OFF    = 0xFF424242.toInt()
 
 class HydrationLogDataType(
     datatype: String,
@@ -52,6 +52,11 @@ class HydrationLogDataType(
     private fun mlFromConfig(c: KSafeConfig): Int = when (slot) {
         2 -> c.drink2Ml
         else -> c.drink1Ml
+    }
+
+    private fun idleColorFromConfig(c: KSafeConfig): Int = when (slot) {
+        2 -> c.drink2Color
+        else -> c.drink1Color
     }
 
     private fun buildView(
@@ -100,8 +105,10 @@ class HydrationLogDataType(
                 ) { state, ksafeConfig ->
                     val label = labelFromConfig(ksafeConfig)
                     val ml = mlFromConfig(ksafeConfig)
-                    when (state) {
-                        HydrationLogState.IDLE   -> buildView(context, config, COLOR_IDLE, label, "${ml}ml")
+                    if (!ksafeConfig.hydrationTrackerEnabled) {
+                        buildView(context, config, COLOR_OFF, label, "OFF", clickable = false)
+                    } else when (state) {
+                        HydrationLogState.IDLE   -> buildView(context, config, idleColorFromConfig(ksafeConfig), label, "${ml}ml")
                         HydrationLogState.LOGGED -> buildView(context, config, COLOR_LOGGED, "+${ml}ml", "✓", clickable = false)
                     }
                 }.collect { view -> emitter.updateView(view) }

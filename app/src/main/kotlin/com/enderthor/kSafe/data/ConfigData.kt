@@ -63,16 +63,27 @@ val PRESET_CONFIRM_SPEED = mapOf(
 // ─── Field colour palette ─────────────────────────────────────────────────────
 
 /** Dark colours that look good with white text on a Karoo ride field.
- *  Chosen to be visually distinct from each other — one per major hue region. */
+ *
+ *  Twelve hues organised as 6 families × 2 shades (lighter / darker), inspired by
+ *  timklge/karoo-reminder's palette. Excluded on purpose:
+ *    - bright greens like 0xFF1B5E20 — used for SENT / LOGGED state flashes
+ *    - oranges like 0xFFE65100 — used for SENDING
+ *    - bright reds like 0xFFB71C1C — used for ERROR
+ *    - mid greys like 0xFF424242 — used for OFF (slot disabled)
+ *  Letting riders pick those would conflict with the state-machine signalling. */
 val FIELD_COLOR_PALETTE: List<Int> = listOf(
-    0xFF1565C0.toInt(),  // Blue           (default actions / webhooks)
-    0xFF2E7D32.toInt(),  // Forest Green   (default SOS / Timer)
-    0xFF6A1B9A.toInt(),  // Deep Purple
+    0xFF1565C0.toInt(),  // Blue            (default actions / webhooks)
+    0xFF0D47A1.toInt(),  // Deep Blue
     0xFF00838F.toInt(),  // Teal
-    0xFF880E4F.toInt(),  // Wine / Dark Pink
-    0xFF6D4C41.toInt(),  // Brown
-    0xFF37474F.toInt(),  // Slate Grey
-    0xFF1A237E.toInt(),  // Midnight Blue  (clearly darker/cooler than vivid Blue)
+    0xFF004D5B.toInt(),  // Deep Teal
+    0xFF2E7D32.toInt(),  // Forest Green    (default SOS / Timer; deliberately darker than success flash)
+    0xFF33691E.toInt(),  // Olive Green
+    0xFF6A1B9A.toInt(),  // Purple
+    0xFF4A148C.toInt(),  // Deep Purple
+    0xFF880E4F.toInt(),  // Pink
+    0xFFAD1457.toInt(),  // Magenta
+    0xFF455A64.toInt(),  // Slate
+    0xFF263238.toInt(),  // Deep Slate
 )
 
 // ─── Enums ────────────────────────────────────────────────────────────────────
@@ -260,10 +271,10 @@ data class KSafeConfig(
     /** Optional custom title shown in the InRideAlert overlay. Empty = use the default
      *  `R.string.fueling_carb_alert_title` ("Eat something"). */
     val carbAlertCustomTitle: String = "",
-    /** Three logging slots, each user-configurable label + grams. */
-    val carb1Label: String = "Gel",      val carb1Grams: Int = 25,
-    val carb2Label: String = "Bar",      val carb2Grams: Int = 30,
-    val carb3Label: String = "Fruit",    val carb3Grams: Int = 20,
+    /** Three logging slots, each user-configurable label + grams + idle background colour. */
+    val carb1Label: String = "Gel",      val carb1Grams: Int = 25,    val carb1Color: Int = 0xFF1565C0.toInt(),
+    val carb2Label: String = "Bar",      val carb2Grams: Int = 30,    val carb2Color: Int = 0xFF1565C0.toInt(),
+    val carb3Label: String = "Fruit",    val carb3Grams: Int = 20,    val carb3Color: Int = 0xFF1565C0.toInt(),
 
     // ─── Hydration tracker (flat target by time, no sensor input) ───────────
     val hydrationTrackerEnabled: Boolean = false,
@@ -277,8 +288,8 @@ data class KSafeConfig(
     /** Optional custom title shown in the InRideAlert overlay. Empty = use the default
      *  `R.string.fueling_hyd_alert_title` ("Drink something"). */
     val hydrationAlertCustomTitle: String = "",
-    val drink1Label: String = "Sip",     val drink1Ml: Int = 100,
-    val drink2Label: String = "Bottle",  val drink2Ml: Int = 500,
+    val drink1Label: String = "Sip",     val drink1Ml: Int = 100,    val drink1Color: Int = 0xFF1565C0.toInt(),
+    val drink2Label: String = "Bottle",  val drink2Ml: Int = 500,    val drink2Color: Int = 0xFF1565C0.toInt(),
 
     // ─── Post-ride summary ──────────────────────────────────────────────────
     /** Show an InRideAlert with totals at the end of every ride. */
@@ -432,7 +443,7 @@ val defaultSenderConfigs = listOf(
 )
 
 val defaultSenderConfigJson: String = Json.encodeToString(defaultSenderConfigs)
-val defaultKSafeConfigJson: String = Json.encodeToString(listOf(KSafeConfig()))
+val defaultKSafeConfigJson: String = Json.encodeToString(listOf(KSafeConfig(configVersion = CONFIG_VERSION)))
 val defaultEmergencyStateJson: String = Json.encodeToString(EmergencyState())
 
 // ─── Config migration ─────────────────────────────────────────────────────────
