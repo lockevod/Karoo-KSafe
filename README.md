@@ -983,6 +983,16 @@ Each log is tagged with a **random session ID** (e.g. `a3f9c2`) generated fresh 
 
 This feature is **disabled by default**. Enabling it is entirely voluntary and helps make KSafe more accurate for all riders.
 
+## Technical documentation
+
+If you want to understand exactly how each detection / tracking algorithm works — the thresholds, the rationale behind each constant, the edge cases handled, and the open items — three companion documents in the `docs/` folder cover the technical details:
+
+- **[Crash detection algorithm](docs/crash-detection-algorithm.md)** — multi-stage confirmation pipeline (`MONITORING → IMPACT → SILENCE_CHECK → CRASH_CONFIRMED`), dual smoothed/peak detector, GPS-stale fallback, terrain-cluster boost, cadence gate, calibration history.
+- **[Medical episode & wellness algorithms](docs/medical-wellness-algorithm.md)** — HR-flatline + HR-collapse sub-detectors, the `% of max HR` wellness mode, why both sub-detectors complement each other, sensor-disconnect handling.
+- **[Nutrition & hydration algorithms](docs/fueling-algorithm.md)** — `IntensityZoneCalculator` (HR / power zones from the Karoo profile, 0.7×–1.3× multiplier), the **target-rate vs burn-rate** explanation (why the multiplier range is anti-bonk strategy rather than pure physiology), dual-mode alerts, initial delay, post-ride summary.
+
+These docs are aimed at contributors and at riders who want to understand the *why* behind the defaults before tuning their own setup. Reading them is not required to use KSafe.
+
 ## Credits
 
 - Developed by EnderThor.
