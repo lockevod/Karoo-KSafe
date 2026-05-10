@@ -37,11 +37,17 @@ const val ALERT_DETAIL_MAX_CHARS = 90
  */
 fun renderAlertText(template: String, tokens: Map<String, String>, maxLength: Int = -1): String {
     val rendered = tokens.entries.fold(template) { acc, (k, v) -> acc.replace("{$k}", v) }
-    return if (maxLength > 0 && rendered.length > maxLength) {
-        rendered.take(maxLength - 1) + "…"
-    } else {
-        rendered
-    }
+    if (maxLength <= 0 || rendered.length <= maxLength) return rendered
+
+    // String.take() operates on UTF-16 code units. Many of the emojis in FUEL_EMOJI_CARB /
+    // FUEL_EMOJI_DRINK and the popular emojis riders may put inside their custom templates
+    // are supplementary-plane and stored as surrogate pairs, so a naive `take(N - 1) + "…"`
+    // can leave an unpaired high surrogate right before the ellipsis (visible as a tofu box
+    // on most renderers). Snap the cut to a code-point boundary by stepping back one unit
+    // when the cut would land between the two halves of a surrogate pair.
+    val cutAt = maxLength - 1
+    val safeCut = if (cutAt > 0 && rendered[cutAt - 1].isHighSurrogate()) cutAt - 1 else cutAt
+    return rendered.take(safeCut) + "…"
 }
 
 /** Convenience overload — vararg variant for inline use at call sites. */
