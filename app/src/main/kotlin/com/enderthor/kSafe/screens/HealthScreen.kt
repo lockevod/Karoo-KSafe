@@ -9,16 +9,11 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
-import androidx.compose.material3.DropdownMenuItem
-import androidx.compose.material3.ExperimentalMaterial3Api
-import androidx.compose.material3.ExposedDropdownMenuBox
-import androidx.compose.material3.ExposedDropdownMenuDefaults
-import androidx.compose.material3.MenuAnchorType
+import androidx.compose.material3.FilterChip
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextField
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
@@ -39,16 +34,20 @@ import com.enderthor.kSafe.data.IncidentResponseLevel
  * Health monitoring tab — exposes the user-configurable knobs for MedicalEpisodeDetector
  * and WellnessMonitor. Internal thresholds (HR_FLATLINE_MAX_BPM, HR_COLLAPSE_DROP_FRACTION,
  * etc.) are NOT exposed; they are calibrated in code from real ride data.
+ *
+ * The response-level UI exposes only WARNING and EMERGENCY. SILENT remains in the enum
+ * (used by tests / future programmatic dispatch) but does not make sense for an *enabled*
+ * detector — if you don't want any notification, the master switch already covers that.
  */
 @Composable
 fun HealthScreen(vm: MainViewModel) {
     val config by vm.config.collectAsState()
 
     var medicalEnabled       by remember(config.medicalEpisodeEnabled)        { mutableStateOf(config.medicalEpisodeEnabled) }
-    var medicalResponseLevel by remember(config.medicalResponseLevel)         { mutableStateOf(config.medicalResponseLevel) }
+    var medicalResponseLevel by remember(config.medicalResponseLevel)         { mutableStateOf(coerceVisible(config.medicalResponseLevel, IncidentResponseLevel.EMERGENCY)) }
 
     var wellnessEnabled        by remember(config.wellnessEnabled)              { mutableStateOf(config.wellnessEnabled) }
-    var wellnessResponseLevel  by remember(config.wellnessResponseLevel)        { mutableStateOf(config.wellnessResponseLevel) }
+    var wellnessResponseLevel  by remember(config.wellnessResponseLevel)        { mutableStateOf(coerceVisible(config.wellnessResponseLevel, IncidentResponseLevel.WARNING)) }
     var wellnessThreshold      by remember(config.wellnessHighHrThreshold)      { mutableStateOf(config.wellnessHighHrThreshold.toString()) }
     var wellnessDuration       by remember(config.wellnessHighHrDurationMinutes){ mutableStateOf(config.wellnessHighHrDurationMinutes.toString()) }
 
@@ -57,7 +56,7 @@ fun HealthScreen(vm: MainViewModel) {
             .fillMaxWidth()
             .verticalScroll(rememberScrollState())
             .padding(12.dp),
-        verticalArrangement = Arrangement.spacedBy(10.dp)
+        verticalArrangement = Arrangement.spacedBy(8.dp)
     ) {
         Text(
             text = stringResource(R.string.health_title),
@@ -66,8 +65,6 @@ fun HealthScreen(vm: MainViewModel) {
         )
 
         // ── HR sensor warning banner ─────────────────────────────────────────
-        // Always shown for now: persistent reminder that these features need a HR sensor.
-        // A future iteration may hide it once HR data is observed in the current session.
         Card(
             colors = CardDefaults.cardColors(containerColor = Color(0xFFFFF3CD)),
             elevation = CardDefaults.cardElevation(defaultElevation = 2.dp),
@@ -91,35 +88,24 @@ fun HealthScreen(vm: MainViewModel) {
         Card(elevation = CardDefaults.cardElevation(defaultElevation = 2.dp)) {
             Column(
                 modifier = Modifier.padding(10.dp),
-                verticalArrangement = Arrangement.spacedBy(8.dp)
+                verticalArrangement = Arrangement.spacedBy(6.dp)
             ) {
-                Text(
-                    text = stringResource(R.string.health_medical_section),
-                    style = MaterialTheme.typography.titleSmall,
-                    fontWeight = FontWeight.Bold,
+                SectionHeader(stringResource(R.string.health_medical_section))
+                EnableRow(
+                    label = stringResource(R.string.health_enabled_label),
+                    checked = medicalEnabled,
+                    onCheckedChange = {
+                        medicalEnabled = it
+                        vm.saveConfig(config.copy(medicalEpisodeEnabled = it))
+                    },
                 )
-                Text(
-                    text = stringResource(R.string.health_medical_hint),
-                    style = MaterialTheme.typography.bodySmall,
+                ResponseLevelChips(
+                    selected = medicalResponseLevel,
+                    onSelected = {
+                        medicalResponseLevel = it
+                        vm.saveConfig(config.copy(medicalResponseLevel = it))
+                    },
                 )
-                HealthRow(label = stringResource(R.string.health_enabled_label)) {
-                    Switch(
-                        checked = medicalEnabled,
-                        onCheckedChange = {
-                            medicalEnabled = it
-                            vm.saveConfig(config.copy(medicalEpisodeEnabled = it))
-                        }
-                    )
-                }
-                HealthRow(label = stringResource(R.string.health_response_level_label)) {
-                    ResponseLevelDropdown(
-                        selected = medicalResponseLevel,
-                        onSelected = {
-                            medicalResponseLevel = it
-                            vm.saveConfig(config.copy(medicalResponseLevel = it))
-                        }
-                    )
-                }
             }
         }
 
@@ -127,39 +113,24 @@ fun HealthScreen(vm: MainViewModel) {
         Card(elevation = CardDefaults.cardElevation(defaultElevation = 2.dp)) {
             Column(
                 modifier = Modifier.padding(10.dp),
-                verticalArrangement = Arrangement.spacedBy(8.dp)
+                verticalArrangement = Arrangement.spacedBy(6.dp)
             ) {
-                Text(
-                    text = stringResource(R.string.health_wellness_section),
-                    style = MaterialTheme.typography.titleSmall,
-                    fontWeight = FontWeight.Bold,
+                SectionHeader(stringResource(R.string.health_wellness_section))
+                EnableRow(
+                    label = stringResource(R.string.health_enabled_label),
+                    checked = wellnessEnabled,
+                    onCheckedChange = {
+                        wellnessEnabled = it
+                        vm.saveConfig(config.copy(wellnessEnabled = it))
+                    },
                 )
-                Text(
-                    text = stringResource(R.string.health_wellness_hint),
-                    style = MaterialTheme.typography.bodySmall,
+                ResponseLevelChips(
+                    selected = wellnessResponseLevel,
+                    onSelected = {
+                        wellnessResponseLevel = it
+                        vm.saveConfig(config.copy(wellnessResponseLevel = it))
+                    },
                 )
-                HealthRow(label = stringResource(R.string.health_enabled_label)) {
-                    Switch(
-                        checked = wellnessEnabled,
-                        onCheckedChange = {
-                            wellnessEnabled = it
-                            vm.saveConfig(config.copy(wellnessEnabled = it))
-                        }
-                    )
-                }
-                HealthRow(label = stringResource(R.string.health_response_level_label)) {
-                    ResponseLevelDropdown(
-                        selected = wellnessResponseLevel,
-                        onSelected = {
-                            wellnessResponseLevel = it
-                            vm.saveConfig(config.copy(wellnessResponseLevel = it))
-                        }
-                    )
-                }
-                // Persist only when the typed value lands in the valid range.
-                // Saving every keystroke through coerceIn would snap "1"→80, "15"→80, "150"→150
-                // while the user is mid-typing — the saved value would diverge from what's shown.
-                // With the in-range guard the field accepts free typing and only commits sensible values.
                 OutlinedTextField(
                     value = wellnessThreshold,
                     onValueChange = { v ->
@@ -171,6 +142,7 @@ fun HealthScreen(vm: MainViewModel) {
                     },
                     label = { Text(stringResource(R.string.health_wellness_threshold_label)) },
                     modifier = Modifier.fillMaxWidth(),
+                    singleLine = true,
                 )
                 OutlinedTextField(
                     value = wellnessDuration,
@@ -183,6 +155,7 @@ fun HealthScreen(vm: MainViewModel) {
                     },
                     label = { Text(stringResource(R.string.health_wellness_duration_label)) },
                     modifier = Modifier.fillMaxWidth(),
+                    singleLine = true,
                 )
             }
         }
@@ -190,53 +163,64 @@ fun HealthScreen(vm: MainViewModel) {
 }
 
 @Composable
-private fun HealthRow(label: String, content: @Composable () -> Unit) {
+private fun SectionHeader(text: String) {
+    Text(
+        text = text,
+        style = MaterialTheme.typography.titleSmall,
+        fontWeight = FontWeight.Bold,
+    )
+}
+
+@Composable
+private fun EnableRow(label: String, checked: Boolean, onCheckedChange: (Boolean) -> Unit) {
     Row(
         modifier = Modifier.fillMaxWidth(),
         horizontalArrangement = Arrangement.SpaceBetween,
-        verticalAlignment = Alignment.CenterVertically
+        verticalAlignment = Alignment.CenterVertically,
     ) {
         Text(text = label, style = MaterialTheme.typography.bodyMedium, modifier = Modifier.weight(1f))
-        content()
+        Switch(checked = checked, onCheckedChange = onCheckedChange)
     }
 }
 
-@OptIn(ExperimentalMaterial3Api::class)
+/**
+ * Compact horizontal chip row for picking response level. Only WARNING / EMERGENCY are
+ * exposed — SILENT does not make sense for an enabled detector and would confuse users.
+ */
 @Composable
-private fun ResponseLevelDropdown(
+private fun ResponseLevelChips(
     selected: IncidentResponseLevel,
     onSelected: (IncidentResponseLevel) -> Unit,
 ) {
-    val expandedState = remember { mutableStateOf(false) }
-    val labels = mapOf(
-        IncidentResponseLevel.SILENT    to stringResource(R.string.health_response_silent),
-        IncidentResponseLevel.WARNING   to stringResource(R.string.health_response_warning),
-        IncidentResponseLevel.EMERGENCY to stringResource(R.string.health_response_emergency),
-    )
-    ExposedDropdownMenuBox(
-        expanded = expandedState.value,
-        onExpandedChange = { expandedState.value = it },
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.spacedBy(6.dp),
+        verticalAlignment = Alignment.CenterVertically,
     ) {
-        TextField(
-            value = labels[selected] ?: selected.name,
-            onValueChange = {},
-            readOnly = true,
-            trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = expandedState.value) },
-            modifier = Modifier.menuAnchor(MenuAnchorType.PrimaryNotEditable)
+        FilterChip(
+            selected = selected == IncidentResponseLevel.WARNING,
+            onClick = { onSelected(IncidentResponseLevel.WARNING) },
+            label = { Text(stringResource(R.string.health_response_warning)) },
+            modifier = Modifier.weight(1f),
         )
-        ExposedDropdownMenu(
-            expanded = expandedState.value,
-            onDismissRequest = { expandedState.value = false },
-        ) {
-            IncidentResponseLevel.entries.forEach { lvl ->
-                DropdownMenuItem(
-                    text = { Text(labels[lvl] ?: lvl.name) },
-                    onClick = {
-                        onSelected(lvl)
-                        expandedState.value = false
-                    }
-                )
-            }
-        }
+        FilterChip(
+            selected = selected == IncidentResponseLevel.EMERGENCY,
+            onClick = { onSelected(IncidentResponseLevel.EMERGENCY) },
+            label = { Text(stringResource(R.string.health_response_emergency)) },
+            modifier = Modifier.weight(1f),
+        )
     }
+}
+
+/**
+ * If a stored config has SILENT (from the previous UI version that exposed it), coerce to
+ * a sensible default on first display so the chip row always shows a selection. The stored
+ * value is left alone until the user explicitly picks a chip.
+ */
+private fun coerceVisible(
+    stored: IncidentResponseLevel,
+    fallback: IncidentResponseLevel,
+): IncidentResponseLevel = when (stored) {
+    IncidentResponseLevel.SILENT -> fallback
+    else -> stored
 }
