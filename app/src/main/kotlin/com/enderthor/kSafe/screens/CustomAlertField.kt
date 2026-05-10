@@ -49,10 +49,10 @@ fun CustomAlertField(
     OutlinedTextField(
         value = displayValue,
         onValueChange = { v ->
-            val trimmed = v.take(maxLength)
+            val clipped = v.take(maxLength)  // length-cap only — does NOT trim whitespace
             // Re-tracking the default when the rider's text exactly matches it keeps the
             // config field empty so future default-string changes still propagate.
-            onCommit(if (trimmed == defaultText) "" else trimmed)
+            onCommit(if (clipped == defaultText) "" else clipped)
         },
         label = { Text(label) },
         supportingText = if (tokensHint.isNotBlank()) {
