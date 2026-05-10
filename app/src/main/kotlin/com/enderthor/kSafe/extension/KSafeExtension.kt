@@ -113,18 +113,18 @@ class KSafeExtension : KarooExtension("ksafe", BuildConfig.VERSION_NAME), Corout
         }, calibLogger)
         medicalDetector = MedicalEpisodeDetector(
             scope = this,
-            onIncident = { reason ->
+            onIncident = { reason, tokens ->
                 launch {
-                    emergencyManager.handleIncident(reason, activeConfig.medicalResponseLevel, activeConfig)
+                    emergencyManager.handleIncident(reason, activeConfig.medicalResponseLevel, activeConfig, tokens)
                 }
             },
             calibLogger = calibLogger,
         )
         wellnessMonitor = WellnessMonitor(
             scope = this,
-            onIncident = { reason ->
+            onIncident = { reason, tokens ->
                 launch {
-                    emergencyManager.handleIncident(reason, activeConfig.wellnessResponseLevel, activeConfig)
+                    emergencyManager.handleIncident(reason, activeConfig.wellnessResponseLevel, activeConfig, tokens)
                 }
             },
             calibLogger = calibLogger,

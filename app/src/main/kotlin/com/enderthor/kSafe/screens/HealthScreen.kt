@@ -48,6 +48,8 @@ fun HealthScreen(vm: MainViewModel) {
 
     var medicalEnabled       by remember(config.medicalEpisodeEnabled)        { mutableStateOf(config.medicalEpisodeEnabled) }
     var medicalResponseLevel by remember(config.medicalResponseLevel)         { mutableStateOf(coerceVisible(config.medicalResponseLevel, IncidentResponseLevel.EMERGENCY)) }
+    var medicalCustomTitle   by remember(config.medicalCustomTitle)           { mutableStateOf(config.medicalCustomTitle) }
+    var medicalCustomDetail  by remember(config.medicalCustomDetail)          { mutableStateOf(config.medicalCustomDetail) }
 
     var wellnessEnabled         by remember(config.wellnessEnabled)              { mutableStateOf(config.wellnessEnabled) }
     var wellnessResponseLevel   by remember(config.wellnessResponseLevel)        { mutableStateOf(coerceVisible(config.wellnessResponseLevel, IncidentResponseLevel.WARNING)) }
@@ -57,15 +59,21 @@ fun HealthScreen(vm: MainViewModel) {
     var wSustainedThresholdBpm  by remember(config.wellnessHighHrThreshold)      { mutableStateOf(config.wellnessHighHrThreshold.toString()) }
     var wSustainedThresholdPct  by remember(config.wellnessHighHrPercent)        { mutableStateOf(config.wellnessHighHrPercent.toString()) }
     var wSustainedDuration      by remember(config.wellnessHighHrDurationMinutes){ mutableStateOf(config.wellnessHighHrDurationMinutes.toString()) }
+    var wSustainedCustomTitle   by remember(config.wellnessSustainedCustomTitle) { mutableStateOf(config.wellnessSustainedCustomTitle) }
+    var wSustainedCustomDetail  by remember(config.wellnessSustainedCustomDetail){ mutableStateOf(config.wellnessSustainedCustomDetail) }
     // Critical tier
     var wCriticalOn             by remember(config.wellnessCriticalEnabled)         { mutableStateOf(config.wellnessCriticalEnabled) }
     var wCriticalThresholdBpm   by remember(config.wellnessCriticalThresholdBpm)    { mutableStateOf(config.wellnessCriticalThresholdBpm.toString()) }
     var wCriticalThresholdPct   by remember(config.wellnessCriticalThresholdPct)    { mutableStateOf(config.wellnessCriticalThresholdPct.toString()) }
     var wCriticalDuration       by remember(config.wellnessCriticalDurationMinutes) { mutableStateOf(config.wellnessCriticalDurationMinutes.toString()) }
+    var wCriticalCustomTitle    by remember(config.wellnessCriticalCustomTitle)     { mutableStateOf(config.wellnessCriticalCustomTitle) }
+    var wCriticalCustomDetail   by remember(config.wellnessCriticalCustomDetail)    { mutableStateOf(config.wellnessCriticalCustomDetail) }
     // Decoupling tier
     var wDecouplingOn           by remember(config.wellnessDecouplingEnabled)        { mutableStateOf(config.wellnessDecouplingEnabled) }
     var wDecouplingThreshold    by remember(config.wellnessDecouplingThresholdPct)   { mutableStateOf(config.wellnessDecouplingThresholdPct.toString()) }
     var wDecouplingDuration     by remember(config.wellnessDecouplingDurationMinutes){ mutableStateOf(config.wellnessDecouplingDurationMinutes.toString()) }
+    var wDecouplingCustomTitle  by remember(config.wellnessDecouplingCustomTitle)    { mutableStateOf(config.wellnessDecouplingCustomTitle) }
+    var wDecouplingCustomDetail by remember(config.wellnessDecouplingCustomDetail)   { mutableStateOf(config.wellnessDecouplingCustomDetail) }
 
     Column(
         modifier = Modifier
@@ -122,6 +130,22 @@ fun HealthScreen(vm: MainViewModel) {
                             medicalResponseLevel = it
                             vm.saveConfig(config.copy(medicalResponseLevel = it))
                         },
+                    )
+                    CustomAlertField(
+                        label = "Custom title",
+                        value = medicalCustomTitle,
+                        onCommit = { v -> medicalCustomTitle = v; vm.saveConfig(config.copy(medicalCustomTitle = v)) },
+                        defaultPlaceholder = stringResource(R.string.warning_medical_title),
+                        maxLength = 30,
+                    )
+                    CustomAlertField(
+                        label = "Custom detail",
+                        value = medicalCustomDetail,
+                        onCommit = { v -> medicalCustomDetail = v; vm.saveConfig(config.copy(medicalCustomDetail = v)) },
+                        defaultPlaceholder = stringResource(R.string.warning_medical_detail),
+                        tokensHint = "Tokens: {bpm}",
+                        maxLength = 80,
+                        singleLine = false,
                     )
                 }
             }
@@ -209,6 +233,22 @@ fun HealthScreen(vm: MainViewModel) {
                     modifier = Modifier.fillMaxWidth(),
                     singleLine = true,
                 )
+                CustomAlertField(
+                    label = "Critical alert title",
+                    value = wCriticalCustomTitle,
+                    onCommit = { v -> wCriticalCustomTitle = v; vm.saveConfig(config.copy(wellnessCriticalCustomTitle = v)) },
+                    defaultPlaceholder = stringResource(R.string.warning_wellness_critical_hr_title),
+                    maxLength = 30,
+                )
+                CustomAlertField(
+                    label = "Critical alert detail",
+                    value = wCriticalCustomDetail,
+                    onCommit = { v -> wCriticalCustomDetail = v; vm.saveConfig(config.copy(wellnessCriticalCustomDetail = v)) },
+                    defaultPlaceholder = stringResource(R.string.warning_wellness_critical_hr_detail),
+                    tokensHint = "Tokens: {bpm}, {threshold}, {minutes}",
+                    maxLength = 80,
+                    singleLine = false,
+                )
                 }  // end if (wCriticalOn)
 
                 // ── Tier 2: Sustained HR ────────────────────────────────────
@@ -261,6 +301,22 @@ fun HealthScreen(vm: MainViewModel) {
                     modifier = Modifier.fillMaxWidth(),
                     singleLine = true,
                 )
+                CustomAlertField(
+                    label = "Sustained alert title",
+                    value = wSustainedCustomTitle,
+                    onCommit = { v -> wSustainedCustomTitle = v; vm.saveConfig(config.copy(wellnessSustainedCustomTitle = v)) },
+                    defaultPlaceholder = stringResource(R.string.warning_wellness_high_hr_title),
+                    maxLength = 30,
+                )
+                CustomAlertField(
+                    label = "Sustained alert detail",
+                    value = wSustainedCustomDetail,
+                    onCommit = { v -> wSustainedCustomDetail = v; vm.saveConfig(config.copy(wellnessSustainedCustomDetail = v)) },
+                    defaultPlaceholder = stringResource(R.string.warning_wellness_high_hr_detail),
+                    tokensHint = "Tokens: {bpm}, {threshold}, {minutes}",
+                    maxLength = 80,
+                    singleLine = false,
+                )
                 }  // end if (wSustainedOn)
 
                 // ── Tier 3: Cardiac decoupling (requires power) ─────────────
@@ -302,6 +358,22 @@ fun HealthScreen(vm: MainViewModel) {
                     label = { Text(stringResource(R.string.health_wellness_decoupling_duration_label)) },
                     modifier = Modifier.fillMaxWidth(),
                     singleLine = true,
+                )
+                CustomAlertField(
+                    label = "Decoupling alert title",
+                    value = wDecouplingCustomTitle,
+                    onCommit = { v -> wDecouplingCustomTitle = v; vm.saveConfig(config.copy(wellnessDecouplingCustomTitle = v)) },
+                    defaultPlaceholder = stringResource(R.string.warning_wellness_decoupling_title),
+                    maxLength = 30,
+                )
+                CustomAlertField(
+                    label = "Decoupling alert detail",
+                    value = wDecouplingCustomDetail,
+                    onCommit = { v -> wDecouplingCustomDetail = v; vm.saveConfig(config.copy(wellnessDecouplingCustomDetail = v)) },
+                    defaultPlaceholder = stringResource(R.string.warning_wellness_decoupling_detail),
+                    tokensHint = "Tokens: {drift}, {minutes}",
+                    maxLength = 80,
+                    singleLine = false,
                 )
                 }  // end if (wDecouplingOn)
                 }  // end if (wellnessEnabled)

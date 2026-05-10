@@ -34,7 +34,7 @@ import timber.log.Timber
  */
 class MedicalEpisodeDetector(
     private val scope: CoroutineScope,
-    private val onIncident: (EmergencyReason) -> Unit,
+    private val onIncident: (EmergencyReason, Map<String, String>) -> Unit,
     private val calibLogger: CalibrationLogger? = null,
 ) {
 
@@ -194,7 +194,7 @@ class MedicalEpisodeDetector(
                     "bpm=$currentHrBpm,duration_s=${durationMs / 1000},speed=%.1f,threshold=$HR_FLATLINE_MAX_BPM".format(lastSpeedKmh)
                 }
                 flatlineSinceMs = 0L  // re-arm: requires HR to rise above threshold then fall again
-                onIncident(EmergencyReason.MEDICAL_FLATLINE)
+                onIncident(EmergencyReason.MEDICAL_FLATLINE, mapOf("bpm" to currentHrBpm.toString()))
             }
         } else {
             flatlineSinceMs = 0L
@@ -224,7 +224,10 @@ class MedicalEpisodeDetector(
                 "bpm=$currentHrBpm,avg5min=$baseline,drop_pct=%.1f,window_s=$HR_COLLAPSE_WINDOW_SEC,speed=%.1f".format(drop * 100f, lastSpeedKmh)
             }
             collapseCooldownUntilMs = now + HR_COLLAPSE_MIN_HISTORY_SEC * 1000L
-            onIncident(EmergencyReason.MEDICAL_COLLAPSE)
+            onIncident(EmergencyReason.MEDICAL_COLLAPSE, mapOf(
+                "bpm" to currentHrBpm.toString(),
+                "baseline" to baseline.toString(),
+            ))
         }
     }
 
