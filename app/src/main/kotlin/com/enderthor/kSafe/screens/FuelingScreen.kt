@@ -116,6 +116,7 @@ fun FuelingScreen(vm: MainViewModel) {
                         }
                     )
                 }
+                DependentSection(enabled = carbsEnabled) {
                 IntField(
                     label = stringResource(R.string.fueling_target_carb_label),
                     text = carbTarget,
@@ -199,6 +200,7 @@ fun FuelingScreen(vm: MainViewModel) {
                 )
                 FieldColorPicker(label = "Slot 3 colour", selected = carb3Color,
                     onSelected = { v -> carb3Color = v; vm.saveConfig(config.copy(carb3Color = v)) })
+                }  // end DependentSection (carbsEnabled)
             }
         }
 
@@ -222,6 +224,7 @@ fun FuelingScreen(vm: MainViewModel) {
                         }
                     )
                 }
+                DependentSection(enabled = hydEnabled) {
                 IntField(
                     label = stringResource(R.string.fueling_target_hyd_label),
                     text = hydTarget,
@@ -298,6 +301,7 @@ fun FuelingScreen(vm: MainViewModel) {
                 )
                 FieldColorPicker(label = "Slot 2 colour", selected = drink2Color,
                     onSelected = { v -> drink2Color = v; vm.saveConfig(config.copy(drink2Color = v)) })
+                }  // end DependentSection (hydEnabled)
             }
         }
 
