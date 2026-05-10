@@ -273,13 +273,35 @@ Both checks have built-in guards: HR data must be fresh (sensor connected within
 
 **Default**: enabled. Response level **Emergency** — same flow as a crash detection (configurable countdown + alert to contacts). The alert message uses your standard emergency message template; the `{reason}` placeholder reads "Medical episode detected".
 
+You can also override the on-screen popup's title and detail per rider — see [Custom alert text](#custom-alert-text) below.
+
 #### Wellness monitor
 
-Watches for sustained high HR — useful as a fatigue / heat-stress reminder on long rides. Default threshold: **180 bpm sustained for 30 continuous minutes**. Both values are configurable per rider in the Health tab.
+A three-tier HR-based fatigue / overexertion / heat-stress monitor. Each tier is independent and can be turned on or off in the Health tab; the master toggle gates the whole monitor. Defaults are conservative — turn on the tier(s) that match your goals.
 
-The streak resets if HR drops below the threshold even briefly — only **continuous** sustained zones trigger the warning, not cumulative time. After firing, a cooldown of one streak-duration must elapse and HR must drop below the threshold and rise again before another warning can fire (no spam during long climbs or sustained interval workouts).
+| Tier | What it watches | Default trigger | Why |
+|---|---|---|---|
+| **Critical HR** | HR very high for a short time | 95 % of max HR (or 175 bpm absolute) sustained for **5 min** | Acute overexertion — early warning. |
+| **Sustained HR** | HR moderately high for a long time | 92 % of max HR (or 180 bpm absolute) sustained for **30 min** | Long-tail fatigue — same rule that existed before, kept for back-compat. |
+| **Cardiac decoupling** | HR / power ratio drift vs. baseline | 7 % drift sustained for **10 min** (after a 10-min baseline) | Clinical indicator of dehydration / heat stress; requires a paired power meter (auto-skips when no power data). |
 
-**Default**: disabled (opt-in — the right thresholds depend strongly on rider age and fitness). Response level **Warning** by default — on-screen notification + beep, **never** sent to emergency contacts unless you explicitly raise the response level to Emergency.
+The HR-based tiers can use either **absolute bpm** thresholds (the legacy mode) or **% of max HR** read from the Karoo profile (auto-scales across riders, no biometric entry needed). The decoupling tier always uses % drift relative to the rider's own ride-specific baseline, so the absolute / % toggle does not apply to it.
+
+The streak resets if the watched signal drops below the tier's threshold even briefly — only **continuous** sustained excursions trigger the alert, not cumulative time. Per-tier cooldowns prevent spam during long climbs or sustained interval workouts.
+
+**Default**: master toggle off (opt-in — the right thresholds depend on rider age and fitness). When the master is on, all three tiers default to enabled. Response level **Warning** by default — on-screen notification + beep, **never** sent to emergency contacts unless you explicitly raise the response level to Emergency.
+
+#### Custom alert text
+
+Every HR-based on-screen alert (medical, plus each of the three wellness tiers) has its own customisable **title** and **detail** in the Health tab. The fields show the built-in default text as a placeholder when empty — leave blank to use the default, or write your own message. The text is rendered with `{token}` placeholders substituted at runtime so you can include the live data in your own wording:
+
+| Alert | Tokens you can use in title / detail |
+|---|---|
+| Medical | `{bpm}` |
+| Wellness Critical / Sustained | `{bpm}`, `{threshold}`, `{minutes}` |
+| Wellness Decoupling | `{drift}` (% drift, 1 decimal), `{minutes}` |
+
+For example, a critical-HR detail of `"HR at {bpm} bpm — slow down ({threshold} for {minutes} min)"` will render at fire time as something like *"HR at 178 bpm — slow down (175 for 5 min)"*.
 
 #### Response levels
 
@@ -328,14 +350,24 @@ The time alert also has a per-category **initial delay** (default 30 min, config
 
 Both modes can be on at the same time. A 5-minute cooldown prevents the two from firing within seconds of each other; once one fires, neither will fire again until the cooldown elapses.
 
-The **alert title** ("Eat something" / "Drink something") is customisable per category — leave empty for the default, or set your own (e.g. *"Snack time!"*, *"Hidrátate!"*, etc.). The detail line (*"Behind by 25g"* / *"30 min since last log"*) stays dynamic.
+Both the **alert title** ("Eat something" / "Drink something") and the **detail line** ("Behind by 25g" / "30 min since last log") are customisable per category. Each field shows the default as placeholder when empty — leave blank to use the default, or write your own template. Tokens are substituted at fire time:
+
+| Token | Substituted with |
+|---|---|
+| `{deficit}` | Current deficit (g for carbs, ml for hydration) |
+| `{elapsed}` | Minutes since the last log entry |
+| `{target}` | Configured per-hour target |
+
+For example, a custom carb detail of `"You're {deficit}g down — eat now ({elapsed} min)"` renders at fire time as *"You're 35g down — eat now (15 min)"*. When the field is empty, the source-specific defaults are used (deficit alerts get *"Behind by Xg"*, time alerts get *"X min since last log"*).
 
 #### Logging in-ride
 
 Two complementary mechanisms:
 
-- **Data fields**: 3 carb log slots + 2 drink log slots, each with its own configurable **label** (e.g. *"Gel"*, *"Bar"*, *"Bottle"*) and **amount** (g or ml). One tap = one log. The slot's status flashes green for 2 seconds as confirmation, then returns to its idle label. Add as many or as few slots to your ride profile as you want; you don't need all of them visible.
+- **Data fields**: 3 carb log slots + 2 drink log slots, each with its own configurable **label** (e.g. *"Gel"*, *"Bar"*, *"Bottle"*), **amount** (g or ml), **idle background colour** (palette of 12 dark hues) and **emoji icon** (e.g. 🍫 / 🥤 / 💧, or none). One tap = one log. The slot flashes green for 2 seconds as confirmation, then returns to its idle label. Add as many or as few slots to your ride profile as you want.
 - **Hardware buttons (BonusActions, SRAM AXS only)**: KSafe registers two extra actions, *"KSafe: Log Carb"* and *"KSafe: Log Drink"*, both wired to slot 1 of each category. Map them to your AXS shifter buttons so you can log without looking at the screen.
+
+When the master Carb / Hydration toggle is off, the corresponding log fields render in grey with `OFF` and tap is disabled — the data field is still visible on the ride profile but clearly inactive, so a stray tap does nothing instead of silently no-op'ing. Re-enable the master in the Fueling tab and the colour / emoji come back.
 
 There are also two **status data fields** (carb status and hydration status) that show your current deficit at a glance, color-coded green / amber / red. Optional — if you don't add them to your ride profile, they don't appear.
 
@@ -346,12 +378,12 @@ When you stop the recording, KSafe shows an `InRideAlert` with totals: *"Carbs: 
 #### What you configure
 
 Per category (Carbs, Hydration) the Fueling tab lets you:
-- Enable / disable the tracker
+- Enable / disable the tracker (master toggle — when off, the rest of the fields collapse for a tidier screen)
 - Set the per-hour target
 - Toggle the deficit alert + threshold
 - Toggle the time alert + interval + initial delay
-- Set a custom alert title (optional — falls back to the default)
-- Configure each slot's label + amount
+- Customise the alert **title** and **detail** templates (optional — placeholder shows the default; leave blank to use it, or write your own with `{deficit}` / `{elapsed}` / `{target}` tokens)
+- Configure each slot's label, amount, idle background colour, and emoji icon
 
 That's it — no biometric data, no FTP, no zone numbers, no max HR. KSafe reads all of that from the Karoo profile.
 
@@ -644,10 +676,10 @@ KSafe provides **three independent custom message buttons** — you can add one,
 
 1. Open KSafe → **Actions tab**.
 2. For each message slot (1, 2, 3):
-   - Toggle **Enable message N**.
+   - Toggle **Enable message N**. When the slot is disabled, the rest of the row collapses for a tidier screen, and the on-ride field renders in grey with `OFF` (tap is suppressed — no more "ERR retry" flash on a disabled slot).
    - Enter a **button label** (max 7 characters) — this appears on the Karoo field button. Examples: `OK👍`, `HOME`, `SAFE`, `CREW`. Defaults: `MSG`, `MSG2`, `MSG3`.
    - Enter the **message text** that will be sent when the field is tapped (any length).
-   - Choose the **idle colour** for the field using the colour swatch row beneath the text fields.
+   - Choose the **idle colour** for the field — tap the colour swatch button to open the picker dialog (12 dark hues, organised as 6 families × 2 shades; reserved state colours like the SENT-flash green and the ERROR red are deliberately excluded so your idle pick can never collide with a state-machine signal).
    - Tap **Send Message N** to test it immediately from the app.
 3. Add **KSafe Message 1**, **KSafe Message 2**, and/or **KSafe Message 3** as data fields in your Karoo ride profile.
 
