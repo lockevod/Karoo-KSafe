@@ -324,7 +324,11 @@ For each category (carbs, hydration) independently:
 - **Alert by deficit**: silent until `(target_so_far − logged) > threshold` (e.g. >25 g for carbs, >300 ml for hydration). Then beep + on-screen `InRideAlert` (full-screen overlay, auto-dismissable in 10 s).
 - **Alert by time**: silent until `time_since_last_log > interval` (e.g. >25 min for carbs, >20 min for hydration). Same alert UX.
 
-Both can be on at the same time. A 5-minute cooldown prevents the two from firing within seconds of each other; once one fires, neither will fire again until the cooldown elapses.
+The time alert also has a per-category **initial delay** (default 30 min, configurable, set to 0 to disable). Most riders don't eat or drink in the first 20 minutes; the initial delay prevents a nag at minute 25 of an otherwise good ride. After the first alert fires or the user logs an item, normal interval logic takes over.
+
+Both modes can be on at the same time. A 5-minute cooldown prevents the two from firing within seconds of each other; once one fires, neither will fire again until the cooldown elapses.
+
+The **alert title** ("Eat something" / "Drink something") is customisable per category — leave empty for the default, or set your own (e.g. *"Snack time!"*, *"Hidrátate!"*, etc.). The detail line (*"Behind by 25g"* / *"30 min since last log"*) stays dynamic.
 
 #### Logging in-ride
 
@@ -345,7 +349,8 @@ Per category (Carbs, Hydration) the Fueling tab lets you:
 - Enable / disable the tracker
 - Set the per-hour target
 - Toggle the deficit alert + threshold
-- Toggle the time alert + interval
+- Toggle the time alert + interval + initial delay
+- Set a custom alert title (optional — falls back to the default)
 - Configure each slot's label + amount
 
 That's it — no biometric data, no FTP, no zone numbers, no max HR. KSafe reads all of that from the Karoo profile.
