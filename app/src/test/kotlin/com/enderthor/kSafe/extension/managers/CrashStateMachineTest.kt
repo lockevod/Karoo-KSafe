@@ -1,20 +1,47 @@
 package com.enderthor.kSafe.extension.managers
 
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNotEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
+/**
+ * Pure unit tests for [CrashStateMachine].
+ *
+ * All tests are **synchronous** — the state machine owns no coroutines, no delays, no I/O.
+ * Time is driven from two sources:
+ *   - [SensorSample.timestampMs] for the state-machine internal clock (impact window,
+ *     silence elapsed). Tests pass timestamps explicitly via [sample].
+ *   - A mutable wall-clock variable for the cold-start guard / speed-update timestamps.
+ *     Most tests pre-advance the wall clock past `coldStartGuardMs` so the guard is
+ *     inert; the cold-start tests explicitly leave it inside the window.
+ */
 class CrashStateMachineTest {
 
+    /** Quiet-frame smoothed magnitude (essentially gravity). */
+    private val QUIET = 9.80
+
+    /**
+     * Build a state machine with a mutable clock the caller can advance. The clock starts
+     * advanced beyond `coldStartGuardMs` so most tests don't trip the cold-start guard.
+     */
     private fun newSm(
-        nowMs: Long = 1_000_000L,
         thresholds: Thresholds = Thresholds(),
-    ): Pair<CrashStateMachine, () -> Unit> {
-        var t = nowMs
-        val sm = CrashStateMachine(thresholds = thresholds, clock = { t })
-        return sm to { t += 1L }   // not used; tests pass timestamps explicitly via samples
+        // Default the wall clock far enough past 0 that the cold-start guard is inert.
+        initialWallMs: Long = 1_000_000L,
+    ): Pair<CrashStateMachine, ClockHandle> {
+        val handle = ClockHandle(initialWallMs)
+        val sm = CrashStateMachine(thresholds = thresholds, clock = handle.clock)
+        return sm to handle
     }
 
+    private class ClockHandle(initial: Long) {
+        var t: Long = initial
+        val clock: Clock = Clock { t }
+        fun advance(ms: Long) { t += ms }
+    }
+
+    /** Build a [SensorSample]. `peak`, `smoothed`, `raw` default to each other. */
     private fun sample(
         time: Long,
         peak: Double = 0.0,
@@ -29,111 +56,304 @@ class CrashStateMachineTest {
         timestampMs = time,
     )
 
+    // ── 1. Sample below thresholds stays in MONITORING ───────────────────────
+
     @Test
     fun `sample below thresholds stays in MONITORING`() {
         val (sm, _) = newSm()
+        sm.onSpeedUpdate(20.0, gpsStale = false)
         val d = sm.onSample(sample(time = 1000, peak = 5.0))
         assertEquals(CrashStateMachine.Decision.None, d)
         assertEquals(CrashStateMachine.State.MONITORING, sm.state)
     }
 
+    // ── 2. Peak above threshold + speed gate OK → IMPACT ─────────────────────
+
     @Test
     fun `peak above threshold with speed gate ok enters IMPACT`() {
         val (sm, _) = newSm()
         sm.onSpeedUpdate(20.0, gpsStale = false)
-        val d = sm.onSample(sample(time = 1000, peak = 50.0, smoothed = 30.0, gyro = 10.0))
-        assertTrue(d is CrashStateMachine.Decision.EnterImpact)
+        val d = sm.onSample(sample(time = 1000, peak = 60.0, smoothed = 30.0, gyro = 0.5))
+        assertTrue("expected EnterImpact, got $d", d is CrashStateMachine.Decision.EnterImpact)
         assertEquals(CrashStateMachine.State.IMPACT, sm.state)
     }
 
+    // ── 3. Peak above threshold, speed below minSpeed, NOT GPS-stale → MONITORING
+
     @Test
-    fun `peak above threshold but speed below gate stays in MONITORING`() {
+    fun `peak above threshold but speed below gate stays in MONITORING even though gpsStale=false`() {
         val (sm, _) = newSm()
         sm.onSpeedUpdate(2.0, gpsStale = false) // below default minSpeedForCrashKmh=10
-        val d = sm.onSample(sample(time = 1000, peak = 50.0, smoothed = 30.0, gyro = 10.0))
+        val d = sm.onSample(sample(time = 1000, peak = 60.0, smoothed = 30.0, gyro = 0.5))
         assertEquals(CrashStateMachine.Decision.None, d)
         assertEquals(CrashStateMachine.State.MONITORING, sm.state)
     }
 
-    @Test
-    fun `IMPACT plus sustained silence transitions to SILENCE_CHECK`() {
-        val (sm, _) = newSm()
-        sm.onSpeedUpdate(20.0, gpsStale = false)
-        sm.onSample(sample(time = 1000, peak = 50.0, smoothed = 30.0, gyro = 10.0))
-        // accel is now quiet for >= silenceRequiredMs
-        sm.onSample(sample(time = 1500, peak = 9.5))
-        sm.onSample(sample(time = 2000, peak = 9.6))
-        val d = sm.onSample(sample(time = 2700, peak = 9.5))    // 1700 ms of silence
-        assertEquals(CrashStateMachine.State.SILENCE_CHECK, sm.state)
-        // Decision may still be None at this point — confirmation needs the speed check too.
-        assertTrue(d is CrashStateMachine.Decision.None || d is CrashStateMachine.Decision.Confirm)
-    }
+    // ── 3b. GPS-stale must NOT bypass the MONITORING speed gate ──────────────
 
     @Test
-    fun `SILENCE_CHECK with speed dropped and cadence quiet confirms`() {
+    fun `MONITORING entry gate is NOT bypassed when gpsStale=true`() {
+        val (sm, _) = newSm()
+        // Below minSpeed and GPS stale — per doc, no bypass at MONITORING entry.
+        sm.onSpeedUpdate(2.0, gpsStale = true)
+        val d = sm.onSample(sample(time = 1000, peak = 60.0, smoothed = 30.0, gyro = 0.5))
+        assertEquals(CrashStateMachine.Decision.None, d)
+        assertEquals(CrashStateMachine.State.MONITORING, sm.state)
+    }
+
+    // ── 4. IMPACT + timeSinceImpact <= 500ms blocks SILENCE_CHECK entry ──────
+
+    @Test
+    fun `IMPACT with timeSinceImpact below 500ms cannot transition to SILENCE_CHECK`() {
+        val (sm, _) = newSm()
+        sm.onSpeedUpdate(2.0, gpsStale = false) // speed dropped, satisfies isSpeedDropConfirmed
+        // Enter IMPACT at t=1000 with raised speed first so MONITORING entry passes
+        sm.onSpeedUpdate(20.0, gpsStale = false)
+        sm.onSample(sample(time = 1000, peak = 60.0, smoothed = 30.0, gyro = 0.5))
+        assertEquals(CrashStateMachine.State.IMPACT, sm.state)
+        // Now drop speed and feed a quiet sample 200ms later (< 500ms gate)
+        sm.onSpeedUpdate(2.0, gpsStale = false)
+        val d = sm.onSample(sample(time = 1200, peak = QUIET, smoothed = QUIET, gyro = 0.5))
+        assertEquals(CrashStateMachine.Decision.None, d)
+        assertEquals(CrashStateMachine.State.IMPACT, sm.state)
+    }
+
+    // ── 5. IMPACT + all four conditions met → SILENCE_CHECK ──────────────────
+
+    @Test
+    fun `IMPACT with all four conditions met enters SILENCE_CHECK`() {
         val (sm, _) = newSm()
         sm.onSpeedUpdate(20.0, gpsStale = false)
-        sm.onCadenceUpdate(80.0)
-        sm.onSample(sample(time = 1000, peak = 50.0, smoothed = 30.0, gyro = 10.0))
-        sm.onSample(sample(time = 1500, peak = 9.5))
-        sm.onSample(sample(time = 2700, peak = 9.5))
+        sm.onSample(sample(time = 1000, peak = 60.0, smoothed = 30.0, gyro = 0.5))
         sm.onSpeedUpdate(2.0, gpsStale = false)
-        sm.onCadenceUpdate(0.0)
-        val d = sm.onSample(sample(time = 3000, peak = 9.5))
+        // 600 ms after impact: deviation < 4.0, gyro < 2.0, time > 500, speed < confirm
+        val d = sm.onSample(sample(time = 1600, peak = QUIET, smoothed = QUIET, gyro = 0.5))
+        assertEquals(CrashStateMachine.State.SILENCE_CHECK, sm.state)
+        assertEquals(CrashStateMachine.Decision.None, d)
+    }
+
+    // ── 6. SILENCE_CHECK + sustained isStill for silenceDurationMs → Confirm ─
+
+    @Test
+    fun `SILENCE_CHECK with continuous stillness for full silenceDurationMs confirms`() {
+        val (sm, _) = newSm()
+        sm.onSpeedUpdate(20.0, gpsStale = false)
+        sm.onSample(sample(time = 0, peak = 60.0, smoothed = 30.0, gyro = 0.5))
+        sm.onSpeedUpdate(2.0, gpsStale = false)
+        // Enter SILENCE_CHECK at t=600 (timeSinceImpact > 500ms)
+        sm.onSample(sample(time = 600, peak = QUIET, smoothed = QUIET, gyro = 0.5))
+        assertEquals(CrashStateMachine.State.SILENCE_CHECK, sm.state)
+        // Tick quiet frames inside the silence window.
+        sm.onSample(sample(time = 2000, peak = QUIET, smoothed = QUIET, gyro = 0.5))
+        sm.onSample(sample(time = 4000, peak = QUIET, smoothed = QUIET, gyro = 0.5))
+        // silenceDurationMs = 4500; silenceStartedMs = 600 → confirm at >= 5100
+        val d = sm.onSample(sample(time = 5200, peak = QUIET, smoothed = QUIET, gyro = 0.5))
         assertEquals(CrashStateMachine.Decision.Confirm, d)
     }
 
-    @Test
-    fun `IMPACT but rider keeps pedaling returns to MONITORING`() {
-        val (sm, _) = newSm()
-        sm.onSpeedUpdate(20.0, gpsStale = false)
-        sm.onCadenceUpdate(80.0)
-        sm.onSample(sample(time = 1000, peak = 50.0, smoothed = 30.0, gyro = 10.0))
-        sm.onCadenceUpdate(75.0)   // still pedaling at the time of silence-check entry
-        sm.onSample(sample(time = 2700, peak = 9.5))
-        // Decision must NOT confirm; state should be back to MONITORING because cadence
-        // active during silence-check window means the rider is fine.
-        val d = sm.onSample(sample(time = 3000, peak = 9.5))
-        assertEquals(CrashStateMachine.State.MONITORING, sm.state)
-        assertTrue(d !is CrashStateMachine.Decision.Confirm)
-    }
+    // ── 7. SILENCE_CHECK GPS-stale uses hardened thresholds ──────────────────
 
     @Test
-    fun `stale cadence is treated as zero so it does not save the rider`() {
-        // Cadence sensor disconnected mid-ride: last update was 80 rpm but it's now
-        // older than thresholds.cadenceStaleThresholdMs. The state machine must NOT
-        // use that stale reading to short-circuit the silence check.
+    fun `SILENCE_CHECK GPS-stale path uses gpsStaleSilenceDurationMs and gpsStaleSilenceDeviationMax`() {
+        // With crashConfirmSpeedKmh=0 the speed gate is disabled — required so we can
+        // get past the MONITORING entry gate at speed=0. We still flip gpsStale on the
+        // *subsequent* speed update so the IMPACT/SILENCE_CHECK path uses hardened thresholds.
+        val (sm, _) = newSm(
+            thresholds = Thresholds(crashConfirmSpeedKmh = 0, minSpeedForCrashKmh = 0)
+        )
+        sm.onSpeedUpdate(0.0, gpsStale = true)
+        sm.onSample(sample(time = 0, peak = 60.0, smoothed = 30.0, gyro = 0.5))
+        // Magnitude well inside the GPS-stale 1.5 deviation max (|9.80-9.81|=0.01)
+        sm.onSample(sample(time = 600, peak = QUIET, smoothed = QUIET, gyro = 0.5))
+        assertEquals(CrashStateMachine.State.SILENCE_CHECK, sm.state)
+
+        // Just shy of gpsStaleSilenceDurationMs (8000) — must NOT confirm yet.
+        val notYet = sm.onSample(sample(time = 8000, peak = QUIET, smoothed = QUIET, gyro = 0.5))
+        // silenceStartedMs = 600; elapsed at t=8000 → 7400 < 8000 → no confirm
+        assertEquals(CrashStateMachine.Decision.None, notYet)
+
+        // Past the gpsStaleSilenceDurationMs window — should confirm.
+        val confirmed = sm.onSample(sample(time = 8700, peak = QUIET, smoothed = QUIET, gyro = 0.5))
+        assertEquals(CrashStateMachine.Decision.Confirm, confirmed)
+    }
+
+    // ── 7b. SILENCE_CHECK GPS-stale uses stricter deviation max (1.5 m/s²) ───
+
+    @Test
+    fun `SILENCE_CHECK GPS-stale rejects samples deviating more than the hardened max`() {
+        val (sm, _) = newSm(
+            thresholds = Thresholds(crashConfirmSpeedKmh = 0, minSpeedForCrashKmh = 0)
+        )
+        sm.onSpeedUpdate(0.0, gpsStale = true)
+        sm.onSample(sample(time = 0, peak = 60.0, smoothed = 30.0, gyro = 0.5))
+        // Magnitude = 11.5 → deviation = 1.69 > 1.5 (gpsStaleSilenceDeviationMax)
+        // Must NOT enter SILENCE_CHECK.
+        sm.onSample(sample(time = 600, peak = 11.5, smoothed = 11.5, gyro = 0.5))
+        assertEquals(CrashStateMachine.State.IMPACT, sm.state)
+    }
+
+    // ── 8. SILENCE_CHECK isStill interrupted mid-way → timer resets ──────────
+
+    @Test
+    fun `SILENCE_CHECK isStill interrupted resets silence timer but stays in SILENCE_CHECK`() {
+        val (sm, _) = newSm()
+        sm.onSpeedUpdate(20.0, gpsStale = false)
+        sm.onSample(sample(time = 0, peak = 60.0, smoothed = 30.0, gyro = 0.5))
+        sm.onSpeedUpdate(2.0, gpsStale = false)
+        sm.onSample(sample(time = 600, peak = QUIET, smoothed = QUIET, gyro = 0.5))
+        assertEquals(CrashStateMachine.State.SILENCE_CHECK, sm.state)
+
+        // Spike mid-silence at t=2000 (deviation > 4.0) — resets timer.
+        sm.onSample(sample(time = 2000, peak = 15.0, smoothed = 15.0, gyro = 0.5))
+        assertEquals(CrashStateMachine.State.SILENCE_CHECK, sm.state)
+
+        // At t=5500 — elapsed since reset = 3500 ms < 4500 → still NOT confirmed.
+        // Continuous (not cumulative) stillness required.
+        val notYet = sm.onSample(sample(time = 5500, peak = QUIET, smoothed = QUIET, gyro = 0.5))
+        assertEquals(CrashStateMachine.Decision.None, notYet)
+    }
+
+    // ── 9. SILENCE_CHECK never settles within doubled window → MONITORING ────
+
+    @Test
+    fun `SILENCE_CHECK not-still beyond impactWindow times two returns to MONITORING`() {
+        val (sm, _) = newSm()
+        sm.onSpeedUpdate(20.0, gpsStale = false)
+        sm.onSample(sample(time = 0, peak = 60.0, smoothed = 30.0, gyro = 0.5))
+        sm.onSpeedUpdate(2.0, gpsStale = false)
+        sm.onSample(sample(time = 600, peak = QUIET, smoothed = QUIET, gyro = 0.5))
+        assertEquals(CrashStateMachine.State.SILENCE_CHECK, sm.state)
+
+        // impactWindowMs = 20_000; doubled window = 40_000.
+        // Keep hitting the timer-reset branch within the doubled window…
+        sm.onSample(sample(time = 20_000, peak = 15.0, smoothed = 15.0, gyro = 0.5))
+        // …then a !isStill sample BEYOND the doubled window.
+        val d = sm.onSample(sample(time = 40_100, peak = 15.0, smoothed = 15.0, gyro = 0.5))
+        assertEquals(CrashStateMachine.Decision.ReturnToMonitoring, d)
+        assertEquals(CrashStateMachine.State.MONITORING, sm.state)
+    }
+
+    // ── 10. IMPACT but rider keeps pedalling → confirmation blocked ──────────
+
+    @Test
+    fun `cadence active in SILENCE_CHECK forces false-alarm exit`() {
+        val (sm, _) = newSm()
+        sm.onSpeedUpdate(20.0, gpsStale = false)
+        sm.onCadenceUpdate(80.0)  // fresh, > 20 RPM
+        sm.onSample(sample(time = 0, peak = 60.0, smoothed = 30.0, gyro = 0.5))
+        sm.onSpeedUpdate(2.0, gpsStale = false)
+        // Touch cadence again so its sample-time is current (cadence stays fresh).
+        sm.onCadenceUpdate(75.0)
+        sm.onSample(sample(time = 600, peak = QUIET, smoothed = QUIET, gyro = 0.5))
+        assertEquals(CrashStateMachine.State.SILENCE_CHECK, sm.state)
+        sm.onCadenceUpdate(75.0)
+        val d = sm.onSample(sample(time = 1000, peak = QUIET, smoothed = QUIET, gyro = 0.5))
+        // Cadence > 20 RPM in SILENCE_CHECK → instant false-alarm exit.
+        assertEquals(CrashStateMachine.State.MONITORING, sm.state)
+        assertNotEquals(CrashStateMachine.Decision.Confirm, d)
+    }
+
+    // ── 11. Stale cadence treated as zero — does NOT save the rider ──────────
+
+    @Test
+    fun `stale cadence is treated as zero and does not block confirmation`() {
         val (sm, _) = newSm(thresholds = Thresholds(cadenceStaleThresholdMs = 1_000L))
         sm.onSpeedUpdate(20.0, gpsStale = false)
-        sm.onCadenceUpdate(80.0)
-        sm.onSample(sample(time = 0, peak = 50.0, smoothed = 30.0, gyro = 10.0))
-        // 2 seconds later (> cadenceStaleThresholdMs) — cadence is stale
-        sm.onSample(sample(time = 2000, peak = 9.5))
+        sm.onCadenceUpdate(80.0)  // logged at lastSampleMs == 0
+        sm.onSample(sample(time = 0, peak = 60.0, smoothed = 30.0, gyro = 0.5))
         sm.onSpeedUpdate(2.0, gpsStale = false)
-        val d = sm.onSample(sample(time = 3000, peak = 9.5))
+        // 600 ms later → cadence age = 600 < 1000, still fresh. Refresh sample.
+        sm.onSample(sample(time = 600, peak = QUIET, smoothed = QUIET, gyro = 0.5))
+        // Now we're in SILENCE_CHECK. Don't touch cadence so it goes stale.
+        // 2_000 ms later — cadence age now 2000 > 1000 → treated as zero.
+        sm.onSample(sample(time = 2_000, peak = QUIET, smoothed = QUIET, gyro = 0.5))
+        // silenceStartedMs = 600 → need ≥ 5100 for 4500-ms window.
+        val d = sm.onSample(sample(time = 5_200, peak = QUIET, smoothed = QUIET, gyro = 0.5))
         assertEquals(CrashStateMachine.Decision.Confirm, d)
     }
+
+    // ── 12. Cold-start guard blocks confirmation when speed never received ───
+
+    @Test
+    fun `cold-start guard blocks confirmation when no speed update received yet`() {
+        // Start with the wall clock at 0 so we are INSIDE the cold-start guard window.
+        val (sm, _) = newSm(
+            thresholds = Thresholds(minSpeedForCrashKmh = 0),
+            initialWallMs = 0L,
+        )
+        // No onSpeedUpdate call at all → speedLastUpdatedAtMs stays NEVER.
+        sm.onSample(sample(time = 0, peak = 60.0, smoothed = 30.0, gyro = 0.5))
+        // Even with all other conditions met, isSpeedDropConfirmed must return false.
+        // Quiet samples for 5+ seconds in sample-time, but wall-clock is still 0 (clock fixed).
+        sm.onSample(sample(time = 600, peak = QUIET, smoothed = QUIET, gyro = 0.5))
+        // Should NOT have entered SILENCE_CHECK — speed-drop guard blocks the 4th condition.
+        assertEquals(CrashStateMachine.State.IMPACT, sm.state)
+        val d = sm.onSample(sample(time = 5_500, peak = QUIET, smoothed = QUIET, gyro = 0.5))
+        assertNotEquals(CrashStateMachine.Decision.Confirm, d)
+    }
+
+    // ── 13. crashConfirmSpeedKmh = 0 disables the confirm gate ───────────────
+
+    @Test
+    fun `crashConfirmSpeedKmh equal to zero disables the confirmation speed gate`() {
+        val (sm, _) = newSm(thresholds = Thresholds(crashConfirmSpeedKmh = 0))
+        sm.onSpeedUpdate(20.0, gpsStale = false)  // speed never drops!
+        sm.onSample(sample(time = 0, peak = 60.0, smoothed = 30.0, gyro = 0.5))
+        // Keep speed high — the speed gate is disabled, so this must not block confirmation.
+        sm.onSample(sample(time = 600, peak = QUIET, smoothed = QUIET, gyro = 0.5))
+        assertEquals(CrashStateMachine.State.SILENCE_CHECK, sm.state)
+        val d = sm.onSample(sample(time = 5_200, peak = QUIET, smoothed = QUIET, gyro = 0.5))
+        assertEquals(CrashStateMachine.Decision.Confirm, d)
+    }
+
+    // ── 14. minSpeedForCrashKmh = 0 lets IMPACT entry happen even at speed=0 ─
+
+    @Test
+    fun `minSpeedForCrashKmh equal to zero disables the MONITORING entry speed gate`() {
+        val (sm, _) = newSm(thresholds = Thresholds(minSpeedForCrashKmh = 0))
+        sm.onSpeedUpdate(0.0, gpsStale = false)
+        val d = sm.onSample(sample(time = 1000, peak = 60.0, smoothed = 30.0, gyro = 0.5))
+        assertTrue("expected EnterImpact, got $d", d is CrashStateMachine.Decision.EnterImpact)
+        assertEquals(CrashStateMachine.State.IMPACT, sm.state)
+    }
+
+    // ── 15. onPause resets state machine to MONITORING ───────────────────────
 
     @Test
     fun `onPause while in IMPACT resets to MONITORING`() {
         val (sm, _) = newSm()
         sm.onSpeedUpdate(20.0, gpsStale = false)
-        sm.onSample(sample(time = 1000, peak = 50.0, smoothed = 30.0, gyro = 10.0))
+        sm.onSample(sample(time = 1000, peak = 60.0, smoothed = 30.0, gyro = 0.5))
         assertEquals(CrashStateMachine.State.IMPACT, sm.state)
         sm.onPause()
         assertEquals(CrashStateMachine.State.MONITORING, sm.state)
     }
 
+    // ── 16. IMPACT timeout → MONITORING ──────────────────────────────────────
+
     @Test
-    fun `GPS stale plus crashConfirmSpeed equals 0 still confirms`() {
-        // Documented behaviour in the algorithm doc: if the user accepts the trade-off of
-        // setting crashConfirmSpeed=0 and the GPS is stale, the speed gate is treated as
-        // "passing" so an outside-ride impact can still confirm.
-        val (sm, _) = newSm(thresholds = Thresholds(crashConfirmSpeedKmh = 0))
-        sm.onSpeedUpdate(0.0, gpsStale = true)
-        sm.onSample(sample(time = 1000, peak = 50.0, smoothed = 30.0, gyro = 10.0))
-        sm.onSample(sample(time = 1500, peak = 9.5))
-        val d = sm.onSample(sample(time = 3000, peak = 9.5))
-        assertEquals(CrashStateMachine.Decision.Confirm, d)
+    fun `IMPACT timeout after impactWindowMs returns to MONITORING`() {
+        // Speed never drops, so SILENCE_CHECK entry is blocked. Should time out.
+        val (sm, _) = newSm()
+        sm.onSpeedUpdate(20.0, gpsStale = false)
+        sm.onSample(sample(time = 0, peak = 60.0, smoothed = 30.0, gyro = 0.5))
+        assertEquals(CrashStateMachine.State.IMPACT, sm.state)
+        // 20_001 ms later — past impactWindowMs default 20_000.
+        val d = sm.onSample(sample(time = 20_001, peak = QUIET, smoothed = QUIET, gyro = 0.5))
+        assertEquals(CrashStateMachine.Decision.ReturnToMonitoring, d)
+        assertEquals(CrashStateMachine.State.MONITORING, sm.state)
+    }
+
+    // ── 17. Gyro > gyroMovingMax blocks IMPACT → SILENCE_CHECK entry ────────
+
+    @Test
+    fun `gyro above gyroMovingMax blocks SILENCE_CHECK entry`() {
+        val (sm, _) = newSm()
+        sm.onSpeedUpdate(20.0, gpsStale = false)
+        sm.onSample(sample(time = 0, peak = 60.0, smoothed = 30.0, gyro = 0.5))
+        sm.onSpeedUpdate(2.0, gpsStale = false)
+        // Accel quiet, speed dropped, time>500 — but gyro = 3.0 > 2.0 → blocked.
+        sm.onSample(sample(time = 600, peak = QUIET, smoothed = QUIET, gyro = 3.0))
+        assertEquals(CrashStateMachine.State.IMPACT, sm.state)
     }
 }
