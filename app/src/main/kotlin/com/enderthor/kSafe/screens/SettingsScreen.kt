@@ -13,7 +13,6 @@ import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -37,57 +36,38 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.withContext
 
 /**
- * Tools tab — non-safety configuration and one-shot actions.
+ * Settings tab — global configuration and maintenance actions.
  *
  * Contents:
- *   - Karoo Live notifications (start/end ride messages with optional live-tracking key)
- *   - Notification tests (ride start, ride end, simulate crash with confirmation)
- *   - FIT export toggle (moved from FuelingScreen — conceptually about ride export, not fueling)
+ *   - Master enable switch (kill-switch for the whole extension)
+ *   - Test alerts (Simulate Crash with confirmation)
+ *   - FIT export toggle (writes fueling totals into the recorded FIT)
  *   - Calibration logging (opt-in sensor capture for algorithm tuning)
- *   - Backup & restore (export / import config JSON)
+ *   - Backup & restore (config JSON via app-specific external storage)
  *
- * The dangerous "Simulate Crash" button uses [TestActionButton]'s [ConfirmConfig] hook so a
- * gloved tap can't fire a real emergency message by accident.
+ * Per-feature toggles live on their feature tab — disable crash detection in Safety,
+ * disable Health in Health, etc. The master switch here disables EVERYTHING at once.
  */
 @Composable
-fun ToolsScreen(vm: MainViewModel) {
+fun SettingsScreen(vm: MainViewModel) {
     val config by vm.config.collectAsState()
     val context = LocalContext.current
 
-    // ── Karoo Live state ──────────────────────────────────────────────────
-    var karooLiveEnabled      by remember(config.karooLiveEnabled)         { mutableStateOf(config.karooLiveEnabled) }
-    var karooLiveKey          by remember(config.karooLiveKey)             { mutableStateOf(config.karooLiveKey) }
-    var karooLiveStartMessage by remember(config.karooLiveStartMessage)    { mutableStateOf(config.karooLiveStartMessage) }
-    var karooLiveEndEnabled   by remember(config.karooLiveEndEnabled)      { mutableStateOf(config.karooLiveEndEnabled) }
-    var karooLiveEndMessage   by remember(config.karooLiveEndMessage)      { mutableStateOf(config.karooLiveEndMessage) }
-
-    // ── FIT export state ──────────────────────────────────────────────────
-    var fitExportEnabled by remember(config.fuelingFitExportEnabled) { mutableStateOf(config.fuelingFitExportEnabled) }
-
-    // ── Calibration logging state ────────────────────────────────────────
+    var isActive          by remember(config.isActive)                  { mutableStateOf(config.isActive) }
+    var fitExportEnabled  by remember(config.fuelingFitExportEnabled)   { mutableStateOf(config.fuelingFitExportEnabled) }
     var calibrationLogging by remember(config.calibrationLoggingEnabled) { mutableStateOf(config.calibrationLoggingEnabled) }
     var calibLogInfo       by remember { mutableStateOf("") }
     var calibLogNote       by remember { mutableStateOf("") }
     var calibLogNoteIsError by remember { mutableStateOf(false) }
 
-    // ── Backup files ─────────────────────────────────────────────────────
     val exportFile = java.io.File(context.getExternalFilesDir(null), "ksafe_export.json")
     val importFile = java.io.File(context.getExternalFilesDir(null), "ksafe_import.json")
 
-    // Auto-save Karoo Live + FIT toggle (calibrationLogging saves on change directly).
-    LaunchedEffect(
-        karooLiveEnabled, karooLiveKey, karooLiveStartMessage,
-        karooLiveEndEnabled, karooLiveEndMessage,
-        fitExportEnabled,
-    ) {
+    LaunchedEffect(isActive, fitExportEnabled) {
         delay(600)
         vm.saveConfig(
             config.copy(
-                karooLiveEnabled        = karooLiveEnabled,
-                karooLiveKey            = karooLiveKey.trim(),
-                karooLiveStartMessage   = karooLiveStartMessage,
-                karooLiveEndEnabled     = karooLiveEndEnabled,
-                karooLiveEndMessage     = karooLiveEndMessage,
+                isActive                = isActive,
                 fuelingFitExportEnabled = fitExportEnabled,
             )
         )
@@ -101,106 +81,50 @@ fun ToolsScreen(vm: MainViewModel) {
         verticalArrangement = Arrangement.spacedBy(12.dp)
     ) {
         Text(
-            text = stringResource(R.string.tools_title),
+            text = stringResource(R.string.settings_screen_title),
             style = MaterialTheme.typography.titleMedium,
             fontWeight = FontWeight.Bold
         )
 
-        // ── Karoo Live ────────────────────────────────────────────────────
+        // ── Master enable ─────────────────────────────────────────────────
         Card(
             modifier = Modifier.fillMaxWidth(),
             colors = CardDefaults.cardColors(
-                containerColor = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.35f)
+                containerColor = MaterialTheme.colorScheme.errorContainer.copy(alpha = 0.25f)
             )
         ) {
             Column(
                 modifier = Modifier.padding(12.dp),
-                verticalArrangement = Arrangement.spacedBy(10.dp)
+                verticalArrangement = Arrangement.spacedBy(8.dp)
             ) {
                 Text(
-                    text = stringResource(R.string.tools_section_karoo_live),
+                    text = stringResource(R.string.settings_section_master),
                     style = MaterialTheme.typography.titleSmall,
                     fontWeight = FontWeight.Bold,
-                    color = MaterialTheme.colorScheme.primary
                 )
-                SettingRow(label = stringResource(R.string.karoo_live_label)) {
-                    Switch(checked = karooLiveEnabled, onCheckedChange = { karooLiveEnabled = it })
+                SettingRow(label = stringResource(R.string.active_label)) {
+                    Switch(checked = isActive, onCheckedChange = { isActive = it })
                 }
-                if (karooLiveEnabled) {
-                    Text(
-                        text = stringResource(R.string.karoo_live_hint),
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                    OutlinedTextField(
-                        value = karooLiveKey,
-                        onValueChange = { karooLiveKey = it },
-                        label = { Text(stringResource(R.string.karoo_live_key_label)) },
-                        placeholder = { Text("e.g. 3738Ag") },
-                        modifier = Modifier.fillMaxWidth(),
-                        singleLine = true,
-                        supportingText = { Text(stringResource(R.string.karoo_live_supporting)) }
-                    )
-                    OutlinedTextField(
-                        value = karooLiveStartMessage,
-                        onValueChange = { karooLiveStartMessage = it },
-                        label = { Text(stringResource(R.string.karoo_live_message_label)) },
-                        modifier = Modifier.fillMaxWidth(),
-                        minLines = 2,
-                        supportingText = { Text(stringResource(R.string.karoo_live_message_hint)) }
-                    )
-                }
-
-                HorizontalDivider(modifier = Modifier.padding(vertical = 4.dp))
-
-                SettingRow(label = stringResource(R.string.karoo_live_end_label)) {
-                    Switch(checked = karooLiveEndEnabled, onCheckedChange = { karooLiveEndEnabled = it })
-                }
-                if (karooLiveEndEnabled) {
-                    OutlinedTextField(
-                        value = karooLiveEndMessage,
-                        onValueChange = { karooLiveEndMessage = it },
-                        label = { Text(stringResource(R.string.karoo_live_end_message_label)) },
-                        modifier = Modifier.fillMaxWidth(),
-                        minLines = 2,
-                        supportingText = { Text(stringResource(R.string.karoo_live_end_message_hint)) }
-                    )
-                }
+                Text(
+                    text = stringResource(R.string.settings_master_hint),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
             }
         }
 
         HorizontalDivider()
 
-        // ── Notification tests ────────────────────────────────────────────
+        // ── Test alerts ───────────────────────────────────────────────────
         Text(
-            text = stringResource(R.string.tools_section_tests),
+            text = stringResource(R.string.settings_section_tests),
             style = MaterialTheme.typography.titleSmall,
             fontWeight = FontWeight.Bold,
             color = MaterialTheme.colorScheme.onSurfaceVariant
         )
 
-        TestActionButton(
-            label = "Test ride start notification",
-            isSuccess = { it.startsWith("Ride start message sent") },
-            onAction = {
-                val ext = KSafeExtension.getInstance()
-                    ?: return@TestActionButton "Extension not connected — wait a moment and try again."
-                ext.sendTestRideStart()
-            }
-        )
-
-        TestActionButton(
-            label = stringResource(R.string.test_ride_end_notification),
-            isSuccess = { it.startsWith("Ride end message sent") },
-            onAction = {
-                val ext = KSafeExtension.getInstance()
-                    ?: return@TestActionButton "Extension not connected — wait a moment and try again."
-                ext.sendTestRideEnd()
-            }
-        )
-
-        // Simulate Crash — sends the real emergency message; guard with a confirmation dialog
-        // so a gloved tap during a settings review can't fire it accidentally.
+        // Real-world emergency message via the active provider. Confirm dialog avoids gloved
+        // double-taps during a settings review from firing a real alert.
         TestActionButton(
             label = stringResource(R.string.simulate_crash_label),
             colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFB71C1C)),
@@ -222,7 +146,7 @@ fun ToolsScreen(vm: MainViewModel) {
 
         // ── FIT export ────────────────────────────────────────────────────
         Text(
-            text = stringResource(R.string.tools_section_fit),
+            text = stringResource(R.string.settings_section_fit),
             style = MaterialTheme.typography.titleSmall,
             fontWeight = FontWeight.Bold,
             color = MaterialTheme.colorScheme.onSurfaceVariant
@@ -265,7 +189,6 @@ fun ToolsScreen(vm: MainViewModel) {
         }
 
         if (calibrationLogging) {
-            // Refresh entry count every 5s while logging is on.
             LaunchedEffect(calibrationLogging) {
                 while (calibrationLogging) {
                     calibLogInfo = KSafeExtension.getInstance()?.getCalibrationLogInfo() ?: ""
@@ -284,7 +207,6 @@ fun ToolsScreen(vm: MainViewModel) {
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.spacedBy(8.dp)
             ) {
-                // Send button has its own status, so it's its own TestActionButton column.
                 Column(modifier = Modifier.weight(1f)) {
                     TestActionButton(
                         label = stringResource(R.string.calibration_send),
@@ -330,7 +252,7 @@ fun ToolsScreen(vm: MainViewModel) {
 
         // ── Backup / Restore ──────────────────────────────────────────────
         Text(
-            text = stringResource(R.string.tools_section_backup),
+            text = stringResource(R.string.settings_section_backup),
             style = MaterialTheme.typography.titleSmall,
             fontWeight = FontWeight.Bold,
             color = MaterialTheme.colorScheme.onSurfaceVariant

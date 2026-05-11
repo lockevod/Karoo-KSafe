@@ -45,7 +45,6 @@ import kotlinx.coroutines.delay
 fun SafetyScreen(vm: MainViewModel) {
     val config by vm.config.collectAsState()
 
-    var isActive           by remember(config.isActive)                   { mutableStateOf(config.isActive) }
     var emergencyMessage   by remember(config.emergencyMessage)            { mutableStateOf(config.emergencyMessage) }
     var countdownSeconds   by remember(config.countdownSeconds)            { mutableStateOf(config.countdownSeconds.toString()) }
 
@@ -69,7 +68,7 @@ fun SafetyScreen(vm: MainViewModel) {
     // Auto-save: runs whenever any setting changes, with a short debounce for text fields.
     // Karoo Live + calibration + backup live in ToolsScreen now and own their own save loops.
     LaunchedEffect(
-        isActive, emergencyMessage, countdownSeconds,
+        emergencyMessage, countdownSeconds,
         crashEnabled, crashSensitivity, minSpeedForCrash, customThreshold, crashConfirmSpeed,
         crashOutsideRide, crashOutsideRideAny,
         speedDropEnabled, speedDropMinutes,
@@ -79,7 +78,6 @@ fun SafetyScreen(vm: MainViewModel) {
         delay(600)
         vm.saveConfig(
             config.copy(
-                isActive                = isActive,
                 emergencyMessage        = emergencyMessage,
                 countdownSeconds        = countdownSeconds.toIntOrNull() ?: 30,
                 crashDetectionEnabled   = crashEnabled,
@@ -111,13 +109,6 @@ fun SafetyScreen(vm: MainViewModel) {
             style = MaterialTheme.typography.titleMedium,
             fontWeight = FontWeight.Bold
         )
-
-        // Extension active toggle
-        SettingRow(label = stringResource(R.string.active_label)) {
-            Switch(checked = isActive, onCheckedChange = { isActive = it })
-        }
-
-        HorizontalDivider()
 
         Text(
             text = stringResource(R.string.section_safety),

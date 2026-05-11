@@ -88,7 +88,12 @@ fun ActionsScreen(vm: MainViewModel) {
     var webhook1Color by remember(config.webhook1Color) { mutableStateOf(config.webhook1Color) }
     var webhook2Color by remember(config.webhook2Color) { mutableStateOf(config.webhook2Color) }
 
-    // ── Status states ─────────────────────────────────────────────────────────
+    // ── Karoo Live notifications ──────────────────────────────────────────────
+    var karooLiveEnabled      by remember(config.karooLiveEnabled)         { mutableStateOf(config.karooLiveEnabled) }
+    var karooLiveKey          by remember(config.karooLiveKey)             { mutableStateOf(config.karooLiveKey) }
+    var karooLiveStartMessage by remember(config.karooLiveStartMessage)    { mutableStateOf(config.karooLiveStartMessage) }
+    var karooLiveEndEnabled   by remember(config.karooLiveEndEnabled)      { mutableStateOf(config.karooLiveEndEnabled) }
+    var karooLiveEndMessage   by remember(config.karooLiveEndMessage)      { mutableStateOf(config.karooLiveEndMessage) }
 
     // Auto-save with debounce — all fields managed by this screen
     LaunchedEffect(
@@ -103,6 +108,8 @@ fun ActionsScreen(vm: MainViewModel) {
         webhook2GeoEnabled, webhook2GeoLat, webhook2GeoLon, webhook2GeoRadius,
         webhook2AlertEnabled, webhook2AlertText,
         webhook1Color, webhook2Color,
+        karooLiveEnabled, karooLiveKey, karooLiveStartMessage,
+        karooLiveEndEnabled, karooLiveEndMessage,
     ) {
         delay(600)
         vm.saveConfig(
@@ -145,6 +152,11 @@ fun ActionsScreen(vm: MainViewModel) {
                 webhook2AlertText    = webhook2AlertText,
                 webhook1Color        = webhook1Color,
                 webhook2Color        = webhook2Color,
+                karooLiveEnabled        = karooLiveEnabled,
+                karooLiveKey            = karooLiveKey.trim(),
+                karooLiveStartMessage   = karooLiveStartMessage,
+                karooLiveEndEnabled     = karooLiveEndEnabled,
+                karooLiveEndMessage     = karooLiveEndMessage,
             )
         )
     }
@@ -161,6 +173,100 @@ fun ActionsScreen(vm: MainViewModel) {
             style = MaterialTheme.typography.titleMedium,
             fontWeight = FontWeight.Bold
         )
+
+        // ── Karoo Live ────────────────────────────────────────────────────────
+        // Lives in Actions because "notify contacts on ride start/end" is conceptually a
+        // notification action, paired with the test buttons that fire those notifications.
+        Card(
+            modifier = Modifier.fillMaxWidth(),
+            colors = CardDefaults.cardColors(
+                containerColor = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.35f)
+            )
+        ) {
+            Column(
+                modifier = Modifier.padding(12.dp),
+                verticalArrangement = Arrangement.spacedBy(10.dp)
+            ) {
+                Text(
+                    text = stringResource(R.string.actions_section_karoo_live),
+                    style = MaterialTheme.typography.titleSmall,
+                    fontWeight = FontWeight.Bold,
+                    color = MaterialTheme.colorScheme.primary
+                )
+                ActionSettingRow(label = stringResource(R.string.karoo_live_label)) {
+                    Switch(checked = karooLiveEnabled, onCheckedChange = { karooLiveEnabled = it })
+                }
+                if (karooLiveEnabled) {
+                    Text(
+                        text = stringResource(R.string.karoo_live_hint),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    OutlinedTextField(
+                        value = karooLiveKey,
+                        onValueChange = { karooLiveKey = it },
+                        label = { Text(stringResource(R.string.karoo_live_key_label)) },
+                        placeholder = { Text("e.g. 3738Ag") },
+                        modifier = Modifier.fillMaxWidth(),
+                        singleLine = true,
+                        supportingText = { Text(stringResource(R.string.karoo_live_supporting)) }
+                    )
+                    OutlinedTextField(
+                        value = karooLiveStartMessage,
+                        onValueChange = { karooLiveStartMessage = it },
+                        label = { Text(stringResource(R.string.karoo_live_message_label)) },
+                        modifier = Modifier.fillMaxWidth(),
+                        minLines = 2,
+                        supportingText = { Text(stringResource(R.string.karoo_live_message_hint)) }
+                    )
+                }
+
+                HorizontalDivider(modifier = Modifier.padding(vertical = 4.dp))
+
+                ActionSettingRow(label = stringResource(R.string.karoo_live_end_label)) {
+                    Switch(checked = karooLiveEndEnabled, onCheckedChange = { karooLiveEndEnabled = it })
+                }
+                if (karooLiveEndEnabled) {
+                    OutlinedTextField(
+                        value = karooLiveEndMessage,
+                        onValueChange = { karooLiveEndMessage = it },
+                        label = { Text(stringResource(R.string.karoo_live_end_message_label)) },
+                        modifier = Modifier.fillMaxWidth(),
+                        minLines = 2,
+                        supportingText = { Text(stringResource(R.string.karoo_live_end_message_hint)) }
+                    )
+                }
+
+                HorizontalDivider(modifier = Modifier.padding(vertical = 4.dp))
+
+                // Tests pair with the Karoo Live card — they fire the same start/end messages
+                // through the active provider so the rider can verify the channel works.
+                Text(
+                    text = stringResource(R.string.actions_section_karoo_live_tests),
+                    style = MaterialTheme.typography.bodySmall,
+                    fontWeight = FontWeight.Bold,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                TestActionButton(
+                    label = "Test ride start notification",
+                    isSuccess = { it.startsWith("Ride start message sent") },
+                    onAction = {
+                        val ext = KSafeExtension.getInstance()
+                            ?: return@TestActionButton "Extension not connected — wait a moment and try again."
+                        ext.sendTestRideStart()
+                    }
+                )
+                TestActionButton(
+                    label = stringResource(R.string.test_ride_end_notification),
+                    isSuccess = { it.startsWith("Ride end message sent") },
+                    onAction = {
+                        val ext = KSafeExtension.getInstance()
+                            ?: return@TestActionButton "Extension not connected — wait a moment and try again."
+                        ext.sendTestRideEnd()
+                    }
+                )
+            }
+        }
 
         // ── Custom Messages card ──────────────────────────────────────────────
         Card(
