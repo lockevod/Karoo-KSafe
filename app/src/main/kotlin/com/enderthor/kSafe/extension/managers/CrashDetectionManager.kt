@@ -356,7 +356,11 @@ class CrashDetectionManager(
             }
             is CrashStateMachine.Decision.Confirm -> {
                 logCrashConfirmed(sample)
-                confirmCrash(CrashSource.IMPACT_CONFIRMED)
+                // alreadyLogged=true: logCrashConfirmed already emitted the canonical
+                // CRASH_CONFIRMED row with full context. confirmCrash must NOT emit a
+                // duplicate (gate-level) CRASH_CONFIRMED for the IMPACT_CONFIRMED path
+                // or downstream consumers that count crashes will double-count.
+                confirmCrash(CrashSource.IMPACT_CONFIRMED, alreadyLogged = true)
             }
             is CrashStateMachine.Decision.ReturnToMonitoring -> {
                 handleReturnToMonitoring(priorState, sample, now)
@@ -671,18 +675,29 @@ class CrashDetectionManager(
 
     /**
      * Single exit for every confirmation path. Applies cooldown and updates [lastCrashTime].
+     *
+     * [alreadyLogged] indicates whether the caller already emitted a rich CRASH_CONFIRMED
+     * row via [logCrashConfirmed]. The IMPACT_CONFIRMED path does, so we MUST NOT emit a
+     * second CRASH_CONFIRMED here (downstream consumers count rows). The SPEED_DROP path
+     * does not — it routes straight here, so we emit the canonical row from this gate.
+     *
+     * Cooldown-suppressed events are emitted under CRASH_GATE_SUPPRESSED so the
+     * calibration log captures the "would-confirm-but-cooldown" event distinctly
+     * without inflating confirmed-crash counts.
      */
-    private fun confirmCrash(source: CrashSource) {
+    private fun confirmCrash(source: CrashSource, alreadyLogged: Boolean = false) {
         val now = clock.nowMs()
         if ((now - lastCrashTime) <= crashCooldownMs) {
             Timber.d("Confirm $source suppressed — within cooldown window")
-            calibLogger?.log(CalibrationLogger.Event.CRASH_CONFIRMED) {
+            calibLogger?.log(CalibrationLogger.Event.CRASH_GATE_SUPPRESSED) {
                 "source=$source,suppressed_by=cooldown,since_last_ms=${now - lastCrashTime}"
             }
             return
         }
         lastCrashTime = now
-        calibLogger?.log(CalibrationLogger.Event.CRASH_CONFIRMED) { "source=$source" }
+        if (!alreadyLogged) {
+            calibLogger?.log(CalibrationLogger.Event.CRASH_CONFIRMED) { "source=$source" }
+        }
         scope.launch { onCrashDetected() }
     }
 }

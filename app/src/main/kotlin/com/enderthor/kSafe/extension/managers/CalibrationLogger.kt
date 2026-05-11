@@ -62,6 +62,12 @@ class CalibrationLogger(
         /** Crash confirmed — full pipeline completed. */
         CRASH_CONFIRMED("CRASH_OK"),
         /**
+         * Confirmation arrived at the cooldown gate but was suppressed because the
+         * previous CRASH_CONFIRMED is still inside the cooldown window. Distinct from
+         * CRASH_CONFIRMED so consumers counting confirmed-crash rows are not inflated.
+         */
+        CRASH_GATE_SUPPRESSED("CRASH_SUPPRESSED"),
+        /**
          * User cancelled the crash countdown — this is a CONFIRMED FALSE POSITIVE.
          * Pairing with the preceding CRASH_OK row identifies exactly which detections were wrong.
          * how_long_ms: time between CRASH_OK and user tap — near-zero means obvious false alarm.
