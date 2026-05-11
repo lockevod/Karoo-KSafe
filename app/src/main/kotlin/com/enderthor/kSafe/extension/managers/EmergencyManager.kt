@@ -311,6 +311,7 @@ class EmergencyManager(
         val countdownState = EmergencyState(
             status = EmergencyStatus.COUNTDOWN,
             reason = reason.label,
+            reasonEnum = reason,                               // persisted so decideResume() can recover
             countdownStartTime = startTime,
             countdownDurationSeconds = config.countdownSeconds,
             checkinEnabled = config.checkinEnabled,
