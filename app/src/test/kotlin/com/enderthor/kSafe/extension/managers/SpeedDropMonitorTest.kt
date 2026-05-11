@@ -28,7 +28,7 @@ class SpeedDropMonitorTest {
         val clock = Clock { currentTime }
         val confirms = mutableListOf<Unit>()
         val monitor = SpeedDropMonitor(
-            scope = this,
+            scope = this.backgroundScope,
             clock = clock,
             accelStillSinceProvider = { accelStillSinceMs },
             cooldownGate = { cooldownOk },

@@ -2,7 +2,6 @@ package com.enderthor.kSafe.extension.managers
 
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
-import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
@@ -29,16 +28,13 @@ class SpeedDropMonitor(
     @Volatile private var stoppedMinutesRequired: Int = 5
     private var job: Job? = null
 
-    /** Own scope decoupled from parent so the poll loop is not a child of the caller's scope. */
-    private val ownScope = CoroutineScope(scope.coroutineContext + SupervisorJob())
-
     /** True iff the monitor is currently inside a zero-speed window. Used only by tests. */
     fun isTracking(): Boolean = startedAtMs > 0L
 
     fun start(stoppedMinutesRequired: Int) {
         this.stoppedMinutesRequired = stoppedMinutesRequired
         job?.cancel()
-        job = ownScope.launch {
+        job = scope.launch {
             while (true) {
                 delay(pollIntervalMs)
                 evaluate()
