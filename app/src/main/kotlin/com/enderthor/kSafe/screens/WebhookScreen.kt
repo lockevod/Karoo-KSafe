@@ -27,7 +27,6 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
@@ -90,18 +89,6 @@ fun ActionsScreen(vm: MainViewModel) {
     var webhook2Color by remember(config.webhook2Color) { mutableStateOf(config.webhook2Color) }
 
     // ── Status states ─────────────────────────────────────────────────────────
-    var customMsgStatus   by remember { mutableStateOf("") }
-    var customMsgIsError  by remember { mutableStateOf(false) }
-    var customMsg2Status  by remember { mutableStateOf("") }
-    var customMsg2IsError by remember { mutableStateOf(false) }
-    var customMsg3Status  by remember { mutableStateOf("") }
-    var customMsg3IsError by remember { mutableStateOf(false) }
-    var webhook1Status    by remember { mutableStateOf("") }
-    var webhook1IsError   by remember { mutableStateOf(false) }
-    var webhook2Status    by remember { mutableStateOf("") }
-    var webhook2IsError   by remember { mutableStateOf(false) }
-
-    val coroutineScope = rememberCoroutineScope()
 
     // Auto-save with debounce — all fields managed by this screen
     LaunchedEffect(
@@ -223,31 +210,14 @@ fun ActionsScreen(vm: MainViewModel) {
                         selected = customMsg1Color,
                         onSelected = { customMsg1Color = it }
                     )
-                    Button(
-                        onClick = {
-                            customMsgStatus = "Sending…"
-                            customMsgIsError = false
-                            coroutineScope.launch {
-                                val ext = KSafeExtension.getInstance()
-                                if (ext == null) {
-                                    customMsgStatus = "Extension not connected — wait a moment and try again."
-                                    customMsgIsError = true
-                                } else {
-                                    val msg = ext.sendCustomMessage(1)
-                                    customMsgIsError = !msg.contains("✓")
-                                    customMsgStatus = msg
-                                }
-                            }
-                        },
-                        modifier = Modifier.fillMaxWidth()
-                    ) { Text(stringResource(R.string.custom_message_send_label)) }
-                    if (customMsgStatus.isNotEmpty()) {
-                        Text(
-                            text = customMsgStatus,
-                            style = MaterialTheme.typography.bodySmall,
-                            color = if (customMsgIsError) Color(0xFFB71C1C) else Color(0xFF2E7D32)
-                        )
-                    }
+                    TestActionButton(
+                        label = stringResource(R.string.custom_message_send_label),
+                        onAction = {
+                            val ext = KSafeExtension.getInstance()
+                                ?: return@TestActionButton "Extension not connected — wait a moment and try again."
+                            ext.sendCustomMessage(1)
+                        }
+                    )
                 }
 
                 HorizontalDivider(modifier = Modifier.padding(vertical = 2.dp))
@@ -277,31 +247,14 @@ fun ActionsScreen(vm: MainViewModel) {
                         selected = customMsg2Color,
                         onSelected = { customMsg2Color = it }
                     )
-                    Button(
-                        onClick = {
-                            customMsg2Status = "Sending…"
-                            customMsg2IsError = false
-                            coroutineScope.launch {
-                                val ext = KSafeExtension.getInstance()
-                                if (ext == null) {
-                                    customMsg2Status = "Extension not connected — wait a moment and try again."
-                                    customMsg2IsError = true
-                                } else {
-                                    val msg = ext.sendCustomMessage(2)
-                                    customMsg2IsError = !msg.contains("✓")
-                                    customMsg2Status = msg
-                                }
-                            }
-                        },
-                        modifier = Modifier.fillMaxWidth()
-                    ) { Text(stringResource(R.string.custom_message_2_send_label)) }
-                    if (customMsg2Status.isNotEmpty()) {
-                        Text(
-                            text = customMsg2Status,
-                            style = MaterialTheme.typography.bodySmall,
-                            color = if (customMsg2IsError) Color(0xFFB71C1C) else Color(0xFF2E7D32)
-                        )
-                    }
+                    TestActionButton(
+                        label = stringResource(R.string.custom_message_2_send_label),
+                        onAction = {
+                            val ext = KSafeExtension.getInstance()
+                                ?: return@TestActionButton "Extension not connected — wait a moment and try again."
+                            ext.sendCustomMessage(2)
+                        }
+                    )
                 }
 
                 HorizontalDivider(modifier = Modifier.padding(vertical = 2.dp))
@@ -331,31 +284,14 @@ fun ActionsScreen(vm: MainViewModel) {
                         selected = customMsg3Color,
                         onSelected = { customMsg3Color = it }
                     )
-                    Button(
-                        onClick = {
-                            customMsg3Status = "Sending…"
-                            customMsg3IsError = false
-                            coroutineScope.launch {
-                                val ext = KSafeExtension.getInstance()
-                                if (ext == null) {
-                                    customMsg3Status = "Extension not connected — wait a moment and try again."
-                                    customMsg3IsError = true
-                                } else {
-                                    val msg = ext.sendCustomMessage(3)
-                                    customMsg3IsError = !msg.contains("✓")
-                                    customMsg3Status = msg
-                                }
-                            }
-                        },
-                        modifier = Modifier.fillMaxWidth()
-                    ) { Text(stringResource(R.string.custom_message_3_send_label)) }
-                    if (customMsg3Status.isNotEmpty()) {
-                        Text(
-                            text = customMsg3Status,
-                            style = MaterialTheme.typography.bodySmall,
-                            color = if (customMsg3IsError) Color(0xFFB71C1C) else Color(0xFF2E7D32)
-                        )
-                    }
+                    TestActionButton(
+                        label = stringResource(R.string.custom_message_3_send_label),
+                        onAction = {
+                            val ext = KSafeExtension.getInstance()
+                                ?: return@TestActionButton "Extension not connected — wait a moment and try again."
+                            ext.sendCustomMessage(3)
+                        }
+                    )
                 }
             }
         }
@@ -412,22 +348,10 @@ fun ActionsScreen(vm: MainViewModel) {
                     onAlertTextChange = { webhook1AlertText = it },
                     fieldColor = webhook1Color,
                     onFieldColorChange = { webhook1Color = it },
-                    testStatus = webhook1Status,
-                    testIsError = webhook1IsError,
                     onTest = {
-                        webhook1Status = "Testing…"
-                        webhook1IsError = false
-                        coroutineScope.launch {
-                            val ext = KSafeExtension.getInstance()
-                            if (ext == null) {
-                                webhook1Status = "Extension not connected — wait a moment."
-                                webhook1IsError = true
-                            } else {
-                                val msg = ext.testWebhook(1)
-                                webhook1IsError = !msg.contains("✓")
-                                webhook1Status = msg
-                            }
-                        }
+                        val ext = KSafeExtension.getInstance()
+                            ?: return@WebhookSlotFields "Extension not connected — wait a moment."
+                        ext.testWebhook(1)
                     },
                     testButtonLabel = "${stringResource(R.string.webhook_test)} Webhook 1"
                 )
@@ -463,22 +387,10 @@ fun ActionsScreen(vm: MainViewModel) {
                     onAlertTextChange = { webhook2AlertText = it },
                     fieldColor = webhook2Color,
                     onFieldColorChange = { webhook2Color = it },
-                    testStatus = webhook2Status,
-                    testIsError = webhook2IsError,
                     onTest = {
-                        webhook2Status = "Testing…"
-                        webhook2IsError = false
-                        coroutineScope.launch {
-                            val ext = KSafeExtension.getInstance()
-                            if (ext == null) {
-                                webhook2Status = "Extension not connected — wait a moment."
-                                webhook2IsError = true
-                            } else {
-                                val msg = ext.testWebhook(2)
-                                webhook2IsError = !msg.contains("✓")
-                                webhook2Status = msg
-                            }
-                        }
+                        val ext = KSafeExtension.getInstance()
+                            ?: return@WebhookSlotFields "Extension not connected — wait a moment."
+                        ext.testWebhook(2)
                     },
                     testButtonLabel = "${stringResource(R.string.webhook_test)} Webhook 2"
                 )
@@ -517,9 +429,7 @@ private fun WebhookSlotFields(
     onAlertTextChange: (String) -> Unit,
     fieldColor: Int,
     onFieldColorChange: (Int) -> Unit,
-    testStatus: String,
-    testIsError: Boolean,
-    onTest: () -> Unit,
+    onTest: suspend () -> String,
     testButtonLabel: String,
 ) {
     val coroutineScope = rememberCoroutineScope()
@@ -666,14 +576,10 @@ private fun WebhookSlotFields(
             onSelected = onFieldColorChange
         )
 
-        Button(onClick = onTest, modifier = Modifier.fillMaxWidth()) { Text(testButtonLabel) }
-        if (testStatus.isNotEmpty()) {
-            Text(
-                text = testStatus,
-                style = MaterialTheme.typography.bodySmall,
-                color = if (testIsError) Color(0xFFB71C1C) else Color(0xFF2E7D32)
-            )
-        }
+        TestActionButton(
+            label = testButtonLabel,
+            onAction = onTest,
+        )
     }
 }
 

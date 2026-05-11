@@ -9,7 +9,6 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
-import androidx.compose.material3.Button
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
@@ -20,10 +19,8 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
@@ -32,7 +29,6 @@ import com.enderthor.kSafe.activity.MainViewModel
 import com.enderthor.kSafe.data.ProviderType
 import com.enderthor.kSafe.extension.KSafeExtension
 import kotlinx.coroutines.delay
-import kotlinx.coroutines.launch
 
 @Composable
 fun ProviderScreen(vm: MainViewModel) {
@@ -41,7 +37,6 @@ fun ProviderScreen(vm: MainViewModel) {
 
     val activeProvider = config.activeProvider
     val activeSender = senderConfigs.find { it.provider == activeProvider }
-    val coroutineScope = rememberCoroutineScope()
 
     // `fieldsProvider` tracks which provider the current field values belong to.
     // It is updated synchronously in onProviderClick so the auto-save LaunchedEffect
@@ -52,8 +47,6 @@ fun ProviderScreen(vm: MainViewModel) {
     var userKey2    by remember { mutableStateOf(activeSender?.userKey2    ?: "") }
     var userKey3    by remember { mutableStateOf(activeSender?.userKey3    ?: "") }
     var phoneNumber by remember { mutableStateOf(activeSender?.phoneNumber ?: "") }
-    var testStatus  by remember { mutableStateOf("") }
-    var testIsError by remember { mutableStateOf(false) }
 
     // Sync fieldsProvider + fields when DataStore loads the real active provider on first
     // composition (e.g. stored provider is PUSHOVER but default is CALLMEBOT) or after
@@ -118,7 +111,6 @@ fun ProviderScreen(vm: MainViewModel) {
             userKey2    = s?.userKey2    ?: ""
             userKey3    = s?.userKey3    ?: ""
             phoneNumber = s?.phoneNumber ?: ""
-            testStatus  = ""
             // Switch active provider last so DataStore propagates after fields are ready.
             vm.setActiveProvider(provider)
         }
@@ -259,35 +251,15 @@ fun ProviderScreen(vm: MainViewModel) {
         }
 
         // Test send
-        if (testStatus.isNotEmpty()) {
-            Text(
-                text = testStatus,
-                style = MaterialTheme.typography.bodySmall,
-                color = if (testIsError) Color(0xFFB71C1C) else Color(0xFF2E7D32)
-            )
-        }
-
-        Button(
-            onClick = {
-                testStatus = "Sending…"
-                testIsError = false
-                coroutineScope.launch {
-                    val ext = KSafeExtension.getInstance()
-                    if (ext == null) {
-                        testStatus = "Extension not connected — wait a moment and try again."
-                        testIsError = true
-                        return@launch
-                    }
-                    // Flush any pending auto-save before testing
-                    vm.updateSenderConfig(activeProvider, apiKey, userKey, userKey2, userKey3, phoneNumber)
-                    val result = ext.sendTestMessage(activeProvider)
-                    testStatus  = result
-                    testIsError = !result.contains("✓") && !result.contains("sent!", ignoreCase = true)
-                }
-            },
-            modifier = Modifier.fillMaxWidth()
-        ) {
-            Text(stringResource(R.string.test_send))
-        }
+        TestActionButton(
+            label = stringResource(R.string.test_send),
+            onAction = {
+                val ext = KSafeExtension.getInstance()
+                    ?: return@TestActionButton "Extension not connected — wait a moment and try again."
+                // Flush any pending auto-save before testing.
+                vm.updateSenderConfig(activeProvider, apiKey, userKey, userKey2, userKey3, phoneNumber)
+                ext.sendTestMessage(activeProvider)
+            }
+        )
     }
 }

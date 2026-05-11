@@ -69,12 +69,16 @@ fun TabLayout(vm: MainViewModel = viewModel()) {
         onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
     }
 
+    // Order matches the rider's mental model: protective features first (Safety, Health,
+    // Fueling), then channel configuration (Providers), then user-defined actions, then
+    // utility-style tools (Karoo Live, calibration, FIT export, backup, Simulate Crash).
     val tabs = listOf(
-        stringResource(R.string.tab_provider),
-        stringResource(R.string.tab_settings),
-        stringResource(R.string.tab_actions),
+        stringResource(R.string.tab_settings),  // value is "Safety"
         stringResource(R.string.tab_health),
         stringResource(R.string.tab_fueling),
+        stringResource(R.string.tab_provider),
+        stringResource(R.string.tab_actions),
+        stringResource(R.string.tab_tools),
     )
     var selectedTab by remember { mutableIntStateOf(0) }
 
@@ -137,11 +141,12 @@ fun TabLayout(vm: MainViewModel = viewModel()) {
         )
 
         when (selectedTab) {
-            0 -> ProviderScreen(vm)
-            1 -> SettingsScreen(vm)
-            2 -> ActionsScreen(vm)
-            3 -> HealthScreen(vm)
-            4 -> FuelingScreen(vm)
+            0 -> SafetyScreen(vm)
+            1 -> HealthScreen(vm)
+            2 -> FuelingScreen(vm)
+            3 -> ProviderScreen(vm)
+            4 -> ActionsScreen(vm)
+            5 -> ToolsScreen(vm)
         }
     }
 }

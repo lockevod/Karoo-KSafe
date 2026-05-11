@@ -77,7 +77,6 @@ fun FuelingScreen(vm: MainViewModel) {
 
     // Post-ride summary state
     var summaryEnabled by remember(config.fuelingPostRideSummaryEnabled) { mutableStateOf(config.fuelingPostRideSummaryEnabled) }
-    var fitExportEnabled by remember(config.fuelingFitExportEnabled) { mutableStateOf(config.fuelingFitExportEnabled) }
 
     Column(
         modifier = Modifier
@@ -350,17 +349,6 @@ fun FuelingScreen(vm: MainViewModel) {
                 onCheckedChange = {
                     summaryEnabled = it
                     vm.saveConfig(config.copy(fuelingPostRideSummaryEnabled = it))
-                }
-            )
-        }
-
-        // FIT export — write cumulative carbs/hyd into the FIT for Strava / Intervals.icu
-        FuelingRow(label = stringResource(R.string.fueling_fit_export_label)) {
-            Switch(
-                checked = fitExportEnabled,
-                onCheckedChange = {
-                    fitExportEnabled = it
-                    vm.saveConfig(config.copy(fuelingFitExportEnabled = it))
                 }
             )
         }
