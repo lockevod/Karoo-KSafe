@@ -2,6 +2,9 @@ package com.enderthor.kSafe.extension.managers
 
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 
 /**
  * Independent watchdog: confirms a crash when the bike has been at zero speed for
@@ -26,10 +29,71 @@ class SpeedDropMonitor(
     @Volatile private var stoppedMinutesRequired: Int = 5
     private var job: Job? = null
 
-    fun start(stoppedMinutesRequired: Int): Unit = TODO()
-    fun stop(): Unit = TODO()
-    fun onSpeedUpdate(speedKmh: Double): Unit = TODO()
-    fun onPause(): Unit = TODO()
+    /** Own scope decoupled from parent so the poll loop is not a child of the caller's scope. */
+    private val ownScope = CoroutineScope(scope.coroutineContext + SupervisorJob())
+
+    /** True iff the monitor is currently inside a zero-speed window. Used only by tests. */
+    fun isTracking(): Boolean = startedAtMs > 0L
+
+    fun start(stoppedMinutesRequired: Int) {
+        this.stoppedMinutesRequired = stoppedMinutesRequired
+        job?.cancel()
+        job = ownScope.launch {
+            while (true) {
+                delay(pollIntervalMs)
+                evaluate()
+            }
+        }
+    }
+
+    fun stop() {
+        job?.cancel()
+        job = null
+        startedAtMs = 0L
+    }
+
+    fun onSpeedUpdate(speedKmh: Double) {
+        if (speedKmh <= 0.0) {
+            if (startedAtMs == 0L) startedAtMs = clock.nowMs()
+        } else {
+            startedAtMs = 0L
+        }
+    }
+
+    fun onPause() {
+        startedAtMs = 0L
+    }
+
+    private fun evaluate() {
+        val started = startedAtMs
+        if (started == 0L) return
+
+        val now = clock.nowMs()
+        val elapsedMs = now - started
+        if (elapsedMs < stoppedMinutesRequired * 60_000L) return
+
+        val stillSince = accelStillSinceProvider()
+        val stillStableFor = if (stillSince > 0L) now - stillSince else 0L
+        if (stillStableFor < accelStillRequiredMs) {
+            calibLogger?.log(CalibrationLogger.Event.SPEEDDROP_EVAL) {
+                "elapsed_ms=$elapsedMs,still_stable_ms=$stillStableFor,need_ms=$accelStillRequiredMs,accel_ok=false"
+            }
+            return
+        }
+
+        if (!cooldownGate()) {
+            calibLogger?.log(CalibrationLogger.Event.SPEEDDROP_EVAL) {
+                "elapsed_ms=$elapsedMs,still_stable_ms=$stillStableFor,cooldown_blocked=true"
+            }
+            return
+        }
+
+        calibLogger?.log(CalibrationLogger.Event.SPEEDDROP_EVAL) {
+            "elapsed_ms=$elapsedMs,still_stable_ms=$stillStableFor,confirm=true"
+        }
+        startedAtMs = 0L
+        onConfirm()
+    }
 
     companion object {
         const val POLL_INTERVAL_MS: Long = 30_000L
