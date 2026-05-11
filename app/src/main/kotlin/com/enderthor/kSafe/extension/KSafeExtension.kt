@@ -773,6 +773,10 @@ class KSafeExtension : KarooExtension("ksafe", BuildConfig.VERSION_NAME), Corout
     fun hydrationTrackerOrNull(): com.enderthor.kSafe.extension.managers.HydrationTracker? =
         if (this::hydrationTracker.isInitialized) hydrationTracker else null
 
+    /** Returns the wellness monitor, or null if not yet initialised (called from FIT writer). */
+    fun wellnessMonitorOrNull(): com.enderthor.kSafe.extension.managers.WellnessMonitor? =
+        if (this::wellnessMonitor.isInitialized) wellnessMonitor else null
+
     fun handleCarbLogTap(slot: Int) {
         Timber.d("handleCarbLogTap slot=$slot")
         if (!activeConfig.carbsTrackerEnabled) return
@@ -915,6 +919,37 @@ class KSafeExtension : KarooExtension("ksafe", BuildConfig.VERSION_NAME), Corout
             nativeFieldNum = null,
             developerDataIndex = 0,
         )
+        // ── Wellness developer fields ──────────────────────────────────────
+        // fieldDefinitionNumbers 2..4 are now PUBLIC API — historical FIT files reference
+        // them by number, so these are immutable once shipped. `ksafe_hr_drift_pct` is a
+        // per-record stream (the only KSafe value not derivable from native FIT data —
+        // Strava does not compute cardiac decoupling on its own). `ksafe_max_drift_pct`
+        // and `ksafe_wellness_fires` are session totals that show up in the activity
+        // header alongside the fueling totals.
+        val hrDriftField = DeveloperField(
+            fieldDefinitionNumber = 2,
+            fitBaseTypeId = 136,
+            fieldName = "ksafe_hr_drift_pct",
+            units = "%",
+            nativeFieldNum = null,
+            developerDataIndex = 0,
+        )
+        val maxDriftField = DeveloperField(
+            fieldDefinitionNumber = 3,
+            fitBaseTypeId = 136,
+            fieldName = "ksafe_max_drift_pct",
+            units = "%",
+            nativeFieldNum = null,
+            developerDataIndex = 0,
+        )
+        val firesField = DeveloperField(
+            fieldDefinitionNumber = 4,
+            fitBaseTypeId = 136,
+            fieldName = "ksafe_wellness_fires",
+            units = "count",
+            nativeFieldNum = null,
+            developerDataIndex = 0,
+        )
 
         val job: Job = launch {
             karooSystem.streamDataFlow(DataType.Type.ELAPSED_TIME)
@@ -922,9 +957,16 @@ class KSafeExtension : KarooExtension("ksafe", BuildConfig.VERSION_NAME), Corout
                 .collect {
                     val carbsG = (carbsTrackerOrNull()?.getStatus()?.cumLoggedG ?: 0).toDouble()
                     val hydMl  = (hydrationTrackerOrNull()?.getStatus()?.cumLoggedMl ?: 0).toDouble()
+                    val wellness = wellnessMonitorOrNull()?.getSummary()
+                    val driftPct    = wellness?.currentDriftPct?.toDouble() ?: 0.0
+                    val maxDriftPct = wellness?.maxDriftPct?.toDouble() ?: 0.0
+                    val fires       = wellness?.totalFires?.toDouble() ?: 0.0
                     val values = listOf(
-                        FieldValue(carbField, carbsG),
-                        FieldValue(hydField,  hydMl),
+                        FieldValue(carbField,     carbsG),
+                        FieldValue(hydField,      hydMl),
+                        FieldValue(hrDriftField,  driftPct),
+                        FieldValue(maxDriftField, maxDriftPct),
+                        FieldValue(firesField,    fires),
                     )
                     when (currentRideState) {
                         is RideState.Recording -> {

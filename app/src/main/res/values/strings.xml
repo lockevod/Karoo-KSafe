@@ -52,7 +52,7 @@
     <string name="settings_master_hint">When OFF the extension stops monitoring everything — crash, speed-drop, check-in, Health (HR), Fueling. Notifications already configured (ride start/end, custom messages, webhooks) are also suppressed. Leave ON unless you want a hard stop.</string>
     <string name="actions_section_karoo_live">Karoo Live notifications</string>
     <string name="actions_section_karoo_live_tests">Test ride notifications</string>
-    <string name="fueling_fit_export_hint">Writes cumulative carbs (g) and hydration (ml) into the recorded FIT so Strava / Intervals.icu / TrainingPeaks can plot them alongside HR and power.</string>
+    <string name="fueling_fit_export_hint">Writes KSafe data into the recorded FIT so Strava / Intervals.icu / TrainingPeaks can plot it alongside HR and power. Includes cumulative carbs (g) and hydration (ml); plus, when wellness is enabled, current HR drift (%), max drift this ride, and wellness alert count.</string>
     <string name="simulate_crash_label">Simulate Crash (send alert now)</string>
     <string name="simulate_crash_confirm_title">Send a real alert?</string>
     <string name="simulate_crash_confirm_body">This sends the configured emergency message through your active provider — no countdown, no cancel. Use this only to verify the channel works end-to-end.</string>
@@ -80,7 +80,7 @@
     <string name="fueling_slot_label_label">Label</string>
     <string name="fueling_slot_grams_label">g</string>
     <string name="fueling_slot_ml_label">ml</string>
-    <string name="fueling_fit_export_label">Write to FIT (Strava / Intervals.icu)</string>
+    <string name="fueling_fit_export_label">Write KSafe data to FIT (Strava / Intervals.icu)</string>
     <string name="fueling_carb_alert_title">Eat something</string>
     <string name="fueling_carb_alert_detail_deficit">Behind by {deficit}g — eat something now (target {target} g/h).</string>
     <string name="fueling_carb_alert_detail_time">{elapsed} min since last log — time to eat (target {target} g/h).</string>

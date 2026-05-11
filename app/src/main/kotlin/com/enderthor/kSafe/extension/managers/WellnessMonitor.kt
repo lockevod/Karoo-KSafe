@@ -67,6 +67,18 @@ class WellnessMonitor(
     @Volatile private var lastDecouplingTriggerMs = 0L
     private val ratioSamples = ArrayDeque<Pair<Long, Float>>()    // (timestamp, hr/w)
 
+    // ─── Session accumulators (consumed by FIT export + Health tab) ─────────
+    // Granularity is MONITOR_TICK_MS (~30 s) for the time-in-zone buckets — exact
+    // enough for post-ride analysis without sub-tick HR sampling.
+    @Volatile private var sessionMaxHr: Int = 0
+    @Volatile private var cumMsCriticalAbove: Long = 0L
+    @Volatile private var cumMsSustainedAbove: Long = 0L
+    @Volatile private var currentDriftPct: Float = 0f
+    @Volatile private var maxDriftPct: Float = 0f
+    @Volatile private var criticalFires: Int = 0
+    @Volatile private var sustainedFires: Int = 0
+    @Volatile private var decouplingFires: Int = 0
+
     @Volatile private var config = KSafeConfig()
     private var monitorJob: Job? = null
 
@@ -88,6 +100,15 @@ class WellnessMonitor(
         lastSustainedTriggerMs = 0L
         lastDecouplingTriggerMs = 0L
         ratioSamples.clear()
+        // Reset session accumulators — fresh ride, fresh totals.
+        sessionMaxHr = 0
+        cumMsCriticalAbove = 0L
+        cumMsSustainedAbove = 0L
+        currentDriftPct = 0f
+        maxDriftPct = 0f
+        criticalFires = 0
+        sustainedFires = 0
+        decouplingFires = 0
         monitorJob = scope.launch {
             oldJob?.cancelAndJoin()
             while (true) { delay(MONITOR_TICK_MS); tick() }
@@ -111,22 +132,37 @@ class WellnessMonitor(
     fun updateHr(bpm: Int) {
         lastHrBpm = bpm
         lastHrUpdateMs = System.currentTimeMillis()
+        // Track session peak. Called every HR callback (~1 Hz), more precise than tick().
+        if (bpm > sessionMaxHr) sessionMaxHr = bpm
     }
 
     fun updatePower(w: Int) { lastPowerW = w }
     fun updateUserProfile(p: UserProfile) { lastUserProfile = p }
 
     // ─── Per-tier evaluation (runs on `scope`, every MONITOR_TICK_MS) ────────
-
-    private fun tick() {
+    // Exposed as `internal` so JVM unit tests in the same package can drive it
+    // synchronously without spinning up the coroutine loop — avoids the wall-clock
+    // vs virtual-time interaction quirks of runTest + advanceTimeBy.
+    internal fun tick() {
         val now = System.currentTimeMillis()
         if (now - lastHrUpdateMs > HR_STALE_MS) {
             // Sensor silent — every per-tier evaluation will return early. Reset the streak
             // accumulators so a transient disconnect doesn't carry forward stale state.
+            // Time-in-zone buckets are NOT touched: if the HR strap drops out we just don't
+            // add anything during stale ticks — neither over- nor under-counts.
             criticalSinceMs = 0L
             sustainedSinceMs = 0L
             decouplingExceededSinceMs = 0L
             return
+        }
+        // Feed the time-in-zone buckets at MONITOR_TICK_MS granularity. The bucket attribution
+        // is "HR at this instant" — a fluctuation within the 30 s window between ticks gets
+        // rounded to whichever side of the threshold the sample landed on. Good enough for
+        // post-ride analysis; not a real-time precision tool.
+        val bpm = lastHrBpm
+        if (bpm != null) {
+            if (bpm >= effectiveCriticalThreshold())   cumMsCriticalAbove  += MONITOR_TICK_MS
+            if (bpm >= effectiveSustainedThreshold()) cumMsSustainedAbove += MONITOR_TICK_MS
         }
         evaluateCriticalTier(now)
         evaluateSustainedTier(now)
@@ -221,6 +257,10 @@ class WellnessMonitor(
         val currentAvg = (currentSum / ratioSamples.size).toFloat()
         val driftPct = ((currentAvg / decouplingBaselineHrPerW) - 1f) * 100f
 
+        // Expose the current drift for FIT export + Health tab. Also track the session peak.
+        currentDriftPct = driftPct
+        if (driftPct > maxDriftPct) maxDriftPct = driftPct
+
         if (driftPct >= config.wellnessDecouplingThresholdPct.toFloat()) {
             if (decouplingExceededSinceMs == 0L) decouplingExceededSinceMs = now
             val sustainedMs = now - decouplingExceededSinceMs
@@ -233,6 +273,7 @@ class WellnessMonitor(
                 }
                 lastDecouplingTriggerMs = now
                 decouplingExceededSinceMs = 0L
+                decouplingFires++
                 onIncident(EmergencyReason.WELLNESS_DECOUPLING, mapOf(
                     "drift" to String.format(Locale.US, "%.1f", driftPct),
                     "minutes" to sustainedMin.toString(),
@@ -288,10 +329,44 @@ class WellnessMonitor(
         calibLogger?.log(CalibrationLogger.Event.WELLNESS_FIRED) {
             "subkind=$tierName,bpm=$bpm,threshold=$threshold,mode=${if (config.wellnessUseMaxHrPercent) "pct" else "abs"},sustained_min=$sustainedMin"
         }
+        when (tierName) {
+            "critical"  -> criticalFires++
+            "sustained" -> sustainedFires++
+        }
         onIncident(reason, mapOf(
             "bpm" to bpm.toString(),
             "threshold" to threshold.toString(),
             "minutes" to sustainedMin.toString(),
         ))
     }
+
+    // ─── Public snapshot for FIT export and the Health tab ──────────────────
+
+    /**
+     * Immutable snapshot of the session-wide wellness state. Cheap to construct
+     * (read-only field reads); call from any thread.
+     */
+    data class WellnessSummary(
+        val maxHrBpm: Int,
+        val cumMsCriticalAbove: Long,
+        val cumMsSustainedAbove: Long,
+        val currentDriftPct: Float,
+        val maxDriftPct: Float,
+        val criticalFires: Int,
+        val sustainedFires: Int,
+        val decouplingFires: Int,
+    ) {
+        val totalFires: Int get() = criticalFires + sustainedFires + decouplingFires
+    }
+
+    fun getSummary(): WellnessSummary = WellnessSummary(
+        maxHrBpm           = sessionMaxHr,
+        cumMsCriticalAbove = cumMsCriticalAbove,
+        cumMsSustainedAbove = cumMsSustainedAbove,
+        currentDriftPct    = currentDriftPct,
+        maxDriftPct        = maxDriftPct,
+        criticalFires      = criticalFires,
+        sustainedFires     = sustainedFires,
+        decouplingFires    = decouplingFires,
+    )
 }
