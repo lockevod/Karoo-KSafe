@@ -37,8 +37,11 @@ const val KAROO_LIVE_BASE_URL = "https://dashboard.hammerhead.io/live/"
  *  v6 → v7 : three-tier wellness model — critical-HR tier (early warning) + cardiac-decoupling tier
  *            (HR / power ratio drift, requires power meter) added alongside the existing sustained-HR
  *            tier. Each tier has its own enable + parameters. Pure version stamp.
+ *  v7 → v8 : EmergencyState gains reasonEnum (EmergencyReason?) so the state machine can recover
+ *            the typed reason after a process restart. Legacy reads without this field get null
+ *            automatically via coerceInputValues = true. Pure version stamp.
  */
-const val CONFIG_VERSION = 7
+const val CONFIG_VERSION = 8
 
 /**
  * Canonical minSpeedForCrashKmh value per preset.
@@ -144,8 +147,10 @@ enum class CrashSensitivity {
  */
 enum class IncidentResponseLevel { SILENT, WARNING, EMERGENCY }
 
+@Serializable
 enum class EmergencyStatus { IDLE, COUNTDOWN, ALERTING }
 
+@Serializable
 enum class EmergencyReason(val label: String) {
     MANUAL_SOS("Manual SOS"),
     CRASH_DETECTED("Crash detected"),
@@ -382,6 +387,7 @@ data class SenderConfig(
 data class EmergencyState(
     val status: EmergencyStatus = EmergencyStatus.IDLE,
     val reason: String = "",
+    val reasonEnum: EmergencyReason? = null,         // null on legacy reads; set by startCountdown
     val countdownStartTime: Long = 0L,
     val countdownDurationSeconds: Int = DEFAULT_COUNTDOWN_SECONDS,
     // Check-in timer
@@ -402,6 +408,12 @@ data class EmergencyState(
         val elapsedMinutes = ((System.currentTimeMillis() - checkinStartTime) / 60_000).toInt()
         return (checkinIntervalMinutes - elapsedMinutes).coerceAtLeast(0)
     }
+
+    /** Absolute deadline epoch-ms derived from persisted fields; 0 if not in a countdown. */
+    fun countdownDeadlineMs(): Long =
+        if (status == EmergencyStatus.COUNTDOWN && countdownStartTime > 0)
+            countdownStartTime + countdownDurationSeconds * 1_000L
+        else 0L
 }
 
 // ─── Backup ───────────────────────────────────────────────────────────────────
@@ -592,6 +604,13 @@ fun KSafeConfig.migrateToLatest(): KSafeConfig {
         // unchanged; the new tiers default to enabled with conservative parameters.
         c = c.copy(configVersion = 7)
         Timber.i("KSafeConfig migrated v%d→v7 (wellness three-tier model)", originalVersion)
+    }
+
+    if (c.configVersion < 8) {
+        // v7 → v8: EmergencyState.reasonEnum (EmergencyReason?) added. No data transform needed;
+        // kotlinx.serialization + coerceInputValues = true fills missing field with null automatically.
+        c = c.copy(configVersion = 8)
+        Timber.i("KSafeConfig migrated v%d→v8 (EmergencyState reasonEnum added)", originalVersion)
     }
 
     return c
