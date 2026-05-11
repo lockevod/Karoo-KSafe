@@ -241,8 +241,10 @@ class CrashDetectionManager(
         currentSpeedKmh = speedKmh
         speedLastUpdatedTime = now
 
-        // Push to the state machine. gpsStale is computed against the wall clock.
-        stateMachine.onSpeedUpdate(speedKmh, gpsStale = false)  // never stale at the moment of update
+        // Push to the state machine — this is the ONLY path that marks "real speed update
+        // received", which the cold-start guard keys off. The per-sample staleness view
+        // travels on [SensorSample.gpsStale] (filled in by [onSensorSample]).
+        stateMachine.onSpeedUpdate(speedKmh)
         speedDropMonitor.onSpeedUpdate(speedKmh)
     }
 
@@ -276,8 +278,8 @@ class CrashDetectionManager(
 
     // ─── Internal: per-sample callback from SensorReader ─────────────────────
 
-    private fun onSensorSample(sample: SensorSample) {
-        val now = sample.timestampMs
+    private fun onSensorSample(rawSample: SensorSample) {
+        val now = rawSample.timestampMs
 
         // Speed staleness check, computed once per sample.
         val gpsCurrentlyStale = isGpsStale(now)
@@ -289,9 +291,10 @@ class CrashDetectionManager(
                 }
             }
         }
-        // Refresh the state machine's gpsStale view continuously — without this it would
-        // only update on speed pings.
-        stateMachine.onSpeedUpdate(currentSpeedKmh, gpsStale = gpsCurrentlyStale)
+        // Stamp the current staleness onto the sample so the state machine sees an
+        // up-to-date view between speed pings, WITHOUT touching the
+        // "real-speed-ever-received" sentinel (which protects the cold-start guard).
+        val sample = rawSample.copy(gpsStale = gpsCurrentlyStale)
 
         // Periodic debug log (debug builds only).
         if (BuildConfig.DEBUG && now - lastLogTime > LOG_INTERVAL_MS) {

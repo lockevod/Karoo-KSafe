@@ -70,10 +70,18 @@ class CrashStateMachine(
 
     // ── Speed / GPS ──────────────────────────────────────────────────────────
     @Volatile private var lastSpeedKmh: Double = 0.0
+    /**
+     * Most recent GPS-stale view, sourced from [SensorSample.gpsStale] on each [onSample].
+     * Lives in the sample domain so the staleness view stays current between speed pings
+     * (an accel sample arrives ~50 Hz; speed pings ~1 Hz).
+     */
     @Volatile private var lastSpeedGpsStale: Boolean = false
     /**
      * Wall-clock timestamp of the most recent [onSpeedUpdate]. `0L` means "never received";
      * used by the cold-start guard together with [startTimeMs].
+     *
+     * Updated **only** from [onSpeedUpdate] — i.e. only when a real speed reading arrives.
+     * The per-sample staleness refresh in [onSample] must not touch this sentinel.
      */
     @Volatile private var speedLastUpdatedAtMs: Long = SPEED_UPDATE_NEVER
 
@@ -110,6 +118,10 @@ class CrashStateMachine(
     fun onSample(sample: SensorSample): Decision {
         val now = sample.timestampMs
         lastSampleMs = now
+        // Refresh the staleness view on every sample. This MUST NOT touch
+        // [speedLastUpdatedAtMs] — that sentinel marks "real speed update received"
+        // and powers the cold-start guard.
+        lastSpeedGpsStale = sample.gpsStale
         if (startTimeMs == 0L) startTimeMs = clock.nowMs()
 
         return when (state) {
@@ -119,9 +131,13 @@ class CrashStateMachine(
         }
     }
 
-    fun onSpeedUpdate(speedKmh: Double, gpsStale: Boolean) {
+    /**
+     * Real speed-update event handler. Call this **only** when an actual speed reading
+     * arrived (from the SDK speed stream) — not on every accel sample. The per-sample
+     * staleness signal travels on [SensorSample.gpsStale] instead.
+     */
+    fun onSpeedUpdate(speedKmh: Double) {
         lastSpeedKmh = speedKmh
-        lastSpeedGpsStale = gpsStale
         speedLastUpdatedAtMs = clock.nowMs()
     }
 
@@ -146,6 +162,7 @@ class CrashStateMachine(
         lastSpeedKmh = 0.0
         lastSpeedGpsStale = false
         speedLastUpdatedAtMs = SPEED_UPDATE_NEVER
+        // Note: lastSpeedGpsStale will be refreshed from the next sample's gpsStale.
         lastCadenceRpm = 0.0
         lastCadenceUpdateMs = 0L
         lastSampleMs = 0L

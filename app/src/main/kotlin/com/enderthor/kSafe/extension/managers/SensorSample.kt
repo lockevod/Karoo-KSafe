@@ -17,4 +17,12 @@ data class SensorSample(
     val gyroMag: Double,
     /** Wall-clock timestamp for the sample, in ms. */
     val timestampMs: Long,
+    /**
+     * Whether the GPS speed reading is considered stale at the moment of this sample.
+     * Filled in by the facade ([CrashDetectionManager]) on every sample so the state
+     * machine sees an up-to-date staleness view between speed pings — without that
+     * being conflated with a "real speed update arrived" signal (which would defeat
+     * the cold-start guard).
+     */
+    val gpsStale: Boolean = false,
 )
