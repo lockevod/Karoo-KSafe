@@ -5,6 +5,7 @@ datastorePreferences = "1.1.1"
 kotlin = "2.0.0"
 junit = "4.13.2"
 kotlinxCoroutinesTest = "1.9.0"
+mockitoCore = "5.14.2"
 
 androidxCore = "1.13.1"
 androidxLifecycle = "2.8.6"
@@ -54,6 +55,7 @@ androidx-foundation-android = { group = "androidx.compose.foundation", name = "f
 androidx-foundation-layout-android = { group = "androidx.compose.foundation", name = "foundation-layout-android", version.ref = "foundationLayoutAndroid" }
 junit = { module = "junit:junit", version.ref = "junit" }
 kotlinx-coroutines-test = { module = "org.jetbrains.kotlinx:kotlinx-coroutines-test", version.ref = "kotlinxCoroutinesTest" }
+mockito-core = { module = "org.mockito:mockito-core", version.ref = "mockitoCore" }
 
 [bundles]
 androidx-lifeycle = ["androidx-lifecycle-runtime-compose", "androidx-lifecycle-viewmodel-compose"]
