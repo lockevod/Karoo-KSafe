@@ -849,9 +849,8 @@ class CrashDetectionManager(
                         calibLogger?.log(CalibrationLogger.Event.CRASH_CONFIRMED) {
                             "total_ms=$totalMs,deviation=%.2f,speed=%.1f,confirm_spd_thr=${config.crashConfirmSpeedKmh},grade=%.1f,cadence=%.0f,gps_stale=$gpsStale,preset=${config.crashSensitivity},effective_dev_max=$effectiveDeviationMax,effective_silence_ms=$effectiveSilenceMs,countdown_s=${config.countdownSeconds}".format(deviation, currentSpeedKmh, currentGrade, currentCadence)
                         }
-                        lastCrashTime = now
                         resetState()
-                        scope.launch { onCrashDetected() }
+                        confirmCrash(CrashSource.IMPACT_CONFIRMED)
                     }
                     !isStill -> {
                         if (timeSinceImpact > windowMs * 2) {
@@ -961,6 +960,28 @@ class CrashDetectionManager(
                 "cancelled_by=$cancelledBy,speed=%.1f,accel_dev=%.2f,gyro=%.2f,state=$state,gps_stale=${isGpsStale()}".format(currentSpeedKmh, lastAccelDeviation, lastGyroMag)
             }
         }
+    }
+
+    /**
+     * Single exit for every confirmation path. Applies cooldown and updates [lastCrashTime].
+     *
+     * Why all paths must go through here: before this gate existed the speed-drop monitor
+     * could re-fire seconds after a confirmed-and-cancelled main-pipeline crash because it
+     * never read [lastCrashTime]. Routing both paths through one method makes that race
+     * impossible by construction.
+     */
+    private fun confirmCrash(source: CrashSource) {
+        val now = clock.nowMs()
+        if ((now - lastCrashTime) <= crashCooldownMs) {
+            Timber.d("Confirm $source suppressed — within cooldown window")
+            calibLogger?.log(CalibrationLogger.Event.CRASH_CONFIRMED) {
+                "source=$source,suppressed_by=cooldown,since_last_ms=${now - lastCrashTime}"
+            }
+            return
+        }
+        lastCrashTime = now
+        calibLogger?.log(CalibrationLogger.Event.CRASH_CONFIRMED) { "source=$source" }
+        scope.launch { onCrashDetected() }
     }
 
     // ─── Speed drop monitor ───────────────────────────────────────────────────
