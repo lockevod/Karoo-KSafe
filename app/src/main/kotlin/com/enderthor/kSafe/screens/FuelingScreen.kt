@@ -59,6 +59,7 @@ fun FuelingScreen(vm: MainViewModel) {
     // Hydration state
     var hydEnabled           by remember(config.hydrationTrackerEnabled)        { mutableStateOf(config.hydrationTrackerEnabled) }
     var hydTarget            by remember(config.hydrationTargetMlPerHour)       { mutableStateOf(config.hydrationTargetMlPerHour.toString()) }
+    var hydDynamic           by remember(config.hydrationDynamicEstimateEnabled){ mutableStateOf(config.hydrationDynamicEstimateEnabled) }
     var hydDeficitOn         by remember(config.hydrationDeficitAlertEnabled)   { mutableStateOf(config.hydrationDeficitAlertEnabled) }
     var hydDeficitThreshold  by remember(config.hydrationDeficitThresholdMl)    { mutableStateOf(config.hydrationDeficitThresholdMl.toString()) }
     var hydTimeOn            by remember(config.hydrationTimeAlertEnabled)      { mutableStateOf(config.hydrationTimeAlertEnabled) }
@@ -248,13 +249,32 @@ fun FuelingScreen(vm: MainViewModel) {
                     )
                 }
                 if (hydEnabled) {
-                IntField(
-                    label = stringResource(R.string.fueling_target_hyd_label),
-                    text = hydTarget,
-                    range = 200..1500,
-                    onCommit = { hydTarget = it; vm.saveConfig(config.copy(hydrationTargetMlPerHour = it.toInt())) },
-                    onTextChange = { hydTarget = it },
+                FuelingRow(label = stringResource(R.string.fueling_hyd_dynamic_label)) {
+                    Switch(
+                        checked = hydDynamic,
+                        onCheckedChange = {
+                            hydDynamic = it
+                            vm.saveConfig(config.copy(hydrationDynamicEstimateEnabled = it))
+                        }
+                    )
+                }
+                Text(
+                    text = stringResource(
+                        if (hydDynamic) R.string.fueling_hyd_dynamic_hint_on
+                        else            R.string.fueling_hyd_dynamic_hint_off
+                    ),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
+                if (!hydDynamic) {
+                    IntField(
+                        label = stringResource(R.string.fueling_target_hyd_label),
+                        text = hydTarget,
+                        range = 200..1500,
+                        onCommit = { hydTarget = it; vm.saveConfig(config.copy(hydrationTargetMlPerHour = it.toInt())) },
+                        onTextChange = { hydTarget = it },
+                    )
+                }
                 HorizontalDivider()
                 FuelingRow(label = stringResource(R.string.fueling_alert_deficit_label)) {
                     Switch(

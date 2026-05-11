@@ -81,6 +81,11 @@ class KSafeExtension : KarooExtension("ksafe", BuildConfig.VERSION_NAME), Corout
     private var currentRideState: RideState? = null
     /** True once the ride-start notification has been sent for the current recording session. */
     private var rideStartNotificationSent = false
+    /** Set true once the Headwind extension publishes a temperature reading for this session.
+     *  When set, we ignore the onboard temperature sensor (device-heat biased) and trust
+     *  Headwind's meteo data. Reset implicitly on process restart — Headwind re-emits early
+     *  on subscription so we re-flip within seconds if it's still installed. */
+    @Volatile private var hasHeadwindTemp = false
     /** True if there was an active ride (Recording or Paused) — used to detect ride end. */
     private var rideWasActive = false
 
@@ -327,6 +332,63 @@ class KSafeExtension : KarooExtension("ksafe", BuildConfig.VERSION_NAME), Corout
                     medicalDetector.updateHr(hr)
                     wellnessMonitor.updateHr(hr)
                     carbsTracker.updateHr(hr)
+                    hydrationTracker.updateHr(hr)
+                }
+        }
+
+        // ── HydrationTracker dynamic-estimate inputs ──────────────────────────
+        // The trackers above already push HR and power into hydrationTracker (via the same
+        // streams). The remaining inputs — weight, ambient temperature, humidity — are
+        // streamed here. All are optional; the SweatEstimator falls back to documented
+        // defaults when a signal is missing.
+        launch {
+            // Power → hydration tracker (in addition to wellness/carbs).
+            karooSystem.streamDataFlow(io.hammerhead.karooext.models.DataType.Type.POWER)
+                .collect { streamState ->
+                    val w = streamState.powerW() ?: return@collect
+                    hydrationTracker.updatePower(w)
+                }
+        }
+        launch {
+            // Weight from user profile → hydration tracker.
+            karooSystem.streamUserProfile().collect { profile ->
+                hydrationTracker.updateUserProfile(profile)
+            }
+        }
+        launch {
+            // Onboard Karoo temperature sensor. Device-heat biased (typically reads
+            // +3–8 °C above ambient when in direct sun / after warm-up), but always
+            // available — used as fallback when Headwind isn't publishing.
+            karooSystem.streamDataFlow(io.hammerhead.karooext.models.DataType.Type.TEMPERATURE)
+                .collect { streamState ->
+                    val s = streamState as? io.hammerhead.karooext.models.StreamState.Streaming
+                        ?: return@collect
+                    val tempC = s.dataPoint.singleValue ?: return@collect
+                    if (!hasHeadwindTemp) hydrationTracker.updateAmbientTemp(tempC)
+                }
+        }
+        // ── Headwind extension streams (TYPE_EXT::karoo-headwind::xxx) ────────
+        // If the karoo-headwind extension is installed on the rider's Karoo, prefer its
+        // weather data (real meteo API) over the onboard sensor. The streams below are
+        // silent on devices without Headwind — no error, just no emissions.
+        // TypeId convention documented at https://github.com/timklge/karoo-headwind.
+        launch {
+            karooSystem.streamDataFlow("TYPE_EXT::karoo-headwind::temperature")
+                .collect { streamState ->
+                    val s = streamState as? io.hammerhead.karooext.models.StreamState.Streaming
+                        ?: return@collect
+                    val tempC = s.dataPoint.singleValue ?: return@collect
+                    hasHeadwindTemp = true
+                    hydrationTracker.updateAmbientTemp(tempC)
+                }
+        }
+        launch {
+            karooSystem.streamDataFlow("TYPE_EXT::karoo-headwind::relativeHumidity")
+                .collect { streamState ->
+                    val s = streamState as? io.hammerhead.karooext.models.StreamState.Streaming
+                        ?: return@collect
+                    val rh = s.dataPoint.singleValue ?: return@collect
+                    hydrationTracker.updateHumidity(rh.toInt().coerceIn(0, 100))
                 }
         }
     }

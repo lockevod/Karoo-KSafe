@@ -87,6 +87,11 @@
     <string name="readiness_at_ride_start_hint">Reads the last 10 rides\' wellness summaries and shows a brief InRideAlert at the start of the next ride if the rider should take it easy. Silent when fully recovered — no per-ride spam. Default ON.</string>
     <string name="readiness_alert_caution_title">Caution today</string>
     <string name="readiness_alert_take_easy_title">Take it easy today</string>
+
+    <!-- Hydration dynamic estimate -->
+    <string name="fueling_hyd_dynamic_label">Estimate hydration target dynamically</string>
+    <string name="fueling_hyd_dynamic_hint_on">Target now varies with HR / power, body weight, ambient temperature and humidity. Uses karoo-headwind weather data when the extension is installed; otherwise the Karoo onboard temperature sensor (biased +3-8 °C) and 50 %% assumed humidity. Expect ±20-30 %% accuracy vs measured sweat.</string>
+    <string name="fueling_hyd_dynamic_hint_off">Currently using the fixed per-hour target below.</string>
     <string name="fueling_carb_alert_title">Eat something</string>
     <string name="fueling_carb_alert_detail_deficit">Behind by {deficit}g — eat something now (target {target} g/h).</string>
     <string name="fueling_carb_alert_detail_time">{elapsed} min since last log — time to eat (target {target} g/h).</string>

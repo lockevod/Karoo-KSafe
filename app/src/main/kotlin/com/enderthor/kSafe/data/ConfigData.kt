@@ -345,6 +345,14 @@ data class KSafeConfig(
     // ─── Hydration tracker (flat target by time, no sensor input) ───────────
     val hydrationTrackerEnabled: Boolean = false,
     val hydrationTargetMlPerHour: Int = 750,
+    /** When true, the hydration tracker ignores [hydrationTargetMlPerHour] and computes a
+     *  dynamic per-hour target from HR, power, weight, ambient temperature and humidity via
+     *  the SweatEstimator (Keytel HR-derived metabolic rate × WBGT heat factor × weight
+     *  scaling). Temperature is sourced from the `karoo-headwind` extension stream when
+     *  installed (real meteo data) or from the Karoo onboard sensor as fallback (sesgo
+     *  device-heat +3-8 °C). Humidity comes from Headwind only; without it the estimator
+     *  assumes 50 % RH. Opt-in: default OFF so existing riders keep the fixed target. */
+    val hydrationDynamicEstimateEnabled: Boolean = false,
     val hydrationDeficitAlertEnabled: Boolean = true,
     val hydrationDeficitThresholdMl: Int = 300,
     val hydrationTimeAlertEnabled: Boolean = false,

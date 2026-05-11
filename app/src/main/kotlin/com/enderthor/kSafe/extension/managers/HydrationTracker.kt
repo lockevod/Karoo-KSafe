@@ -6,6 +6,7 @@ import com.enderthor.kSafe.data.KSafeConfig
 import io.hammerhead.karooext.KarooSystemService
 import io.hammerhead.karooext.models.InRideAlert
 import io.hammerhead.karooext.models.PlayBeepPattern
+import io.hammerhead.karooext.models.UserProfile
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.cancelAndJoin
@@ -45,6 +46,19 @@ class HydrationTracker(
     @Volatile private var lastLogMs = 0L
     @Volatile private var lastAlertMs = 0L
     @Volatile private var lastPeriodicLogMs = 0L
+
+    // ─── Dynamic-estimate inputs (push from KSafeExtension, all optional) ────
+    // When [KSafeConfig.hydrationDynamicEstimateEnabled] is true the tick() integrator
+    // queries [SweatEstimator] each tick instead of using the fixed target rate. These
+    // fields are the latest known values from each stream; null means "no data yet".
+    @Volatile private var lastHrBpm: Int? = null
+    @Volatile private var lastPowerW: Int? = null
+    @Volatile private var lastWeightKg: Double? = null
+    @Volatile private var lastAmbientTempC: Double? = null
+    @Volatile private var lastHumidityPct: Int? = null
+    /** Most recent estimator output, exposed via [getStatus] for logging / future UI. */
+    @Volatile private var lastSweatRateMlHr: Double = 0.0
+    @Volatile private var lastSweatConfidence: SweatConfidence = SweatConfidence.LOW
 
     @Volatile private var config = KSafeConfig()
     private var monitorJob: Job? = null
@@ -87,6 +101,18 @@ class HydrationTracker(
         else if (wasEnabled && !config.hydrationTrackerEnabled) stop()
     }
 
+    // ─── Dynamic-estimate input updaters ────────────────────────────────────
+    // Called from KSafeExtension whenever a stream emits. All are no-ops unless
+    // [KSafeConfig.hydrationDynamicEstimateEnabled] is true at tick time.
+
+    fun updateHr(bpm: Int)            { lastHrBpm = bpm }
+    fun updatePower(w: Int)           { lastPowerW = w }
+    fun updateUserProfile(p: UserProfile) {
+        if (p.weight > 0) lastWeightKg = p.weight.toDouble()
+    }
+    fun updateAmbientTemp(c: Double)  { lastAmbientTempC = c }
+    fun updateHumidity(pct: Int)      { lastHumidityPct = pct }
+
     /** Log a single tap on slot 1 or 2. Adds the configured millilitres to the cumulative log. */
     fun logEntry(slot: Int) {
         val ml = when (slot) {
@@ -110,6 +136,9 @@ class HydrationTracker(
         cumLoggedMl = cumLoggedMl,
         deficitMl = (cumTargetMl - cumLoggedMl).toInt(),
         deficitThresholdMl = config.hydrationDeficitThresholdMl,
+        currentRateMlPerHour = if (config.hydrationDynamicEstimateEnabled) lastSweatRateMlHr.toInt()
+                               else config.hydrationTargetMlPerHour,
+        estimateConfidence = if (config.hydrationDynamicEstimateEnabled) lastSweatConfidence else null,
     )
 
     fun getSummary(): HydrationSummary = HydrationSummary(
@@ -125,7 +154,24 @@ class HydrationTracker(
         val now = System.currentTimeMillis()
         if (lastTickMs != 0L) {
             val dtSec = (now - lastTickMs) / 1000f
-            val ratePerSec = config.hydrationTargetMlPerHour / 3600f
+            val ratePerHour: Float = if (config.hydrationDynamicEstimateEnabled) {
+                // Pull all available signals into the estimator on every tick. Inputs that
+                // have not been received are passed as null so the estimator falls back to
+                // its documented defaults (50 % RH, 20 °C, 70 kg, moderate ride).
+                val estimate = estimateSweatRate(SweatEstimateInputs(
+                    hrBpm = lastHrBpm,
+                    powerW = lastPowerW,
+                    weightKg = lastWeightKg,
+                    ambientTempC = lastAmbientTempC,
+                    humidityPct = lastHumidityPct,
+                ))
+                lastSweatRateMlHr = estimate.mlPerHour
+                lastSweatConfidence = estimate.confidence
+                estimate.mlPerHour.toFloat()
+            } else {
+                config.hydrationTargetMlPerHour.toFloat()
+            }
+            val ratePerSec = ratePerHour / 3600f
             cumTargetMl += dtSec * ratePerSec
         }
         lastTickMs = now
@@ -195,8 +241,12 @@ class HydrationTracker(
         if (now - lastPeriodicLogMs < PERIODIC_LOG_INTERVAL_MS) return
         lastPeriodicLogMs = now
         val deficit = (cumTargetMl - cumLoggedMl).toInt()
+        val mode = if (config.hydrationDynamicEstimateEnabled) "dynamic" else "fixed"
         calibLogger.log(CalibrationLogger.Event.FUELING_HYDRATION_PERIODIC) {
-            "cum_target=${cumTargetMl.toInt()},cum_logged=$cumLoggedMl,deficit=$deficit"
+            "mode=$mode,rate_ml_h=${if (config.hydrationDynamicEstimateEnabled) lastSweatRateMlHr.toInt() else config.hydrationTargetMlPerHour}," +
+                "conf=$lastSweatConfidence,hr=${lastHrBpm ?: -1},pwr=${lastPowerW ?: -1}," +
+                "temp=${lastAmbientTempC ?: Double.NaN},rh=${lastHumidityPct ?: -1}," +
+                "cum_target=${cumTargetMl.toInt()},cum_logged=$cumLoggedMl,deficit=$deficit"
         }
     }
 }
@@ -210,6 +260,11 @@ data class HydrationStatus(
     val cumLoggedMl: Int,
     val deficitMl: Int,
     val deficitThresholdMl: Int,
+    /** Currently active per-hour rate. Equals [KSafeConfig.hydrationTargetMlPerHour] in fixed
+     *  mode; equals the latest [SweatEstimator] output in dynamic mode. */
+    val currentRateMlPerHour: Int = 0,
+    /** Confidence of the dynamic estimate. Null when in fixed mode. */
+    val estimateConfidence: SweatConfidence? = null,
 )
 
 /** Totals captured at end-of-ride for the post-ride summary InRideAlert. */
