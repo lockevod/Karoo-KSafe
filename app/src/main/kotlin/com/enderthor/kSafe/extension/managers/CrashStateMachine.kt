@@ -175,18 +175,24 @@ class CrashStateMachine(
      * Phase 1 — MONITORING.
      *
      * Entry to IMPACT requires:
-     *   1. impactDetected = (smoothed > smoothedThr) OR (peak > peakThr) OR (gyro > gyroThr)
+     *   1. impactDetected = (smoothed > smoothedThr) OR (peak > peakThr)
      *   2. Speed gate: `currentSpeedKmh >= minSpeedForCrashKmh` OR `minSpeedForCrashKmh == 0`.
+     *
+     * Strict `>` is verbatim with the pre-refactor monolith
+     * (`smoothedMagnitude > threshold || magnitude > effectivePeakThreshold`).
      *
      * The speed gate intentionally **does not** bypass on `gpsStale=true`. The doc only
      * bypasses speed in [isSpeedDropConfirmed] (used in IMPACT/SILENCE_CHECK), not in the
      * MONITORING spike gate.
+     *
+     * Gyro is intentionally NOT an entry path: hard cornering / shoulder checks routinely
+     * produce 4–10 rad/s on a bike and would create false positives. Production code never
+     * used a gyro entry branch.
      */
     private fun handleMonitoring(sample: SensorSample, now: Long): Decision {
         val isImpact =
-            sample.peakMagnitude >= thresholds.peakImpactThreshold ||
-            sample.smoothedMagnitude >= thresholds.smoothedImpactThreshold ||
-            sample.gyroMag >= thresholds.gyroImpactThreshold
+            sample.peakMagnitude > thresholds.peakImpactThreshold ||
+            sample.smoothedMagnitude > thresholds.smoothedImpactThreshold
         if (!isImpact) return Decision.None
 
         val speedOk = thresholds.minSpeedForCrashKmh == 0 ||
@@ -198,11 +204,10 @@ class CrashStateMachine(
         silenceStartedMs = 0L
 
         val reason = when {
-            sample.peakMagnitude >= thresholds.peakImpactThreshold &&
-                sample.smoothedMagnitude >= thresholds.smoothedImpactThreshold -> "BOTH"
-            sample.peakMagnitude >= thresholds.peakImpactThreshold -> "PEAK"
-            sample.smoothedMagnitude >= thresholds.smoothedImpactThreshold -> "SMOOTH"
-            else -> "GYRO"
+            sample.peakMagnitude > thresholds.peakImpactThreshold &&
+                sample.smoothedMagnitude > thresholds.smoothedImpactThreshold -> "BOTH"
+            sample.peakMagnitude > thresholds.peakImpactThreshold -> "PEAK"
+            else -> "SMOOTH"
         }
         calibLogger?.log(CalibrationLogger.Event.IMPACT_ENTER) {
             "peak=%.2f,smoothed=%.2f,gyro=%.2f,speed=%.1f,gps_stale=$lastSpeedGpsStale,reason=$reason"

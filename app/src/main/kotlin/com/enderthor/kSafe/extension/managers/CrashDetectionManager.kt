@@ -72,10 +72,6 @@ class CrashDetectionManager(
 
     private companion object {
         const val GRAVITY = 9.81
-        // Gyro entry threshold — kept high enough to stay effectively dormant in production:
-        // typical riding gyro peaks at ~2.0 rad/s; default 6.0 means MONITORING gyro branch
-        // is inert, matching the pre-refactor behaviour.
-        const val GYRO_IMPACT_THRESHOLD = 6.0
         // Stillness reference threshold — matches SensorReader.SILENCE_DEVIATION_MAX.
         const val SILENCE_DEVIATION_MAX = 4.0
         const val SILENCE_DURATION_MS = 4_500L
@@ -623,7 +619,6 @@ class CrashDetectionManager(
         return Thresholds(
             smoothedImpactThreshold = smoothedThresholdFor(cfg),
             peakImpactThreshold = effectivePeakThr,
-            gyroImpactThreshold = GYRO_IMPACT_THRESHOLD,
             silenceDeviationMax = SILENCE_DEVIATION_MAX,
             silenceDurationMs = SILENCE_DURATION_MS,
             gyroMovingMax = GYRO_MOVING_MAX,

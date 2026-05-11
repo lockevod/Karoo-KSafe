@@ -11,10 +11,6 @@ package com.enderthor.kSafe.extension.managers
  * Source notes (each value):
  *  - `smoothedImpactThreshold = 45.0` — MEDIUM smoothed bar (doc rev 3 + production code).
  *  - `peakImpactThreshold = 50.0` — MEDIUM peak bar, `smoothedThr + 5` principle (doc rev 3).
- *  - `gyroImpactThreshold = 6.0` — used only as an *additional* MONITORING entry path
- *     (the production code does NOT use gyro to enter IMPACT, but the state-machine
- *     scaffold exposes a gyro entry knob; default chosen high enough to be effectively
- *     inert at production usage and only fire on genuine rotational events).
  *  - `silenceDeviationMax = 4.0` — `SILENCE_DEVIATION_MAX` (doc + production code).
  *  - `silenceDurationMs = 4_500` — `SILENCE_DURATION_MS` (doc + production code).
  *  - `gpsStaleSilenceDeviationMax = 1.5` — `GPS_STALE_DEVIATION_MAX` (doc + production code).
@@ -34,7 +30,6 @@ data class Thresholds(
     // ── MONITORING → IMPACT spike thresholds ─────────────────────────────────
     val smoothedImpactThreshold: Double = 45.0,
     val peakImpactThreshold: Double = 50.0,
-    val gyroImpactThreshold: Double = 6.0,
 
     // ── IMPACT → SILENCE_CHECK entry (GPS-fresh thresholds) ──────────────────
     val silenceDeviationMax: Double = 4.0,
