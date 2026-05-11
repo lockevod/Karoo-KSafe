@@ -350,7 +350,7 @@ class CrashDetectionManager(
                 logImpactEnter(sample, decision.reason, boostActive)
             }
             is CrashStateMachine.Decision.Confirm -> {
-                logCrashConfirmed(sample, now)
+                logCrashConfirmed(sample)
                 confirmCrash(CrashSource.IMPACT_CONFIRMED)
             }
             is CrashStateMachine.Decision.ReturnToMonitoring -> {
@@ -369,7 +369,7 @@ class CrashDetectionManager(
                 // Inside SILENCE_CHECK: log SILENCE_BROKEN / SILENCE_ENTER transition.
                 if (priorState == CrashStateMachine.State.IMPACT &&
                     stateMachine.state == CrashStateMachine.State.SILENCE_CHECK) {
-                    logSilenceEnter(sample, now)
+                    logSilenceEnter(sample)
                 }
                 if (priorState == CrashStateMachine.State.SILENCE_CHECK &&
                     stateMachine.state == CrashStateMachine.State.SILENCE_CHECK) {
@@ -418,7 +418,7 @@ class CrashDetectionManager(
         }
     }
 
-    private fun logSilenceEnter(sample: SensorSample, now: Long) {
+    private fun logSilenceEnter(sample: SensorSample) {
         val deviation = abs(sample.rawMagnitude - GRAVITY)
         Timber.d(">>> SILENCE_CHECK started (deviation=%.2f gyro=%.2f speed=%.1fkm/h)",
             deviation, sample.gyroMag, currentSpeedKmh)
@@ -428,7 +428,7 @@ class CrashDetectionManager(
         }
     }
 
-    private fun logCrashConfirmed(sample: SensorSample, now: Long) {
+    private fun logCrashConfirmed(sample: SensorSample) {
         val deviation = abs(sample.rawMagnitude - GRAVITY)
         val gpsStale = lastGpsStaleState
         val effectiveDevMax = if (gpsStale) GPS_STALE_DEVIATION_MAX else SILENCE_DEVIATION_MAX
