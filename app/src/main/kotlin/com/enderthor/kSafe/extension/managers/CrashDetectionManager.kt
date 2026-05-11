@@ -365,8 +365,14 @@ class CrashDetectionManager(
      */
     @Volatile private var accelStillSinceMs = 0L
 
-    private var speedDropJob: Job? = null
-    @Volatile private var speedDropStartTime = 0L
+    private val speedDropMonitor = SpeedDropMonitor(
+        scope = scope,
+        clock = clock,
+        accelStillSinceProvider = { accelStillSinceMs },
+        cooldownGate = { (clock.nowMs() - lastCrashTime) > crashCooldownMs },
+        onConfirm = { confirmCrash(CrashSource.SPEED_DROP) },
+        calibLogger = calibLogger,
+    )
     @Volatile private var speedLastUpdatedTime = 0L  // timestamp of last updateSpeed() call — stale GPS detection
 
     // ── Calibration rate-limit timestamps (sensor thread) ────────────────────
@@ -425,12 +431,12 @@ class CrashDetectionManager(
 
         Timber.d("CrashDetectionManager STARTED (sensitivity=${config.crashSensitivity}, threshold=${cachedThreshold}m/s²)")
 
-        if (config.speedDropDetectionEnabled) startSpeedDropMonitor()
+        if (config.speedDropDetectionEnabled) speedDropMonitor.start(config.speedDropMinutes)
     }
 
     fun stop() {
         sensorManager.unregisterListener(this)
-        speedDropJob?.cancel()
+        speedDropMonitor.stop()
         resetState()
         Timber.d("CrashDetectionManager STOPPED")
     }
@@ -478,13 +484,7 @@ class CrashDetectionManager(
         currentSpeedKmh = speedKmh
         speedLastUpdatedTime = now
 
-        if (config.speedDropDetectionEnabled) {
-            if (speedKmh < SPEED_THRESHOLD_KMH) {
-                if (speedDropStartTime == 0L) speedDropStartTime = clock.nowMs()
-            } else {
-                speedDropStartTime = 0L
-            }
-        }
+        speedDropMonitor.onSpeedUpdate(speedKmh)
     }
 
     /**
@@ -525,7 +525,7 @@ class CrashDetectionManager(
      * detection after the configured window — even though the rider intentionally paused.
      */
     fun resetSpeedDropOnPause() {
-        speedDropStartTime = 0L
+        speedDropMonitor.onPause()
         Timber.d("Speed-drop timer reset on ride pause")
     }
 
@@ -984,46 +984,4 @@ class CrashDetectionManager(
         scope.launch { onCrashDetected() }
     }
 
-    // ─── Speed drop monitor ───────────────────────────────────────────────────
-
-    private fun startSpeedDropMonitor() {
-        speedDropJob?.cancel()
-        speedDropJob = scope.launch {
-            while (true) {
-                delay(30_000L)
-                if (speedDropStartTime > 0) {
-                    val now = clock.nowMs()
-                    val stoppedFor = (now - speedDropStartTime) / 60_000
-                    if (stoppedFor >= config.speedDropMinutes) {
-                        // Additional guard: require accelerometer to have been continuously near
-                        // gravity for at least SPEED_DROP_ACCEL_STILL_MS — not just at this
-                        // single polling instant. A snapshot read at the 30s boundary can land on
-                        // either side of the rider's activity by chance, producing both false
-                        // positives (caller phone but bike happened to be still) and false
-                        // negatives (caller stopped fidgeting just as we polled).
-                        //
-                        // accelStillSinceMs is reset to 0 in processAccelerometer whenever a
-                        // sample exceeds SILENCE_DEVIATION_MAX. A non-zero value means the
-                        // accel has been quiet since that timestamp.
-                        val stillSince = accelStillSinceMs
-                        val stillStableFor = if (stillSince > 0) now - stillSince else 0L
-                        val accelOk = stillStableFor >= SPEED_DROP_ACCEL_STILL_MS
-                        // ── Calibration point 5: log every evaluation so you can tune the 60s threshold
-                        calibLogger?.log(CalibrationLogger.Event.SPEEDDROP_EVAL) {
-                            "stopped_min=$stoppedFor,still_stable_s=${stillStableFor/1_000},need_s=${SPEED_DROP_ACCEL_STILL_MS/1_000},accel_ok=$accelOk"
-                        }
-                        if (accelOk) {
-                            Timber.d("Speed drop confirmed: stopped for ${stoppedFor}min, accel stable for %.0fs → alert",
-                                stillStableFor / 1000.0)
-                            speedDropStartTime = 0L
-                            onCrashDetected()
-                        } else {
-                            Timber.d("Speed drop timer elapsed but accel not stably still (stable for %.0fs, need %.0fs) — waiting",
-                                stillStableFor / 1000.0, SPEED_DROP_ACCEL_STILL_MS / 1000.0)
-                        }
-                    }
-                }
-            }
-        }
-    }
 }
