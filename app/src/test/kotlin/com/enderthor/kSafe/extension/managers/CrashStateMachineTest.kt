@@ -258,17 +258,51 @@ class CrashStateMachineTest {
     // ── 11. Stale cadence treated as zero — does NOT save the rider ──────────
 
     @Test
-    fun `stale cadence is treated as zero and does not block confirmation`() {
+    fun `stale cadence age over threshold is treated as zero and does not block confirmation`() {
+        // Exercises the `age > cadenceStaleThresholdMs` branch of isCadenceActive
+        // specifically. We must first fire a sample so lastSampleMs > 0; only then
+        // does onCadenceUpdate stamp lastCadenceUpdateMs to that non-zero sample
+        // time and the staleness *age* computation becomes meaningful.
         val (sm, _) = newSm(thresholds = Thresholds(cadenceStaleThresholdMs = 1_000L))
         sm.onSpeedUpdate(20.0)
-        sm.onCadenceUpdate(80.0)  // logged at lastSampleMs == 0
+        // 1. Fire an early sample first → lastSampleMs = 1000.
+        sm.onSample(sample(time = 1_000, peak = 5.0, smoothed = 5.0, gyro = 0.5))
+        // 2. NOW write cadence — it gets stamped with lastSampleMs = 1000.
+        sm.onCadenceUpdate(80.0)
+        // 3. Now drive the impact. Speed must be high enough to pass the gate.
+        sm.onSample(sample(time = 1_100, peak = 60.0, smoothed = 30.0, gyro = 0.5))
+        assertEquals(CrashStateMachine.State.IMPACT, sm.state)
+        sm.onSpeedUpdate(2.0)
+        // 4. Enter SILENCE_CHECK at t=1700 (timeSinceImpact = 600 > 500).
+        //    Cadence age here is 1700-1000 = 700 < 1000 → still fresh, but we're
+        //    leaving the cadence-active branch via the >20 RPM check just by entering.
+        //    Wait — fresh cadence at 80 RPM would force false-alarm exit. So we need
+        //    a sample where cadence is already STALE before entering SILENCE_CHECK.
+        //
+        //    Drive sample-time forward to 2_500 so cadence age = 1_500 > 1_000 (stale).
+        sm.onSample(sample(time = 2_500, peak = QUIET, smoothed = QUIET, gyro = 0.5))
+        // We are now in SILENCE_CHECK with cadence age 1500 > 1000 — treated as zero.
+        assertEquals(CrashStateMachine.State.SILENCE_CHECK, sm.state)
+        // silenceStartedMs = 2_500 → confirm at >= 2_500 + 4_500 = 7_000.
+        val d = sm.onSample(sample(time = 7_100, peak = QUIET, smoothed = QUIET, gyro = 0.5))
+        assertEquals(CrashStateMachine.Decision.Confirm, d)
+    }
+
+    // ── 11b. Cadence never received in-ride — separate branch worth covering ─
+
+    @Test
+    fun `no cadence received in-ride is treated as zero and does not block confirmation`() {
+        // Cadence is updated BEFORE any sample is processed, so lastCadenceUpdateMs
+        // stays at 0 (the "never received in-ride" sentinel). isCadenceActive must
+        // return false via that branch — distinct from the age>threshold branch.
+        val (sm, _) = newSm(thresholds = Thresholds(cadenceStaleThresholdMs = 1_000L))
+        sm.onSpeedUpdate(20.0)
+        sm.onCadenceUpdate(80.0)  // logged at lastSampleMs == 0 (never-received sentinel)
         sm.onSample(sample(time = 0, peak = 60.0, smoothed = 30.0, gyro = 0.5))
         sm.onSpeedUpdate(2.0)
-        // 600 ms later → cadence age = 600 < 1000, still fresh. Refresh sample.
+        // Even though cadence value is 80 RPM, the sentinel makes isCadenceActive=false.
         sm.onSample(sample(time = 600, peak = QUIET, smoothed = QUIET, gyro = 0.5))
-        // Now we're in SILENCE_CHECK. Don't touch cadence so it goes stale.
-        // 2_000 ms later — cadence age now 2000 > 1000 → treated as zero.
-        sm.onSample(sample(time = 2_000, peak = QUIET, smoothed = QUIET, gyro = 0.5))
+        assertEquals(CrashStateMachine.State.SILENCE_CHECK, sm.state)
         // silenceStartedMs = 600 → need ≥ 5100 for 4500-ms window.
         val d = sm.onSample(sample(time = 5_200, peak = QUIET, smoothed = QUIET, gyro = 0.5))
         assertEquals(CrashStateMachine.Decision.Confirm, d)
