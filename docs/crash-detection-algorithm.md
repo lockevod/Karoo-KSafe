@@ -544,7 +544,11 @@ A second process kill during the 10 s mini-confirm loses the emergency entirely.
 
 ### Cooldown interaction
 
-`resumeCountdown` does NOT update `lastCrashTime` on the manager — the cooldown was set when the original crash was confirmed, before the process died. On resume, `confirmCrash` (the unified gate) is unaware of the resume happening; only `sendAlerts` runs at the end. This means a NEW crash detected immediately after resume would still be blocked by the original cooldown window, which is the desired behaviour.
+`lastCrashTime` lives **in memory** on `CrashDetectionManager`, not in DataStore. After the process dies and restarts, it resets to 0 along with the rest of the manager state. Consequence: during the resumed countdown the cooldown window from the original crash is gone, so a NEW crash detected mid-resume would NOT be suppressed.
+
+This is an accepted gap. The scenarios that cause process kill mid-countdown — Android low-memory pressure, force-stop, or an unrelated crash in the app — are infrequent, and the probability of a real second physical crash arriving within the few seconds of a resumed countdown is extraordinarily small. Persisting `lastCrashTime` would harden this corner but the implementation cost is not justified by the risk it eliminates.
+
+`resumeCountdown` and `resumeAfterDeadline` therefore dispatch the alert through `sendAlerts(config, reason)` directly without going through the `confirmCrash` gate. The gate exists to deduplicate fresh detections; the resumed countdown is a continuation of a detection that already passed it.
 
 ### Calibration / observability
 

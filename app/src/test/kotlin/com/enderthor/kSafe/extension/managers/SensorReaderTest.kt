@@ -14,10 +14,15 @@ import org.mockito.Mockito.verify
 
 /**
  * Lifecycle tests for [SensorReader]. We exercise register/unregister and idempotency
- * against a mocked [SensorManager] — SensorEvent simulation needs reflection on
- * package-private constructors that mockito-inline cannot mock cleanly, so the buffer-
- * clearance race fix (item 11 in the reliability diagnostic) is verified by code
- * inspection of [SensorReader.stop] rather than by a feed-and-observe test.
+ * against a mocked [SensorManager].
+ *
+ * Limitation: SensorEvent has a package-private constructor that the stub android.jar
+ * shipped with the testDebugUnitTest classpath replaces with a "Stub!" throw, and
+ * mockito-inline cannot synthesize a SensorEvent that survives access to its public
+ * `sensor` / `values` fields cleanly enough to drive the SensorReader through real
+ * accel ticks. So the **race-fix payoff** (stop() unregistering BEFORE clearing the
+ * buffers — item 11 in the reliability diagnostic) is verified by code inspection of
+ * [SensorReader.stop] rather than by a feed-and-observe assertion in this suite.
  */
 class SensorReaderTest {
 
@@ -29,7 +34,7 @@ class SensorReaderTest {
 
     private fun newReader(sensorManager: SensorManager): SensorReader = SensorReader(
         sensorManager = sensorManager,
-        clock = Clock { 1_000L },
+        clock = { 1_000L },
         onSample = { /* not exercised in lifecycle tests */ },
     )
 
@@ -55,7 +60,7 @@ class SensorReaderTest {
     }
 
     @Test
-    fun `start is idempotent — calling twice does not re-register`() {
+    fun `start is idempotent - calling twice does not re-register`() {
         val sm = mock(SensorManager::class.java)
         val accel = accelSensor()
         val gyro = gyroSensor()
@@ -89,7 +94,7 @@ class SensorReaderTest {
     }
 
     @Test
-    fun `gyroscope is optional — start succeeds with only accelerometer`() {
+    fun `gyroscope is optional - start succeeds with only accelerometer`() {
         val sm = mock(SensorManager::class.java)
         val accel = accelSensor()
         `when`(sm.getDefaultSensor(Sensor.TYPE_ACCELEROMETER)).thenReturn(accel)
@@ -106,7 +111,16 @@ class SensorReaderTest {
     }
 
     @Test
-    fun `stop unregisters and clears the accelStillSinceMs accumulator`() {
+    fun `stop on a freshly started reader unregisters the listener`() {
+        // Note: this test only exercises the unregister side of stop(). We cannot easily
+        // fill the buffers from a unit test (SensorEvent has a package-private constructor
+        // that mockito-inline cannot mock cleanly and whose stubbed android.jar variant
+        // throws "Stub!"), so the buffer-clearance race fix in stop() — which clears AFTER
+        // unregister — is verified by code inspection of SensorReader.stop() rather than
+        // by a feed-and-observe assertion. The assertions on accelStillSinceMs and
+        // lastGyroMag below are weak (they hold even without start/stop) but exist to
+        // make it obvious if a future refactor accidentally initialises these fields to
+        // non-zero defaults.
         val sm = mock(SensorManager::class.java)
         val accel = accelSensor()
         val gyro = gyroSensor()
@@ -118,12 +132,8 @@ class SensorReaderTest {
         reader.stop()
 
         verify(sm).unregisterListener(reader)
-        // Internal accumulators reset to defaults.
         assertEquals(0L, reader.accelStillSinceMs)
         assertEquals(0.0, reader.lastGyroMag, 0.0)
-        // Snapshot of the magnitude buffer is empty after stop — the race-fix payoff:
-        // even if processAccel had been running, stop() unregistered before clearing,
-        // so this snapshot reflects the cleared state.
         assertEquals(emptyList<Double>(), reader.magnitudeBufferSnapshot())
     }
 
