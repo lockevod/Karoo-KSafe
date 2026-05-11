@@ -9,6 +9,7 @@ import com.enderthor.kSafe.extension.managers.EmergencyResume
 import com.enderthor.kSafe.extension.managers.decideResume
 import com.enderthor.kSafe.data.KSafeConfig
 import com.enderthor.kSafe.data.ProviderType
+import com.enderthor.kSafe.data.RideWellnessRecord
 import com.enderthor.kSafe.datatype.CustomMessageDataType
 import com.enderthor.kSafe.datatype.CustomMessageState
 import com.enderthor.kSafe.datatype.WebhookState
@@ -22,8 +23,11 @@ import com.enderthor.kSafe.extension.managers.EmergencyManager
 import com.enderthor.kSafe.extension.managers.LocationManager
 import com.enderthor.kSafe.extension.managers.LogReporter
 import com.enderthor.kSafe.extension.managers.MedicalEpisodeDetector
+import com.enderthor.kSafe.extension.managers.ReadinessAdvice
+import com.enderthor.kSafe.extension.managers.ReadinessLevel
 import com.enderthor.kSafe.extension.managers.WebhookManager
 import com.enderthor.kSafe.extension.managers.WellnessMonitor
+import com.enderthor.kSafe.extension.managers.decideReadiness
 import io.hammerhead.karooext.KarooSystemService
 import io.hammerhead.karooext.extension.KarooExtension
 import io.hammerhead.karooext.internal.Emitter
@@ -31,6 +35,7 @@ import io.hammerhead.karooext.models.DataType
 import io.hammerhead.karooext.models.DeveloperField
 import io.hammerhead.karooext.models.FieldValue
 import io.hammerhead.karooext.models.FitEffect
+import io.hammerhead.karooext.models.InRideAlert
 import io.hammerhead.karooext.models.RideState
 import io.hammerhead.karooext.models.StreamState
 import io.hammerhead.karooext.models.SystemNotification
@@ -343,6 +348,15 @@ class KSafeExtension : KarooExtension("ksafe", BuildConfig.VERSION_NAME), Corout
                     if (!rideStartNotificationSent) {
                         rideStartNotificationSent = true
                         sendRideStartNotification()
+                        // Readiness advice from the last 10 rides' wellness summaries.
+                        // Silent when RECOVERED (decideReadiness returns null) — no per-ride spam.
+                        if (activeConfig.readinessAtRideStartEnabled) {
+                            launch {
+                                val history = configManager.loadWellnessHistoryFlow().first()
+                                val advice = decideReadiness(history, System.currentTimeMillis())
+                                if (advice != null) fireReadinessAdvice(advice)
+                            }
+                        }
                     }
                     rideWasActive = true
                 }
@@ -361,6 +375,10 @@ class KSafeExtension : KarooExtension("ksafe", BuildConfig.VERSION_NAME), Corout
             is RideState.Idle -> {
                 val wasActive = rideWasActive
                 val wasLogging = calibLogger.isEnabled
+                // Snapshot wellness BEFORE stop() so a future change to stop() that resets
+                // accumulators can't silently erase the per-ride summary we need to persist.
+                val wellnessSnapshot = if (wasActive && activeConfig.wellnessEnabled)
+                    wellnessMonitor.getSummary() else null
                 emergencyManager.stopAll()
                 medicalDetector.stop()
                 wellnessMonitor.stop()
@@ -373,6 +391,8 @@ class KSafeExtension : KarooExtension("ksafe", BuildConfig.VERSION_NAME), Corout
                 // Send ride-end notification if there was an active ride
                 if (wasActive) {
                     sendRideEndNotification()
+                    // Persist the wellness summary for the next ride's readiness advice.
+                    if (wellnessSnapshot != null) persistWellnessSummary(wellnessSnapshot)
                 }
                 // Auto-send calibration log if it was active during the ride
                 // (only if the user hasn't already turned off logging — that path sends its own copy)
@@ -493,6 +513,50 @@ class KSafeExtension : KarooExtension("ksafe", BuildConfig.VERSION_NAME), Corout
                 Timber.e(e, "KSafe: error sending ride end notification")
             }
         }
+    }
+
+    /**
+     * Persists the wellness summary at the end of an active ride so the next ride start
+     * can compute readiness advice. Appends to the rolling 10-record history in DataStore.
+     */
+    private fun persistWellnessSummary(snapshot: WellnessMonitor.WellnessSummary) {
+        launch {
+            val current = configManager.loadWellnessHistoryFlow().first()
+            val updated = current.append(RideWellnessRecord(
+                endedAtMs = System.currentTimeMillis(),
+                maxHrBpm = snapshot.maxHrBpm,
+                cumMsCriticalAbove = snapshot.cumMsCriticalAbove,
+                cumMsSustainedAbove = snapshot.cumMsSustainedAbove,
+                maxDriftPct = snapshot.maxDriftPct,
+                criticalFires = snapshot.criticalFires,
+                sustainedFires = snapshot.sustainedFires,
+                decouplingFires = snapshot.decouplingFires,
+            ))
+            configManager.saveWellnessHistory(updated)
+            Timber.d("KSafe: appended wellness record (history size ${updated.records.size})")
+        }
+    }
+
+    /**
+     * Fires the readiness InRideAlert at the start of a ride. Colour-coded by level:
+     * CAUTION (amber) for the milder rules, TAKE_IT_EASY (red) for the high-drift rule.
+     * RECOVERED never reaches here — [decideReadiness] returns null and the caller skips.
+     */
+    private fun fireReadinessAdvice(advice: ReadinessAdvice) {
+        val (titleRes, bgColor) = when (advice.level) {
+            ReadinessLevel.RECOVERED -> return   // never fires — defensive
+            ReadinessLevel.CAUTION -> R.string.readiness_alert_caution_title to 0xFFEF6C00.toInt()
+            ReadinessLevel.TAKE_IT_EASY -> R.string.readiness_alert_take_easy_title to 0xFFB71C1C.toInt()
+        }
+        karooSystem.dispatch(InRideAlert(
+            id = "ksafe-readiness-${System.currentTimeMillis()}",
+            icon = R.drawable.ic_ksafe,
+            title = getString(titleRes),
+            detail = advice.reasons.joinToString(" • "),
+            autoDismissMs = 15_000L,
+            backgroundColor = bgColor,
+            textColor = 0xFFFFFFFF.toInt(),
+        ))
     }
 
     /**

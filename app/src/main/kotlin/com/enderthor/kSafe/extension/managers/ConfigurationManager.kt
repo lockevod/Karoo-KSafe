@@ -7,9 +7,11 @@ import com.enderthor.kSafe.activity.dataStore
 import com.enderthor.kSafe.data.EmergencyState
 import com.enderthor.kSafe.data.KSafeConfig
 import com.enderthor.kSafe.data.SenderConfig
+import com.enderthor.kSafe.data.WellnessHistory
 import com.enderthor.kSafe.data.defaultEmergencyStateJson
 import com.enderthor.kSafe.data.defaultKSafeConfigJson
 import com.enderthor.kSafe.data.defaultSenderConfigJson
+import com.enderthor.kSafe.data.defaultWellnessHistoryJson
 import com.enderthor.kSafe.data.migrateToLatest
 import com.enderthor.kSafe.extension.jsonWithUnknownKeys
 import kotlinx.coroutines.flow.Flow
@@ -24,6 +26,7 @@ class ConfigurationManager(private val context: Context) {
     private val configKey = stringPreferencesKey("ksafeconfig")
     private val senderConfigKey = stringPreferencesKey("sender")
     private val emergencyStateKey = stringPreferencesKey("emergencystate")
+    private val wellnessHistoryKey = stringPreferencesKey("wellnesshistory")
 
     // ─── KSafeConfig ──────────────────────────────────────────────────────────
 
@@ -103,5 +106,27 @@ class ConfigurationManager(private val context: Context) {
                 EmergencyState()
             }
         }
+    }
+
+    // ─── WellnessHistory ──────────────────────────────────────────────────────
+
+    suspend fun saveWellnessHistory(history: WellnessHistory) {
+        context.dataStore.edit { prefs ->
+            prefs[wellnessHistoryKey] = Json.encodeToString(history)
+        }
+    }
+
+    fun loadWellnessHistoryFlow(): Flow<WellnessHistory> {
+        return context.dataStore.data.map { prefs ->
+            val raw = prefs[wellnessHistoryKey] ?: defaultWellnessHistoryJson
+            try {
+                jsonWithUnknownKeys.decodeFromString<WellnessHistory>(raw)
+            } catch (e: Throwable) {
+                val snippet = raw.take(200).replace("\n", " ")
+                Timber.e(e, "Failed to read WellnessHistory (%s: %s) — raw[0..200] = %s",
+                    e.javaClass.simpleName, e.message, snippet)
+                WellnessHistory()
+            }
+        }.distinctUntilChanged()
     }
 }

@@ -10,6 +10,7 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.SegmentedButton
@@ -52,6 +53,7 @@ fun HealthScreen(vm: MainViewModel) {
     var medicalCustomDetail  by remember(config.medicalCustomDetail)          { mutableStateOf(config.medicalCustomDetail) }
 
     var wellnessEnabled         by remember(config.wellnessEnabled)              { mutableStateOf(config.wellnessEnabled) }
+    var readinessAtRideStartEnabled by remember(config.readinessAtRideStartEnabled) { mutableStateOf(config.readinessAtRideStartEnabled) }
     var wellnessResponseLevel   by remember(config.wellnessResponseLevel)        { mutableStateOf(coerceVisible(config.wellnessResponseLevel, IncidentResponseLevel.WARNING)) }
     var wellnessUseMaxHrPercent by remember(config.wellnessUseMaxHrPercent)      { mutableStateOf(config.wellnessUseMaxHrPercent) }
     // Sustained tier (existing fields)
@@ -376,6 +378,22 @@ fun HealthScreen(vm: MainViewModel) {
                     singleLine = false,
                 )
                 }  // end if (wDecouplingOn)
+
+                // ── Readiness advice at ride start (cross-tier — uses ALL wellness data) ─
+                HorizontalDivider(modifier = Modifier.padding(vertical = 6.dp))
+                EnableRow(
+                    label = stringResource(R.string.readiness_at_ride_start_label),
+                    checked = readinessAtRideStartEnabled,
+                    onCheckedChange = {
+                        readinessAtRideStartEnabled = it
+                        vm.saveConfig(config.copy(readinessAtRideStartEnabled = it))
+                    },
+                )
+                Text(
+                    text = stringResource(R.string.readiness_at_ride_start_hint),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
                 }  // end if (wellnessEnabled)
             }
         }

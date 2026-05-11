@@ -221,6 +221,11 @@ data class KSafeConfig(
     // ─── Wellness monitor (sustained high HR) ────────────────────────────────
     /** Master toggle for [WellnessMonitor]. Default OFF — opt-in: thresholds depend on user age/fitness. */
     val wellnessEnabled: Boolean = false,
+    /** When true, on the first Recording transition of a session KSafe consults the last
+     *  10 stored ride wellness records and fires an InRideAlert if the rider should take
+     *  it easy (high cardiac drift / many wellness fires / multiple hard rides in a row).
+     *  Silent when the rider is fully recovered — no per-ride spam. Default ON. */
+    val readinessAtRideStartEnabled: Boolean = true,
     /** Response level for wellness alerts. Default WARNING — on-screen only, never to contacts. */
     val wellnessResponseLevel: IncidentResponseLevel = IncidentResponseLevel.WARNING,
     /** HR threshold for the wellness monitor (bpm). User-tunable in the Health tab.
@@ -518,6 +523,44 @@ val defaultSenderConfigs = listOf(
 val defaultSenderConfigJson: String = Json.encodeToString(defaultSenderConfigs)
 val defaultKSafeConfigJson: String = Json.encodeToString(listOf(KSafeConfig(configVersion = CONFIG_VERSION)))
 val defaultEmergencyStateJson: String = Json.encodeToString(EmergencyState())
+
+// ─── Wellness ride history (consumed by ReadinessDecision) ────────────────────
+
+/**
+ * Snapshot of one ride's wellness summary, persisted at the Recording → Idle transition.
+ * Field set mirrors `WellnessMonitor.WellnessSummary` plus a wall-clock timestamp so
+ * recency rules can be evaluated independently of the rider's timezone.
+ */
+@Serializable
+data class RideWellnessRecord(
+    val endedAtMs: Long = 0L,
+    val maxHrBpm: Int = 0,
+    val cumMsCriticalAbove: Long = 0L,
+    val cumMsSustainedAbove: Long = 0L,
+    val maxDriftPct: Float = 0f,
+    val criticalFires: Int = 0,
+    val sustainedFires: Int = 0,
+    val decouplingFires: Int = 0,
+) {
+    val totalFires: Int get() = criticalFires + sustainedFires + decouplingFires
+}
+
+/**
+ * Rolling history of the last 10 wellness summaries, newest first. Consumed by
+ * `decideReadiness` to advise the rider at the start of the next ride.
+ */
+@Serializable
+data class WellnessHistory(
+    val records: List<RideWellnessRecord> = emptyList(),
+) {
+    /** Returns a new history with `record` prepended and trimmed to the most recent [MAX_SIZE]. */
+    fun append(record: RideWellnessRecord): WellnessHistory =
+        WellnessHistory(records = (listOf(record) + records).take(MAX_SIZE))
+
+    companion object { const val MAX_SIZE = 10 }
+}
+
+val defaultWellnessHistoryJson: String = Json.encodeToString(WellnessHistory())
 
 // ─── Config migration ─────────────────────────────────────────────────────────
 

@@ -81,6 +81,12 @@
     <string name="fueling_slot_grams_label">g</string>
     <string name="fueling_slot_ml_label">ml</string>
     <string name="fueling_fit_export_label">Write KSafe data to FIT (Strava / Intervals.icu)</string>
+
+    <!-- Readiness at ride start -->
+    <string name="readiness_at_ride_start_label">Readiness advice at ride start</string>
+    <string name="readiness_at_ride_start_hint">Reads the last 10 rides\' wellness summaries and shows a brief InRideAlert at the start of the next ride if the rider should take it easy. Silent when fully recovered — no per-ride spam. Default ON.</string>
+    <string name="readiness_alert_caution_title">Caution today</string>
+    <string name="readiness_alert_take_easy_title">Take it easy today</string>
     <string name="fueling_carb_alert_title">Eat something</string>
     <string name="fueling_carb_alert_detail_deficit">Behind by {deficit}g — eat something now (target {target} g/h).</string>
     <string name="fueling_carb_alert_detail_time">{elapsed} min since last log — time to eat (target {target} g/h).</string>
