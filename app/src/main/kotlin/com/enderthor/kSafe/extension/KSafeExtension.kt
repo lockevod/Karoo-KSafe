@@ -362,7 +362,6 @@ class KSafeExtension : KarooExtension("ksafe", BuildConfig.VERSION_NAME), Corout
                 val wasActive = rideWasActive
                 val wasLogging = calibLogger.isEnabled
                 emergencyManager.stopAll()
-                if (wasActive) sendFuelingPostRideSummary()
                 medicalDetector.stop()
                 wellnessMonitor.stop()
                 carbsTracker.stop()
@@ -456,35 +455,6 @@ class KSafeExtension : KarooExtension("ksafe", BuildConfig.VERSION_NAME), Corout
     /** Direct cancel — called from CancelEmergencyActivity. */
     fun cancelEmergency() {
         launch { emergencyManager.cancelEmergency(activeConfig) }
-    }
-
-    /**
-     * Dispatches an InRideAlert with the totals for any enabled fueling tracker.
-     * Called from the Idle branch of handleRideState before the trackers are stopped.
-     */
-    private fun sendFuelingPostRideSummary() {
-        val config = activeConfig
-        if (!config.fuelingPostRideSummaryEnabled) return
-        if (!this::carbsTracker.isInitialized || !this::hydrationTracker.isInitialized) return
-        val parts = mutableListOf<String>()
-        if (config.carbsTrackerEnabled) {
-            val s = carbsTracker.getSummary()
-            if (s.cumTargetG > 0) parts.add("Carbs: ${s.cumLoggedG}/${s.cumTargetG}g (${s.percentageHit}%)")
-        }
-        if (config.hydrationTrackerEnabled) {
-            val s = hydrationTracker.getSummary()
-            if (s.cumTargetMl > 0) parts.add("Hyd: ${s.cumLoggedMl}/${s.cumTargetMl}ml (${s.percentageHit}%)")
-        }
-        if (parts.isEmpty()) return
-        karooSystem.dispatch(io.hammerhead.karooext.models.InRideAlert(
-            id = "ksafe-fueling-summary",
-            icon = R.drawable.ic_ksafe,
-            title = "Ride finished",
-            detail = parts.joinToString(" • "),
-            autoDismissMs = 15_000L,
-            backgroundColor = 0xFF2E7D32.toInt(),
-            textColor = 0xFFFFFFFF.toInt(),
-        ))
     }
 
     /** Sends a ride-start notification with the Karoo Live link if the feature is enabled and a key is set. */

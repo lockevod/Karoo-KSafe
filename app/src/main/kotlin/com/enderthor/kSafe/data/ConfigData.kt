@@ -355,9 +355,6 @@ data class KSafeConfig(
     val drink1Label: String = "Sip",     val drink1Ml: Int = 100,    val drink1Color: Int = 0xFF1565C0.toInt(),    val drink1Icon: String = "💧",
     val drink2Label: String = "Bottle",  val drink2Ml: Int = 500,    val drink2Color: Int = 0xFF1565C0.toInt(),    val drink2Icon: String = FUEL_BOTTLE_DRAWABLE,
 
-    // ─── Post-ride summary ──────────────────────────────────────────────────
-    /** Show an InRideAlert with totals at the end of every ride. */
-    val fuelingPostRideSummaryEnabled: Boolean = true,
     /** Write per-second cumulative carbs (g) and hydration (ml) into the FIT file as
      *  developer fields, plus the totals into the session message. Default ON because
      *  the cost is negligible (~0.05% battery over 5 h, no perceptible CPU). Riders

@@ -76,7 +76,6 @@ fun FuelingScreen(vm: MainViewModel) {
     var drink2Icon           by remember(config.drink2Icon)                      { mutableStateOf(config.drink2Icon) }
 
     // Post-ride summary state
-    var summaryEnabled by remember(config.fuelingPostRideSummaryEnabled) { mutableStateOf(config.fuelingPostRideSummaryEnabled) }
 
     Column(
         modifier = Modifier
@@ -340,17 +339,6 @@ fun FuelingScreen(vm: MainViewModel) {
                 }
                 }  // end if (hydEnabled)
             }
-        }
-
-        // Post-ride summary
-        FuelingRow(label = stringResource(R.string.fueling_post_ride_summary_label)) {
-            Switch(
-                checked = summaryEnabled,
-                onCheckedChange = {
-                    summaryEnabled = it
-                    vm.saveConfig(config.copy(fuelingPostRideSummaryEnabled = it))
-                }
-            )
         }
     }
 }

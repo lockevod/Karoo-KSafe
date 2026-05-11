@@ -80,7 +80,6 @@
     <string name="fueling_slot_label_label">Label</string>
     <string name="fueling_slot_grams_label">g</string>
     <string name="fueling_slot_ml_label">ml</string>
-    <string name="fueling_post_ride_summary_label">Post-ride summary</string>
     <string name="fueling_fit_export_label">Write to FIT (Strava / Intervals.icu)</string>
     <string name="fueling_carb_alert_title">Eat something</string>
     <string name="fueling_carb_alert_detail_deficit">Behind by {deficit}g — eat something now (target {target} g/h).</string>
