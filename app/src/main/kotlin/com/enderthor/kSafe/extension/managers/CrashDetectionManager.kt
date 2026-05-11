@@ -318,6 +318,12 @@ class CrashDetectionManager(
 
         // Track the state before submitting the sample so we can detect transitions
         // and emit rich calibration events for them.
+        //
+        // priorImpactDetected reads the *raw* sample (not the cooldown-quieted version
+        // built below). This is deliberate: the calibration log wants to know that a
+        // would-be impact arrived during cooldown so the rider/dev can audit whether
+        // the cooldown formula is too aggressive. If we ran sampleWouldImpact on the
+        // quieted version, every cooldown sample would falsely look "non-impact".
         val priorState = stateMachine.state
         val priorImpactDetected = sampleWouldImpact(sample)
 
