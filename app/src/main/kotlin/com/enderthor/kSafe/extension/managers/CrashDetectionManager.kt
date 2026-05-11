@@ -34,6 +34,7 @@ class CrashDetectionManager(
     private val scope: CoroutineScope,
     private val onCrashDetected: () -> Unit,
     private val calibLogger: CalibrationLogger? = null,
+    private val clock: Clock = SystemClock,
 ) : SensorEventListener {
 
     // ─── Thresholds (m/s²) ────────────────────────────────────────────────────
@@ -411,7 +412,7 @@ class CrashDetectionManager(
         updateCachedThresholds(config)
         resetState()
         speedDataReceived = false
-        startTime = System.currentTimeMillis()
+        startTime = clock.nowMs()
         // Reset periodic log timer so the first sensor sample fires an immediate config snapshot.
         // This captures preset, thresholds and initial state at the start of each session.
         lastPeriodicLogMs = 0L
@@ -461,7 +462,7 @@ class CrashDetectionManager(
     }
 
     fun updateSpeed(speedKmh: Double) {
-        val now = System.currentTimeMillis()
+        val now = clock.nowMs()
         // Deceleration tracking: negative = braking/crash. Computed before we overwrite
         // currentSpeedKmh so the delta is always (new − old). Only valid when a previous
         // reading exists AND at least 200 ms have elapsed (avoids noisy near-zero Δt division).
@@ -479,7 +480,7 @@ class CrashDetectionManager(
 
         if (config.speedDropDetectionEnabled) {
             if (speedKmh < SPEED_THRESHOLD_KMH) {
-                if (speedDropStartTime == 0L) speedDropStartTime = System.currentTimeMillis()
+                if (speedDropStartTime == 0L) speedDropStartTime = clock.nowMs()
             } else {
                 speedDropStartTime = 0L
             }
@@ -532,17 +533,17 @@ class CrashDetectionManager(
 
     /**
      * True if the speed reading hasn't been refreshed for longer than [GPS_STALE_MS].
-     * Accepts [now] so callers that already hold `System.currentTimeMillis()` avoid a
+     * Accepts [now] so callers that already hold `clock.nowMs()` avoid a
      * redundant JNI call.
      */
-    private fun isGpsStale(now: Long = System.currentTimeMillis()): Boolean =
+    private fun isGpsStale(now: Long = clock.nowMs()): Boolean =
         speedLastUpdatedTime > 0 &&
                 (now - speedLastUpdatedTime) > GPS_STALE_MS
 
     /**
      * Returns true if the rider's GPS speed is low enough to confirm a crash.
      *
-     * Accepts [now] so callers that already hold `System.currentTimeMillis()` avoid extra
+     * Accepts [now] so callers that already hold `clock.nowMs()` avoid extra
      * JNI calls.  All decision logic is pure field reads + arithmetic — safe to call on
      * the sensor thread at 50 Hz (IMPACT state only).
      *
@@ -555,7 +556,7 @@ class CrashDetectionManager(
      * accelerometer alone can confirm the crash. The caller is responsible for hardening
      * the accel threshold accordingly (see SILENCE_CHECK).
      */
-    private fun isSpeedDropConfirmed(now: Long = System.currentTimeMillis()): Boolean {
+    private fun isSpeedDropConfirmed(now: Long = clock.nowMs()): Boolean {
         // Guard: no data yet AND within the cold-start window → not safe to confirm
         if (!speedDataReceived && (now - startTime) < COLD_START_GUARD_MS) return false
         // Stale GPS: let the accel decide — SILENCE_CHECK uses GPS_STALE_DEVIATION_MAX / GPS_STALE_SILENCE_DURATION_MS
@@ -595,7 +596,7 @@ class CrashDetectionManager(
         if (lastAccelDeviation > SILENCE_DEVIATION_MAX) {
             accelStillSinceMs = 0L
         } else if (accelStillSinceMs == 0L) {
-            accelStillSinceMs = System.currentTimeMillis()
+            accelStillSinceMs = clock.nowMs()
         }
 
         // Sliding-window average (3 samples ≈ 60ms at SENSOR_DELAY_GAME).
@@ -618,7 +619,7 @@ class CrashDetectionManager(
         // Dynamic post-IMPACT_TMO boost: temporarily raises the effective peak threshold after a false
         // alarm to suppress repeated triggers on the same rough terrain section.
         // The smooth threshold is intentionally NOT boosted — a sustained real crash still fires.
-        val now = System.currentTimeMillis()
+        val now = clock.nowMs()
         val boostActive = now < postImpactBoostUntil
 
         // Grade-aware proactive boost: on descents the road-surface noise floor (potholes, gravel,
@@ -643,7 +644,7 @@ class CrashDetectionManager(
 
         // ── GPS stale transition — log once when stale state changes ──────────
         // isGpsStale() is computed once here and reused throughout to avoid
-        // multiple System.currentTimeMillis() calls on the hot sensor path.
+        // multiple clock.nowMs() calls on the hot sensor path.
         val gpsCurrentlyStale = isGpsStale(now)
         if (gpsCurrentlyStale != lastGpsStaleState) {
             lastGpsStaleState = gpsCurrentlyStale
@@ -970,7 +971,7 @@ class CrashDetectionManager(
             while (true) {
                 delay(30_000L)
                 if (speedDropStartTime > 0) {
-                    val now = System.currentTimeMillis()
+                    val now = clock.nowMs()
                     val stoppedFor = (now - speedDropStartTime) / 60_000
                     if (stoppedFor >= config.speedDropMinutes) {
                         // Additional guard: require accelerometer to have been continuously near
