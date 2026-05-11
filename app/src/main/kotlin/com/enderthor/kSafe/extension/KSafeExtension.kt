@@ -3,7 +3,10 @@ package com.enderthor.kSafe.extension
 import com.enderthor.kSafe.BuildConfig
 import com.enderthor.kSafe.R
 import com.enderthor.kSafe.data.EmergencyReason
+import com.enderthor.kSafe.data.EmergencyState
 import com.enderthor.kSafe.data.EmergencyStatus
+import com.enderthor.kSafe.extension.managers.EmergencyResume
+import com.enderthor.kSafe.extension.managers.decideResume
 import com.enderthor.kSafe.data.KSafeConfig
 import com.enderthor.kSafe.data.ProviderType
 import com.enderthor.kSafe.datatype.CustomMessageDataType
@@ -38,6 +41,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.mapNotNull
 import kotlinx.coroutines.launch
 import timber.log.Timber
@@ -197,6 +201,39 @@ class KSafeExtension : KarooExtension("ksafe", BuildConfig.VERSION_NAME), Corout
                     applyIdleMonitoring(config)
                 }
                 Timber.d("Config updated: active=${config.isActive}, crash=${config.crashDetectionEnabled}, outsideRide=${config.crashMonitorOutsideRide}, anySpeed=${config.crashMonitorOutsideRideAnySpeed}")
+            }
+        }
+
+        launch {
+            // Resume any countdown that survived a process kill — see EmergencyResumeDecision.
+            // We read config first (to ensure activeConfig is populated) then load the persisted
+            // emergency state. Both .first() calls suspend only until DataStore emits once, so
+            // this block completes quickly on startup before any ride state arrives.
+            val initialConfig = configManager.loadConfigFlow().first()
+            activeConfig = initialConfig
+            val state = configManager.loadEmergencyStateFlow().first()
+            val decision = decideResume(state, System.currentTimeMillis())
+            when (decision) {
+                EmergencyResume.Nothing -> { /* no-op */ }
+                is EmergencyResume.Active -> {
+                    Timber.i("Resuming countdown after process restart, remaining=${decision.remainingMs}ms")
+                    emergencyManager.resumeCountdown(state, activeConfig)
+                }
+                EmergencyResume.AfterDeadline -> {
+                    val reason = state.reasonEnum
+                    if (reason != null) {
+                        Timber.i("Resuming countdown after deadline — mini-confirm")
+                        // IMPORTANT: clear the persisted state BEFORE starting the mini-confirm.
+                        // Otherwise a second process kill during the 10s window would trigger
+                        // resumeAfterDeadline again on next boot — infinite re-trigger loop.
+                        configManager.saveEmergencyState(EmergencyState())
+                        emergencyManager.resumeAfterDeadline(reason, activeConfig)
+                    }
+                }
+                is EmergencyResume.DiscardStale -> {
+                    Timber.w("Discarding stale countdown, age=${decision.ageMs}ms")
+                    configManager.saveEmergencyState(EmergencyState())
+                }
             }
         }
 
