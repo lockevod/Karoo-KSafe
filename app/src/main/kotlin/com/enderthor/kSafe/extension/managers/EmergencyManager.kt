@@ -47,6 +47,9 @@ class EmergencyManager(
          *  DataTypes collect from this instead of DataStore to avoid write latency. */
         val uiState: StateFlow<EmergencyState> get() = _uiState
         private val _uiState = MutableStateFlow(EmergencyState())
+
+        /** Duration of the mini-confirm shown when resuming after a missed deadline. */
+        private const val MINI_CONFIRM_SECONDS = 10
     }
 
     private val sosOverlay = SosOverlayManager(context)
@@ -340,6 +343,88 @@ class EmergencyManager(
                 delay(1_000L)
             }
 
+            sendAlerts(config, reason)
+        }
+    }
+
+    /**
+     * Re-attach to an in-progress countdown that survived a process kill. Called from
+     * [KSafeExtension.initializeSystem] when a persisted [EmergencyState] indicates the
+     * countdown was running and its deadline has not yet passed.
+     *
+     * The remaining time is computed from the persisted [EmergencyState.countdownDeadlineMs];
+     * a new countdownJob is launched with that remaining duration so the rider sees the same
+     * cancel UI as if the process had never been killed.
+     */
+    fun resumeCountdown(state: EmergencyState, config: KSafeConfig) {
+        val reason = state.reasonEnum ?: return    // legacy state without enum — can't safely resume
+        val deadline = state.countdownDeadlineMs()
+        val now = System.currentTimeMillis()
+        val remainingMs = (deadline - now).coerceAtLeast(0L)
+        if (remainingMs == 0L) {
+            // shouldn't reach here — initializeSystem branches to resumeAfterDeadline instead
+            return
+        }
+
+        currentStatus = EmergencyStatus.COUNTDOWN
+        currentReason = reason
+        countdownStartedAt = now - (state.countdownDurationSeconds * 1_000L - remainingMs)
+        _uiState.value = state.copy()
+
+        countdownJob?.cancel()
+        countdownJob = scope.launch {
+            // No re-save to DataStore on resume — the existing persisted state is the source of truth.
+            karooSystem.dispatch(TurnScreenOn)
+            karooSystem.dispatch(BEEP_LONG)
+
+            val totalRemainingSeconds = (remainingMs / 1_000L).toInt().coerceAtLeast(1)
+            for (remaining in totalRemainingSeconds downTo 1) {
+                sosOverlay.showOrUpdate(reason, remaining) {
+                    scope.launch { cancelEmergency(config) }
+                }
+                if (remaining % 5 == 0 || remaining <= 10) {
+                    if (remaining <= 10) karooSystem.dispatch(TurnScreenOn)
+                    if (remaining <= 5) karooSystem.dispatch(BEEP_URGENT)
+                }
+                delay(1_000L)
+            }
+            sendAlerts(config, reason)
+        }
+    }
+
+    /**
+     * The persisted countdown deadline has already passed (process was dead longer than the
+     * remaining countdown). Rather than firing the alert silently — which is harsh, since
+     * "process killed" is usually Android low-memory, not "rider in peril" — show a 10s
+     * SystemAlertWindow mini-confirm with cancel / send buttons. Default on timeout: send.
+     *
+     * This deliberately differs from resumeCountdown so a normal post-impact rider who has
+     * already moved on with their life is not greeted by an alert dispatched against contacts
+     * 30 minutes later for a crash they cancelled mid-flight.
+     */
+    fun resumeAfterDeadline(reason: EmergencyReason, config: KSafeConfig) {
+        currentStatus = EmergencyStatus.COUNTDOWN
+        currentReason = reason
+        val startTime = System.currentTimeMillis()
+        countdownStartedAt = startTime
+        _uiState.value = EmergencyState(
+            status = EmergencyStatus.COUNTDOWN,
+            reason = reason.label,
+            reasonEnum = reason,
+            countdownStartTime = startTime,
+            countdownDurationSeconds = MINI_CONFIRM_SECONDS,
+        )
+        countdownJob?.cancel()
+        countdownJob = scope.launch {
+            karooSystem.dispatch(TurnScreenOn)
+            karooSystem.dispatch(BEEP_LONG)
+            for (remaining in MINI_CONFIRM_SECONDS downTo 1) {
+                sosOverlay.showOrUpdate(reason, remaining) {
+                    scope.launch { cancelEmergency(config) }
+                }
+                if (remaining <= 5) karooSystem.dispatch(BEEP_URGENT)
+                delay(1_000L)
+            }
             sendAlerts(config, reason)
         }
     }
