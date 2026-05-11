@@ -30,10 +30,24 @@ import kotlin.math.abs
  * The state machine just decides "Confirm" / "Enter IMPACT" / "Return to MONITORING".
  */
 class CrashStateMachine(
-    private val thresholds: Thresholds,
+    thresholds: Thresholds,
     private val clock: Clock = SystemClock,
     private val calibLogger: CalibrationLogger? = null,
 ) {
+    /**
+     * Mutable thresholds reference so the facade can apply mid-ride adjustments
+     * (sensitivity-preset config changes, POST_TMO peak boost, grade-aware boost)
+     * without re-instantiating the state machine. Reads are unsynchronised: writes
+     * happen on Main, reads on the sensor thread. The data class is immutable so
+     * a partially-written value is impossible — @Volatile ensures visibility.
+     */
+    @Volatile var thresholds: Thresholds = thresholds
+        private set
+
+    /** Atomically swap the thresholds. Called from the facade on config / boost changes. */
+    fun setThresholds(t: Thresholds) {
+        thresholds = t
+    }
     private companion object {
         /** Gravity reference, m/s². The whole stillness logic compares against this. */
         const val GRAVITY = 9.81
@@ -200,7 +214,9 @@ class CrashStateMachine(
         val deviationMax = if (gpsStale) thresholds.gpsStaleSilenceDeviationMax
                            else thresholds.silenceDeviationMax
 
-        val deviation = abs(sample.smoothedMagnitude - GRAVITY)
+        // Use rawMagnitude — production CrashDetectionManager.processAccelerometer() uses
+        // `abs(magnitude - GRAVITY)` (raw, not smoothed). Behavioural-equivalence requirement.
+        val deviation = abs(sample.rawMagnitude - GRAVITY)
 
         val accelOk = deviation < deviationMax
         val gyroOk = sample.gyroMag < thresholds.gyroMovingMax
@@ -254,7 +270,9 @@ class CrashStateMachine(
         val effectiveSilenceMs = if (gpsStale) thresholds.gpsStaleSilenceDurationMs
                                  else thresholds.silenceDurationMs
 
-        val deviation = abs(sample.smoothedMagnitude - GRAVITY)
+        // Use rawMagnitude — production CrashDetectionManager.processAccelerometer() uses
+        // `abs(magnitude - GRAVITY)` (raw, not smoothed). Behavioural-equivalence requirement.
+        val deviation = abs(sample.rawMagnitude - GRAVITY)
         val accelOk = deviation <= deviationMax
         val speedDropOk = isSpeedDropConfirmed(now)
         val isStill = accelOk && speedDropOk
