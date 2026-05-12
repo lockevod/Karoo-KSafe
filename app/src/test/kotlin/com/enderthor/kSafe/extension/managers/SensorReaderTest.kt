@@ -51,11 +51,15 @@ class SensorReaderTest {
 
         verify(sm).registerListener(
             eq(reader), eq(accel),
-            eq(SensorManager.SENSOR_DELAY_GAME), isNull<Handler>()
+            eq(SensorManager.SENSOR_DELAY_GAME),
+            eq(SensorReader.BATCH_MAX_LATENCY_US),
+            isNull<Handler>()
         )
         verify(sm).registerListener(
             eq(reader), eq(gyro),
-            eq(SensorManager.SENSOR_DELAY_GAME), isNull<Handler>()
+            eq(SensorManager.SENSOR_DELAY_GAME),
+            eq(SensorReader.BATCH_MAX_LATENCY_US),
+            isNull<Handler>()
         )
     }
 
@@ -75,7 +79,7 @@ class SensorReaderTest {
         // 2 register calls total (one accel + one gyro), regardless of how many times start() ran.
         verify(sm, times(2)).registerListener(
             any<SensorReader>(), any<Sensor>(),
-            any<Int>(), isNull<Handler>()
+            any<Int>(), any<Int>(), isNull<Handler>()
         )
     }
 
@@ -89,7 +93,7 @@ class SensorReaderTest {
 
         verify(sm, times(0)).registerListener(
             any<SensorReader>(), any<Sensor>(),
-            any<Int>(), isNull<Handler>()
+            any<Int>(), any<Int>(), isNull<Handler>()
         )
     }
 
@@ -106,7 +110,7 @@ class SensorReaderTest {
         // Exactly one register call — the accelerometer.
         verify(sm, times(1)).registerListener(
             any<SensorReader>(), any<Sensor>(),
-            any<Int>(), isNull<Handler>()
+            any<Int>(), any<Int>(), isNull<Handler>()
         )
     }
 
@@ -153,7 +157,7 @@ class SensorReaderTest {
         // 4 register calls total (2 sensors × 2 start cycles), 1 unregister so far.
         verify(sm, times(4)).registerListener(
             any<SensorReader>(), any<Sensor>(),
-            any<Int>(), isNull<Handler>()
+            any<Int>(), any<Int>(), isNull<Handler>()
         )
         verify(sm, times(1)).unregisterListener(reader)
     }

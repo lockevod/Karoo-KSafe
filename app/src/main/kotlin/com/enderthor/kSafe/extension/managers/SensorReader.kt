@@ -87,7 +87,33 @@ class SensorReader(
 
     /**
      * Register the accelerometer (mandatory) and gyroscope (optional) at
-     * `SENSOR_DELAY_GAME` (~50 Hz). Idempotent.
+     * `SENSOR_DELAY_GAME` (~50 Hz) with hardware-FIFO batching enabled
+     * ([BATCH_MAX_LATENCY_US] = 100 ms). Idempotent.
+     *
+     * ## Battery: why we batch
+     *
+     * Without batching, the kernel wakes the CPU once per sensor sample — ~50 wakeups
+     * per second per sensor. With `maxReportLatencyUs = 100_000` the kernel buffers up
+     * to 100 ms of samples in the sensor IC's FIFO and delivers them in a batch:
+     * ~10 CPU wakeups per second instead of 50. The samples themselves are still
+     * delivered one at a time to [onSensorChanged] in the original order with full
+     * timestamps; only the inter-batch wakeup cadence changes.
+     *
+     * ## Why batching does not affect detection
+     *
+     * The state machine reads per-sample magnitude (raw, smoothed, peak) and gyro for
+     * the impact-entry gate. None of those depend on the timing between samples —
+     * only on the values, which are unchanged by batching. The silence-check timer
+     * counts elapsed milliseconds over a 4500 ms window; 100 ms of batch granularity
+     * is < 3 % jitter, well inside the existing tick noise. Worst-case impact-to-fire
+     * latency increases by up to 100 ms — operationally invisible for an emergency
+     * with a 30 s cancel countdown.
+     *
+     * ## When the batch latency hint is ignored
+     *
+     * `maxReportLatencyUs` is a hint to Android; some SoCs honour it, others coalesce
+     * with global wakeup schedules. The fallback is "behave as if not batching" — no
+     * regression risk relative to unbatched.
      *
      * @param handler Optional handler on which to deliver sensor callbacks. When null,
      *   the SDK uses the main looper. Production wires this from
@@ -98,9 +124,19 @@ class SensorReader(
         if (registered) return
         val accel = sensorManager.getDefaultSensor(Sensor.TYPE_ACCELEROMETER) ?: return
         val gyro = sensorManager.getDefaultSensor(Sensor.TYPE_GYROSCOPE)
-        sensorManager.registerListener(this, accel, SensorManager.SENSOR_DELAY_GAME, handler)
+        sensorManager.registerListener(
+            this, accel,
+            SensorManager.SENSOR_DELAY_GAME,
+            BATCH_MAX_LATENCY_US,
+            handler,
+        )
         gyro?.let {
-            sensorManager.registerListener(this, it, SensorManager.SENSOR_DELAY_GAME, handler)
+            sensorManager.registerListener(
+                this, it,
+                SensorManager.SENSOR_DELAY_GAME,
+                BATCH_MAX_LATENCY_US,
+                handler,
+            )
         }
         registered = true
     }
@@ -228,5 +264,11 @@ class SensorReader(
          * Verbatim from `CrashDetectionManager.SILENCE_DEVIATION_MAX`.
          */
         const val SILENCE_DEVIATION_MAX = 4.0
+
+        /**
+         * Sensor FIFO batch latency. 100 ms = up to 5 samples buffered per wakeup at
+         * SENSOR_DELAY_GAME (~50 Hz). See [start] for the reasoning.
+         */
+        const val BATCH_MAX_LATENCY_US = 100_000
     }
 }

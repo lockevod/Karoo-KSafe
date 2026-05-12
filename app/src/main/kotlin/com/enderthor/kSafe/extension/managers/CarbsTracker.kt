@@ -34,7 +34,10 @@ class CarbsTracker(
 ) {
 
     // ─── Constants ───────────────────────────────────────────────────────────
-    private val MONITOR_TICK_MS         = 5_000L
+    // Tick at 15 s — same reasoning as HydrationTracker: alert cooldown is 5 min, the
+    // deficit / time thresholds have minute granularity downstream, and the zone-aware
+    // target rate changes slowly relative to a 15 s tick. Halves wakeups vs. 5 s.
+    private val MONITOR_TICK_MS         = 15_000L
     private val ALERT_COOLDOWN_MS       = 5L * 60_000L
     private val PERIODIC_LOG_INTERVAL_MS = 120_000L
 

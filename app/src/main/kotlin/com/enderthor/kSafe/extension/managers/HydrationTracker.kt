@@ -27,7 +27,11 @@ class HydrationTracker(
 ) {
 
     // ─── Constants ───────────────────────────────────────────────────────────
-    private val MONITOR_TICK_MS         = 5_000L
+    // Tick at 15 s — alert cooldown is 5 min and target accumulation is monotonic, so
+    // a coarser cadence loses < 1 % cumulative precision over a 5 h ride while halving
+    // the wakeup count vs. the original 5 s. The deficit and time-alert thresholds
+    // both have minute-level granularity downstream, so 15 s polling is fine.
+    private val MONITOR_TICK_MS         = 15_000L
     private val ALERT_COOLDOWN_MS       = 5L * 60_000L
     private val PERIODIC_LOG_INTERVAL_MS = 120_000L
 
