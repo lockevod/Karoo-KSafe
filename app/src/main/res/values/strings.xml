@@ -118,7 +118,7 @@
 
     <!-- Health screen -->
     <string name="health_title">Health monitoring</string>
-    <string name="health_no_hr_warning_title">No heart-rate sensor</string>
+    <string name="health_no_hr_warning_title">Heart-rate sensor required</string>
     <string name="health_no_hr_warning_body">Pair a HR sensor to enable medical and wellness detection. Without HR data these detectors stay idle.</string>
     <string name="health_medical_section">Medical episode detection</string>
     <string name="health_medical_hint">Detects sudden heart-rate flatline or collapse during a ride. Requires a paired HR sensor.</string>
