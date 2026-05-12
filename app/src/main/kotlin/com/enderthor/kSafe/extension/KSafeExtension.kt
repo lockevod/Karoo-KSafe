@@ -302,25 +302,30 @@ class KSafeExtension : KarooExtension("ksafe", BuildConfig.VERSION_NAME), Corout
 
         launch {
             // Power meter stream — optional. carbsTracker uses it for the zone multiplier; the
-            // wellnessMonitor's cardiac-decoupling tier uses it for the HR/W ratio. If absent,
-            // the carb tracker falls back to HR zones and decoupling auto-skips.
+            // wellnessMonitor's cardiac-decoupling tier uses it for the HR/W ratio; the
+            // hydrationTracker uses it as the preferred metabolic-rate input for the sweat
+            // estimator. If absent, the carb tracker falls back to HR zones, decoupling
+            // auto-skips, and hydration falls back to HR-derived metabolic rate.
             karooSystem.streamDataFlow(io.hammerhead.karooext.models.DataType.Type.POWER)
                 .collect { streamState ->
                     val w = streamState.powerW() ?: return@collect
                     carbsTracker.updatePower(w)
                     wellnessMonitor.updatePower(w)
+                    hydrationTracker.updatePower(w)
                 }
         }
 
         launch {
             // Rider profile (weight, max HR, FTP, HR zones, power zones). Read continuously —
             // if the rider edits their profile in the Karoo settings mid-ride, the new values
-            // propagate immediately. Both the carb tracker (for HR/power zone multiplier) and
-            // the wellness monitor (for the optional % of max HR threshold mode) consume it.
+            // propagate immediately. The carb tracker uses it for HR/power zone multiplier,
+            // the wellness monitor for the optional % of max HR threshold mode, and the
+            // hydration tracker for the body-mass scaling factor in the sweat estimator.
             karooSystem.streamUserProfile()
                 .collect { profile ->
                     carbsTracker.updateUserProfile(profile)
                     wellnessMonitor.updateUserProfile(profile)
+                    hydrationTracker.updateUserProfile(profile)
                 }
         }
 
@@ -336,25 +341,10 @@ class KSafeExtension : KarooExtension("ksafe", BuildConfig.VERSION_NAME), Corout
                 }
         }
 
-        // ── HydrationTracker dynamic-estimate inputs ──────────────────────────
-        // The trackers above already push HR and power into hydrationTracker (via the same
-        // streams). The remaining inputs — weight, ambient temperature, humidity — are
-        // streamed here. All are optional; the SweatEstimator falls back to documented
-        // defaults when a signal is missing.
-        launch {
-            // Power → hydration tracker (in addition to wellness/carbs).
-            karooSystem.streamDataFlow(io.hammerhead.karooext.models.DataType.Type.POWER)
-                .collect { streamState ->
-                    val w = streamState.powerW() ?: return@collect
-                    hydrationTracker.updatePower(w)
-                }
-        }
-        launch {
-            // Weight from user profile → hydration tracker.
-            karooSystem.streamUserProfile().collect { profile ->
-                hydrationTracker.updateUserProfile(profile)
-            }
-        }
+        // ── HydrationTracker — ambient temperature + humidity streams ─────────
+        // Power, user profile and HR are pushed into the hydration tracker from the
+        // collectors above. The remaining inputs (temperature, humidity) live here
+        // because the hydration tracker is their only consumer.
         launch {
             // Onboard Karoo temperature sensor. Device-heat biased (typically reads
             // +3–8 °C above ambient when in direct sun / after warm-up), but always
