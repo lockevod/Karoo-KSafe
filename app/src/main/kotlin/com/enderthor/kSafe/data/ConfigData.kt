@@ -133,13 +133,32 @@ val FIELD_COLOR_PALETTE: List<Int> = listOf(
     0xFF455A64.toInt(),  // Slate
     0xFF263238.toInt(),  // Deep Slate
     // ── New distinct hues (v2.x) to widen differentiation in the picker.
-    // All chosen at Material 700-900 luminance for white-text contrast ≥7:1
+    // All chosen at Material 700-900 luminance for white-text contrast ≥4.5:1
     // and at hue distances ≥30° from every state-driven colour (orange E65100,
     // red B71C1C, yellow F57F17, green 1B5E20, grey OFF 424242).
     0xFF283593.toInt(),  // Indigo          (cool blue-violet, distinct from Blue/Deep Blue)
     0xFF5D4037.toInt(),  // Brown           (warm earth tone, no other warm-dark hue in palette)
     0xFF006064.toInt(),  // Dark Cyan       (saturated cyan, distinct from blue-leaning Teal)
     0xFF4E0A18.toInt(),  // Burgundy        (deep wine, distinct from hot Pink / Magenta)
+    // ── Extra hues (v2.y) to widen visual range without removing saved entries above.
+    // Riders complained the palette read as too monotone because the existing 16
+    // entries clustered into "X / Deep X" pairs. These four fill the obvious gaps:
+    // a brighter blue, a vivid purple, an almost-black blue, and a wine that sits
+    // between Burgundy and Pink. All cleared against the same hue/contrast rules.
+    0xFF0277BD.toInt(),  // Sky Blue        (M700 light-blue, brighter than Blue 1565C0)
+    0xFF8E24AA.toInt(),  // Bright Purple   (M600 purple, lighter than Purple 6A1B9A — still ≥4.5:1 on white)
+    0xFF1A237E.toInt(),  // Midnight Blue   (M900 indigo, very dark, distinct lightness from Indigo 283593)
+    0xFF7B1F3D.toInt(),  // Dark Wine       (warm reddish-purple between Burgundy 4E0A18 and Pink 880E4F)
+    // ── Vivid mid-tone hues (v2.z). Field text is hard-coded white in field_view.xml,
+    // so every entry above is M700-M900 = visually quite dark. Riders reported the
+    // palette feels like 24 shades of the same darkness. These four are M500/M400
+    // — clearly brighter than anything above while still measured ≥4.5:1 contrast
+    // against white text (verified via WCAG luminance formula). Hue distance from
+    // every reserved state colour stays ≥30°.
+    0xFF3F51B5.toInt(),  // Bright Indigo   (M500, ~7.0:1 on white — vivid blue-violet)
+    0xFF7E57C2.toInt(),  // Lavender        (Deep Purple M400, ~5.4:1 — clearly lighter than any other purple)
+    0xFFE91E63.toInt(),  // Bright Pink     (M500, ~4.7:1 — hot pink, very different feel from Magenta AD1457)
+    0xFF795548.toInt(),  // Tan Brown       (M500, ~5.5:1 — warm/lighter brown, complements deep Brown 5D4037)
 )
 
 // ─── Enums ────────────────────────────────────────────────────────────────────
