@@ -579,9 +579,21 @@ class KSafeExtension : KarooExtension("ksafe", BuildConfig.VERSION_NAME), Corout
                 Timber.d("BonusAction: log-carb-1 triggered")
                 handleCarbLogTap(1)
             }
+            "log-carb-2" -> {
+                Timber.d("BonusAction: log-carb-2 triggered")
+                handleCarbLogTap(2)
+            }
+            "log-carb-3" -> {
+                Timber.d("BonusAction: log-carb-3 triggered")
+                handleCarbLogTap(3)
+            }
             "log-drink-1" -> {
                 Timber.d("BonusAction: log-drink-1 triggered")
                 handleHydrationLogTap(1)
+            }
+            "log-drink-2" -> {
+                Timber.d("BonusAction: log-drink-2 triggered")
+                handleHydrationLogTap(2)
             }
         }
     }

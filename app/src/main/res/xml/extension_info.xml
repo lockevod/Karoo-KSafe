@@ -114,8 +114,17 @@
         typeId="hyd-status" />
     <BonusAction
         actionId="log-carb-1"
-        displayName="@string/action_log_carb" />
+        displayName="@string/action_log_carb_1" />
+    <BonusAction
+        actionId="log-carb-2"
+        displayName="@string/action_log_carb_2" />
+    <BonusAction
+        actionId="log-carb-3"
+        displayName="@string/action_log_carb_3" />
     <BonusAction
         actionId="log-drink-1"
-        displayName="@string/action_log_drink" />
+        displayName="@string/action_log_drink_1" />
+    <BonusAction
+        actionId="log-drink-2"
+        displayName="@string/action_log_drink_2" />
 </ExtensionInfo>

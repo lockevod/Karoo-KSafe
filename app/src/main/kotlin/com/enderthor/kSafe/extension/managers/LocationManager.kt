@@ -26,10 +26,7 @@ class LocationManager(
     private val karooSystem: KarooSystemService,
     private val scope: CoroutineScope
 ) {
-    companion object {
-        /** How often to store a new GPS fix. 2 min = ~30 updates/hour instead of ~3600. */
-        private const val LOCATION_SAMPLE_MS = 2 * 60_000L
-    }
+    // (Constants in the companion object at the bottom of the file.)
 
     // @Volatile: written from the location-stream coroutine on Default and read from any
     // dispatcher when an emergency builds the {location} link. `Double` writes are not
@@ -76,8 +73,18 @@ class LocationManager(
      * If the timeout expires, the cached link (possibly null) is returned instead.
      *
      * Call this when an alert is about to be sent so the location is as accurate as possible.
+     *
+     * **Reuses the cached fix without opening a new consumer if the last sample is less
+     * than [REUSE_CACHED_FRESH_MS] old.** The persistent stream started by [start] already
+     * keeps the cache near-realtime, so opening a fresh consumer just to read what we
+     * already have wastes a Karoo IPC round-trip and slows the emergency dispatch.
      */
     suspend fun getFreshLocationLink(timeoutMs: Long = 5_000L): String? {
+        val now = System.currentTimeMillis()
+        if (lastSampleTime > 0L && now - lastSampleTime < REUSE_CACHED_FRESH_MS) {
+            if (BuildConfig.DEBUG) Timber.d("Reusing cached location (${(now - lastSampleTime) / 1000}s old)")
+            return getLocationLink()
+        }
         return try {
             val event = withTimeout(timeoutMs) {
                 karooSystem.streamLocation().first()
@@ -92,5 +99,12 @@ class LocationManager(
             Timber.w("Fresh location timed out after ${timeoutMs}ms, falling back to cached location")
             getLocationLink()
         }
+    }
+
+    companion object {
+        /** How often to store a new GPS fix. 2 min = ~30 updates/hour instead of ~3600. */
+        private const val LOCATION_SAMPLE_MS = 2 * 60_000L
+        /** Reuse the cached fix without opening a new consumer if it's at most this old. */
+        private const val REUSE_CACHED_FRESH_MS = 10_000L
     }
 }

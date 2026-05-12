@@ -200,6 +200,10 @@ class CrashDetectionManager(
         speedDropMonitor.stop()
         stateMachine.reset()
         resetWindowAccumulators()
+        // Clear the post-confirmation cooldown gate. Otherwise a rider who disables crash
+        // detection mid-cooldown then re-enables it within ~30 s would have a legitimate
+        // impact suppressed by stale cooldown state from the previous session.
+        lastCrashTime = 0L
         Timber.d("CrashDetectionManager STOPPED")
     }
 

@@ -110,6 +110,13 @@
     <string name="fueling_hyd_alert_detail_time">{elapsed} min since last log — drink (target {target} ml/h).</string>
 
     <!-- Fueling BonusActions -->
+    <string name="action_log_carb_1">KSafe: Log Carb 1</string>
+    <string name="action_log_carb_2">KSafe: Log Carb 2</string>
+    <string name="action_log_carb_3">KSafe: Log Carb 3</string>
+    <string name="action_log_drink_1">KSafe: Log Drink 1</string>
+    <string name="action_log_drink_2">KSafe: Log Drink 2</string>
+    <!-- Legacy string IDs preserved for any external translation that still references them.
+         The new per-slot string IDs above are what extension_info.xml uses now. -->
     <string name="action_log_carb">KSafe: Log Carb</string>
     <string name="action_log_drink">KSafe: Log Drink</string>
 
