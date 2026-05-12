@@ -62,4 +62,30 @@ class EmergencyResumeDecisionTest {
         val s = countdown(startMs = 0L)
         assertEquals(EmergencyResume.Nothing, decideResume(s, nowMs = 1_010_000L))
     }
+
+    @Test
+    fun `nowMs exactly equal to deadline falls into AfterDeadline branch`() {
+        // Boundary check: decideResume uses `nowMs < deadline` (strict) for Active, so the
+        // exact-deadline tick must take the else branch (AfterDeadline) — not Active and
+        // not DiscardStale. If the implementation flipped to `<=` this test would catch it.
+        val startMs = 1_000_000L
+        val durationS = 30
+        val s = countdown(startMs = startMs, durationS = durationS)
+        val deadlineMs = startMs + durationS * 1_000L
+        assertEquals(EmergencyResume.AfterDeadline, decideResume(s, nowMs = deadlineMs))
+    }
+
+    @Test
+    fun `nowMs one millisecond before deadline returns Active with 1ms remaining`() {
+        // Companion to the boundary test above: confirms the strict `<` is honoured on the
+        // Active side as well. A subtle off-by-one (e.g. `nowMs <= deadline`) would still
+        // pass the AfterDeadline test alone, so we need both sides asserted.
+        val startMs = 1_000_000L
+        val durationS = 30
+        val s = countdown(startMs = startMs, durationS = durationS)
+        val nowMs = startMs + durationS * 1_000L - 1L
+        val r = decideResume(s, nowMs = nowMs)
+        assertTrue("expected Active near boundary, got $r", r is EmergencyResume.Active)
+        assertEquals(1L, (r as EmergencyResume.Active).remainingMs)
+    }
 }

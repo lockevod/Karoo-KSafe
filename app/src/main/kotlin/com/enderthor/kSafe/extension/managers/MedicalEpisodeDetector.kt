@@ -36,6 +36,12 @@ class MedicalEpisodeDetector(
     private val scope: CoroutineScope,
     private val onIncident: (EmergencyReason, Map<String, String>) -> Unit,
     private val calibLogger: CalibrationLogger? = null,
+    /**
+     * Injectable clock. Production passes [SystemClock]; tests pass a fake to drive
+     * sub-detector windows (flatline duration, collapse 4-min history) without waiting
+     * real-time seconds inside a coroutine `delay`.
+     */
+    private val clock: Clock = SystemClock,
 ) {
 
     // ─── Constants (calibrated conservatively; expose to config only if real data justifies it) ──
@@ -121,7 +127,7 @@ class MedicalEpisodeDetector(
      * allowed; the monitor coroutine derives state from timestamps.
      */
     fun updateHr(bpm: Int) {
-        val now = System.currentTimeMillis()
+        val now = clock.nowMs()
         if (!hrDataReceived) {
             hrDataReceived = true
             Timber.d("MedicalEpisodeDetector: first HR reading $bpm bpm")
@@ -137,13 +143,18 @@ class MedicalEpisodeDetector(
 
     fun updateSpeed(kmh: Double) {
         lastSpeedKmh = kmh
-        if (kmh >= ACTIVE_SPEED_KMH) lastSpeedAboveActiveMs = System.currentTimeMillis()
+        if (kmh >= ACTIVE_SPEED_KMH) lastSpeedAboveActiveMs = clock.nowMs()
     }
 
     // ─── Monitor tick (runs on `scope`, every MONITOR_TICK_MS) ────────────────────────────
 
-    private fun tick() {
-        val now = System.currentTimeMillis()
+    /**
+     * Internal so unit tests in the same package can drive ticks deterministically against
+     * a fake [Clock] without having to wait on the production [delay]-based monitor coroutine.
+     * Production still drives this from [start]'s `monitorJob`.
+     */
+    internal fun tick() {
+        val now = clock.nowMs()
 
         // ── HR stale transition logging (once per change) ─────────────────────
         val isStale = hrDataReceived && (now - lastHrUpdateMs > HR_STALE_MS)

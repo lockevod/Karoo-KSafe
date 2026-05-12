@@ -13,12 +13,12 @@ import com.enderthor.kSafe.data.defaultKSafeConfigJson
 import com.enderthor.kSafe.data.defaultSenderConfigJson
 import com.enderthor.kSafe.data.defaultWellnessHistoryJson
 import com.enderthor.kSafe.data.migrateToLatest
+import com.enderthor.kSafe.extension.jsonForStorage
 import com.enderthor.kSafe.extension.jsonWithUnknownKeys
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.map
 import kotlinx.serialization.encodeToString
-import kotlinx.serialization.json.Json
 import timber.log.Timber
 
 class ConfigurationManager(private val context: Context) {
@@ -32,7 +32,7 @@ class ConfigurationManager(private val context: Context) {
 
     suspend fun saveConfig(config: KSafeConfig) {
         context.dataStore.edit { t ->
-            t[configKey] = Json.encodeToString(listOf(config))
+            t[configKey] = jsonForStorage.encodeToString(listOf(config))
         }
     }
 
@@ -64,7 +64,7 @@ class ConfigurationManager(private val context: Context) {
 
     suspend fun saveSenderConfigs(configs: List<SenderConfig>) {
         context.dataStore.edit { prefs ->
-            prefs[senderConfigKey] = Json.encodeToString(configs)
+            prefs[senderConfigKey] = jsonForStorage.encodeToString(configs)
         }
     }
 
@@ -87,7 +87,7 @@ class ConfigurationManager(private val context: Context) {
 
     suspend fun saveEmergencyState(state: EmergencyState) {
         context.dataStore.edit { prefs ->
-            prefs[emergencyStateKey] = Json.encodeToString(state)
+            prefs[emergencyStateKey] = jsonForStorage.encodeToString(state)
         }
     }
 
@@ -112,7 +112,7 @@ class ConfigurationManager(private val context: Context) {
 
     suspend fun saveWellnessHistory(history: WellnessHistory) {
         context.dataStore.edit { prefs ->
-            prefs[wellnessHistoryKey] = Json.encodeToString(history)
+            prefs[wellnessHistoryKey] = jsonForStorage.encodeToString(history)
         }
     }
 
