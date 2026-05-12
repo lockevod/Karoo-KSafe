@@ -403,9 +403,12 @@ class CrashDetectionManager(
         }
     }
 
+    // Strict `>` matches the SM entry comparator (see CrashStateMachine.handleMonitoring
+    // and commit 08d8e91). With `>=` the IMPACT_SPEED_REJECTED audit log would fire at
+    // exact-equality boundaries where the SM did not actually treat the sample as an impact.
     private fun sampleWouldImpact(sample: SensorSample): Boolean =
-        sample.peakMagnitude >= cachedEffectivePeakThr ||
-        sample.smoothedMagnitude >= cachedSmoothedThr
+        sample.peakMagnitude > cachedEffectivePeakThr ||
+        sample.smoothedMagnitude > cachedSmoothedThr
 
     // ─── Calibration log emission ────────────────────────────────────────────
 
