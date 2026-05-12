@@ -106,6 +106,25 @@ class HydrationTracker(
         // for the post-ride summary.
     }
 
+    /**
+     * Re-launch the monitor without resetting accumulators. Used by the master-switch
+     * mid-ride OFF→ON transition: the rider's cumulative target and logged volumes are
+     * preserved so a brief toggle does not erase the ride's totals. The first tick after
+     * resume skips integration (lastTickMs = 0L sentinel) so the OFF window is not
+     * integrated as if it had been a ride segment.
+     */
+    fun resume(config: KSafeConfig) {
+        this.config = config
+        if (!config.hydrationTrackerEnabled) return
+        val oldJob = monitorJob
+        lastTickMs = 0L
+        monitorJob = scope.launch {
+            oldJob?.cancelAndJoin()
+            while (true) { delay(MONITOR_TICK_MS); tick() }
+        }
+        Timber.d("HydrationTracker resumed (cumTargetMl=${cumTargetMl.toInt()}, cumLoggedMl=$cumLoggedMl)")
+    }
+
     fun updateConfig(config: KSafeConfig) {
         val wasEnabled = this.config.hydrationTrackerEnabled
         this.config = config

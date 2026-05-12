@@ -100,6 +100,24 @@ class CarbsTracker(
         // for the post-ride summary. Reset happens on the next start().
     }
 
+    /**
+     * Re-launch the monitor without resetting accumulators. Used by the master-switch
+     * mid-ride OFF→ON transition so the rider's cumulative target/logged grams survive
+     * a brief toggle. The first tick after resume skips integration (lastTickMs = 0L)
+     * so the OFF window is not double-counted.
+     */
+    fun resume(config: KSafeConfig) {
+        this.config = config
+        if (!config.carbsTrackerEnabled) return
+        val oldJob = monitorJob
+        lastTickMs = 0L
+        monitorJob = scope.launch {
+            oldJob?.cancelAndJoin()
+            while (true) { delay(MONITOR_TICK_MS); tick() }
+        }
+        Timber.d("CarbsTracker resumed (cumTargetG=${cumTargetG.toInt()}, cumLoggedG=$cumLoggedG)")
+    }
+
     fun updateConfig(config: KSafeConfig) {
         val wasEnabled = this.config.carbsTrackerEnabled
         this.config = config

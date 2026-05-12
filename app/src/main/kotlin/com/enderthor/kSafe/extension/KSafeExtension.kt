@@ -181,6 +181,7 @@ class KSafeExtension : KarooExtension("ksafe", BuildConfig.VERSION_NAME), Corout
         launch {
             // Observe config changes
             configManager.loadConfigFlow().collect { config ->
+                val prevActive = activeConfig.isActive
                 activeConfig = config
                 crashManager.updateConfig(config)
                 medicalDetector.updateConfig(config)
@@ -206,9 +207,15 @@ class KSafeExtension : KarooExtension("ksafe", BuildConfig.VERSION_NAME), Corout
                         }
                     }
                 }
-                // Re-evaluate crash monitoring if idle (ride start/pause is handled by handleRideState)
-                if (currentRideState is RideState.Idle) {
-                    applyIdleMonitoring(config)
+                // Re-evaluate monitoring based on current ride state.
+                // Idle: applyIdleMonitoring already honors isActive.
+                // Recording: enforce master switch transitions — stop everything if the
+                // master was just turned OFF, restart everything if it was just turned ON.
+                // An in-flight emergency countdown is left alone — cancel via SOS/cancel button.
+                when (currentRideState) {
+                    is RideState.Idle -> applyIdleMonitoring(config)
+                    is RideState.Recording -> applyMasterSwitchTransition(prevActive)
+                    else -> { /* Paused: leave as-is */ }
                 }
                 Timber.d("Config updated: active=${config.isActive}, crash=${config.crashDetectionEnabled}, outsideRide=${config.crashMonitorOutsideRide}, anySpeed=${config.crashMonitorOutsideRideAnySpeed}")
             }
@@ -223,7 +230,13 @@ class KSafeExtension : KarooExtension("ksafe", BuildConfig.VERSION_NAME), Corout
             activeConfig = initialConfig
             val state = configManager.loadEmergencyStateFlow().first()
             val decision = decideResume(state, System.currentTimeMillis())
-            when (decision) {
+            // Master switch acts as a hard stop — if the user toggled isActive OFF
+            // between the process kill and this boot, discard any persisted countdown
+            // rather than resuming it.
+            if (!initialConfig.isActive && decision !is EmergencyResume.Nothing) {
+                Timber.w("Discarding persisted emergency state — master switch is OFF")
+                configManager.saveEmergencyState(EmergencyState())
+            } else when (decision) {
                 EmergencyResume.Nothing -> { /* no-op */ }
                 is EmergencyResume.Active -> {
                     Timber.i("Resuming countdown after process restart, remaining=${decision.remainingMs}ms")
@@ -440,8 +453,10 @@ class KSafeExtension : KarooExtension("ksafe", BuildConfig.VERSION_NAME), Corout
                 // Reset per-ride flags
                 rideStartNotificationSent = false
                 rideWasActive = false
-                // Send ride-end notification if there was an active ride
-                if (wasActive) {
+                // Send ride-end notification if there was an active ride.
+                // Suppressed when the master switch is OFF (per settings_master_hint:
+                // "Notifications already configured (ride start/end, …) are also suppressed").
+                if (wasActive && activeConfig.isActive) {
                     sendRideEndNotification()
                     // Persist the wellness summary for the next ride's readiness advice.
                     if (wellnessSnapshot != null) persistWellnessSummary(wellnessSnapshot)
@@ -463,6 +478,38 @@ class KSafeExtension : KarooExtension("ksafe", BuildConfig.VERSION_NAME), Corout
                     }
                 }
             }
+        }
+    }
+
+    /**
+     * Called when the master switch flips while a ride is Recording. Stops all monitoring
+     * when master goes ON→OFF; restarts everything when master goes OFF→ON. No-op for
+     * non-transitions.
+     *
+     * The OFF→ON path uses `resume()` on the accumulating trackers (wellness, carbs,
+     * hydration) so the rider's session totals are preserved across a brief toggle — a
+     * fat-finger does not erase a ride's cumulative grams/ml/zone-time. Crash and medical
+     * detectors are point-in-time, so they get a fresh start().
+     */
+    private fun applyMasterSwitchTransition(prevActive: Boolean) {
+        val nowActive = activeConfig.isActive
+        if (prevActive == nowActive) return
+        if (prevActive && !nowActive) {
+            Timber.d("Master switch OFF mid-ride — stopping all monitoring")
+            crashManager.stop()
+            medicalDetector.stop()
+            wellnessMonitor.stop()
+            carbsTracker.stop()
+            hydrationTracker.stop()
+            emergencyManager.stopCheckinTimer()
+        } else {
+            Timber.d("Master switch ON mid-ride — resuming monitoring (preserving session totals)")
+            crashManager.start(activeConfig)
+            medicalDetector.start(activeConfig)
+            wellnessMonitor.resume(activeConfig)
+            carbsTracker.resume(activeConfig)
+            hydrationTracker.resume(activeConfig)
+            emergencyManager.startCheckinTimer(activeConfig)
         }
     }
 
@@ -496,11 +543,19 @@ class KSafeExtension : KarooExtension("ksafe", BuildConfig.VERSION_NAME), Corout
      * BonusAction in Karoo controller settings. Works regardless of which data fields are visible.
      */
     override fun onBonusAction(actionId: String) {
+        // cancel-emergency is always allowed so the rider can stop an in-flight alert
+        // even after toggling the master switch off. All other BonusActions are
+        // suppressed when the master switch is OFF (per settings_master_hint).
+        if (actionId == "cancel-emergency") {
+            Timber.d("BonusAction: cancel-emergency triggered")
+            launch { emergencyManager.cancelEmergency(activeConfig) }
+            return
+        }
+        if (!activeConfig.isActive) {
+            Timber.d("BonusAction $actionId ignored — master switch OFF")
+            return
+        }
         when (actionId) {
-            "cancel-emergency" -> {
-                Timber.d("BonusAction: cancel-emergency triggered")
-                launch { emergencyManager.cancelEmergency(activeConfig) }
-            }
             "send-custom-message" -> {
                 Timber.d("BonusAction: send-custom-message triggered")
                 launch { sendCustomMessage() }
@@ -619,6 +674,11 @@ class KSafeExtension : KarooExtension("ksafe", BuildConfig.VERSION_NAME), Corout
      */
     suspend fun sendCustomMessage(slot: Int = 1): String {
         val config = activeConfig
+        if (!config.isActive) {
+            CustomMessageState.update(slot, CustomMessageState.ERROR)
+            launch { kotlinx.coroutines.delay(4_000L); CustomMessageState.update(slot, CustomMessageState.IDLE) }
+            return "Extension is disabled — enable it in Settings first."
+        }
         val enabled = when (slot) {
             2 -> config.customMessage2Enabled
             3 -> config.customMessage3Enabled
@@ -760,6 +820,18 @@ class KSafeExtension : KarooExtension("ksafe", BuildConfig.VERSION_NAME), Corout
             val label = if (slot == 1) config.webhook1Label.ifBlank { "Action 1" }
                         else config.webhook2Label.ifBlank { "Action 2" }
 
+            if (!config.isActive) {
+                Timber.d("handleWebhookTap slot=$slot blocked — master switch OFF")
+                WebhookState.update(slot, WebhookState.ERROR, "disabled")
+                launch { kotlinx.coroutines.delay(4_000L); WebhookState.update(slot, WebhookState.IDLE) }
+                karooSystem.dispatch(SystemNotification(
+                    id = "ksafe-webhook-$slot-master-off",
+                    header = label,
+                    message = "Extension is disabled — enable it in Settings first."
+                ))
+                return
+            }
+
             // ── Enabled check ─────────────────────────────────────────────────
             val enabled = if (slot == 1) config.webhook1Enabled else config.webhook2Enabled
             if (!enabled) {
@@ -895,6 +967,7 @@ class KSafeExtension : KarooExtension("ksafe", BuildConfig.VERSION_NAME), Corout
 
     fun handleCarbLogTap(slot: Int) {
         Timber.d("handleCarbLogTap slot=$slot")
+        if (!activeConfig.isActive) return
         if (!activeConfig.carbsTrackerEnabled) return
         if (!this::carbsTracker.isInitialized) return
         carbsTracker.logEntry(slot)
@@ -908,6 +981,7 @@ class KSafeExtension : KarooExtension("ksafe", BuildConfig.VERSION_NAME), Corout
 
     fun handleHydrationLogTap(slot: Int) {
         Timber.d("handleHydrationLogTap slot=$slot")
+        if (!activeConfig.isActive) return
         if (!activeConfig.hydrationTrackerEnabled) return
         if (!this::hydrationTracker.isInitialized) return
         hydrationTracker.logEntry(slot)
@@ -919,31 +993,36 @@ class KSafeExtension : KarooExtension("ksafe", BuildConfig.VERSION_NAME), Corout
     }
 
     fun handleSOSTap() {
-        if (!activeConfig.isActive) return
         // Use in-memory currentStatus — reading DataStore here can race with
         // the async COUNTDOWN save inside countdownJob, causing cancels to be
         // misidentified as new triggers.
+        // Cancel-path is always allowed (mirrors onBonusAction cancel-emergency):
+        // a rider must always be able to stop an in-flight alert, even if the
+        // master switch was toggled off after the countdown started.
         launch {
             when (emergencyManager.currentStatus) {
-                EmergencyStatus.IDLE ->
-                    emergencyManager.triggerEmergency(EmergencyReason.MANUAL_SOS, activeConfig)
                 EmergencyStatus.COUNTDOWN ->
                     emergencyManager.cancelEmergency(activeConfig)
+                EmergencyStatus.IDLE -> {
+                    if (!activeConfig.isActive) return@launch
+                    emergencyManager.triggerEmergency(EmergencyReason.MANUAL_SOS, activeConfig)
+                }
                 EmergencyStatus.ALERTING -> { /* ignore tap while alerting */ }
             }
         }
     }
 
     fun handleCheckinTap() {
-        if (!activeConfig.isActive) return
         launch {
             when (emergencyManager.currentStatus) {
                 EmergencyStatus.COUNTDOWN -> {
+                    // Cancel path always allowed — see handleSOSTap rationale.
                     Timber.d("Emergency cancelled via Timer field tap")
                     emergencyManager.cancelEmergency(activeConfig)
                 }
                 EmergencyStatus.ALERTING -> { /* ignore tap while alerting */ }
                 EmergencyStatus.IDLE -> {
+                    if (!activeConfig.isActive) return@launch
                     if (activeConfig.checkinEnabled) {
                         emergencyManager.resetCheckinTimer(activeConfig)
                         Timber.d("Check-in performed by user tap")

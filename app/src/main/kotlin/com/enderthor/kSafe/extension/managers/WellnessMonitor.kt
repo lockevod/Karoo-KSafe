@@ -122,6 +122,29 @@ class WellnessMonitor(
         Timber.d("WellnessMonitor stopped")
     }
 
+    /**
+     * Re-launch the monitor without resetting session totals. Used by the master-switch
+     * mid-ride OFF→ON transition: cumulative HR-zone time, max-HR snapshot, drift
+     * statistics and per-tier fire counters survive a brief toggle. The "continuous
+     * violation" timers (criticalSinceMs, sustainedSinceMs, decouplingExceededSinceMs)
+     * are reset because their semantics require an uninterrupted observation window —
+     * the OFF period broke that continuity.
+     */
+    fun resume(config: KSafeConfig) {
+        this.config = config
+        if (!config.wellnessEnabled) return
+        val oldJob = monitorJob
+        criticalSinceMs = 0L
+        sustainedSinceMs = 0L
+        decouplingExceededSinceMs = 0L
+        decouplingBaselineHrPerW = 0f
+        monitorJob = scope.launch {
+            oldJob?.cancelAndJoin()
+            while (true) { delay(MONITOR_TICK_MS); tick() }
+        }
+        Timber.d("WellnessMonitor resumed (sessionMaxHr=$sessionMaxHr, criticalFires=$criticalFires, sustainedFires=$sustainedFires)")
+    }
+
     fun updateConfig(config: KSafeConfig) {
         val wasEnabled = this.config.wellnessEnabled
         this.config = config
