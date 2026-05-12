@@ -815,10 +815,39 @@ class KSafeExtension : KarooExtension("ksafe", BuildConfig.VERSION_NAME), Corout
     // ─── Actions called from DataType callbacks ───────────────────────────────
 
     /**
-     * Fire-and-forget webhook trigger. Shows a SystemNotification with the result.
-     * Called from BonusAction or directly from the settings UI test path.
-     * When geo-fence is enabled for the slot, the request is blocked if the device
-     * is further than the configured radius from the target coordinates.
+     * Picks the right user-feedback channel based on ride state:
+     *  - Recording → [InRideAlert] so the message lands on top of whatever ride screen
+     *                the rider is on (map, data field grid, climb, …) instead of being
+     *                pushed to the Karoo's notification drawer where they won't see it.
+     *  - Idle / Paused → [SystemNotification], same as before — they're not actively
+     *                    looking at the screen so the notification queue is fine.
+     *
+     * Background: per the in-house design guide system notifications should not fire
+     * mid-ride. The webhook tap is rider-initiated so suppression isn't the right call
+     * (the rider IS expecting feedback) — switching channel is.
+     */
+    private fun dispatchWebhookFeedback(id: String, header: String, message: String, bgColor: Int = 0xFF263238.toInt()) {
+        if (currentRideState is RideState.Recording) {
+            karooSystem.dispatch(InRideAlert(
+                id = id,
+                icon = R.drawable.ic_ksafe,
+                title = header,
+                detail = message,
+                autoDismissMs = 4_000L,
+                backgroundColor = bgColor,
+                textColor = 0xFFFFFFFF.toInt(),
+            ))
+        } else {
+            karooSystem.dispatch(SystemNotification(id = id, header = header, message = message))
+        }
+    }
+
+    /**
+     * Fire-and-forget webhook trigger. Shows a SystemNotification (out-of-ride) or an
+     * InRideAlert (recording) with the result. Called from BonusAction or directly from
+     * the settings UI test path. When geo-fence is enabled for the slot, the request is
+     * blocked if the device is further than the configured radius from the target
+     * coordinates.
      */
     suspend fun handleWebhookTap(slot: Int) {
         Timber.d("handleWebhookTap called slot=$slot")
@@ -831,11 +860,12 @@ class KSafeExtension : KarooExtension("ksafe", BuildConfig.VERSION_NAME), Corout
                 Timber.d("handleWebhookTap slot=$slot blocked — master switch OFF")
                 WebhookState.update(slot, WebhookState.ERROR, "disabled")
                 launch { kotlinx.coroutines.delay(4_000L); WebhookState.update(slot, WebhookState.IDLE) }
-                karooSystem.dispatch(SystemNotification(
+                dispatchWebhookFeedback(
                     id = "ksafe-webhook-$slot-master-off",
                     header = label,
-                    message = "Extension is disabled — enable it in Settings first."
-                ))
+                    message = "Extension is disabled — enable it in Settings first.",
+                    bgColor = 0xFFB71C1C.toInt(),
+                )
                 return
             }
 
@@ -845,11 +875,12 @@ class KSafeExtension : KarooExtension("ksafe", BuildConfig.VERSION_NAME), Corout
                 Timber.d("handleWebhookTap slot=$slot disabled")
                 WebhookState.update(slot, WebhookState.ERROR, "disabled")
                 launch { kotlinx.coroutines.delay(4_000L); WebhookState.update(slot, WebhookState.IDLE) }
-                karooSystem.dispatch(SystemNotification(
+                dispatchWebhookFeedback(
                     id = "ksafe-webhook-$slot-disabled",
                     header = label,
-                    message = "Webhook disabled — enable it in the Actions tab"
-                ))
+                    message = "Webhook disabled — enable it in the Actions tab",
+                    bgColor = 0xFFB71C1C.toInt(),
+                )
                 return
             }
 
@@ -859,11 +890,12 @@ class KSafeExtension : KarooExtension("ksafe", BuildConfig.VERSION_NAME), Corout
                 Timber.d("handleWebhookTap slot=$slot no URL")
                 WebhookState.update(slot, WebhookState.ERROR, "no URL")
                 launch { kotlinx.coroutines.delay(4_000L); WebhookState.update(slot, WebhookState.IDLE) }
-                karooSystem.dispatch(SystemNotification(
+                dispatchWebhookFeedback(
                     id = "ksafe-webhook-$slot-nourl",
                     header = label,
-                    message = "No URL configured — set one in the Actions tab"
-                ))
+                    message = "No URL configured — set one in the Actions tab",
+                    bgColor = 0xFFB71C1C.toInt(),
+                )
                 return
             }
 
@@ -878,21 +910,23 @@ class KSafeExtension : KarooExtension("ksafe", BuildConfig.VERSION_NAME), Corout
                 if (curLat == 0.0 && curLon == 0.0) {
                     WebhookState.update(slot, WebhookState.ERROR, "no GPS")
                     launch { kotlinx.coroutines.delay(4_000L); WebhookState.update(slot, WebhookState.IDLE) }
-                    karooSystem.dispatch(SystemNotification(
+                    dispatchWebhookFeedback(
                         id = "ksafe-webhook-$slot-geo-nofix",
                         header = label,
-                        message = "Blocked — no GPS fix yet"
-                    ))
+                        message = "Blocked — no GPS fix yet",
+                        bgColor = 0xFFE65100.toInt(),
+                    )
                     return
                 }
                 if (targetLat == 0.0 && targetLon == 0.0) {
                     WebhookState.update(slot, WebhookState.ERROR, "no target")
                     launch { kotlinx.coroutines.delay(4_000L); WebhookState.update(slot, WebhookState.IDLE) }
-                    karooSystem.dispatch(SystemNotification(
+                    dispatchWebhookFeedback(
                         id = "ksafe-webhook-$slot-geo-nocfg",
                         header = label,
-                        message = "Blocked — no target location configured"
-                    ))
+                        message = "Blocked — no target location configured",
+                        bgColor = 0xFFE65100.toInt(),
+                    )
                     return
                 }
                 val distance = distanceMeters(curLat, curLon, targetLat, targetLon)
@@ -900,11 +934,12 @@ class KSafeExtension : KarooExtension("ksafe", BuildConfig.VERSION_NAME), Corout
                     val distKm = if (distance >= 1000) "${"%.1f".format(distance/1000)}km" else "${distance.toInt()}m"
                     WebhookState.update(slot, WebhookState.ERROR, "geo $distKm")
                     launch { kotlinx.coroutines.delay(5_000L); WebhookState.update(slot, WebhookState.IDLE) }
-                    karooSystem.dispatch(SystemNotification(
+                    dispatchWebhookFeedback(
                         id = "ksafe-webhook-$slot-geo-far",
                         header = label,
-                        message = "Blocked — ${distance.toInt()}m away (max ${radiusM}m)"
-                    ))
+                        message = "Blocked — ${distance.toInt()}m away (max ${radiusM}m)",
+                        bgColor = 0xFFE65100.toInt(),
+                    )
                     Timber.d("Webhook $slot geo-fenced: ${distance.toInt()}m > ${radiusM}m")
                     return
                 }
@@ -919,23 +954,21 @@ class KSafeExtension : KarooExtension("ksafe", BuildConfig.VERSION_NAME), Corout
             WebhookState.update(slot, if (result.success) WebhookState.SUCCESS else WebhookState.ERROR, resultMsg)
             launch { kotlinx.coroutines.delay(4_000L); WebhookState.update(slot, WebhookState.IDLE) }
 
-            karooSystem.dispatch(
-                SystemNotification(
-                    id = "ksafe-webhook-$slot-${if (result.success) "ok" else "err"}",
-                    header = label,
-                    message = if (result.success) "$label ✓" else result.message,
-                )
+            dispatchWebhookFeedback(
+                id = "ksafe-webhook-$slot-${if (result.success) "ok" else "err"}",
+                header = label,
+                message = if (result.success) "$label ✓" else result.message,
+                bgColor = if (result.success) 0xFF1B5E20.toInt() else 0xFFB71C1C.toInt(),
             )
             if (result.success) {
                 val alertEnabled = if (slot == 1) config.webhook1AlertEnabled else config.webhook2AlertEnabled
                 val alertText    = if (slot == 1) config.webhook1AlertText    else config.webhook2AlertText
                 if (alertEnabled && alertText.isNotBlank()) {
-                    karooSystem.dispatch(
-                        SystemNotification(
-                            id = "ksafe-webhook-$slot-alert",
-                            header = label,
-                            message = alertText,
-                        )
+                    dispatchWebhookFeedback(
+                        id = "ksafe-webhook-$slot-alert",
+                        header = label,
+                        message = alertText,
+                        bgColor = 0xFF1565C0.toInt(),
                     )
                 }
             }

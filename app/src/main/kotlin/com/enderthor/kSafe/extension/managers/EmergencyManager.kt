@@ -54,6 +54,15 @@ class EmergencyManager(
 
     private val sosOverlay = SosOverlayManager(context)
 
+    init {
+        // Reset the static state flow on every manager construction. The flow lives in the
+        // companion object because DataTypes read it through `EmergencyManager.uiState`
+        // without a manager reference — but that means a service rebind without process
+        // death would otherwise leave the flow holding the previous instance's state,
+        // disagreeing with `currentStatus` (which is instance-scoped, starts at IDLE here).
+        _uiState.value = EmergencyState()
+    }
+
     private var countdownJob: Job? = null
     private var checkinJob: Job? = null
     private var checkinWarningJob: Job? = null

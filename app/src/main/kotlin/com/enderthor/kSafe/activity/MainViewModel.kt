@@ -19,6 +19,7 @@ import io.hammerhead.karooext.KarooSystemService
 import io.hammerhead.karooext.models.UserProfile
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import kotlinx.serialization.encodeToString
@@ -96,10 +97,18 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
      * Empty alert-customisation fields are pre-filled with their localised default texts
      * (see [materializeAlertDefaults]) so the rider has a concrete starting point to edit
      * rather than an empty string they'd have to know how to fill.
+     *
+     * Re-loads from DataStore via `first()` rather than `config.value` because the StateFlow
+     * uses `WhileSubscribed(5000)` — if no UI is collecting at the moment Export is tapped
+     * (e.g. the rider just toggled away from the Settings tab), `.value` would return the
+     * `KSafeConfig()` initial value and the rider would silently get a defaults-only file
+     * written to disk. The DataStore-backed flow always emits the persisted value first.
      */
-    fun exportToJson(): String {
-        val materialized = config.value.materializeAlertDefaults(getApplication())
-        return jsonForExport.encodeToString(senderConfigs.value.toBackupExport(materialized))
+    suspend fun exportToJson(): String {
+        val freshConfig = configManager.loadConfigFlow().first()
+        val freshSenders = configManager.loadSenderConfigFlow().first()
+        val materialized = freshConfig.materializeAlertDefaults(getApplication())
+        return jsonForExport.encodeToString(freshSenders.toBackupExport(materialized))
     }
 
     /**

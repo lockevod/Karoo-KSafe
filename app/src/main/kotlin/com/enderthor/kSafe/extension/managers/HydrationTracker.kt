@@ -203,8 +203,16 @@ class HydrationTracker(
                     ambientTempC = lastAmbientTempC,
                     humidityPct = lastHumidityPct,
                 ))
-                lastSweatRateMlHr = estimate.mlPerHour
                 lastSweatConfidence = estimate.confidence
+                // Only publish the LOW-confidence default (~298 ml/h) to the UI/alert path
+                // after at least one MEDIUM-or-better tick has happened. Without this guard,
+                // the very first integration with no HR/power yet would bleed a misleading
+                // "≈300 ml/h" through `getStatus().currentRateMlPerHour` and into the
+                // `{target}` token of the first alert. Internal integration still uses the
+                // LOW estimate (better than nothing while the sensors wake up).
+                if (estimate.confidence != SweatConfidence.LOW || lastSweatRateMlHr > 0.0) {
+                    lastSweatRateMlHr = estimate.mlPerHour
+                }
                 estimate.mlPerHour.toFloat()
             } else {
                 config.hydrationTargetMlPerHour.toFloat()
