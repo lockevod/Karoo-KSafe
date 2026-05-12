@@ -30,25 +30,39 @@ import kotlin.math.sqrt
  *     Temperature. Without a globe sensor the formula degenerates to `0.7 * wet_bulb + 0.3 * temp`.
  *     Wet bulb is computed from temperature + relative humidity via Stull 2011 (valid 5–99 % RH,
  *     0–50 °C). Without humidity from a meteo source we assume 50 % RH (moderate continental
- *     summer). Anchor points: < 18 °C = 1.0 ×, 23 °C = 1.20 ×, 28 °C = 1.50 ×, 32 °C = 1.82 ×.
+ *     summer). Anchor points: < 18 °C = 1.0 ×, 23 °C = 1.40 ×, 28 °C = 2.10 ×, 32 °C = 2.74 ×.
+ *
+ *     These anchors sit at the **upper end** of the Sawka 2007 / Baker 2017 published ranges —
+ *     about +140 % sweat at WBGT 30 vs. WBGT 18, against a literature median closer to +80 %.
+ *     The bias toward over-estimation is deliberate. The output drives a hydration *target*,
+ *     not a measurement: an under-shooting target risks dehydration (heat illness, cramps,
+ *     performance collapse), an over-shooting target costs at most a few extra sips. The
+ *     slope effectively assumes an unacclimated trained cyclist at threshold intensity in
+ *     direct sun, which is also the worst case riders are likely to encounter.
  *
  * ## Accuracy expectations
  *
- * Published sweat-loss studies (Baker 2017 review; Cheuvront & Sawka 2014) report ±15–25 %
- * error vs. direct measurement when ALL of (HR, weight, ambient temp) are accurate. This
- * implementation should land in the same band when wired to power + Headwind weather; closer
- * to ±25–35 % when fed HR + onboard sensor (device-heat-biased temp + assumed 50 % RH).
+ * Compared to direct sweat-loss measurement, this estimator systematically biases high
+ * in hot conditions by ~30–60 % vs. the literature median (Baker 2017; Cheuvront & Sawka
+ * 2014). Riders matching the conservative end (unacclimated, hot ride, threshold intensity)
+ * see the displayed target track their actual loss within ±15–25 %. Riders matching the
+ * literature median see a target sitting 30–60 % above their actual loss — the safety bias.
  *
- * For comparison, Garmin Connect (Firstbeat algorithm) reports ±15–20 % with Tempe external
- * temperature, ±25 % without.
+ * For comparison, Garmin Connect (Firstbeat algorithm) targets the literature median and
+ * reports ±15–20 % error with Tempe external temperature, ±25 % without — i.e. closer to
+ * the actual loss but with a non-trivial probability of under-target on hot days.
  *
  * ## Not modelled
  *
- *  - Aclimatization. A rider freshly arrived from a cold climate sweats 20–30 % more than an
- *    aclimated rider at the same intensity / heat. The model assumes "average" aclimation.
+ *  - Acclimatization. A rider freshly arrived from a cold climate sweats 20–30 % more than
+ *    an acclimated rider at the same intensity / heat. The heat-factor anchors above already
+ *    sit near the unacclimated end, so the under-estimate for that subgroup is smaller than
+ *    the literature gap suggests — but acclimated riders in mild heat will see this model
+ *    over-shoot by ~15–25 % even before the deliberate safety bias kicks in.
  *  - Solar load. WBGT without a globe sensor underestimates by 2–4 °C in direct sun.
  *  - Individual sweat-rate variation. Some riders are documented at 2.5–3.0 L/hr in heat;
- *    others under 0.8 L/hr at identical conditions. The model targets the median rider.
+ *    others under 0.8 L/hr at identical conditions. The model targets the upper portion
+ *    of that distribution by design.
  *  - Wind-driven evaporative cooling. Marginal effect (≤ 10 %) compared with intensity/heat;
  *    omitted for simplicity. Headwind speed COULD be added if field data shows it matters.
  */
@@ -147,9 +161,12 @@ private fun wetBulbStull(tempC: Double, humidityPct: Double): Double {
 }
 
 /** Heat multiplier on the base sweat rate. Piecewise-linear over WBGT.
- *  Slopes calibrated against Sawka 2007 / ACGIH TLV heat-strain curves: ~80 % increase
- *  in sweat at WBGT 30 °C vs WBGT 18 °C for unaclimated subjects. The original (Garmin-
- *  inspired) 3 %/°C linear was too conservative against published cyclist data.
+ *  Anchors are intentionally at the upper bound of Sawka 2007 / ACSM heat-strain curves
+ *  for unacclimated trained cyclists — roughly +140 % sweat at WBGT 30 vs. WBGT 18, vs.
+ *  a literature median closer to +80 %. The over-estimation is a safety bias for the
+ *  hydration *target* the rider sees: under-targeting risks dehydration, over-targeting
+ *  costs nothing. The earlier 3 %/°C linear (Garmin-style, median-tracking) was discarded
+ *  because it under-targeted on the hot rides that actually need a correct number.
  */
 private fun heatFactor(tempC: Double, humidityPct: Double): Double {
     if (tempC < 18.0) return 1.0
