@@ -157,8 +157,13 @@ enum class CrashSensitivity {
  * How an incident detector's emission should be handled.
  *
  *  - [SILENT]    — log to calibration only; no UI, no notification, no contact alert.
- *  - [WARNING]   — on-screen [SystemNotification] + beep. No countdown, no contact alert.
- *  - [EMERGENCY] — full crash flow: countdown + contact alert.
+ *  - [WARNING]   — full-screen `InRideAlert` overlay + configurable beep
+ *                  ([KSafeConfig.wellnessBeepPattern]). No countdown, no contact alert.
+ *                  The alert lands on top of whatever ride screen the rider is on so it
+ *                  is actually seen mid-ride — `SystemNotification` would route the
+ *                  message to the Karoo OS Control Center instead, which is not visible
+ *                  while riding.
+ *  - [EMERGENCY] — full crash flow: cancellable countdown + contact alert.
  */
 enum class IncidentResponseLevel { SILENT, WARNING, EMERGENCY }
 
