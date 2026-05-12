@@ -10,7 +10,7 @@
 ## Master switch and field colours
 
 - **Active**: Enable or disable the extension entirely. When OFF, all monitoring stops (crash, speed-drop, check-in, Health, Fueling) and configured notifications (ride start/end, custom messages, webhooks) are suppressed. Cancel paths for an in-flight emergency stay available so a rider can always stop an active alert.
-- **SOS field colour**: Idle background colour for the SOS data field (shown in SAFE state). Palette of 8 preset dark colours with white text — see [field-colours.md](field-colours.md).
+- **SOS field colour**: Idle background colour for the SOS data field (shown in SAFE state). Palette of 16 preset dark hues with white text — see [field-colours.md](field-colours.md).
 - **Timer field colour**: Idle colour for the Safety Timer field (shown when the timer is running normally). Warning (yellow) and expired (red) state colours are always preserved regardless of this setting.
 
 ## Emergency message and notifications
@@ -43,6 +43,6 @@
 
 ## Bottom of the tab
 
-- **FIT export** *(v2.0)*: Toggles whether cumulative carbs / hydration are written to the Karoo's FIT file as developer fields. Default ON. Details in [health-fueling.md](health-fueling.md).
+- **FIT export** *(v2.0)*: Toggles whether KSafe's fueling stream (cumulative carbs logged, cumulative carbs burned, current burn rate g/h, hydration ml) and wellness stream (HR drift %, max drift, alert count) are written to the Karoo's FIT file as developer fields. Default ON. Details in [health-fueling.md](health-fueling.md).
 - **Help improve KSafe**: Optional anonymous calibration data toggle (disabled by default). Full disclosure in [calibration-logging.md](calibration-logging.md).
 - **Export / Import**: Configuration backup and restore — see [backup-restore.md](backup-restore.md) for the file format, the recommended ADB workflow, and the JSON schema.

@@ -5,7 +5,6 @@ import com.enderthor.kSafe.R
 import com.enderthor.kSafe.data.KSafeConfig
 import io.hammerhead.karooext.KarooSystemService
 import io.hammerhead.karooext.models.InRideAlert
-import io.hammerhead.karooext.models.PlayBeepPattern
 import io.hammerhead.karooext.models.UserProfile
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
@@ -41,9 +40,6 @@ class CarbsTracker(
     private val ALERT_COOLDOWN_MS       = 5L * 60_000L
     private val PERIODIC_LOG_INTERVAL_MS = 120_000L
 
-    private val BEEP_LONG = PlayBeepPattern(listOf(
-        PlayBeepPattern.Tone(frequency = 880, durationMs = 800)
-    ))
     private val ALERT_BG_COLOR = 0xFFE65100.toInt()  // amber
     private val ALERT_TX_COLOR = 0xFFFFFFFF.toInt()  // white
     private val AUTO_DISMISS_MS = 10_000L
@@ -226,7 +222,7 @@ class CarbsTracker(
             tokens,
             maxLength = ALERT_TITLE_MAX_CHARS,
         )
-        karooSystem.dispatch(BEEP_LONG)
+        config.carbBeepPattern.toPlayBeepPattern()?.let { karooSystem.dispatch(it) }
         karooSystem.dispatch(InRideAlert(
             id = "ksafe-carb-alert-$source",
             icon = R.drawable.ic_ksafe,

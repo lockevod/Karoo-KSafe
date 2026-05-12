@@ -247,7 +247,10 @@ class EmergencyManager(
             IncidentResponseLevel.WARNING -> {
                 val titleTemplate = customTitleFor(reason, config).ifBlank { defaultTitleFor(reason) }
                 val detailTemplate = customDetailFor(reason, config).ifBlank { defaultDetailFor(reason) }
-                karooSystem.dispatch(BEEP_LONG)
+                // Rider-configurable beep — applies to all WARNING-level alerts (wellness tiers
+                // and any medical incident downgraded to WARNING). Emergency-level alerts use
+                // the hardcoded urgent BEEP_LONG + BEEP_URGENT sequence further down.
+                config.wellnessBeepPattern.toPlayBeepPattern()?.let { karooSystem.dispatch(it) }
                 karooSystem.dispatch(InRideAlert(
                     id = "ksafe-warning-${reason.name.lowercase()}",
                     icon = com.enderthor.kSafe.R.drawable.ic_ksafe,

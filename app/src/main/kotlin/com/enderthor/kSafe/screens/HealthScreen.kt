@@ -184,6 +184,11 @@ fun HealthScreen(vm: MainViewModel) {
                         vm.saveConfig(config.copy(wellnessUseMaxHrPercent = it))
                     },
                 )
+                BeepPatternPicker(
+                    label = stringResource(R.string.fueling_beep_pattern_label),
+                    selected = config.wellnessBeepPattern,
+                    onSelected = { v -> vm.saveConfig(config.copy(wellnessBeepPattern = v)) },
+                )
 
                 // ── Tier 1: Critical HR ─────────────────────────────────────
                 androidx.compose.material3.HorizontalDivider()

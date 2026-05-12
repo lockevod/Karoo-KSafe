@@ -188,6 +188,11 @@ fun FuelingScreen(vm: MainViewModel) {
                     maxLength = 80,
                     singleLine = false,
                 )
+                BeepPatternPicker(
+                    label = stringResource(R.string.fueling_beep_pattern_label),
+                    selected = config.carbBeepPattern,
+                    onSelected = { v -> vm.saveConfig(config.copy(carbBeepPattern = v)) },
+                )
                 HorizontalDivider()
                 Text(text = stringResource(R.string.fueling_items_section), style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.Bold)
                 val gLabel = stringResource(R.string.fueling_slot_grams_label)
@@ -331,6 +336,11 @@ fun FuelingScreen(vm: MainViewModel) {
                     tokensHint = "Tokens: {deficit}, {elapsed}, {target}",
                     maxLength = 80,
                     singleLine = false,
+                )
+                BeepPatternPicker(
+                    label = stringResource(R.string.fueling_beep_pattern_label),
+                    selected = config.hydBeepPattern,
+                    onSelected = { v -> vm.saveConfig(config.copy(hydBeepPattern = v)) },
                 )
                 HorizontalDivider()
                 Text(text = stringResource(R.string.fueling_items_section), style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.Bold)

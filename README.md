@@ -147,7 +147,7 @@ Grouped, top to bottom:
 - **Countdown** — how long (default 30 s) you have to cancel before alerts are sent.
 - **Crash detection** — enable/disable, sensitivity preset, min speed and confirm speed, plus the two "monitor outside ride" toggles.
 - **Speed-drop and check-in** — speed-drop time window; periodic check-in interval (auto-pauses with the ride).
-- **FIT export** *(v2.0)* — write cumulative carbs/hydration as developer fields so they appear as graphs in Strava / Intervals.icu / TrainingPeaks.
+- **FIT export** *(v2.0)* — write KSafe streams (logged carbs, burned carbs, current burn rate g/h, hydration ml, optional wellness HR drift) as developer fields so they appear as graphs in Strava / Intervals.icu / TrainingPeaks.
 - **Help improve KSafe** *(opt-in)* — anonymous calibration data toggle, disabled by default.
 - **Backup / Restore** — Export and Import buttons.
 
@@ -180,7 +180,7 @@ The carb target adapts in real time to your effort using HR / power zones from y
 | HR sensor + HR zones (no power) | 0.7..1.3 from your HR zone | Good fallback |
 | Neither sensor present | 1.0 (neutral) | Flat target × time |
 
-Two combinable alert modes per category (**deficit** vs **time**), each with customisable title / detail templates and tokens (`{deficit}`, `{elapsed}`, `{target}`). Logging via 3 carb + 2 drink data fields (one tap = one log) and 2 SRAM AXS hardware buttons. Post-ride summary. **Cumulative carbs and hydration are written to the FIT file as developer fields** so they appear as graphs in Strava / Intervals.icu / TrainingPeaks.
+Two combinable alert modes per category (**deficit** vs **time**), each with customisable title / detail templates, tokens (`{deficit}`, `{elapsed}`, `{target}`) and a per-category **beep pattern** picker (single beep / double pip / rising chime / urgent pulse / silent). Logging via 3 carb + 2 drink data fields (one tap = one log) and 2 SRAM AXS hardware buttons. Three glanceable carb status fields — current deficit, instantaneous burn rate (g/h), cumulative carbs burned — plus the hydration deficit. Post-ride summary. **Logged + burned carbs, burn rate, and hydration are written to the FIT file as developer fields** so they appear as graphs in Strava / Intervals.icu / TrainingPeaks.
 
 📘 **Full reference: [docs/health-fueling.md](docs/health-fueling.md)** — intensity multiplier curves, dynamic sweat-rate estimator with safety bias, alert modes, FIT export schema, privacy.
 
@@ -277,7 +277,7 @@ KSafe provides **three independent custom message buttons** — you can add one,
    - Toggle **Enable message N**. When the slot is disabled, the rest of the row collapses for a tidier screen, and the on-ride field renders in grey with `OFF` (tap is suppressed).
    - Enter a **button label** (max 7 characters) — appears on the Karoo field button. Examples: `OK👍`, `HOME`, `SAFE`, `CREW`. Defaults: `MSG`, `MSG2`, `MSG3`.
    - Enter the **message text** that will be sent when the field is tapped (any length).
-   - Choose the **idle colour** for the field using the colour swatch button (12 dark hues; reserved state colours are excluded so your pick can never collide with a state-machine signal).
+   - Choose the **idle colour** for the field using the colour swatch button (16 dark hues; reserved state colours are excluded so your pick can never collide with a state-machine signal).
    - Tap **Send Message N** to test it immediately from the app.
 3. Add **KSafe Message 1**, **KSafe Message 2**, and/or **KSafe Message 3** as data fields in your Karoo ride profile.
 
@@ -319,7 +319,7 @@ When you press the configured button during a ride, the HTTP request fires immed
 
 ## Field Colours
 
-Every KSafe ride field has a customisable **idle background colour** picked from a palette of 8 dark hues (legible with white text on a Karoo display). State-driven colours (red error, orange countdown, amber warning, green success, grey OFF) are **reserved by the state machine** so your idle pick can never collide with a runtime signal.
+Every KSafe ride field has a customisable **idle background colour** picked from a palette of 16 dark hues (legible with white text on a Karoo display). State-driven colours (red error, orange countdown, amber warning, green success, grey OFF) are **reserved by the state machine** so your idle pick can never collide with a runtime signal.
 
 Idle colours are configured in the **Settings tab** (SOS, Safety Timer), the **Actions tab** (Custom Messages, Webhooks) and the **Fueling tab** (carb / drink slots, v2.0).
 

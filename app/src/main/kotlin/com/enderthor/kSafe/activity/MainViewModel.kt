@@ -8,6 +8,7 @@ import com.enderthor.kSafe.data.KSafeBackupExport
 import com.enderthor.kSafe.data.ProviderType
 import com.enderthor.kSafe.data.SenderConfig
 import com.enderthor.kSafe.data.defaultSenderConfigs
+import com.enderthor.kSafe.data.materializeAlertDefaults
 import com.enderthor.kSafe.data.toBackupExport
 import com.enderthor.kSafe.data.toSenderConfigs
 import com.enderthor.kSafe.extension.jsonForExport
@@ -69,9 +70,15 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
      * Serializes current config + sender configs to a pretty-printed JSON string.
      * Each provider has its own typed block containing only its relevant fields,
      * making the file a clean, self-documented template for manual editing.
+     *
+     * Empty alert-customisation fields are pre-filled with their localised default texts
+     * (see [materializeAlertDefaults]) so the rider has a concrete starting point to edit
+     * rather than an empty string they'd have to know how to fill.
      */
-    fun exportToJson(): String =
-        jsonForExport.encodeToString(senderConfigs.value.toBackupExport(config.value))
+    fun exportToJson(): String {
+        val materialized = config.value.materializeAlertDefaults(getApplication())
+        return jsonForExport.encodeToString(senderConfigs.value.toBackupExport(materialized))
+    }
 
     /**
      * Parses [json] and overwrites stored config + sender configs.

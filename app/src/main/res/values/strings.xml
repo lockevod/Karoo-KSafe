@@ -77,6 +77,12 @@
     <string name="fueling_custom_title_hyd_placeholder">Default: Drink something</string>
     <string name="fueling_enabled_label">Enabled</string>
     <string name="fueling_items_section">Items</string>
+    <string name="fueling_beep_pattern_label">Sound</string>
+    <string name="beep_pattern_off">Off (visual only)</string>
+    <string name="beep_pattern_single_long">Single long beep</string>
+    <string name="beep_pattern_double_short">Double short pip</string>
+    <string name="beep_pattern_rising_triple">Rising triple chime</string>
+    <string name="beep_pattern_urgent_pulse">Urgent pulse</string>
     <string name="fueling_slot_label_label">Label</string>
     <string name="fueling_slot_grams_label">g</string>
     <string name="fueling_slot_ml_label">ml</string>

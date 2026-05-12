@@ -66,8 +66,28 @@ Each detector has a configurable response level:
 | Level | What happens |
 |-------|-------------|
 | **Silent** | Logged to calibration data only — useful for testing without producing UI noise |
-| **Warning** | On-screen notification + beep on the Karoo, no alert to emergency contacts |
-| **Emergency** | Full crash flow: countdown + alert to contacts |
+| **Warning** | On-screen notification + beep on the Karoo, no alert to emergency contacts. The beep is **configurable** — see [Beep patterns](#beep-patterns) — including Off if you want the alert overlay without any sound. |
+| **Emergency** | Full crash flow: countdown + alert to contacts. Beep stays on the urgent default — not configurable by design, this is the safety-critical path. |
+
+### Beep patterns
+
+Karoo's SDK has no sound catalogue — every "different sound" is a sequence of synthesised tones. KSafe exposes a small set of presets so you can pick a different cadence per category rather than the same single long beep for everything:
+
+| Preset | Pattern |
+|---|---|
+| **Off** | No sound — visual `InRideAlert` only |
+| **Single long beep** | 880 Hz × 800 ms (default — historical behaviour) |
+| **Double short pip** | 880 Hz × 150 ms, 100 ms gap, again |
+| **Rising triple chime** | 660 → 880 → 1100 Hz × 200 ms each |
+| **Urgent pulse** | pip-pause-pip-pause-rising (same shape the emergency countdown uses) |
+
+Three independent pickers:
+
+- **Fueling tab → Carbs → Sound**: applies to carb deficit / time alerts.
+- **Fueling tab → Hydration → Sound**: applies to hydration deficit / time alerts.
+- **Health tab → wellness → Sound**: applies to all WARNING-level alerts (wellness sustained / critical / decoupling, plus any medical incident the rider downgraded to Warning).
+
+Emergency-level countdown beeps (crash, medical-collapse on Emergency, the in-emergency urgent pulses) stay on the urgent default. Making them rider-mutable would defeat the safety guarantee that the Karoo grabs your attention when something serious happens.
 
 ### Privacy
 
@@ -107,6 +127,56 @@ Hydration is more dynamic than carbs because evaporative cooling depends on heat
 
 The dynamic mode biases **high** in hot conditions by design: the estimator's job is to set a hydration *target*, not measure your sweat. Under-targeting risks dehydration (heat illness, cramps, performance collapse); over-targeting costs at most a few extra sips. See `SweatEstimator.kt` for the full bias rationale.
 
+### How to pick your per-hour targets
+
+KSafe asks you for a base **carb target (g/h)** and a base **hydration target (ml/h)**, and then modulates the carbs automatically by intensity zone and (optionally) the hydration by HR/power + weather. Default values out of the box are **60 g/h** for carbs and **750 ml/h** for hydration — sensible for a 2–3 h endurance ride in mild weather, but **not optimal for everyone**. Here is how to ballpark your own numbers.
+
+#### Carb target (g/h)
+
+Sports-nutrition guidance scales with ride duration and intensity:
+
+| Ride duration | Target g/h | Notes |
+|---|---|---|
+| < 60 min | 0–30 | Glycogen stores cover it; only fuel if you're going all-out from minute one |
+| 1–2 h | 30–60 | Single-source glucose works (gel, drink, banana) |
+| 2–3 h | 60–90 | Endurance standard. **KSafe default (60) is the bottom of this range** |
+| 3–5 h | 75–100 | Need a glucose+fructose mix (multi-sugar) to break the 60 g/h gut-transporter limit |
+| > 5 h / ultra | 90–120 | Only realistic with gut training; most riders top out at 80–95 |
+
+**Bodyweight ceiling**: research puts the gut-trained max at roughly **1.0–1.2 g/kg/h**. A 75 kg rider can sustainably absorb up to ~90 g/h; a 60 kg rider up to ~70 g/h. Use `bodyweight_kg × 1.0` as a "going-hard" target.
+
+**Intensity scaling is automatic**: once you set the base, KSafe's 0.7×–1.3× zone multiplier (table above) does the per-second adjustment. You don't need to bump the base for hard intervals — KSafe sees the HR or power and integrates more grams while you're in zone 4-5. The per-hour number you configure is **your target at threshold-ish effort**, not your peak.
+
+#### Hydration target (ml/h)
+
+Hydration is dominated by heat, humidity and bodyweight, much more than by intensity. Field-tested rate by conditions:
+
+| Temperature | Suggested ml/h |
+|---|---|
+| < 15 °C (cool) | 400–600 |
+| 15–22 °C (mild) | 600–800 |
+| 22–28 °C (warm) | 800–1100 |
+| 28–32 °C (hot) | 1100–1400 |
+| > 32 °C (very hot) | 1400–1800 |
+
+**KSafe default (750)** suits a mild day. For a summer MTB ride at 14:00 with the sun on your back, bump it manually to 1000–1200 — or, better, enable the **Dynamic estimate** toggle and let the sweat-rate model derive it from your HR/power, weight (from your Karoo profile), and the temperature/humidity stream. With [karoo-headwind](https://github.com/timklge/karoo-headwind) installed you also get real meteo humidity; without it KSafe falls back to the Karoo onboard temperature sensor (biased high by device self-heating — the estimator compensates by erring on the high side because under-targeting hydration is far more dangerous than over-targeting).
+
+**Bodyweight scaling**: ~10 ml/kg/h in moderate heat, scaling up to ~20 ml/kg/h in extreme heat for a heavy sweater. A 60 kg rider in 25 °C might need 600 ml/h; a 90 kg rider in the same weather might need 900–1000 ml/h.
+
+#### How to calibrate against a real ride
+
+Defaults are a starting point — your true rate is rider-specific. The data fields make tuning straightforward:
+
+1. **Set the base targets and ride** with the carb-status and hydration-status fields visible (and optionally the burn-rate + carbs-burned fields too).
+2. **At 2 h, check the screen**: KSafe shows `cum target` (what it integrated), `cum logged` (what you actually consumed), and the deficit between them.
+3. **Tune for the next ride**:
+   - Felt **bonk-y** despite hitting your logged target → your true burn rate is higher than KSafe integrated. Increase the base 10–15 g/h.
+   - Finished with a **full belly** and unused gels → drop the base 5–10 g/h.
+   - **Light-headed / cramping** in warm conditions → increase the hydration target 100–200 ml/h, or enable Dynamic estimate.
+   - **No symptoms, low deficit consistently** → defaults are working; no change needed.
+
+After two or three calibration rides in varied conditions you'll have personalised numbers. The defaults are a starting hypothesis, not a prescription.
+
 ### Two combinable alert modes
 
 For each category (carbs, hydration) independently:
@@ -132,12 +202,19 @@ For example, a custom carb detail of `"You're {deficit}g down — eat now ({elap
 
 Two complementary mechanisms:
 
-- **Data fields**: 3 carb log slots + 2 drink log slots, each with its own configurable **label** (e.g. *"Gel"*, *"Bar"*, *"Bottle"*), **amount** (g or ml), **idle background colour** (palette of 12 dark hues) and **icon** (emoji like 🍫 / 🥤 / 💧, or one of the two bundled vector drawables for sports gel pouch and cyclist bidón — Unicode has no good emoji for those shapes). One tap = one log. The slot flashes green for 2 seconds as confirmation, then returns to its idle label. Add as many or as few slots to your ride profile as you want.
+- **Data fields**: 3 carb log slots + 2 drink log slots, each with its own configurable **label** (e.g. *"Gel"*, *"Bar"*, *"Bottle"*), **amount** (g or ml), **idle background colour** (palette of 16 dark hues — see [field-colours.md](field-colours.md)) and **icon** (emoji like 🍫 / 🥤 / 💧, or one of the two bundled vector drawables for sports gel pouch and cyclist bidón — Unicode has no good emoji for those shapes). One tap = one log. The slot flashes green for 2 seconds as confirmation, then returns to its idle label. Add as many or as few slots to your ride profile as you want.
 - **Hardware buttons (BonusActions, SRAM AXS only)**: KSafe registers two extra actions, *"KSafe: Log Carb"* and *"KSafe: Log Drink"*, both wired to slot 1 of each category. Map them to your AXS shifter buttons so you can log without looking at the screen.
 
 When the master Carb / Hydration toggle is off, the corresponding log fields render in grey with `OFF` and tap is disabled — the data field is still visible on the ride profile but clearly inactive, so a stray tap does nothing instead of silently no-op'ing. Re-enable the master in the Fueling tab and the colour / emoji come back.
 
-There are also two **status data fields** (carb status and hydration status) that show your current deficit at a glance, color-coded green / amber / red. Optional — if you don't add them to your ride profile, they don't appear.
+There are also four **status data fields** for carbs (deficit, burn rate, cumulative burned) plus one for hydration (deficit). All are optional — only the ones you add to your ride profile actually appear:
+
+| Field | What it shows |
+|---|---|
+| **KSafe Carb Status** (`carb-status`) | Current carb deficit (target − logged), colour-coded green / amber / red |
+| **KSafe Carb Burn Rate** (`carb-burn-rate`) | Instantaneous burn rate in g/h (`target × zone multiplier`). With no HR/power the multiplier is 1.0 and the field shows the configured base target — useful to confirm the zone-aware modulation is doing what you expect. |
+| **KSafe Carbs Burned** (`carbs-burned`) | Cumulative g the body should have burned this session — companion to the deficit field, lets you see "total need" alongside "currently behind". |
+| **KSafe Hydration Status** (`hyd-status`) | Current hydration deficit (target − logged), colour-coded |
 
 ### Post-ride summary
 
@@ -149,10 +226,15 @@ KSafe writes the cumulative carbohydrates and hydration you log into the Karoo's
 
 | Field | Type | Where in the FIT |
 |---|---|---|
-| `ksafe_carbs_g` | float32, units `"g"` | Per-second `record` (timeline graph) + `session` summary (activity header) |
-| `ksafe_hyd_ml`  | float32, units `"ml"` | Same |
+| `ksafe_carbs_g` | float32, units `"g"` | Per-second `record` (timeline graph) + `session` summary (activity header) — cumulative carbs **logged** by tap or AXS button |
+| `ksafe_carbs_burned_g` | float32, units `"g"` | Same — cumulative carbs the body **should have burned** at the zone-aware target rate |
+| `ksafe_carb_burn_rate_gph` | float32, units `"g/h"` | Same — **instantaneous** burn rate (zone-modulated) |
+| `ksafe_hyd_ml`  | float32, units `"ml"` | Same — cumulative hydration logged |
 
-The values are cumulative — a step curve growing across the ride. Tools that prefer rate (g/h) can derive it locally with whatever averaging window suits the analysis.
+The logged / burned / hydration fields are cumulative step curves. The burn rate is instantaneous, so it tracks intensity changes — drop in HR or power, rate drops. Tools that prefer rate from cumulative data can still derive a logged-rate (g/h) locally by differencing.
+
+> [!NOTE]
+> Field-definition numbers 5 (`ksafe_carbs_burned_g`) and 6 (`ksafe_carb_burn_rate_gph`) join the original 0–4 as **immutable once shipped** — historical FIT files reference them by number, so they cannot be repurposed.
 
 Toggleable via the **"Write to FIT"** switch in the Fueling tab. Default ON because the cost is negligible (~0.05 % battery over a 5 h ride, no perceptible CPU). Riders who don't want extra developer columns in their FIT can opt out cleanly.
 
@@ -167,7 +249,8 @@ Per category (Carbs, Hydration) the Fueling tab lets you:
 - Toggle the deficit alert + threshold
 - Toggle the time alert + interval + initial delay
 - Customise the alert **title** and **detail** templates (optional — placeholder shows the default; leave blank to use it, or write your own with `{deficit}` / `{elapsed}` / `{target}` tokens)
-- Configure each slot's label, amount, idle background colour, and icon (emoji or one of the bundled vector drawables for sports gel and bidón)
+- Pick the **alert sound** (`Off` / `Single long` / `Double pip` / `Rising chime` / `Urgent pulse`) — see [Beep patterns](#beep-patterns)
+- Configure each slot's label, amount, idle background colour (16-hue palette — see [field-colours.md](field-colours.md)), and icon (emoji or one of the bundled vector drawables for sports gel and bidón)
 - For hydration only: toggle the **dynamic estimate** mode
 - Toggle FIT export (default on; controls whether your fueling appears as developer fields in the Karoo's FIT file)
 

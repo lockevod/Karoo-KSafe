@@ -1,5 +1,7 @@
 package com.enderthor.kSafe.data
 
+import android.content.Context
+import com.enderthor.kSafe.R
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
@@ -41,7 +43,7 @@ const val KAROO_LIVE_BASE_URL = "https://dashboard.hammerhead.io/live/"
  *            the typed reason after a process restart. Legacy reads without this field get null
  *            automatically via coerceInputValues = true. Pure version stamp.
  */
-const val CONFIG_VERSION = 8
+const val CONFIG_VERSION = 10
 
 /**
  * Canonical minSpeedForCrashKmh value per preset.
@@ -125,6 +127,14 @@ val FIELD_COLOR_PALETTE: List<Int> = listOf(
     0xFFAD1457.toInt(),  // Magenta
     0xFF455A64.toInt(),  // Slate
     0xFF263238.toInt(),  // Deep Slate
+    // ── New distinct hues (v2.x) to widen differentiation in the picker.
+    // All chosen at Material 700-900 luminance for white-text contrast ≥7:1
+    // and at hue distances ≥30° from every state-driven colour (orange E65100,
+    // red B71C1C, yellow F57F17, green 1B5E20, grey OFF 424242).
+    0xFF283593.toInt(),  // Indigo          (cool blue-violet, distinct from Blue/Deep Blue)
+    0xFF5D4037.toInt(),  // Brown           (warm earth tone, no other warm-dark hue in palette)
+    0xFF006064.toInt(),  // Dark Cyan       (saturated cyan, distinct from blue-leaning Teal)
+    0xFF4E0A18.toInt(),  // Burgundy        (deep wine, distinct from hot Pink / Magenta)
 )
 
 // ─── Enums ────────────────────────────────────────────────────────────────────
@@ -271,6 +281,11 @@ data class KSafeConfig(
     /** Custom InRideAlert title/detail for the cardiac DECOUPLING tier. Empty → built-in defaults. */
     val wellnessDecouplingCustomTitle: String = "",
     val wellnessDecouplingCustomDetail: String = "",
+    /** Beep pattern played for WARNING-level alerts (wellness sustained / critical / decoupling
+     *  and any medical incident the rider downgraded to WARNING). Emergency-level alerts
+     *  (crash / medical-collapse on EMERGENCY) stay on the urgent BEEP_LONG + BEEP_URGENT
+     *  countdown sequence — those grab attention by design and aren't user-mutable. */
+    val wellnessBeepPattern: BeepPattern = BeepPattern.SINGLE_LONG,
     // Calibration logging — writes detailed sensor events to CSV for threshold tuning
     val calibrationLoggingEnabled: Boolean = false,
     // Field colours — idle/ready background for each ride-screen widget
@@ -336,6 +351,9 @@ data class KSafeConfig(
      *  (`fueling_carb_alert_detail_deficit` / `_time`). When set, the same template is used
      *  for both alert sources; tokens `{deficit}`, `{elapsed}`, `{target}` substituted at runtime. */
     val carbAlertCustomDetail: String = "",
+    /** Beep pattern played when a carb alert fires. OFF = visual only. See [BeepPattern]
+     *  for the available presets. Default keeps the v8 behaviour (single 880 Hz × 800 ms). */
+    val carbBeepPattern: BeepPattern = BeepPattern.SINGLE_LONG,
     /** Three logging slots, each user-configurable label + grams + idle background colour
      *  + optional emoji prefix. Empty `carbNIcon` = no emoji, label only. */
     val carb1Label: String = "Gel",      val carb1Grams: Int = 25,    val carb1Color: Int = 0xFF1565C0.toInt(),    val carb1Icon: String = FUEL_GEL_DRAWABLE,
@@ -365,6 +383,8 @@ data class KSafeConfig(
     /** Optional custom detail template. Empty = use source-specific defaults
      *  (`fueling_hyd_alert_detail_deficit` / `_time`). Tokens `{deficit}`, `{elapsed}`, `{target}`. */
     val hydrationAlertCustomDetail: String = "",
+    /** Beep pattern played when a hydration alert fires. OFF = visual only. */
+    val hydBeepPattern: BeepPattern = BeepPattern.SINGLE_LONG,
     val drink1Label: String = "Sip",     val drink1Ml: Int = 100,    val drink1Color: Int = 0xFF1565C0.toInt(),    val drink1Icon: String = "💧",
     val drink2Label: String = "Bottle",  val drink2Ml: Int = 500,    val drink2Color: Int = 0xFF1565C0.toInt(),    val drink2Icon: String = FUEL_BOTTLE_DRAWABLE,
 
@@ -661,6 +681,68 @@ fun KSafeConfig.migrateToLatest(): KSafeConfig {
         Timber.i("KSafeConfig migrated v%d→v8 (EmergencyState reasonEnum added)", originalVersion)
     }
 
+    if (c.configVersion < 9) {
+        // v8 → v9: carbBeepPattern + hydBeepPattern added. Defaults to SINGLE_LONG so existing
+        // riders hear exactly the same 880 Hz × 800 ms beep they had before. Pure version stamp;
+        // coerceInputValues fills the missing enum field with its declared default.
+        c = c.copy(configVersion = 9)
+        Timber.i("KSafeConfig migrated v%d→v9 (carb/hyd beep pattern picker)", originalVersion)
+    }
+
+    if (c.configVersion < 10) {
+        // v9 → v10: wellnessBeepPattern added for WARNING-level alerts. Same SINGLE_LONG
+        // default → previous behaviour preserved. Emergency-level beeps stay hardcoded.
+        c = c.copy(configVersion = 10)
+        Timber.i("KSafeConfig migrated v%d→v10 (wellness beep pattern picker)", originalVersion)
+    }
+
     return c
 }
+
+/**
+ * Returns a copy of this config with empty alert-customisation fields pre-filled with their
+ * current localised default strings. Used by the JSON export so the user sees the actual
+ * default texts in the file and can edit them in place — easier than guessing what the
+ * default looks like before changing it.
+ *
+ * Only customisation fields with an `ifBlank { context.getString(R.string.*) }` runtime
+ * fall-back are materialised here. Fields with non-empty literal defaults (e.g.
+ * `emergencyMessage`, `karooLiveStartMessage`, `customMessage`) already serialise visibly.
+ *
+ * After import the materialised strings are stored as literal field values. The runtime
+ * fall-back code (`config.xxx.ifBlank { … }`) keeps working — the `ifBlank` branch is just
+ * never taken because the field is no longer blank. Tradeoff: a user who imports an exported
+ * config no longer picks up future changes to the default strings (e.g. translation updates,
+ * typo fixes) for the materialised fields. That's the same situation as anyone who
+ * explicitly customised the alert, which is the intent here.
+ */
+fun KSafeConfig.materializeAlertDefaults(context: Context): KSafeConfig = copy(
+    // ── Fueling alerts ─────────────────────────────────────────────────────
+    carbAlertCustomTitle =
+        carbAlertCustomTitle.ifBlank { context.getString(R.string.fueling_carb_alert_title) },
+    carbAlertCustomDetail =
+        carbAlertCustomDetail.ifBlank { context.getString(R.string.fueling_carb_alert_detail_deficit) },
+    hydrationAlertCustomTitle =
+        hydrationAlertCustomTitle.ifBlank { context.getString(R.string.fueling_hyd_alert_title) },
+    hydrationAlertCustomDetail =
+        hydrationAlertCustomDetail.ifBlank { context.getString(R.string.fueling_hyd_alert_detail_deficit) },
+    // ── Medical incidents ──────────────────────────────────────────────────
+    medicalCustomTitle =
+        medicalCustomTitle.ifBlank { context.getString(R.string.warning_medical_title) },
+    medicalCustomDetail =
+        medicalCustomDetail.ifBlank { context.getString(R.string.warning_medical_detail) },
+    // ── Wellness, three tiers ──────────────────────────────────────────────
+    wellnessSustainedCustomTitle =
+        wellnessSustainedCustomTitle.ifBlank { context.getString(R.string.warning_wellness_high_hr_title) },
+    wellnessSustainedCustomDetail =
+        wellnessSustainedCustomDetail.ifBlank { context.getString(R.string.warning_wellness_high_hr_detail) },
+    wellnessCriticalCustomTitle =
+        wellnessCriticalCustomTitle.ifBlank { context.getString(R.string.warning_wellness_critical_hr_title) },
+    wellnessCriticalCustomDetail =
+        wellnessCriticalCustomDetail.ifBlank { context.getString(R.string.warning_wellness_critical_hr_detail) },
+    wellnessDecouplingCustomTitle =
+        wellnessDecouplingCustomTitle.ifBlank { context.getString(R.string.warning_wellness_decoupling_title) },
+    wellnessDecouplingCustomDetail =
+        wellnessDecouplingCustomDetail.ifBlank { context.getString(R.string.warning_wellness_decoupling_detail) },
+)
 

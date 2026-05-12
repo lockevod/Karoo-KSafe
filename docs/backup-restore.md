@@ -97,3 +97,20 @@ Typing long tokens (Pushover App Token, Telegram Bot Token, etc.) on the Karoo t
 
 > [!NOTE]
 > The import is tolerant: you can fill in only the providers you use and leave the rest empty. Unknown or extra fields are silently ignored, so imports from older or newer versions of KSafe always work.
+
+## Editing alert messages from the export
+
+The 12 customisable alert texts (carb / hydration title + detail, medical title + detail, and the three wellness tier title + details) all fall back to a built-in default at runtime when the configured value is empty. To make those defaults visible and editable from the JSON, **the export pre-fills any empty field with its current localised default text**. You see something like:
+
+```json
+"carbAlertCustomTitle": "Eat something",
+"carbAlertCustomDetail": "Behind by {deficit}g — eat now",
+"medicalCustomTitle": "Possible medical episode",
+```
+
+instead of a sea of empty strings. Edit the wording in place, save, push back, import. No need to guess what the default looks like before changing it.
+
+> [!TIP]
+> Tokens like `{deficit}`, `{elapsed}`, `{target}` (fueling) or the runtime substitutions in medical / wellness messages keep working exactly the same after you customise. See [health-fueling.md](health-fueling.md) for the token reference.
+
+The trade-off: once an alert field has been materialised in your exported / re-imported config, it no longer picks up future updates to the default text (e.g. translation fixes shipped in a later KSafe release) for that specific field. The same is true for anyone who has explicitly customised an alert — which is the intent of materialisation. Clear the field back to empty in the JSON before importing if you want to revert that one to "always follow whatever the current default is".
