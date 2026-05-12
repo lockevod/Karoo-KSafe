@@ -51,6 +51,13 @@ class HydrationTracker(
     // When [KSafeConfig.hydrationDynamicEstimateEnabled] is true the tick() integrator
     // queries [SweatEstimator] each tick instead of using the fixed target rate. These
     // fields are the latest known values from each stream; null means "no data yet".
+    //
+    // Threading note: each field is individually volatile so single reads are atomic, but
+    // the snapshot tick() composes from them is NOT atomic across fields — HR can be
+    // from tick N while power is from tick N+1. In practice the streams emit at <10 Hz
+    // and the tick runs every 5 s, so the inconsistency window vs. the integration step
+    // is negligible. The estimator is monotonic in each input within its smooth band,
+    // so a mixed snapshot just lands between the "true" values for adjacent ticks.
     @Volatile private var lastHrBpm: Int? = null
     @Volatile private var lastPowerW: Int? = null
     @Volatile private var lastWeightKg: Double? = null
@@ -205,10 +212,18 @@ class HydrationTracker(
 
     private fun fireAlert(source: String, deficitMl: Int, elapsedMin: Long) {
         lastAlertMs = System.currentTimeMillis()
+        // In dynamic-estimate mode the {target} placeholder must report the live
+        // estimator output, not the fixed config value — a rider on a 30 °C ride
+        // configured for 750 ml/h but estimating 1300 ml/h would otherwise see the
+        // wrong number in their custom template.
+        val effectiveTarget = if (config.hydrationDynamicEstimateEnabled)
+            lastSweatRateMlHr.toInt()
+        else
+            config.hydrationTargetMlPerHour
         val tokens = mapOf(
             "deficit" to deficitMl.toString(),
             "elapsed" to elapsedMin.toString(),
-            "target"  to config.hydrationTargetMlPerHour.toString(),
+            "target"  to effectiveTarget.toString(),
         )
         val detailTemplate = config.hydrationAlertCustomDetail.ifBlank {
             if (source == "deficit") context.getString(R.string.fueling_hyd_alert_detail_deficit)

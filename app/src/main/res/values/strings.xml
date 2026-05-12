@@ -90,7 +90,7 @@
 
     <!-- Hydration dynamic estimate -->
     <string name="fueling_hyd_dynamic_label">Estimate hydration target dynamically</string>
-    <string name="fueling_hyd_dynamic_hint_on">Target now varies with HR / power, body weight, ambient temperature and humidity. Uses karoo-headwind weather data when the extension is installed; otherwise the Karoo onboard temperature sensor (biased +3-8 °C) and 50 %% assumed humidity. Expect ±20-30 %% accuracy vs measured sweat.</string>
+    <string name="fueling_hyd_dynamic_hint_on">Target now varies with HR / power, body weight, ambient temperature and humidity. Uses karoo-headwind weather data when the extension is installed; otherwise the Karoo onboard temperature sensor (biased +3-8 °C) and 50 %% assumed humidity. Expect ±25-35 %% accuracy in the common HR + onboard configuration; closer to ±20 %% with power meter + Headwind.</string>
     <string name="fueling_hyd_dynamic_hint_off">Currently using the fixed per-hour target below.</string>
     <string name="fueling_carb_alert_title">Eat something</string>
     <string name="fueling_carb_alert_detail_deficit">Behind by {deficit}g — eat something now (target {target} g/h).</string>

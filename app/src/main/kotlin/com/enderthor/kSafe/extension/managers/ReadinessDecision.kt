@@ -66,7 +66,7 @@ fun decideReadiness(history: WellnessHistory, nowMs: Long): ReadinessAdvice? {
         )
         recent && minutesAbove(newest.cumMsCriticalAbove) >= 10 -> ReadinessAdvice(
             ReadinessLevel.CAUTION,
-            listOf("${minutesAbove(newest.cumMsCriticalAbove)} min above critical HR yesterday"),
+            listOf("${minutesAbove(newest.cumMsCriticalAbove)} min above critical HR in your last ride"),
         )
         ridesWithin72h >= 3 -> ReadinessAdvice(
             ReadinessLevel.CAUTION,

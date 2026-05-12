@@ -18,14 +18,16 @@ class SweatEstimatorTest {
     @Test
     fun `moderate endurance HR temperate conditions returns ~500-650 ml per hour`() {
         // 70 kg rider, 150 bpm, 20 °C, 50 % RH. The classic "long endurance ride at z2-z3".
-        // Sport-science literature reports 0.5–0.7 L/hr in cool conditions.
+        // Expected value is ~557 ml/hr by direct calculation (Keytel 654 kcal/hr * 0.85
+        // sweat/kcal * 1.0 heat factor). The ±15 % band catches a regression that would
+        // shift the base coefficient or skip the heat-factor branch.
         val out = estimateSweatRate(SweatEstimateInputs(
             hrBpm = 150,
             weightKg = 70.0,
             ambientTempC = 20.0,
             humidityPct = 50,
         ))
-        assertInRange("moderate temperate", out.mlPerHour, 450.0, 700.0)
+        assertInRange("moderate temperate", out.mlPerHour, 475.0, 640.0)
         assertEquals(SweatConfidence.MEDIUM, out.confidence)
     }
 
@@ -106,14 +108,18 @@ class SweatEstimatorTest {
 
     @Test
     fun `humidity raises sweat at the same temperature`() {
-        // 25 °C is in the linear heat band — small but measurable humidity effect.
+        // At 28 °C the WBGT lands inside the active heat band for any reasonable humidity,
+        // so a humidity increase produces a measurable bump in the heat factor (whereas at
+        // 25 °C with low RH the WBGT can stay below the 18 °C cutoff). Picking 28 °C
+        // guarantees both samples evaluate the WBGT branch — the test is then about
+        // humidity sensitivity, not about clearing the floor.
         val dry = estimateSweatRate(SweatEstimateInputs(
-            hrBpm = 150, weightKg = 70.0, ambientTempC = 25.0, humidityPct = 20,
+            hrBpm = 150, weightKg = 70.0, ambientTempC = 28.0, humidityPct = 20,
         )).mlPerHour
         val humid = estimateSweatRate(SweatEstimateInputs(
-            hrBpm = 150, weightKg = 70.0, ambientTempC = 25.0, humidityPct = 80,
+            hrBpm = 150, weightKg = 70.0, ambientTempC = 28.0, humidityPct = 80,
         )).mlPerHour
-        assertTrue("80 % RH should give more sweat than 20 % RH at 25 °C: dry=$dry humid=$humid",
+        assertTrue("80 % RH should give more sweat than 20 % RH at 28 °C: dry=$dry humid=$humid",
             humid > dry)
     }
 

@@ -78,6 +78,24 @@ class ReadinessDecisionTest {
     }
 
     @Test
+    fun `rule 4 fires when newest ride is recent AND a 72h streak exists with mild signals`() {
+        // The previous test made rules 1-3 unreachable by setting the newest ride to 30 h
+        // (outside the 24 h recency window). This case proves rule 4 still fires when a
+        // RECENT ride exists with sub-threshold drift / fires (rules 1-3 evaluate but
+        // none match), and the 72 h streak is the only remaining trigger.
+        val h = WellnessHistory(listOf(
+            record(ageHours = 12, maxDriftPct = 3f, sustainedFires = 1),  // recent but mild
+            record(ageHours = 36, maxDriftPct = 4f),
+            record(ageHours = 65, maxDriftPct = 2f),
+        ))
+        val advice = decideReadiness(h, NOW)
+        // Rule 1: drift < 10 → no. Rule 2: 1 fire < 2 → no. Rule 3: 0 ms critical → no.
+        // Rule 4: 3 rides within 72 h → yes.
+        assertEquals(ReadinessLevel.CAUTION, advice?.level)
+        assertTrue(advice!!.reasons.first().contains("3 rides"))
+    }
+
+    @Test
     fun `most recent ride older than 24 hours and no streak returns null`() {
         // Newest ride 30 h ago — past the recent-24h window, and only one ride in 72 h.
         val h = WellnessHistory(listOf(record(ageHours = 30, maxDriftPct = 15f)))

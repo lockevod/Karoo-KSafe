@@ -149,26 +149,22 @@ class WellnessMonitorTest {
     }
 
     @Test
-    fun `sustained tier fire increments sustainedFires counter`() = runTest {
-        // duration = 1 minute → 2 consecutive ticks (60 s) above threshold triggers the fire.
-        // First tick: streak begins (sustainedSinceMs = now). Second tick: sustained ≥ 60 s,
-        // cooldown is 0 (no previous fire), so fires.
+    fun `single tick above sustained threshold does not yet fire`() = runTest {
+        // Honest version of what this test ACTUALLY covers: the accumulator advances by
+        // one MONITOR_TICK_MS step but the sustained-duration condition (60 s with our
+        // 1-min config) is not satisfied. No fire. The fire path itself depends on
+        // System.currentTimeMillis advancing across multiple ticks, which is awkward to
+        // simulate deterministically in a JVM unit test — exercised in field testing via
+        // the calibration log instead.
         val (mon, incidents) = newMonitor(sustainedBpm = 160)
 
         mon.updateHr(170)
         mon.tick()
-        // Second tick is the "fires" tick — but tick() uses wall-clock System.currentTimeMillis,
-        // so we need to wait long enough for `now - sustainedSinceMs >= 60 000 ms`. In a JVM
-        // test this is impractical without real-time sleep, so instead we drive the fire
-        // path by calling tick() in a tight loop and asserting on the eventual fire count
-        // would be flaky. Skip — covered by the integration of fireTier with calibration
-        // logs in field testing.
 
-        // What we CAN assert deterministically: the bucket accumulator advanced.
         assertEquals(30_000L, mon.getSummary().cumMsSustainedAbove)
         assertEquals(170, mon.getSummary().maxHrBpm)
-        // No fire yet — duration not met (would need ≥ 60 s wall-clock).
         assertEquals(0, incidents.size)
+        assertEquals(0, mon.getSummary().sustainedFires)
     }
 
     @Test
