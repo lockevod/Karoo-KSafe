@@ -30,23 +30,15 @@ Compatible with Karoo 3 running Karoo OS version 1.527 and later.
 
 ## Features
 
-- **Crash detection**: Uses the Karoo's accelerometer and gyroscope to detect sudden impacts automatically.
-- **Manual SOS**: Tap the SOS data field to trigger an emergency alert manually.
-- **Check-in timer**: Set a periodic check-in interval. If you don't tap "OK" before the timer expires, an alert is sent automatically. **The timer pauses automatically when the ride is paused** (coffee stop, etc.) and resets when you resume — no alerts during planned breaks.
-- **Speed drop detection**: Detects when your speed drops suddenly and remains low for a configurable time window.
-- **Medical episode detection** *(v2.0, optional, requires HR sensor)*: Detects sudden heart-rate flatline (asystole / severe bradycardia) or HR collapse (vasovagal syncope) during a ride. Triggers the same emergency flow as a crash by default. Stays silent if no HR sensor is paired — no false alarms when you don't wear a chest strap.
-- **Wellness monitor** *(v2.0, optional, requires HR sensor)*: Three-tier on-screen warning when HR stays above a configurable threshold for a sustained period, when HR climbs critically, or when HR/power decoupling indicates heat stress / dehydration — useful for fatigue / overexertion / dehydration awareness on long rides. Sent to the rider only, never to emergency contacts (response level configurable).
-- **Nutrition & hydration tracker** *(v2.0, preventive safety, optional)*: Watches your carb and fluid intake during the ride and reminds you to eat / drink **before** depletion impairs your judgment on the bike. Carb target adapts in real time to your effort using the Karoo's own HR or power zones. Hydration target is per-hour, with an optional dynamic estimate that varies with weather and intensity. Up to **3 carb slots and 2 drink slots** as data fields (one tap = one log) and 2 SRAM AXS hardware buttons. Two combinable alert modes — by **deficit** or by **time**. **Cumulative carbs (g) and hydration (ml) are also written into the FIT file as developer fields**, so the activity in Strava / Intervals.icu / TrainingPeaks shows your fueling as graphs alongside HR / power / cadence.
-- **Emergency countdown with cancel**: All triggers start a configurable countdown (default 30s) so you can cancel false alarms before alerts are sent. A **red overlay with a Cancel button** appears on top of the ride screen — visible from any screen, no matter which data field is active.
-- **Location included**: Your GPS coordinates are automatically included in the alert message as a Google Maps link.
-- **Multiple messaging providers**: WhatsApp via CallMeBot (free), push notification via Pushover, free unlimited push via ntfy, or Telegram bot messages (free, unlimited).
-- **Ride start notification**: Optionally sends a message to your contacts when you start a ride, including a Karoo Live real-time tracking link. Sent **only once** when the ride truly begins — resuming after a pause does **not** trigger it again.
-- **Ride end notification**: Optionally sends a configurable message to your contacts when you finish a ride (recording stops completely).
-- **Custom message buttons**: Send any custom text message instantly via a hardware button or the app — no countdown, no emergency. **Up to three independent message buttons** are available, each with its own configurable label and text.
-- **Webhook actions**: Trigger any HTTP endpoint from a Karoo hardware button. Works over Bluetooth tether. Two independent slots with optional **geo-fence** (only fires when near a saved location) and optional **ride alert** (on-screen notification every time it fires).
-- **Five data fields**: SOS field, Safety Timer field, and up to three Custom Message fields — add any combination to your ride profile.
-- **Custom field colours**: Each ride field can be assigned an independent idle background colour from a preset palette of twelve dark hues. Reserved state colours (red error, orange countdown, amber warning, green success flash, grey OFF) are deliberately excluded so your idle pick can never collide with a state-machine signal.
-- **Help improve KSafe** *(optional)*: Enable anonymous calibration data sending to help tune the crash detection algorithm. See [Calibration Logging](docs/calibration-logging.md) for details.
+- **Reactive safety**: automatic crash detection (accelerometer + gyroscope), speed-drop detection, periodic check-in timer (auto-pauses with the ride), manual SOS field, and a configurable countdown with a red full-screen Cancel overlay visible from any screen.
+- **HR-based detection** *(v2.0, optional, requires HR sensor)*: medical episode detection (HR flatline / collapse) and a three-tier wellness monitor for fatigue, overexertion, and HR/power decoupling.
+- **Preventive nutrition & hydration tracker** *(v2.0, optional)*: per-second carb and fluid targets that adapt to your effort via HR/power zones, two combinable alert modes (deficit and time), 3 carb + 2 drink log slots, FIT-file export so Strava / Intervals.icu / TrainingPeaks plot your fueling alongside HR/power.
+- **Four messaging providers**: Telegram (free, unlimited), ntfy (free, unlimited), CallMeBot (WhatsApp, free), Pushover (~$5 one-time). Switch between them without losing credentials.
+- **Ride-start and ride-end notifications** to your contacts, with optional real-time Karoo Live tracking link.
+- **Custom message buttons** (3 independent slots) — send *"I'm OK"*, *"Heading home"* or any preset text in one tap. No countdown.
+- **Webhook actions** (2 slots) — fire any HTTP endpoint from a hardware button (Home Assistant, Shelly, IFTTT, n8n…) with optional **geo-fence** and **on-screen ride alert** per slot.
+- **Customisable colours, labels and templates**: every data field has a configurable idle colour from a 12-hue palette; every alert (HR, fueling) has its own customisable title/detail with `{token}` substitution.
+- **Anonymous calibration logging** *(opt-in)* — record sensor and algorithm data to help tune crash detection for everyone. See [docs/calibration-logging.md](docs/calibration-logging.md).
 
 ## Requirements
 
@@ -111,56 +103,30 @@ KSafe registers four actions you can assign to hardware controller buttons or in
 | **KSafe: Webhook Action 1** | Fires the configured HTTP request for webhook slot 1 |
 | **KSafe: Webhook Action 2** | Fires the configured HTTP request for webhook slot 2 |
 
-All four actions work from **any screen**, with no need to look at the display.
-
-To configure any of these actions:
-
-1. On the Karoo, go to **Sensors → [your AXS groupset] → Configure Controls**.
-2. Press the physical SRAM AXS shifter button you want to use.
-3. Select the desired **KSafe** action from the list. **Short Press** and **Long Press** can be assigned independently on the same button.
-
-Once configured, hitting that control fires the action immediately from any screen during a ride.
+All four actions work from **any screen**, with no need to look at the display. To assign one: on the Karoo go to **Sensors → [your AXS groupset] → Configure Controls**, press the physical shifter button, and pick the KSafe action. **Short Press** and **Long Press** can be assigned independently.
 
 > [!NOTE]
-> BonusActions are **exclusive to SRAM AXS controllers** (RED/Force AXS shifters). This option will only appear if you have a SRAM AXS groupset paired to your Karoo. Make sure KSafe is installed and the Karoo has been restarted after installation. See the [official Hammerhead guide](https://support.hammerhead.io/hc/en-us/articles/25672636525979-Karoo-OS-Controlling-Karoo-with-SRAM-AXS-Controllers) for details on pairing and configuring AXS controls.
+> BonusActions are **exclusive to SRAM AXS controllers** (RED/Force AXS shifters). The option only appears if a SRAM AXS groupset is paired and the Karoo has been restarted after installing KSafe. See the [official Hammerhead guide](https://support.hammerhead.io/hc/en-us/articles/25672636525979-Karoo-OS-Controlling-Karoo-with-SRAM-AXS-Controllers) for details.
 
 ## Data Fields
 
-KSafe provides five custom data fields you can add to your ride profiles:
+KSafe provides five custom data fields you can add to your ride profiles. Add any combination from the Karoo profile editor; configure them in the KSafe app.
 
-### SOS Field
+| Field | Idle state | Tap action | Active states |
+|-------|-----------|------------|---------------|
+| **SOS** | `SAFE` (default green) | Trigger an SOS emergency countdown | Orange countdown with seconds, tap again to cancel · Red `ALERT SENT` briefly after dispatch |
+| **Safety Timer** | Remaining check-in time, green→yellow→red as it nears expiry | Reset the check-in timer ("I'm OK") | Orange `CANCEL` + seconds during any emergency · `Timer OFF` if check-in disabled |
+| **Custom Message 1 / 2 / 3** | Configured label (default blue), e.g. `OK👍`, `HOME`, `CREW` | Send that slot's configured message immediately — no countdown | Orange `SENDING…` · Green `SENT ✓` · Red `ERR retry` (tap again to retry) |
 
-- Shows **SAFE** in the configured idle colour (default: dark green) when everything is OK.
-- **Tap** to manually trigger an SOS emergency countdown.
-- During countdown shows remaining seconds in orange — **tap again to cancel**.
-- Shows **ALERT SENT** (red) briefly when alerts have been dispatched.
-- Idle colour can be changed in the **Settings tab** → *SOS field colour* swatch row.
+**Notes:**
 
-### Safety Timer Field
-
-- Shows remaining check-in time (green/yellow/red depending on urgency).
-- **Tap** to reset the timer (= "I'm OK" check-in).
-- During any active emergency countdown, shows **CANCEL** with remaining seconds — **tap to cancel**.
-- Shows **Timer OFF** when check-in is disabled.
-- The timer **pauses automatically when the ride is paused** and resets to the full interval when recording resumes.
-- Idle colour can be changed in the **Settings tab** → *Timer field colour* swatch row.
-
-### Custom Message Fields (1, 2 and 3)
-
-KSafe provides **three independent custom message fields** — **KSafe Message 1**, **KSafe Message 2**, and **KSafe Message 3**. Each field works identically and independently:
-
-- Shows the **configured button label** in the configured idle colour (default: blue) when ready — e.g. *"OK👍"*, *"HOME"*, *"CREW"*.
-- **Tap** to send that field's configured message instantly — no countdown, no emergency.
-- Shows **SENDING…** (orange) while the message is being sent.
-- Shows **SENT ✓** (green) on success, then returns to ready after a few seconds.
-- Shows **ERR retry** (red) if sending failed — **tap again to retry**.
-
-Each field has its own label (shown on the button), message text (what gets sent), and idle colour. You can add one, two, or all three to any ride screen. Message 1 is also assignable to a hardware button (see [Hardware button via BonusAction](#3--hardware-button-via-bonusaction-optional)).
-
-Add one or more fields to your Karoo ride profile from the profile editor. Configure them in the **Actions tab** of the KSafe app.
+- The Safety Timer **pauses automatically** when the ride is paused and resets to the full interval when recording resumes — no false check-in alerts during planned breaks.
+- The three Custom Message fields are fully independent (each has its own label, text and idle colour). You can put all three on the same screen.
+- Message 1 is also assignable to a hardware button (see [Hardware button via BonusAction](#3--hardware-button-via-bonusaction-optional)).
+- Idle colours are picked in the **Settings tab** (SOS, Timer) or the **Actions tab** (Custom Messages).
 
 > [!TIP]
-> Tapping a data field is one of three ways to cancel an emergency countdown. See the [Cancelling an Emergency](#cancelling-an-emergency) section for all three methods and their trade-offs.
+> Tapping a data field is one of three ways to cancel an emergency countdown. See [Cancelling an Emergency](#cancelling-an-emergency) for all three methods and their trade-offs.
 
 ## Configuration
 
@@ -277,28 +243,12 @@ Crash detection uses the Karoo's built-in accelerometer and gyroscope directly (
 | 🏁 **High** | 35 m/s² (~3.5g) | 40 m/s² | 15 km/h | 5 km/h | 15 s | Smooth road only (velodrome, closed circuit) |
 | 🔧 **Custom** | 20–70 m/s² slider | thr + 5 m/s² | You choose | You choose | Preset-aware | Any specific use case |
 
-**Picking the right preset:**
-
-- **Low** — requires a very hard impact (~5.5g). MTB jump landings and drops typically generate 3–5g and stay below this threshold. Use for technical MTB, enduro, gravel with aggressive features.
-- **Medium** — balanced default. Normal road vibration, cobblestones and moderate bumps stay below 4.5g. Large potholes at speed can reach this range — but the continuous-stillness requirement prevents false alarms when you keep riding.
-- **High** — only on perfectly smooth surfaces (velodromes, closed circuits, pristine tarmac). Any 3.5g+ impact on MTB or gravel will trigger the impact detector, even though the silence check rejects most of them.
-- **Custom** — set the slider to anything between 20 and 70 m/s². Useful when no preset fits exactly.
-
 > [!WARNING]
-> Do **not** use High on MTB trails, gravel, or roads with potholes/expansion joints. Even with the continuous silence check, a brief stop after a bump could produce a false alarm.
+> Do **not** use High on MTB trails, gravel, or roads with potholes/expansion joints. Any jump or large bump regularly exceeds 3.5g and would trigger the impact detector. Even with the continuous-silence check, a brief stop after a bump could produce a false alarm.
 
-📘 **Real-world scenarios, detailed level commentary, and the full algorithm internals: [docs/crash-detection-algorithm.md](docs/crash-detection-algorithm.md).** Pothole at 40 km/h, MTB jump landing, expansion joint, slow technical climb — all the edge cases enumerated and explained.
+You can always override the min. speed manually after selecting a preset (setting it to 0 disables the speed gate entirely — useful for testing).
 
-### Minimum speed reference
-
-| Level | Default min. speed | Why |
-|-------|--------------------|-----|
-| Low | 3 km/h | MTB crashes happen at walking pace on technical sections |
-| Medium | 10 km/h | Road + mixed use — filters slow-speed handling |
-| High | 15 km/h | Pure road — crashes at low speed are extremely rare |
-| Custom | Your choice | Adjust to your riding style |
-
-You can always override the min. speed manually after selecting a level. Setting it to 0 disables the check entirely (useful for testing).
+📘 **Per-preset commentary, real-world scenarios (pothole at 40 km/h, MTB jump landing, expansion joint, slow technical climb…) and the full algorithm internals: [docs/crash-detection-algorithm.md](docs/crash-detection-algorithm.md).**
 
 ## Testing
 
@@ -379,37 +329,11 @@ When you press the configured button during a ride, the HTTP request fires immed
 
 ## Field Colours
 
-Each KSafe ride field has a customisable **idle background colour** — the colour shown when the field is in its normal/ready state. Eight dark colours are available, all chosen for legibility with white text on a Karoo display:
+Every KSafe ride field has a customisable **idle background colour** picked from a palette of 8 dark hues (legible with white text on a Karoo display). State-driven colours (red error, orange countdown, amber warning, green success, grey OFF) are **reserved by the state machine** so your idle pick can never collide with a runtime signal.
 
-| Swatch | Colour | Default for |
-|--------|--------|-------------|
-| 🔵 | Blue | Webhooks, Custom Messages |
-| 🟢 | Forest Green | SOS (SAFE state), Safety Timer (OK state) |
-| 🟣 | Deep Purple | — |
-| 🩵 | Teal | — |
-| 🍷 | Wine / Dark Pink | — |
-| 🟤 | Brown | — |
-| ⬛ | Slate Grey | — |
-| 🌌 | Midnight Blue | — |
+Idle colours are configured in the **Settings tab** (SOS, Safety Timer), the **Actions tab** (Custom Messages, Webhooks) and the **Fueling tab** (carb / drink slots, v2.0).
 
-**State-driven colours are always preserved** regardless of your idle colour choice:
-
-| State | Colour | Applies to |
-|-------|--------|------------|
-| Countdown (SOS/Timer) | Orange | All fields |
-| Alert sent | Red | SOS |
-| Timer warning | Yellow | Safety Timer |
-| Timer expired | Red | Safety Timer |
-| Sending | Orange | Custom Messages |
-| Sent ✓ | Green | Custom Messages |
-| Error | Red | Custom Messages |
-
-**Where to change colours:**
-
-- **SOS field** → **Settings tab** → *SOS field colour* swatch row (near the top, under Countdown seconds).
-- **Safety Timer field** → **Settings tab** → *Timer field colour* swatch row (just below the Check-in interval setting).
-- **Custom Message 1 / 2 / 3** → **Actions tab** → expand the message slot → colour swatches below the message text field.
-- **Webhook 1 / 2** → **Actions tab** → expand the webhook slot → colour swatches below the label field.
+📘 **Full palette, state-driven colour table, per-field configuration paths: [docs/field-colours.md](docs/field-colours.md)**
 
 ## Backup and Restore
 
@@ -556,6 +480,7 @@ There are many conditions under which KSafe may fail to detect an incident or de
 - **[Messaging providers — full setup](docs/messaging-providers.md)** — step-by-step for ntfy, CallMeBot, Telegram, Pushover.
 - **[Health & Fueling — full reference](docs/health-fueling.md)** — every field of the Health and Fueling tabs, tier thresholds, FIT-file export schema, custom alert tokens.
 - **[Webhook cookbook](docs/webhooks-cookbook.md)** — copy-paste recipes for Home Assistant, Shelly, ntfy, IFTTT, n8n / Make + hardware button assignment.
+- **[Field colours](docs/field-colours.md)** — idle palette, reserved state colours, and where to change each field's colour.
 - **[Calibration logging](docs/calibration-logging.md)** — full disclosure of what the opt-in sensor logger records and how it is sent.
 
 ### Algorithm internals (for contributors and curious riders)
