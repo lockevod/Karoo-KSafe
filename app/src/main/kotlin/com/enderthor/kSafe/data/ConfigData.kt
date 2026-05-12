@@ -138,34 +138,32 @@ val FUEL_EMOJI_DRINK: List<String> = listOf(
  * who had it selected.
  */
 val FIELD_COLOR_PALETTE: List<Int> = listOf(
-    // Row 1 — Warm earth (browns + olive). Reserved orange/red/yellow zones rule out
-    // any hotter hue, so the warm slot is browns + olive only.
+    // 20 entries laid out as 4 columns x 5 rows in the picker dialog. Each row is a
+    // coherent hue family ordered light->dark, walking the rainbow row-by-row.
+    //
+    // Row 1 — Warm earth + green. Reserved orange/red/yellow zones rule out any
+    // hotter hue, so the warm slot is browns + olive only.
     0xFF795548.toInt(),  // Tan Brown       (M500, ~5.5:1 on white — lighter than Brown)
     0xFF5D4037.toInt(),  // Brown           (M700, deep earth tone)
     0xFF33691E.toInt(),  // Olive Green     (M800, warm yellow-green)
     0xFF2E7D32.toInt(),  // Forest Green    (M700, default SOS/Timer; darker than success flash)
-    // Row 2 — Cyans / teals.
+    // Row 2 — Cyan / teal → first blue. Sky Blue bridges the cyan and blue ranges.
     0xFF0277BD.toInt(),  // Sky Blue        (M700 light-blue, brightest cyan-leaning entry)
     0xFF00838F.toInt(),  // Teal            (M700)
-    0xFF006064.toInt(),  // Dark Cyan       (M900 saturated cyan)
     0xFF004D5B.toInt(),  // Deep Teal       (custom darker teal)
-    // Row 3 — Blues.
     0xFF1565C0.toInt(),  // Blue            (M700, default actions / webhooks)
+    // Row 3 — Blues → indigos.
     0xFF0D47A1.toInt(),  // Deep Blue       (M900)
     0xFF283593.toInt(),  // Indigo          (M800, cool blue-violet)
-    0xFF1A237E.toInt(),  // Midnight Blue   (M900, very dark indigo)
-    // Row 4 — Indigo → purple. Includes the vivid M500/M400 mid-tones.
     0xFF3F51B5.toInt(),  // Bright Indigo   (M500, ~7.0:1 on white — vivid blue-violet)
     0xFF7E57C2.toInt(),  // Lavender        (Deep Purple M400, ~5.4:1 — clearly lighter than any other purple)
+    // Row 4 — Purples → first pink.
     0xFF6A1B9A.toInt(),  // Purple          (M800)
     0xFF4A148C.toInt(),  // Deep Purple     (M900)
-    // Row 5 — Magenta → pink.
     0xFF8E24AA.toInt(),  // Bright Purple   (M600 purple-magenta, ~5.3:1 on white)
     0xFF880E4F.toInt(),  // Pink            (M900)
-    0xFFAD1457.toInt(),  // Magenta         (M700)
+    // Row 5 — Pink → wine → neutrals.
     0xFFE91E63.toInt(),  // Bright Pink     (M500, ~4.7:1 — hot pink)
-    // Row 6 — Wines + neutral slates.
-    0xFF7B1F3D.toInt(),  // Dark Wine       (custom, between Pink and Burgundy)
     0xFF4E0A18.toInt(),  // Burgundy        (custom deep wine)
     0xFF455A64.toInt(),  // Slate           (M700 blue-grey)
     0xFF263238.toInt(),  // Deep Slate      (M900 blue-grey)

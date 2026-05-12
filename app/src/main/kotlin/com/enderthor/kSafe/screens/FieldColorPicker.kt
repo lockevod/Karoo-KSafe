@@ -3,8 +3,6 @@ package com.enderthor.kSafe.screens
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -81,14 +79,7 @@ fun FieldColorPicker(
             onDismissRequest = { dialogOpen = false },
             title = { Text(label) },
             text = {
-                // Vertical scroll: with 24 colours the grid is 6 rows tall and would
-                // overflow the AlertDialog's content box on shorter screens, visibly
-                // squashing the bottom row. Scrolling keeps every swatch a perfect
-                // circle no matter how tall the dialog ends up being.
-                Column(
-                    modifier = Modifier.verticalScroll(rememberScrollState()),
-                    verticalArrangement = Arrangement.spacedBy(8.dp),
-                ) {
+                Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
                     FIELD_COLOR_PALETTE.chunked(4).forEach { rowColors ->
                         Row(
                             horizontalArrangement = Arrangement.spacedBy(12.dp),
@@ -98,7 +89,7 @@ fun FieldColorPicker(
                                 val isSelected = colorInt == selected
                                 Box(
                                     modifier = Modifier
-                                        .size(36.dp)
+                                        .size(40.dp)
                                         .clip(CircleShape)
                                         .background(Color(colorInt))
                                         .then(
