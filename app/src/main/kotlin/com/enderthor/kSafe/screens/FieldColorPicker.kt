@@ -89,7 +89,7 @@ fun FieldColorPicker(
                                 val isSelected = colorInt == selected
                                 Box(
                                     modifier = Modifier
-                                        .size(40.dp)
+                                        .size(38.dp)
                                         .clip(CircleShape)
                                         .background(Color(colorInt))
                                         .then(
