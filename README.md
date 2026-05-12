@@ -140,28 +140,18 @@ Open the KSafe app on your Karoo to configure it. The app has five tabs:
 
 ### Settings Tab
 
-- **Active**: Enable or disable the extension entirely. When OFF, all monitoring stops (crash, speed-drop, check-in, Health, Fueling) and configured notifications (ride start/end, custom messages, webhooks) are suppressed.
-- **SOS field colour**: Choose the idle background colour for the SOS data field (shown when in SAFE state). Select from a palette of 8 preset dark colours with white text.
-- **Timer field colour**: Choose the idle background colour for the Safety Timer field (shown when the timer is running normally). Warning (yellow) and expired (red) state colours are always preserved regardless of this setting.
-- **Emergency message**: The message sent to your contacts. Available placeholders:
-  - `{location}` — GPS coordinates as a Google Maps link.
-  - `{reason}` — reason for the alert (crash / check-in expired / manual SOS / speed drop).
-  - `{livetrack}` — Karoo Live real-time tracking link (only if a key is configured).
-- **Notify contacts on ride start**: Toggle to enable/disable a notification when the ride starts. Sent **only once per ride** — resuming from a pause does not send it again. Use `{livetrack}` in the message to include the tracking link (requires a Karoo Live key).
-- **Karoo Live key**: Enter only the key part of your Karoo Live URL. For example, from `https://dashboard.hammerhead.io/live/3738Ag` enter `3738Ag`. Leave empty to send a plain start message without a tracking link.
-- **Ride start message**: The text sent when the ride starts. Use `{livetrack}` to insert the tracking link.
-- **Notify contacts on ride end**: Toggle to enable/disable a notification when the ride recording stops completely. Does not require a Karoo Live key — any message text works.
-- **Ride end message**: The text sent when the ride ends.
-- The `{livetrack}` placeholder also works in your emergency message — if a key is set, emergency alerts will include the tracking link too.
-- **Countdown seconds**: How long the cancellation countdown lasts before alerts are sent (default: 30s).
-- **Crash detection**: Enable/disable automatic crash detection. Configure sensitivity and minimum speed (see [Crash Detection](#crash-detection) for guidance on which level to choose).
-- **Max. speed to confirm crash**: The GPS speed below which the rider is considered stopped after an impact (default: **3 km/h** for Low, **5 km/h** for Medium/High). Increase to 8 km/h for MTB/gravel where sliding after a crash is common; lower to 3 km/h for strict road use.
-- **Monitor crash when not riding**: Keeps crash detection active even when no ride is recording. Useful for warm-ups or quick spins without starting a recording.
-- **Monitor crash when not riding — any speed**: Same as above but ignores the minimum speed threshold (detects crashes even while stationary). ⚠ More false positives — use with caution.
-- **Speed drop detection**: Enable/disable detection of prolonged speed drops. Configure the time window (minutes) with no movement before triggering.
-- **Check-in timer**: Enable/disable periodic check-ins. Configure the interval in minutes (default: 120 min). A warning beep fires 10 minutes before expiry. **The timer pauses automatically when the ride is paused** (coffee stop, traffic light, etc.) and resets to the full interval when you resume. Any active check-in countdown is also cancelled on pause.
+Grouped, top to bottom:
 
-At the bottom of the Settings tab you will find the optional **"Help improve KSafe"** toggle (anonymous calibration data) — disabled by default. See [Calibration Logging](docs/calibration-logging.md) for the full breakdown of what is recorded and how it is sent.
+- **Master switch + field colours** — *Active* (extension on/off, suppresses everything when OFF), SOS field colour, Safety Timer field colour.
+- **Emergency message and notifications** — emergency template (`{location}` / `{reason}` / `{livetrack}` placeholders), ride-start and ride-end toggles + messages, Karoo Live key.
+- **Countdown** — how long (default 30 s) you have to cancel before alerts are sent.
+- **Crash detection** — enable/disable, sensitivity preset, min speed and confirm speed, plus the two "monitor outside ride" toggles.
+- **Speed-drop and check-in** — speed-drop time window; periodic check-in interval (auto-pauses with the ride).
+- **FIT export** *(v2.0)* — write cumulative carbs/hydration as developer fields so they appear as graphs in Strava / Intervals.icu / TrainingPeaks.
+- **Help improve KSafe** *(opt-in)* — anonymous calibration data toggle, disabled by default.
+- **Backup / Restore** — Export and Import buttons.
+
+📘 **Field-by-field reference (every toggle, every placeholder, every default): [docs/configuration-reference.md](docs/configuration-reference.md).** Use it when you need the exact behaviour of a specific setting; otherwise the grouped summary above and the in-app hints are enough to configure KSafe.
 
 ### Health Tab
 
@@ -335,105 +325,14 @@ Idle colours are configured in the **Settings tab** (SOS, Safety Timer), the **A
 
 📘 **Full palette, state-driven colour table, per-field configuration paths: [docs/field-colours.md](docs/field-colours.md)**
 
-## Backup and Restore
+## Backup, restore and easy token entry
 
-KSafe lets you export and restore your entire configuration (API keys, tokens, messages, all settings) from the **Settings tab**, at the bottom of the screen.
-
-### Exporting your configuration
-
-Tap **Export** — KSafe writes your configuration to:
-
-```
-/sdcard/Android/data/com.enderthor.kSafe/files/ksafe_export.json
-```
-
-You can retrieve this file with ADB:
-
-```bash
-adb pull /sdcard/Android/data/com.enderthor.kSafe/files/ksafe_export.json
-```
-
-### Restoring a configuration
-
-To import a configuration, place the file at this exact path **with this exact name**:
-
-```
-/sdcard/Android/data/com.enderthor.kSafe/files/ksafe_import.json
-```
-
-You can push it with ADB:
-
-```bash
-adb push ksafe_export.json /sdcard/Android/data/com.enderthor.kSafe/files/ksafe_import.json
-```
-
-Then tap **Import** in the Settings tab. KSafe will read `ksafe_import.json` and apply the configuration immediately.
-
-> The export and import files have intentionally different names so there is no risk of accidentally overwriting a backup you just made.
-
-## Tips
-
-### Easiest way to enter API keys and tokens
-
-Typing long tokens (Pushover App Token, Telegram Bot Token, etc.) on the Karoo touchscreen is tedious and error-prone. The fastest workflow is:
-
-1. Open KSafe on your Karoo and tap **Export** (Settings tab, bottom of screen).
-2. Pull the file to your computer with ADB:
-   ```bash
-   adb pull /sdcard/Android/data/com.enderthor.kSafe/files/ksafe_export.json
-   ```
-3. Open `ksafe_export.json` in any text editor. The exported file has a dedicated block for each provider, each with only the fields that provider actually uses:
-
-   | Provider block | Field | Description |
-   |----------------|-------|-------------|
-   | `callmebot` | `apiKey` | API key obtained from callmebot.com |
-   | `callmebot` | `phoneNumber` | Recipient WhatsApp number with international prefix, no `+` (e.g. `34612345678`) |
-   | `pushover` | `appToken` | Application token from pushover.net |
-   | `pushover` | `userKey` / `userKey2` / `userKey3` | Up to 3 recipient user/group keys |
-   | `ntfy` | `topic` | Topic name chosen by you (e.g. `ksafe-alerts-myname`) |
-   | `telegram` | `botToken` | Bot token from @BotFather |
-   | `telegram` | `chatId` / `chatId2` / `chatId3` | Up to 3 chat / channel / group IDs |
-
-   Example after editing (showing Telegram and Pushover):
-
-   ```json
-   {
-     "config": { "isActive": true, "crashDetectionEnabled": true },
-     "callmebot": {
-       "apiKey": "1234567",
-       "phoneNumber": "34612345678"
-     },
-     "pushover": {
-       "appToken": "azGDORePK8gMaC0QP344AMyzxxxx",
-       "userKey": "uQiRzpo4DXghDm3xxxxfQu",
-       "userKey2": "",
-       "userKey3": ""
-     },
-     "ntfy": {
-       "topic": "ksafe-alerts-myname"
-     },
-     "telegram": {
-       "botToken": "7123456789:AAFxxxxxxxxxxxx",
-       "chatId": "123456789",
-       "chatId2": "",
-       "chatId3": ""
-     }
-   }
-   ```
-
-   > **Telegram note**: the Chat ID is required — the bot needs to know which chat/group/channel to deliver to (a bot can be in many chats at once). See [docs/messaging-providers.md](docs/messaging-providers.md) for how to get yours.
-
-4. Save the file and push it back as `ksafe_import.json`:
-   ```bash
-   adb push ksafe_export.json /sdcard/Android/data/com.enderthor.kSafe/files/ksafe_import.json
-   ```
-5. Tap **Import** in KSafe — all keys are applied instantly.
+KSafe exports and restores your entire configuration (API keys, tokens, messages, all settings) from the **Settings tab**: tap **Export** to write `ksafe_export.json` to the device, edit / archive it on your computer with ADB, and push it back as `ksafe_import.json` to apply. The same workflow is also the recommended way to enter long tokens like Pushover App Token or Telegram Bot Token — much easier than typing them on the Karoo touchscreen.
 
 > [!TIP]
-> You can also use this workflow to back up your configuration before updating the app, or to copy your setup to another Karoo device.
+> The import is tolerant: unknown or extra fields are silently ignored, so imports from older or newer versions of KSafe always work. You only need to fill in the providers you actually use.
 
-> [!NOTE]
-> The import is tolerant: you can fill in only the providers you use and leave the rest empty. Unknown or extra fields are silently ignored, so imports from older or newer versions of KSafe always work.
+📘 **Full procedure, ADB commands, JSON schema with examples for each provider: [docs/backup-restore.md](docs/backup-restore.md).**
 
 ## Known Issues
 
@@ -477,9 +376,11 @@ There are many conditions under which KSafe may fail to detect an incident or de
 
 ### User guides (`docs/`)
 
+- **[Settings tab — field reference](docs/configuration-reference.md)** — every Settings-tab toggle and field documented one by one.
 - **[Messaging providers — full setup](docs/messaging-providers.md)** — step-by-step for ntfy, CallMeBot, Telegram, Pushover.
 - **[Health & Fueling — full reference](docs/health-fueling.md)** — every field of the Health and Fueling tabs, tier thresholds, FIT-file export schema, custom alert tokens.
 - **[Webhook cookbook](docs/webhooks-cookbook.md)** — copy-paste recipes for Home Assistant, Shelly, ntfy, IFTTT, n8n / Make + hardware button assignment.
+- **[Backup and restore](docs/backup-restore.md)** — Export/Import procedure, ADB workflow, JSON schema, easy token entry workflow.
 - **[Field colours](docs/field-colours.md)** — idle palette, reserved state colours, and where to change each field's colour.
 - **[Calibration logging](docs/calibration-logging.md)** — full disclosure of what the opt-in sensor logger records and how it is sent.
 
