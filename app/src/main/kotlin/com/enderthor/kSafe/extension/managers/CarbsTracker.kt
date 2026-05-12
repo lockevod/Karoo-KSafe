@@ -85,6 +85,15 @@ class CarbsTracker(
             oldJob?.cancelAndJoin()
             while (true) { delay(MONITOR_TICK_MS); tick() }
         }
+        calibLogger?.log(CalibrationLogger.Event.FUELING_CARB_START) {
+            "base_gph=${config.carbTargetGperHour}," +
+                "deficit_alert=${config.carbDeficitAlertEnabled}," +
+                "deficit_threshold_g=${config.carbDeficitThresholdG}," +
+                "time_alert=${config.carbTimeAlertEnabled}," +
+                "time_interval_min=${config.carbTimeIntervalMin}," +
+                "time_initial_delay_min=${config.carbTimeInitialDelayMin}," +
+                "beep=${config.carbBeepPattern}"
+        }
         Timber.d("CarbsTracker started, target=${config.carbTargetGperHour} g/h")
     }
 
@@ -169,7 +178,9 @@ class CarbsTracker(
         lastZoneSnapshot = zone
 
         if (lastTickMs != 0L) {
-            val dtSec = (now - lastTickMs) / 1000f
+            // coerceAtLeast(0L): a wall-clock NTP correction can push `now` backwards by
+            // seconds — we never want cumTargetG to decrease, so clamp negative dt to 0.
+            val dtSec = (now - lastTickMs).coerceAtLeast(0L) / 1000f
             val ratePerSec = config.carbTargetGperHour / 3600f
             cumTargetG += dtSec * ratePerSec * zone.multiplier
         }
@@ -232,8 +243,18 @@ class CarbsTracker(
             backgroundColor = ALERT_BG_COLOR,
             textColor = ALERT_TX_COLOR,
         ))
+        val burnRateGph = (config.carbTargetGperHour * lastZoneSnapshot.multiplier).toInt()
         calibLogger?.log(CalibrationLogger.Event.FUELING_CARB_FIRED) {
-            "source=$source,deficit_g=$deficit,since_log_min=$elapsedMin,cum_target=${cumTargetG.toInt()},cum_logged=$cumLoggedG,zone=${lastZoneSnapshot.source}/${lastZoneSnapshot.index}/${lastZoneSnapshot.total},multiplier=%.2f".format(lastZoneSnapshot.multiplier)
+            // Locale.US: the calibration CSV uses comma as field separator, so we must NOT
+            // let the default Locale turn "1.15" into "1,15" on es/fr/de devices.
+            String.format(
+                java.util.Locale.US,
+                "source=%s,deficit_g=%d,since_log_min=%d,cum_target=%d,cum_logged=%d,burn_rate_gph=%d,zone=%s/%d/%d,multiplier=%.2f,beep=%s",
+                source, deficit, elapsedMin,
+                cumTargetG.toInt(), cumLoggedG, burnRateGph,
+                lastZoneSnapshot.source, lastZoneSnapshot.index, lastZoneSnapshot.total,
+                lastZoneSnapshot.multiplier, config.carbBeepPattern,
+            )
         }
         Timber.d(">>> Carb alert fired ($source): deficit=${deficit}g elapsed=${elapsedMin}min")
     }
@@ -243,8 +264,17 @@ class CarbsTracker(
         if (now - lastPeriodicLogMs < PERIODIC_LOG_INTERVAL_MS) return
         lastPeriodicLogMs = now
         val deficit = (cumTargetG - cumLoggedG).toInt()
+        val burnRateGph = (config.carbTargetGperHour * lastZoneSnapshot.multiplier).toInt()
         calibLogger.log(CalibrationLogger.Event.FUELING_CARB_PERIODIC) {
-            "cum_target=${cumTargetG.toInt()},cum_logged=$cumLoggedG,deficit=$deficit,zone_source=${lastZoneSnapshot.source},zone_idx=${lastZoneSnapshot.index},zone_total=${lastZoneSnapshot.total},multiplier=%.2f,hr=${lastHrBpm ?: -1},power=${lastPowerW ?: -1}".format(lastZoneSnapshot.multiplier)
+            // Locale.US — see fireAlert above.
+            String.format(
+                java.util.Locale.US,
+                "cum_target=%d,cum_logged=%d,deficit=%d,burn_rate_gph=%d,zone_source=%s,zone_idx=%d,zone_total=%d,multiplier=%.2f,hr=%d,power=%d",
+                cumTargetG.toInt(), cumLoggedG, deficit, burnRateGph,
+                lastZoneSnapshot.source, lastZoneSnapshot.index, lastZoneSnapshot.total,
+                lastZoneSnapshot.multiplier,
+                lastHrBpm ?: -1, lastPowerW ?: -1,
+            )
         }
     }
 }

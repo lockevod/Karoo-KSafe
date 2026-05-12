@@ -42,6 +42,11 @@ const val KAROO_LIVE_BASE_URL = "https://dashboard.hammerhead.io/live/"
  *  v7 → v8 : EmergencyState gains reasonEnum (EmergencyReason?) so the state machine can recover
  *            the typed reason after a process restart. Legacy reads without this field get null
  *            automatically via coerceInputValues = true. Pure version stamp.
+ *  v8 → v9 : carbBeepPattern / hydBeepPattern (rider-selectable beep patterns for fueling alerts).
+ *            Default SINGLE_LONG preserves v8 audible behaviour. Pure version stamp.
+ *  v9 → v10: wellnessBeepPattern (rider-selectable beep for all WARNING-level alerts — wellness
+ *            tiers + medical when downgraded to Warning). Emergency-level paths keep the
+ *            hardcoded urgent default by design. Pure version stamp.
  */
 const val CONFIG_VERSION = 10
 

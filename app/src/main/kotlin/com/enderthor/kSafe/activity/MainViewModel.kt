@@ -14,6 +14,9 @@ import com.enderthor.kSafe.data.toSenderConfigs
 import com.enderthor.kSafe.extension.jsonForExport
 import com.enderthor.kSafe.extension.jsonWithUnknownKeys
 import com.enderthor.kSafe.extension.managers.ConfigurationManager
+import com.enderthor.kSafe.extension.streamUserProfile
+import io.hammerhead.karooext.KarooSystemService
+import io.hammerhead.karooext.models.UserProfile
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.stateIn
@@ -27,11 +30,30 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     private val configManager = ConfigurationManager(application)
 
+    /**
+     * Settings-screen-owned KarooSystemService so the UI can read live data from the Karoo
+     * (currently only [UserProfile] for the wellness "% of max HR" resolved-bpm hint).
+     *
+     * Separate from the [KSafeExtension]'s own service — that one runs in the extension
+     * service process and is what the ride-time managers consume. Activities and services
+     * communicate with the Karoo OS via independent client instances.
+     */
+    private val karooSystem = KarooSystemService(application).also { it.connect { } }
+
     val config: StateFlow<KSafeConfig> = configManager.loadConfigFlow()
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), KSafeConfig())
 
     val senderConfigs: StateFlow<List<SenderConfig>> = configManager.loadSenderConfigFlow()
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+
+    /**
+     * Live stream of the rider's Karoo profile, used by the wellness UI to show the
+     * resolved bpm threshold derived from `maxHr × pct / 100`. Null until the Karoo
+     * delivers the first event (no profile set in the launcher, or the system service
+     * hasn't connected yet).
+     */
+    val userProfile: StateFlow<UserProfile?> = karooSystem.streamUserProfile()
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), null)
 
     // ─── Config updates ───────────────────────────────────────────────────────
 
@@ -120,5 +142,10 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             Timber.e(e, "Failed to import config from JSON")
             false
         }
+    }
+
+    override fun onCleared() {
+        karooSystem.disconnect()
+        super.onCleared()
     }
 }

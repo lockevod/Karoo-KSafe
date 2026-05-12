@@ -260,7 +260,9 @@ class EmergencyManager(
                     backgroundColor = 0xFFE65100.toInt(),
                     textColor = 0xFFFFFFFF.toInt(),
                 ))
-                calibLogger?.log(CalibrationLogger.Event.INCIDENT_WARNING) { "reason=${reason.label}" }
+                calibLogger?.log(CalibrationLogger.Event.INCIDENT_WARNING) {
+                    "reason=${reason.label},beep=${config.wellnessBeepPattern}"
+                }
                 Timber.d("Warning incident dispatched: $reason")
             }
             IncidentResponseLevel.EMERGENCY -> {

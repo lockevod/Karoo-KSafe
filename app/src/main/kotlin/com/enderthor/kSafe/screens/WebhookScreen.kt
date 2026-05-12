@@ -35,6 +35,7 @@ import androidx.compose.ui.unit.dp
 import com.enderthor.kSafe.R
 import com.enderthor.kSafe.activity.MainViewModel
 import com.enderthor.kSafe.extension.KSafeExtension
+import com.enderthor.kSafe.extension.managers.safeTake
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
@@ -115,13 +116,13 @@ fun ActionsScreen(vm: MainViewModel) {
         vm.saveConfig(
             config.copy(
                 customMessageEnabled    = customMessageEnabled,
-                customMessageTitle      = customMessageTitle.take(7).ifBlank { "MSG" },
+                customMessageTitle      = customMessageTitle.safeTake(7).ifBlank { "MSG" },
                 customMessage           = customMessage,
                 customMessage2Enabled   = customMessage2Enabled,
-                customMessage2Title     = customMessage2Title.take(7).ifBlank { "MSG2" },
+                customMessage2Title     = customMessage2Title.safeTake(7).ifBlank { "MSG2" },
                 customMessage2          = customMessage2,
                 customMessage3Enabled   = customMessage3Enabled,
-                customMessage3Title     = customMessage3Title.take(7).ifBlank { "MSG3" },
+                customMessage3Title     = customMessage3Title.safeTake(7).ifBlank { "MSG3" },
                 customMessage3          = customMessage3,
                 customMsg1Color         = customMsg1Color,
                 customMsg2Color         = customMsg2Color,

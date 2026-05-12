@@ -31,11 +31,17 @@ class LocationManager(
         private const val LOCATION_SAMPLE_MS = 2 * 60_000L
     }
 
-    var lastLat: Double = 0.0
+    // @Volatile: written from the location-stream coroutine on Default and read from any
+    // dispatcher when an emergency builds the {location} link. `Double` writes are not
+    // atomic on every JVM, and even where they are, visibility across threads requires
+    // either volatile or synchronization. Volatile is cheaper than a lock here because
+    // the two fields are independent doubles — a torn write would produce coordinates
+    // mixed between the previous and current sample, plotting to the wrong place.
+    @Volatile var lastLat: Double = 0.0
         private set
-    var lastLng: Double = 0.0
+    @Volatile var lastLng: Double = 0.0
         private set
-    private var lastSampleTime: Long = 0L
+    @Volatile private var lastSampleTime: Long = 0L
     private var locationJob: Job? = null
 
     fun start() {

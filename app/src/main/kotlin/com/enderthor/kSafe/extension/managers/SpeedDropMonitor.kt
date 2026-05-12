@@ -33,6 +33,11 @@ class SpeedDropMonitor(
 
     fun start(stoppedMinutesRequired: Int) {
         this.stoppedMinutesRequired = stoppedMinutesRequired
+        // Reset the zero-speed window state from the previous session, otherwise the
+        // first poll of the new ride could find a stale `startedAtMs` (carried over from
+        // an old session that ended mid-zero-speed) and fire a spurious SPEED_DROP within
+        // the first 30 s of recording.
+        startedAtMs = 0L
         job?.cancel()
         job = scope.launch {
             while (true) {

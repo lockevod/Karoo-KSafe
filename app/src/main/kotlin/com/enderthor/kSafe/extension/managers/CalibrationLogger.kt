@@ -126,18 +126,36 @@ class CalibrationLogger(
         /** Generic SILENT-level incident dispatched by EmergencyManager.handleIncident. */
         INCIDENT_SILENT("SILENT"),
         // ─── Fueling tracker (added 2026-05) ─────────────────────────────────
+        /**
+         * Snapshot of the carb tracker config at session start. Lets a reader of the CSV
+         * correlate observed behaviour with the exact config in effect for this ride
+         * (base target, alert toggles + thresholds, selected beep pattern) without
+         * having to cross-reference a separately exported config JSON.
+         */
+        FUELING_CARB_START("CARB_START"),
         /** User logged a carb intake via tap or BonusAction. */
         FUELING_CARB_LOGGED("CARB_LOG"),
         /** Carb tracker fired an alert (deficit or time-interval). */
         FUELING_CARB_FIRED("CARB_FIRE"),
         /** Periodic 2-minute snapshot of carb tracker state, correlable with PERIODIC by timestamp. */
         FUELING_CARB_PERIODIC("CARB_PERIODIC"),
+        /** Snapshot of hydration tracker config at session start — see [FUELING_CARB_START]. */
+        FUELING_HYDRATION_START("HYD_START"),
         /** User logged a hydration intake via tap or BonusAction. */
         FUELING_HYDRATION_LOGGED("HYD_LOG"),
         /** Hydration tracker fired an alert (deficit or time-interval). */
         FUELING_HYDRATION_FIRED("HYD_FIRE"),
         /** Periodic 2-minute snapshot of hydration tracker state. */
         FUELING_HYDRATION_PERIODIC("HYD_PERIODIC"),
+        // ─── FIT export (added 2026-05) ──────────────────────────────────────
+        /**
+         * Karoo invoked `startFit` — the FIT developer-field writer is now active. Lists
+         * the developer-field numbers in use so a reader can confirm which streams a given
+         * ride actually contains (useful when a rider says "I don't see field X in Strava").
+         */
+        FIT_WRITER_START("FIT_START"),
+        /** `startFit`'s coroutine was cancelled — FIT writes ended for this ride. */
+        FIT_WRITER_STOP("FIT_STOP"),
         /** Marker written when logging is disabled — session end boundary. */
         LOG_END("LOG_END"),
     }
@@ -230,18 +248,22 @@ class CalibrationLogger(
         sessionId = "%06x".format((startTime xor (startTime.ushr(16))) and 0xFFFFFFL)
         synchronized(buffer) { buffer.clear() }
         isEnabled = true
-        // Reset output file: delete old data and write a fresh header so this session is clean.
-        try {
-            val dir = context.getExternalFilesDir(null)
-            if (dir != null) {
-                dir.mkdirs()
-                File(dir, FILE_NAME).writeText("$HEADER\n")
-            }
-        } catch (e: Exception) {
-            Timber.w(e, "CalibrationLogger: failed to reset log file on enable")
-        }
         flushJob?.cancel()
+        // Reset output file + first periodic flush both off-Main. `writeText` is a
+        // synchronous disk write which we must not run on the caller's dispatcher
+        // (KSafeExtension's Main + SupervisorJob). For a fresh file it's sub-ms but on
+        // a slow eMMC it's been measured at tens of ms — enough to drop a frame in the
+        // settings UI when the rider toggles the calibration switch.
         flushJob = scope.launch(Dispatchers.IO) {
+            try {
+                val dir = context.getExternalFilesDir(null)
+                if (dir != null) {
+                    dir.mkdirs()
+                    File(dir, FILE_NAME).writeText("$HEADER\n")
+                }
+            } catch (e: Exception) {
+                Timber.w(e, "CalibrationLogger: failed to reset log file on enable")
+            }
             while (true) {
                 delay(FLUSH_INTERVAL_MS)
                 flush()

@@ -91,6 +91,16 @@ class HydrationTracker(
             oldJob?.cancelAndJoin()
             while (true) { delay(MONITOR_TICK_MS); tick() }
         }
+        calibLogger?.log(CalibrationLogger.Event.FUELING_HYDRATION_START) {
+            "base_ml_h=${config.hydrationTargetMlPerHour}," +
+                "dynamic=${config.hydrationDynamicEstimateEnabled}," +
+                "deficit_alert=${config.hydrationDeficitAlertEnabled}," +
+                "deficit_threshold_ml=${config.hydrationDeficitThresholdMl}," +
+                "time_alert=${config.hydrationTimeAlertEnabled}," +
+                "time_interval_min=${config.hydrationTimeIntervalMin}," +
+                "time_initial_delay_min=${config.hydrationTimeInitialDelayMin}," +
+                "beep=${config.hydBeepPattern}"
+        }
         Timber.d("HydrationTracker started, target=${config.hydrationTargetMlPerHour} ml/h")
     }
 
@@ -180,7 +190,8 @@ class HydrationTracker(
     private fun tick() {
         val now = System.currentTimeMillis()
         if (lastTickMs != 0L) {
-            val dtSec = (now - lastTickMs) / 1000f
+            // Clamp negative dt — see CarbsTracker.tick() for rationale (NTP correction).
+            val dtSec = (now - lastTickMs).coerceAtLeast(0L) / 1000f
             val ratePerHour: Float = if (config.hydrationDynamicEstimateEnabled) {
                 // Pull all available signals into the estimator on every tick. Inputs that
                 // have not been received are passed as null so the estimator falls back to
@@ -266,7 +277,7 @@ class HydrationTracker(
             textColor = ALERT_TX_COLOR,
         ))
         calibLogger?.log(CalibrationLogger.Event.FUELING_HYDRATION_FIRED) {
-            "source=$source,deficit_ml=$deficitMl,since_log_min=$elapsedMin,cum_target=${cumTargetMl.toInt()},cum_logged=$cumLoggedMl"
+            "source=$source,deficit_ml=$deficitMl,since_log_min=$elapsedMin,cum_target=${cumTargetMl.toInt()},cum_logged=$cumLoggedMl,beep=${config.hydBeepPattern}"
         }
         Timber.d(">>> Hydration alert fired ($source): deficit=${deficitMl}ml elapsed=${elapsedMin}min")
     }

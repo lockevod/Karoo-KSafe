@@ -9,6 +9,7 @@ import com.enderthor.kSafe.R
 import com.enderthor.kSafe.activity.FieldTapReceiver
 import com.enderthor.kSafe.data.KSafeConfig
 import com.enderthor.kSafe.extension.managers.ConfigurationManager
+import com.enderthor.kSafe.extension.managers.safeTake
 import io.hammerhead.karooext.KarooSystemService
 import io.hammerhead.karooext.extension.DataTypeImpl
 import io.hammerhead.karooext.internal.ViewEmitter
@@ -51,9 +52,9 @@ class CustomMessageDataType(
     private val configManager = ConfigurationManager(context)
 
     private fun titleFromConfig(config: KSafeConfig) = when (slot) {
-        2 -> config.customMessage2Title.take(7).ifBlank { "MSG2" }
-        3 -> config.customMessage3Title.take(7).ifBlank { "MSG3" }
-        else -> config.customMessageTitle.take(7).ifBlank { "MSG" }
+        2 -> config.customMessage2Title.safeTake(7).ifBlank { "MSG2" }
+        3 -> config.customMessage3Title.safeTake(7).ifBlank { "MSG3" }
+        else -> config.customMessageTitle.safeTake(7).ifBlank { "MSG" }
     }
 
     private fun idleColorFromConfig(config: KSafeConfig) = when (slot) {

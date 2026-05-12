@@ -28,6 +28,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import com.enderthor.kSafe.R
 import com.enderthor.kSafe.activity.MainViewModel
+import com.enderthor.kSafe.extension.managers.safeTake
 
 @Composable
 fun FuelingScreen(vm: MainViewModel) {
@@ -197,7 +198,7 @@ fun FuelingScreen(vm: MainViewModel) {
                 Text(text = stringResource(R.string.fueling_items_section), style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.Bold)
                 val gLabel = stringResource(R.string.fueling_slot_grams_label)
                 SlotRow(label = "Slot 1", labelText = carb1Label, amountText = carb1Grams, unitLabel = gLabel, range = 0..100,
-                    onLabel = { v -> carb1Label = v.take(8); vm.saveConfig(config.copy(carb1Label = v.take(8))) },
+                    onLabel = { v -> carb1Label = v.safeTake(8); vm.saveConfig(config.copy(carb1Label = v.safeTake(8))) },
                     onAmountCommit = { v -> carb1Grams = v; vm.saveConfig(config.copy(carb1Grams = v.toInt())) },
                     onAmountText = { carb1Grams = it },
                 )
@@ -208,7 +209,7 @@ fun FuelingScreen(vm: MainViewModel) {
                         onSelected = { v -> carb1Icon = v; vm.saveConfig(config.copy(carb1Icon = v)) })
                 }
                 SlotRow(label = "Slot 2", labelText = carb2Label, amountText = carb2Grams, unitLabel = gLabel, range = 0..100,
-                    onLabel = { v -> carb2Label = v.take(8); vm.saveConfig(config.copy(carb2Label = v.take(8))) },
+                    onLabel = { v -> carb2Label = v.safeTake(8); vm.saveConfig(config.copy(carb2Label = v.safeTake(8))) },
                     onAmountCommit = { v -> carb2Grams = v; vm.saveConfig(config.copy(carb2Grams = v.toInt())) },
                     onAmountText = { carb2Grams = it },
                 )
@@ -219,7 +220,7 @@ fun FuelingScreen(vm: MainViewModel) {
                         onSelected = { v -> carb2Icon = v; vm.saveConfig(config.copy(carb2Icon = v)) })
                 }
                 SlotRow(label = "Slot 3", labelText = carb3Label, amountText = carb3Grams, unitLabel = gLabel, range = 0..100,
-                    onLabel = { v -> carb3Label = v.take(8); vm.saveConfig(config.copy(carb3Label = v.take(8))) },
+                    onLabel = { v -> carb3Label = v.safeTake(8); vm.saveConfig(config.copy(carb3Label = v.safeTake(8))) },
                     onAmountCommit = { v -> carb3Grams = v; vm.saveConfig(config.copy(carb3Grams = v.toInt())) },
                     onAmountText = { carb3Grams = it },
                 )
@@ -346,7 +347,7 @@ fun FuelingScreen(vm: MainViewModel) {
                 Text(text = stringResource(R.string.fueling_items_section), style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.Bold)
                 val mlLabel = stringResource(R.string.fueling_slot_ml_label)
                 SlotRow(label = "Slot 1", labelText = drink1Label, amountText = drink1Ml, unitLabel = mlLabel, range = 0..1000,
-                    onLabel = { v -> drink1Label = v.take(8); vm.saveConfig(config.copy(drink1Label = v.take(8))) },
+                    onLabel = { v -> drink1Label = v.safeTake(8); vm.saveConfig(config.copy(drink1Label = v.safeTake(8))) },
                     onAmountCommit = { v -> drink1Ml = v; vm.saveConfig(config.copy(drink1Ml = v.toInt())) },
                     onAmountText = { drink1Ml = it },
                 )
@@ -357,7 +358,7 @@ fun FuelingScreen(vm: MainViewModel) {
                         onSelected = { v -> drink1Icon = v; vm.saveConfig(config.copy(drink1Icon = v)) })
                 }
                 SlotRow(label = "Slot 2", labelText = drink2Label, amountText = drink2Ml, unitLabel = mlLabel, range = 0..1000,
-                    onLabel = { v -> drink2Label = v.take(8); vm.saveConfig(config.copy(drink2Label = v.take(8))) },
+                    onLabel = { v -> drink2Label = v.safeTake(8); vm.saveConfig(config.copy(drink2Label = v.safeTake(8))) },
                     onAmountCommit = { v -> drink2Ml = v; vm.saveConfig(config.copy(drink2Ml = v.toInt())) },
                     onAmountText = { drink2Ml = it },
                 )

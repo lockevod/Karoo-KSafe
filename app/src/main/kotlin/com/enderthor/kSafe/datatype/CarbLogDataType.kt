@@ -10,6 +10,7 @@ import com.enderthor.kSafe.activity.FieldTapReceiver
 import com.enderthor.kSafe.data.FUEL_GEL_DRAWABLE
 import com.enderthor.kSafe.data.KSafeConfig
 import com.enderthor.kSafe.extension.managers.ConfigurationManager
+import com.enderthor.kSafe.extension.managers.safeTake
 import io.hammerhead.karooext.KarooSystemService
 import io.hammerhead.karooext.extension.DataTypeImpl
 import io.hammerhead.karooext.internal.ViewEmitter
@@ -54,9 +55,9 @@ class CarbLogDataType(
 
     private fun labelFromConfig(c: KSafeConfig): String {
         val raw = when (slot) {
-            2 -> c.carb2Label.take(7).ifBlank { "Carb 2" }
-            3 -> c.carb3Label.take(7).ifBlank { "Carb 3" }
-            else -> c.carb1Label.take(7).ifBlank { "Carb 1" }
+            2 -> c.carb2Label.safeTake(7).ifBlank { "Carb 2" }
+            3 -> c.carb3Label.safeTake(7).ifBlank { "Carb 3" }
+            else -> c.carb1Label.safeTake(7).ifBlank { "Carb 1" }
         }
         val icon = iconFromConfig(c)
         // FUEL_GEL_DRAWABLE renders as a left compound drawable on the TextView

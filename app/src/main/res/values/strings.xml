@@ -83,6 +83,10 @@
     <string name="beep_pattern_double_short">Double short pip</string>
     <string name="beep_pattern_rising_triple">Rising triple chime</string>
     <string name="beep_pattern_urgent_pulse">Urgent pulse</string>
+    <string name="beep_pattern_done">Done</string>
+    <string name="health_warning_sound_label">Warning sound</string>
+    <string name="health_emergency_sound_hint">Emergency-level uses the urgent crash countdown beep — not configurable by design.</string>
+    <string name="health_medical_sound_hint_warning">In Warning mode this alert plays the picker below (shared with wellness — one sound for every Warning-level alert).</string>
     <string name="fueling_slot_label_label">Label</string>
     <string name="fueling_slot_grams_label">g</string>
     <string name="fueling_slot_ml_label">ml</string>

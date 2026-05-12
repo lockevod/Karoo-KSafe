@@ -90,7 +90,12 @@ class KSafeExtension : KarooExtension("ksafe", BuildConfig.VERSION_NAME), Corout
     private var rideWasActive = false
 
     companion object {
-        private var instance: KSafeExtension? = null
+        // @Volatile: written from onCreate / onDestroy on the Main thread but read from
+        // FieldTapReceiver (binder thread), DataType polling coroutines (Dispatchers.Default),
+        // and the BeepPatternPicker preview (Compose's recomposition dispatcher). Without the
+        // volatile annotation a stale-cached null is theoretically possible after the service
+        // first starts up on architectures with relaxed memory ordering.
+        @Volatile private var instance: KSafeExtension? = null
         fun getInstance(): KSafeExtension? = instance
         internal fun setInstance(ext: KSafeExtension) { instance = ext }
     }
@@ -1166,6 +1171,11 @@ class KSafeExtension : KarooExtension("ksafe", BuildConfig.VERSION_NAME), Corout
             developerDataIndex = 0,
         )
 
+        calibLogger.log(CalibrationLogger.Event.FIT_WRITER_START) {
+            // Field-definition numbers are public-API once shipped; record them so the CSV
+            // can be cross-referenced with the developer-field schema in the resulting FIT.
+            "fields=0,1,2,3,4,5,6"
+        }
         val job: Job = launch {
             karooSystem.streamDataFlow(DataType.Type.ELAPSED_TIME)
                 .mapNotNull { (it as? StreamState.Streaming)?.dataPoint?.singleValue }
@@ -1205,7 +1215,10 @@ class KSafeExtension : KarooExtension("ksafe", BuildConfig.VERSION_NAME), Corout
                     }
                 }
         }
-        emitter.setCancellable { job.cancel() }
+        emitter.setCancellable {
+            job.cancel()
+            calibLogger.log(CalibrationLogger.Event.FIT_WRITER_STOP) { "" }
+        }
     }
 
     override fun onDestroy() {

@@ -10,6 +10,7 @@ import com.enderthor.kSafe.activity.FieldTapReceiver
 import com.enderthor.kSafe.data.FUEL_BOTTLE_DRAWABLE
 import com.enderthor.kSafe.data.KSafeConfig
 import com.enderthor.kSafe.extension.managers.ConfigurationManager
+import com.enderthor.kSafe.extension.managers.safeTake
 import io.hammerhead.karooext.KarooSystemService
 import io.hammerhead.karooext.extension.DataTypeImpl
 import io.hammerhead.karooext.internal.ViewEmitter
@@ -52,8 +53,8 @@ class HydrationLogDataType(
 
     private fun labelFromConfig(c: KSafeConfig): String {
         val raw = when (slot) {
-            2 -> c.drink2Label.take(7).ifBlank { "Drink 2" }
-            else -> c.drink1Label.take(7).ifBlank { "Drink 1" }
+            2 -> c.drink2Label.safeTake(7).ifBlank { "Drink 2" }
+            else -> c.drink1Label.safeTake(7).ifBlank { "Drink 1" }
         }
         val icon = iconFromConfig(c)
         // FUEL_BOTTLE_DRAWABLE renders as a left compound drawable on the TextView
