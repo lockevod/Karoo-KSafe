@@ -8,6 +8,9 @@ import com.enderthor.kSafe.data.EmergencyStatus
 import com.enderthor.kSafe.data.IncidentResponseLevel
 import com.enderthor.kSafe.data.KSafeConfig
 import com.enderthor.kSafe.extension.Sender
+import com.enderthor.kSafe.extension.util.ALERT_DETAIL_MAX_CHARS
+import com.enderthor.kSafe.extension.util.ALERT_TITLE_MAX_CHARS
+import com.enderthor.kSafe.extension.util.renderAlertText
 import io.hammerhead.karooext.KarooSystemService
 import io.hammerhead.karooext.models.PlayBeepPattern
 import io.hammerhead.karooext.models.InRideAlert

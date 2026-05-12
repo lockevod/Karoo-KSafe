@@ -1,5 +1,6 @@
-package com.enderthor.kSafe.extension.managers
+package com.enderthor.kSafe.extension.crash
 
+import com.enderthor.kSafe.extension.util.Clock
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotEquals
 import org.junit.Assert.assertTrue

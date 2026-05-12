@@ -1,10 +1,13 @@
-package com.enderthor.kSafe.extension.managers
+package com.enderthor.kSafe.extension.crash
 
 import android.content.Context
 import android.hardware.SensorManager
 import com.enderthor.kSafe.BuildConfig
 import com.enderthor.kSafe.data.CrashSensitivity
 import com.enderthor.kSafe.data.KSafeConfig
+import com.enderthor.kSafe.extension.managers.CalibrationLogger
+import com.enderthor.kSafe.extension.util.Clock
+import com.enderthor.kSafe.extension.util.SystemClock
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch

@@ -8,7 +8,7 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontStyle
-import com.enderthor.kSafe.extension.managers.safeTake
+import com.enderthor.kSafe.extension.util.safeTake
 
 /**
  * Reusable input for an alert title or detail "custom override".

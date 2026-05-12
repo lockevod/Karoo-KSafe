@@ -28,7 +28,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import com.enderthor.kSafe.R
 import com.enderthor.kSafe.activity.MainViewModel
-import com.enderthor.kSafe.extension.managers.safeTake
+import com.enderthor.kSafe.extension.util.safeTake
 
 @Composable
 fun FuelingScreen(vm: MainViewModel) {

@@ -1,4 +1,4 @@
-package com.enderthor.kSafe.extension.managers
+package com.enderthor.kSafe.extension.util
 
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue

@@ -1,5 +1,6 @@
-package com.enderthor.kSafe.extension.managers
+package com.enderthor.kSafe.extension.crash
 
+import com.enderthor.kSafe.extension.util.Clock
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.test.TestScope
 import kotlinx.coroutines.test.advanceTimeBy

@@ -1,10 +1,12 @@
-package com.enderthor.kSafe.extension.managers
+package com.enderthor.kSafe.extension.crash
 
 import android.hardware.Sensor
 import android.hardware.SensorEvent
 import android.hardware.SensorEventListener
 import android.hardware.SensorManager
 import android.os.Handler
+import com.enderthor.kSafe.extension.util.Clock
+import com.enderthor.kSafe.extension.util.SystemClock
 import kotlin.math.abs
 import kotlin.math.sqrt
 

@@ -35,7 +35,7 @@ import androidx.compose.ui.unit.dp
 import com.enderthor.kSafe.R
 import com.enderthor.kSafe.activity.MainViewModel
 import com.enderthor.kSafe.extension.KSafeExtension
-import com.enderthor.kSafe.extension.managers.safeTake
+import com.enderthor.kSafe.extension.util.safeTake
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 

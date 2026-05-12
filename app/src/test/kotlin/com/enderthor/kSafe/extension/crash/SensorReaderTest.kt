@@ -1,4 +1,4 @@
-package com.enderthor.kSafe.extension.managers
+package com.enderthor.kSafe.extension.crash
 
 import android.hardware.Sensor
 import android.hardware.SensorManager

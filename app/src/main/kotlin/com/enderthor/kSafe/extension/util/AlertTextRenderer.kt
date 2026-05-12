@@ -1,4 +1,4 @@
-package com.enderthor.kSafe.extension.managers
+package com.enderthor.kSafe.extension.util
 
 /**
  * Hard cap on the rendered alert title length. The Karoo `InRideAlert` title must fit in a

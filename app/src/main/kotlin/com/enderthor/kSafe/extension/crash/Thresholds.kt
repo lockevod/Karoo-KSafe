@@ -1,4 +1,4 @@
-package com.enderthor.kSafe.extension.managers
+package com.enderthor.kSafe.extension.crash
 
 /**
  * All numeric tunables that the state machine reads. Lifted out of [CrashDetectionManager]

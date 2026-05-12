@@ -10,7 +10,7 @@ import com.enderthor.kSafe.activity.FieldTapReceiver
 import com.enderthor.kSafe.data.FUEL_BOTTLE_DRAWABLE
 import com.enderthor.kSafe.data.KSafeConfig
 import com.enderthor.kSafe.extension.managers.ConfigurationManager
-import com.enderthor.kSafe.extension.managers.safeTake
+import com.enderthor.kSafe.extension.util.safeTake
 import io.hammerhead.karooext.KarooSystemService
 import io.hammerhead.karooext.extension.DataTypeImpl
 import io.hammerhead.karooext.internal.ViewEmitter

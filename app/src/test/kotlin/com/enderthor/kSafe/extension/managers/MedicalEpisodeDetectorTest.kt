@@ -2,6 +2,7 @@ package com.enderthor.kSafe.extension.managers
 
 import com.enderthor.kSafe.data.EmergencyReason
 import com.enderthor.kSafe.data.KSafeConfig
+import com.enderthor.kSafe.extension.util.Clock
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import org.junit.Assert.assertEquals

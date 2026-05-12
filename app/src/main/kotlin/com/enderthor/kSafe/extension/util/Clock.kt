@@ -1,4 +1,4 @@
-package com.enderthor.kSafe.extension.managers
+package com.enderthor.kSafe.extension.util
 
 /**
  * Lets tests replace `System.currentTimeMillis()` with a fake clock so deterministic

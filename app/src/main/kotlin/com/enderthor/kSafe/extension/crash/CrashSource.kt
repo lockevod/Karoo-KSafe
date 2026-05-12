@@ -1,4 +1,4 @@
-package com.enderthor.kSafe.extension.managers
+package com.enderthor.kSafe.extension.crash
 
 /**
  * Identifies which path inside [CrashDetectionManager] confirmed a crash.

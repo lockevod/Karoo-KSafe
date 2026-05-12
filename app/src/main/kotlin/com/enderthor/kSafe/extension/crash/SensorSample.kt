@@ -1,4 +1,4 @@
-package com.enderthor.kSafe.extension.managers
+package com.enderthor.kSafe.extension.crash
 
 /**
  * One processed sample emitted by [SensorReader] downstream to [CrashStateMachine].

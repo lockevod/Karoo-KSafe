@@ -1,4 +1,4 @@
-package com.enderthor.kSafe.extension.managers
+package com.enderthor.kSafe.extension.util
 
 import com.enderthor.kSafe.data.WellnessHistory
 import java.util.Locale

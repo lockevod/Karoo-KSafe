@@ -3,6 +3,12 @@ package com.enderthor.kSafe.extension.managers
 import android.content.Context
 import com.enderthor.kSafe.R
 import com.enderthor.kSafe.data.KSafeConfig
+import com.enderthor.kSafe.extension.util.ALERT_DETAIL_MAX_CHARS
+import com.enderthor.kSafe.extension.util.ALERT_TITLE_MAX_CHARS
+import com.enderthor.kSafe.extension.util.SweatConfidence
+import com.enderthor.kSafe.extension.util.SweatEstimateInputs
+import com.enderthor.kSafe.extension.util.estimateSweatRate
+import com.enderthor.kSafe.extension.util.renderAlertText
 import io.hammerhead.karooext.KarooSystemService
 import io.hammerhead.karooext.models.InRideAlert
 import io.hammerhead.karooext.models.UserProfile
