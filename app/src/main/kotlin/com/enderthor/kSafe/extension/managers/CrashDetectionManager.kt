@@ -72,7 +72,9 @@ class CrashDetectionManager(
 
     private companion object {
         const val GRAVITY = 9.81
-        // Stillness reference threshold — matches SensorReader.SILENCE_DEVIATION_MAX.
+        // Stillness reference threshold. Must stay numerically equal to
+        // `SensorReader.SILENCE_DEVIATION_MAX` — the companion there is public for tests
+        // and as the default constructor argument. If you change one, change both.
         const val SILENCE_DEVIATION_MAX = 4.0
         const val SILENCE_DURATION_MS = 4_500L
         const val GYRO_MOVING_MAX = 2.0

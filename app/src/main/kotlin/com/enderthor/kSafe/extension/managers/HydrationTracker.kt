@@ -59,9 +59,10 @@ class HydrationTracker(
     // Threading note: each field is individually volatile so single reads are atomic, but
     // the snapshot tick() composes from them is NOT atomic across fields — HR can be
     // from tick N while power is from tick N+1. In practice the streams emit at <10 Hz
-    // and the tick runs every 5 s, so the inconsistency window vs. the integration step
-    // is negligible. The estimator is monotonic in each input within its smooth band,
-    // so a mixed snapshot just lands between the "true" values for adjacent ticks.
+    // and the tick runs every MONITOR_TICK_MS (15 s), so the inconsistency window vs.
+    // the integration step is negligible. The estimator is monotonic in each input
+    // within its smooth band, so a mixed snapshot just lands between the "true" values
+    // for adjacent ticks.
     @Volatile private var lastHrBpm: Int? = null
     @Volatile private var lastPowerW: Int? = null
     @Volatile private var lastWeightKg: Double? = null
