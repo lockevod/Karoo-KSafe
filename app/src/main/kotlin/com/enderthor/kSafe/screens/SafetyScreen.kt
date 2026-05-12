@@ -39,7 +39,7 @@ import kotlinx.coroutines.delay
  * Safety tab — crash detection, speed-drop, check-in, emergency message, countdown, SOS color.
  *
  * Tools-style content (Karoo Live, calibration log, FIT export, backup/restore, Simulate Crash)
- * lives in [ToolsScreen] so this screen stays focused on "things that protect the rider".
+ * lives in [SettingsScreen] so this screen stays focused on "things that protect the rider".
  */
 @Composable
 fun SafetyScreen(vm: MainViewModel) {
@@ -66,7 +66,7 @@ fun SafetyScreen(vm: MainViewModel) {
     var timerFieldColor by remember(config.timerFieldColor) { mutableStateOf(config.timerFieldColor) }
 
     // Auto-save: runs whenever any setting changes, with a short debounce for text fields.
-    // Karoo Live + calibration + backup live in ToolsScreen now and own their own save loops.
+    // Karoo Live + calibration + backup live in SettingsScreen now and own their own save loops.
     LaunchedEffect(
         emergencyMessage, countdownSeconds,
         crashEnabled, crashSensitivity, minSpeedForCrash, customThreshold, crashConfirmSpeed,

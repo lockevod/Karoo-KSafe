@@ -243,7 +243,7 @@ class CrashStateMachine(
         val accelOk = deviation < deviationMax
         val gyroOk = sample.gyroMag < thresholds.gyroMovingMax
         val timeOk = timeSinceImpact > thresholds.minTimeSinceImpactMs
-        val speedDropOk = isSpeedDropConfirmed(now)
+        val speedDropOk = isSpeedDropConfirmed()
 
         if (accelOk && gyroOk && timeOk && speedDropOk) {
             state = State.SILENCE_CHECK
@@ -296,7 +296,7 @@ class CrashStateMachine(
         // `abs(magnitude - GRAVITY)` (raw, not smoothed). Behavioural-equivalence requirement.
         val deviation = abs(sample.rawMagnitude - GRAVITY)
         val accelOk = deviation <= deviationMax
-        val speedDropOk = isSpeedDropConfirmed(now)
+        val speedDropOk = isSpeedDropConfirmed()
         val isStill = accelOk && speedDropOk
 
         val timeSinceImpact = now - impactStartedMs
@@ -333,17 +333,21 @@ class CrashStateMachine(
      * Mirror of `CrashDetectionManager.isSpeedDropConfirmed()`.
      *
      *  1. **Cold-start guard**: if no speed update has been received and
-     *     `now - startTimeMs < coldStartGuardMs`, return `false` to block confirmation.
-     *     We can't trust `currentSpeedKmh = 0.0` (its uninitialised default) yet.
+     *     `clock.nowMs() - startTimeMs < coldStartGuardMs`, return `false` to block
+     *     confirmation. We can't trust `currentSpeedKmh = 0.0` (its uninitialised
+     *     default) yet.
      *  2. **GPS stale**: returns `true`, bypassing the speed gate. The caller is
      *     expected to apply hardened deviation/duration thresholds.
      *  3. **Default**: `(crashConfirmSpeedKmh == 0)` disables the gate explicitly,
      *     otherwise `currentSpeedKmh < crashConfirmSpeedKmh`.
      *
-     * Note: cold-start guard uses *wall-clock* (`clock.nowMs()`) for the elapsed-since-start
-     * computation. The speed update timestamp also lives in wall-clock domain.
+     * Uses **wall-clock** (`clock.nowMs()`) intentionally for the elapsed-since-start
+     * computation: the rest of the state machine works in sample-time, but the cold-start
+     * guard is about "the SDK has had time to send us a real speed event", which is a
+     * wall-clock concept and lives in the same domain as `speedLastUpdatedAtMs`.
+     * No `nowMs` parameter — pass-through callers don't need to pre-snapshot wall-clock.
      */
-    private fun isSpeedDropConfirmed(@Suppress("UNUSED_PARAMETER") nowMs: Long): Boolean {
+    private fun isSpeedDropConfirmed(): Boolean {
         val wall = clock.nowMs()
         // 1. Cold-start guard — block when no speed received and still inside the guard window.
         if (speedLastUpdatedAtMs == SPEED_UPDATE_NEVER &&

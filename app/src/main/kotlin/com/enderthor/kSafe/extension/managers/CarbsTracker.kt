@@ -160,8 +160,17 @@ class CarbsTracker(
         deficitG = (cumTargetG - cumLoggedG).toInt(),
         deficitThresholdG = config.carbDeficitThresholdG,
         zoneSnapshot = lastZoneSnapshot,
-        burnRateGph = (config.carbTargetGperHour * lastZoneSnapshot.multiplier).toInt(),
+        burnRateGph = computeBurnRateGph(),
     )
+
+    /**
+     * Instantaneous carb burn rate in g/h, equal to the configured base target modulated by
+     * the current zone multiplier. Single source of truth — the data field, the calibration
+     * log fire payload and the periodic log row all read through this helper so future
+     * tweaks to the formula stay in lock-step.
+     */
+    private fun computeBurnRateGph(): Int =
+        (config.carbTargetGperHour * lastZoneSnapshot.multiplier).toInt()
 
     fun getSummary(): CarbSummary = CarbSummary(
         cumTargetG = cumTargetG.toInt(),
@@ -243,7 +252,7 @@ class CarbsTracker(
             backgroundColor = ALERT_BG_COLOR,
             textColor = ALERT_TX_COLOR,
         ))
-        val burnRateGph = (config.carbTargetGperHour * lastZoneSnapshot.multiplier).toInt()
+        val burnRateGph = computeBurnRateGph()
         calibLogger?.log(CalibrationLogger.Event.FUELING_CARB_FIRED) {
             // Locale.US: the calibration CSV uses comma as field separator, so we must NOT
             // let the default Locale turn "1.15" into "1,15" on es/fr/de devices.
@@ -264,7 +273,7 @@ class CarbsTracker(
         if (now - lastPeriodicLogMs < PERIODIC_LOG_INTERVAL_MS) return
         lastPeriodicLogMs = now
         val deficit = (cumTargetG - cumLoggedG).toInt()
-        val burnRateGph = (config.carbTargetGperHour * lastZoneSnapshot.multiplier).toInt()
+        val burnRateGph = computeBurnRateGph()
         calibLogger.log(CalibrationLogger.Event.FUELING_CARB_PERIODIC) {
             // Locale.US — see fireAlert above.
             String.format(

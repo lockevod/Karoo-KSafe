@@ -20,7 +20,18 @@ class Sender(
     private val maxCycles = 3
     private val attemptsPerCycle = 3
     private val delaySeconds = listOf(60, 120, 180)
+    /**
+     * Wait between cycles. Length contract: **must be `maxCycles - 1`** because the loop
+     * skips this list on the last cycle (no point waiting for a cycle that won't run).
+     */
     private val cycleDelayMinutes = listOf(5, 10)
+
+    companion object {
+        /** Per-HTTP-request timeout for single-attempt sends (test path + single-recipient flows). */
+        private const val ATTEMPT_TIMEOUT_MS = 15_000L
+        /** Per-HTTP-request timeout for the full multi-recipient retry attempt block. */
+        private const val ATTEMPT_BLOCK_TIMEOUT_MS = 30_000L
+    }
 
     // ─── Entry points ─────────────────────────────────────────────────────────
 
@@ -50,7 +61,7 @@ class Sender(
                         "?phone=${config.phoneNumber.trim()}" +
                         "&text=${Uri.encode("KSafe test — alerts are configured correctly.")}" +
                         "&apikey=${config.apiKey}"
-                    val response = withTimeoutOrNull(15_000L) { karooSystem.httpRequest("GET", url) }
+                    val response = withTimeoutOrNull(ATTEMPT_TIMEOUT_MS) { karooSystem.httpRequest("GET", url) }
                         ?: return "No response — check your internet connection."
                     val body = response.body?.toString(Charsets.UTF_8) ?: ""
                     when {
@@ -78,7 +89,7 @@ class Sender(
                             put("message", "KSafe test — alerts are configured correctly.")
                             put("priority", 1)
                         }.toString()
-                        val response = withTimeoutOrNull(15_000L) {
+                        val response = withTimeoutOrNull(ATTEMPT_TIMEOUT_MS) {
                             karooSystem.httpRequest(
                                 "POST", "https://api.pushover.net/1/messages.json",
                                 mapOf("Content-Type" to "application/json"),
@@ -112,7 +123,7 @@ class Sender(
 
                 ProviderType.NTFY -> {
                     if (config.apiKey.isBlank()) return "Missing Topic."
-                    val response = withTimeoutOrNull(15_000L) {
+                    val response = withTimeoutOrNull(ATTEMPT_TIMEOUT_MS) {
                         karooSystem.httpRequest(
                             "POST",
                             "https://ntfy.sh/${config.apiKey.trim()}",
@@ -144,7 +155,7 @@ class Sender(
                             put("chat_id", chatId.trim())
                             put("text", "KSafe test — alerts are configured correctly.")
                         }.toString()
-                        val response = withTimeoutOrNull(15_000L) {
+                        val response = withTimeoutOrNull(ATTEMPT_TIMEOUT_MS) {
                             karooSystem.httpRequest(
                                 "POST",
                                 "https://api.telegram.org/bot${config.apiKey.trim()}/sendMessage",
@@ -176,6 +187,11 @@ class Sender(
                     results.joinToString("\n")
                 }
             }
+        } catch (e: kotlinx.coroutines.CancellationException) {
+            // Never swallow cancellation — it must propagate so the calling coroutine
+            // (e.g. the user pressing Back while the test send is in flight) actually
+            // exits instead of being told "Unexpected error: …".
+            throw e
         } catch (e: Exception) {
             "Unexpected error: ${e.message}"
         }
@@ -204,7 +220,7 @@ class Sender(
                         Timber.d("Retry attempt $totalAttempts, waiting ${waitSeconds}s")
                         delay(waitSeconds * 1000L)
                     }
-                    val result = withTimeoutOrNull(30_000L) {
+                    val result = withTimeoutOrNull(ATTEMPT_BLOCK_TIMEOUT_MS) {
                         attemptSend(message, provider, isEmergency, config)
                     } == true
 
@@ -223,6 +239,10 @@ class Sender(
             }
             Timber.e("Message failed after $totalAttempts attempts")
             false
+        } catch (e: kotlinx.coroutines.CancellationException) {
+            // Cancellation must propagate (caller scope tear-down). Swallowing here
+            // would leave the parent coroutine running past the cancellation point.
+            throw e
         } catch (e: Exception) {
             Timber.e(e, "Retry error: ${e.message}")
             false

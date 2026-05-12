@@ -25,8 +25,8 @@ import kotlin.math.sqrt
  *    terrain-noise metric (PERIODIC / IMPACT_ENTER calibration log fields).
  *  - `SILENCE_DEVIATION_MAX = 4.0` — deviation-from-gravity threshold that drives
  *    [accelStillSinceMs]. The speed-drop monitor reads this field to require continuous
- *    stillness (≥ `SPEED_DROP_ACCEL_STILL_MS`) before firing. Must stay in sync with
- *    `CrashDetectionManager.SILENCE_DEVIATION_MAX` (private companion, same numeric value).
+ *    stillness (≥ `SPEED_DROP_ACCEL_STILL_MS`) before firing. Aliased by
+ *    `CrashDetectionManager.SILENCE_DEVIATION_MAX` (single source of truth lives here).
  *  - Gravity reference `GRAVITY = 9.81` (m/s²) for the deviation calculation.
  *
  * Notes:
@@ -262,7 +262,7 @@ class SensorReader(
         /**
          * Deviation-from-gravity threshold under which the accelerometer is considered
          * "still" for the speed-drop monitor's stable-stillness accumulator.
-         * Mirrors `CrashDetectionManager.SILENCE_DEVIATION_MAX` (private companion).
+         * Single source of truth — `CrashDetectionManager.SILENCE_DEVIATION_MAX` aliases this.
          * If you change one, change both — they MUST stay numerically equal.
          */
         const val SILENCE_DEVIATION_MAX = 4.0

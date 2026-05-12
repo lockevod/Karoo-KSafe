@@ -14,9 +14,15 @@ import kotlinx.coroutines.launch
 import timber.log.Timber
 
 /**
- * Hydration tracker. Same dual-mode alert structure as [CarbsTracker] but with a flat per-hour
- * target (no intensity multiplier). The rider compensates for hot weather by raising
- * [KSafeConfig.hydrationTargetMlPerHour] pre-ride.
+ * Hydration tracker. Same dual-mode alert structure as [CarbsTracker].
+ *
+ * Two target modes selectable via [KSafeConfig.hydrationDynamicEstimateEnabled]:
+ *  - **Flat** (default): integrates [KSafeConfig.hydrationTargetMlPerHour] verbatim — the
+ *    rider compensates for hot weather by bumping the per-hour target pre-ride.
+ *  - **Dynamic**: feeds HR/power + weight + temperature + humidity into [SweatEstimator]
+ *    every tick and integrates whatever rate the model returns. Biases high in hot
+ *    conditions by design (under-targeting hydration is far more dangerous than
+ *    over-targeting). See `references/health-fueling.md`.
  */
 class HydrationTracker(
     private val scope: CoroutineScope,
