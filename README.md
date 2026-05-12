@@ -4,7 +4,7 @@
 > **Available from v2.0** — the **Health tab** (medical episode detection, three-tier wellness / HR monitor, customisable HR alert templates) and the **Fueling tab** (carb and hydration tracker, log slots with custom colours and icons, customisable alert templates, FIT-file export) require KSafe **v2.0 or newer**. Earlier installs only ship the safety / SOS / messaging features. Update via the Hammerhead Companion app once v2.0 is released.
 
 > [!NOTE]
-> If you want to **help improve crash detection**, enable the anonymous calibration data toggle in the app (Settings tab) and send the data after your rides. This data is completely anonymous. The more data collected, the better the algorithm gets tuned for all users. See [Calibration Logging](#calibration-logging-optional) for details.
+> If you want to **help improve crash detection**, enable the anonymous calibration data toggle in the app (Settings tab) and send the data after your rides. This data is completely anonymous. The more data collected, the better the algorithm gets tuned for all users. See [Calibration Logging](docs/calibration-logging.md) for details.
 
 > [!WARNING]
 > This extension can send emergency alerts to your contacts. Please test it carefully before relying on it in real situations.
@@ -36,19 +36,17 @@ Compatible with Karoo 3 running Karoo OS version 1.527 and later.
 - **Speed drop detection**: Detects when your speed drops suddenly and remains low for a configurable time window.
 - **Medical episode detection** *(v2.0, optional, requires HR sensor)*: Detects sudden heart-rate flatline (asystole / severe bradycardia) or HR collapse (vasovagal syncope) during a ride. Triggers the same emergency flow as a crash by default. Stays silent if no HR sensor is paired — no false alarms when you don't wear a chest strap.
 - **Wellness monitor** *(v2.0, optional, requires HR sensor)*: Three-tier on-screen warning when HR stays above a configurable threshold for a sustained period, when HR climbs critically, or when HR/power decoupling indicates heat stress / dehydration — useful for fatigue / overexertion / dehydration awareness on long rides. Sent to the rider only, never to emergency contacts (response level configurable).
-- **Nutrition & hydration tracker** *(v2.0, preventive safety, optional)*: Watches your carb and fluid intake during the ride and reminds you to eat / drink **before** depletion impairs your judgment on the bike. Carb target adapts in real time to your effort using the Karoo's own HR or power zones (5 / 7 zones). Hydration target is per-hour, you raise it for hot days. Up to **3 carb slots and 2 drink slots** as data fields (each pre-configured with a label, amount, idle colour and icon — emoji or bundled vector drawable, one tap = one log) and 2 SRAM AXS hardware buttons. Two combinable alert modes — by **deficit** (you're behind your target) or by **time** (X minutes since last log) — appearing as a full-screen `InRideAlert` overlay with customisable title and detail templates. Post-ride summary shows totals vs target. **Cumulative carbs (g) and hydration (ml) are also written into the FIT file as developer fields**, so the activity in Strava / Intervals.icu / TrainingPeaks shows your fueling as graphs alongside HR / power / cadence — coaches can correlate fueling with effort directly.
+- **Nutrition & hydration tracker** *(v2.0, preventive safety, optional)*: Watches your carb and fluid intake during the ride and reminds you to eat / drink **before** depletion impairs your judgment on the bike. Carb target adapts in real time to your effort using the Karoo's own HR or power zones. Hydration target is per-hour, with an optional dynamic estimate that varies with weather and intensity. Up to **3 carb slots and 2 drink slots** as data fields (one tap = one log) and 2 SRAM AXS hardware buttons. Two combinable alert modes — by **deficit** or by **time**. **Cumulative carbs (g) and hydration (ml) are also written into the FIT file as developer fields**, so the activity in Strava / Intervals.icu / TrainingPeaks shows your fueling as graphs alongside HR / power / cadence.
 - **Emergency countdown with cancel**: All triggers start a configurable countdown (default 30s) so you can cancel false alarms before alerts are sent. A **red overlay with a Cancel button** appears on top of the ride screen — visible from any screen, no matter which data field is active.
 - **Location included**: Your GPS coordinates are automatically included in the alert message as a Google Maps link.
 - **Multiple messaging providers**: WhatsApp via CallMeBot (free), push notification via Pushover, free unlimited push via ntfy, or Telegram bot messages (free, unlimited).
 - **Ride start notification**: Optionally sends a message to your contacts when you start a ride, including a Karoo Live real-time tracking link. Sent **only once** when the ride truly begins — resuming after a pause does **not** trigger it again.
 - **Ride end notification**: Optionally sends a configurable message to your contacts when you finish a ride (recording stops completely).
-- **Custom message buttons**: Send any custom text message instantly via a hardware button or the app — no countdown, no emergency. Useful for "I'm OK", "Starting now", or any quick status update to your contacts. **Up to three independent message buttons** are available, each with its own configurable label and text.
-- **Webhook actions**: Trigger any HTTP endpoint from a Karoo hardware button — open your garage door (Home Assistant, Shelly), send a push notification (ntfy), fire an IFTTT/n8n/Make automation, or call any REST API. Works over Bluetooth tether. Two independent webhook slots available (see [Webhook Actions](#webhook-actions)).
-- **Webhook geo-fence** *(optional)*: Restrict each webhook so it only fires when the device is within a configurable radius of a saved GPS point. Prevents accidental triggers — e.g. your garage door only opens when you are actually near home.
-- **Webhook ride alert** *(optional)*: Show a configurable on-screen notification every time a webhook fires — useful to notice accidental button presses immediately.
+- **Custom message buttons**: Send any custom text message instantly via a hardware button or the app — no countdown, no emergency. **Up to three independent message buttons** are available, each with its own configurable label and text.
+- **Webhook actions**: Trigger any HTTP endpoint from a Karoo hardware button. Works over Bluetooth tether. Two independent slots with optional **geo-fence** (only fires when near a saved location) and optional **ride alert** (on-screen notification every time it fires).
 - **Five data fields**: SOS field, Safety Timer field, and up to three Custom Message fields — add any combination to your ride profile.
-- **Custom field colours**: Each ride field (SOS, Safety Timer, Custom Messages, Webhooks, and the fueling slots) can be assigned an independent idle background colour from a preset palette of twelve dark hues organised as 6 families × 2 shades. Reserved state colours (red error, orange countdown, amber warning, green success flash, grey OFF) are deliberately excluded so your idle pick can never collide with a state-machine signal.
-- **Help improve KSafe** *(optional)*: Enable anonymous calibration data sending to help tune the crash detection algorithm. See [Calibration Logging](#calibration-logging-optional) for details.
+- **Custom field colours**: Each ride field can be assigned an independent idle background colour from a preset palette of twelve dark hues. Reserved state colours (red error, orange countdown, amber warning, green success flash, grey OFF) are deliberately excluded so your idle pick can never collide with a state-machine signal.
+- **Help improve KSafe** *(optional)*: Enable anonymous calibration data sending to help tune the crash detection algorithm. See [Calibration Logging](docs/calibration-logging.md) for details.
 
 ## Requirements
 
@@ -74,6 +72,7 @@ KSafe shows a full-screen SOS cancel overlay during an emergency countdown so yo
 The app will automatically open the Android settings screen for this permission. Toggle **KSafe → Allow** and press Back to return to the app.
 
 If you miss it or need to grant it later:
+
 1. Open the **KSafe app** on the Karoo.
 2. A yellow warning banner will appear at the top if the permission is not yet granted.
 3. Tap **"Enable now"** — it opens the settings screen directly.
@@ -115,6 +114,7 @@ KSafe registers four actions you can assign to hardware controller buttons or in
 All four actions work from **any screen**, with no need to look at the display.
 
 To configure any of these actions:
+
 1. On the Karoo, go to **Sensors → [your AXS groupset] → Configure Controls**.
 2. Press the physical SRAM AXS shifter button you want to use.
 3. Select the desired **KSafe** action from the list. **Short Press** and **Long Press** can be assigned independently on the same button.
@@ -129,6 +129,7 @@ Once configured, hitting that control fires the action immediately from any scre
 KSafe provides five custom data fields you can add to your ride profiles:
 
 ### SOS Field
+
 - Shows **SAFE** in the configured idle colour (default: dark green) when everything is OK.
 - **Tap** to manually trigger an SOS emergency countdown.
 - During countdown shows remaining seconds in orange — **tap again to cancel**.
@@ -136,6 +137,7 @@ KSafe provides five custom data fields you can add to your ride profiles:
 - Idle colour can be changed in the **Settings tab** → *SOS field colour* swatch row.
 
 ### Safety Timer Field
+
 - Shows remaining check-in time (green/yellow/red depending on urgency).
 - **Tap** to reset the timer (= "I'm OK" check-in).
 - During any active emergency countdown, shows **CANCEL** with remaining seconds — **tap to cancel**.
@@ -172,7 +174,7 @@ Open the KSafe app on your Karoo to configure it. The app has five tabs:
 
 ### Settings Tab
 
-- **Active**: Enable or disable the extension entirely.
+- **Active**: Enable or disable the extension entirely. When OFF, all monitoring stops (crash, speed-drop, check-in, Health, Fueling) and configured notifications (ride start/end, custom messages, webhooks) are suppressed.
 - **SOS field colour**: Choose the idle background colour for the SOS data field (shown when in SAFE state). Select from a palette of 8 preset dark colours with white text.
 - **Timer field colour**: Choose the idle background colour for the Safety Timer field (shown when the timer is running normally). Warning (yellow) and expired (red) state colours are always preserved regardless of this setting.
 - **Emergency message**: The message sent to your contacts. Available placeholders:
@@ -193,234 +195,42 @@ Open the KSafe app on your Karoo to configure it. The app has five tabs:
 - **Speed drop detection**: Enable/disable detection of prolonged speed drops. Configure the time window (minutes) with no movement before triggering.
 - **Check-in timer**: Enable/disable periodic check-ins. Configure the interval in minutes (default: 120 min). A warning beep fires 10 minutes before expiry. **The timer pauses automatically when the ride is paused** (coffee stop, traffic light, etc.) and resets to the full interval when you resume. Any active check-in countdown is also cancelled on pause.
 
-### Calibration Logging (optional)
-
-At the very bottom of the Settings tab you will find the **"Help improve KSafe"** section with a single toggle: **Send anonymous calibration data**.
-
-This feature is **disabled by default** and completely optional. Enabling it helps the developer improve and calibrate the crash detection algorithm over time, using real-world data from different riding styles and terrain types.
-
-#### What data is collected
-
-When enabled, KSafe records detailed sensor events to a local CSV file:
-
-| Data recorded | Examples |
-|---|---|
-| Accelerometer magnitude values | `raw=52.3 m/s²`, `smooth=49.1 m/s²` |
-| Detection thresholds in use | `threshold=45 m/s²`, `peakThreshold=50 m/s²` |
-| GPS speed at the moment of each event | `speed=28.4 km/h` |
-| Crash detection state | `MONITORING`, `IMPACT`, `SILENCE_CHECK` |
-| Sensitivity preset active | `preset=MEDIUM` |
-| Gyroscope magnitude | `gyro=0.82 rad/s` |
-| GPS stale flag | `gps_stale=false` |
-| Elapsed ride time | `elapsed_s=1247.3` |
-| Road grade (slope) | `grade=-5.2` (% descent) |
-| Pedalling cadence | `cadence=82 RPM` |
-| Heart rate *(when paired)* | `bpm=152`, `avg5min=149` |
-| Terrain noise level | `noise=2.4 m/s²` (std-dev over 5 s) |
-| Ride profile type | `profile=GRAVEL` (from Karoo profile) |
-| **Anonymous session ID** | `session=a3f9c2` (random, per-session) |
-| Device model | `device=Karoo-3` |
-| App version | `app_version=1.5.3` |
-
-#### What is NOT collected
-
-- ❌ GPS coordinates — no location data, no maps, no tracking
-- ❌ Emergency messages or contact information
-- ❌ Account data, email, phone number, or any personal identifier
-- ❌ Anything that reveals who you are, where you ride, or when
-
-**Session ID**: a random 6-character code (e.g. `a3f9c2`) generated fresh each time you enable logging. It contains no timestamp, no location, and no device fingerprint — it is a random discriminator so multiple logs sent to the developer can be told apart. Two sessions from the same device will have completely different IDs.
-
-The data consists exclusively of raw sensor readings and algorithm states — the same numbers the crash detection algorithm reads internally. It is not possible to identify you, your location, your route, or your contacts from this data.
-
-#### How the data is sent
-
-The CSV file is sent automatically to the developer via Telegram (a private bot) when you:
-- **Disable** the calibration logging toggle, or
-- **Finish a ride** (if logging was active during the ride)
-
-You can also tap **Send now** to transmit the current log immediately. The file is typically 50–400 KB for a 2–4 hour ride session.
-
-Each file arrives in the developer's Telegram with:
-- A **descriptive filename** — e.g. `ksafe_v1.5.3_a3f9c2_Karoo-3.csv`
-- A **caption** in Telegram — e.g. `📊 kSafe Calibration Log | Session: a3f9c2 | Karoo 3 | v1.5.3 | 1247 rows`
-
-This makes it easy for the developer to identify and organise logs from multiple testers without any personal information.
-
-#### Why this helps
-
-Crash detection thresholds (impact magnitudes, silence durations, speed gates) need to be tuned to real-world conditions across different riding disciplines — MTB, gravel, road, velodrome. Each discipline generates a different noise floor and a different impact distribution. The calibration data allows the developer to:
-
-- Understand the terrain noise distribution at different speed/terrain combinations
-- Identify conditions where the speed gate is too aggressive (misses real crashes)
-- Identify conditions that produce false positives (terrain spikes that look like crashes)
-- Tune the SILENCE_CHECK duration and deviation thresholds to real post-crash physics
-
-This data is processed by the developer and never shared with third parties.
+At the bottom of the Settings tab you will find the optional **"Help improve KSafe"** toggle (anonymous calibration data) — disabled by default. See [Calibration Logging](docs/calibration-logging.md) for the full breakdown of what is recorded and how it is sent.
 
 ### Health Tab
 
-> [!NOTE]
-> **Available from v2.0.** The Health tab and all HR-based detectors (medical episodes, three-tier wellness monitor) require KSafe v2.0 or newer.
+The Health tab adds two **HR-based detectors** that complement the accelerometer-based crash detection. Both are **optional** and only fire when a heart-rate sensor (ANT+ or BLE) is paired. Without HR data they stay silent.
 
-The Health tab adds two **HR-based detectors** that complement the accelerometer-based crash detection. Both are **optional** and only fire when a heart-rate sensor (ANT+ or BLE) is paired to the Karoo. Without HR data the detectors stay completely silent — no false negatives, no false positives.
+| Detector | What it watches | Default |
+|----------|-----------------|---------|
+| **Medical episode** | HR flatline (< 30 bpm × 30 s) or HR collapse (≥ 40 % drop in 10 s) while riding | Enabled, Emergency response |
+| **Wellness — Critical HR** | HR ≥ 95 % of max (or 175 bpm) for ≥ 5 min continuous | Off (opt-in), Warning response |
+| **Wellness — Sustained HR** | HR ≥ 92 % of max (or 180 bpm) for ≥ 30 min continuous | Off (opt-in), Warning response |
+| **Wellness — Cardiac decoupling** | HR/power drift ≥ 7 % vs. ride baseline for ≥ 10 min (requires power meter) | Off (opt-in), Warning response |
 
-> [!IMPORTANT]
-> A heart-rate sensor is **never required** for KSafe to work. Crash detection, manual SOS, check-in timer, speed drop, and webhook actions all work without HR. The Health tab is purely additive — turn it on if you ride with a chest strap or optical HR monitor and want the extra detection layer.
+Every alert has its own customisable **title** and **detail** template with `{bpm}` / `{threshold}` / `{minutes}` / `{drift}` tokens. Response level per detector: **Silent** (calibration log only), **Warning** (on-screen + beep), or **Emergency** (full crash flow).
 
-#### Medical episode detection
-
-Watches the rider's HR for two patterns that strongly indicate a medical incident:
-
-- **Flatline** — HR drops below 30 bpm for 30 continuous seconds while the rider is active. Catches asystole and severe bradycardia.
-- **Collapse** — HR drops by ≥ 40% from the 5-minute rolling average within 10 seconds. Catches vasovagal syncope and other events where the heart keeps beating at a low rate (where flatline alone wouldn't fire).
-
-Both checks have built-in guards: HR data must be fresh (sensor connected within the last 15 s), and the rider must have been moving above 5 km/h within the last 60 seconds. This avoids spurious alerts when the Karoo is sitting on a desk with a paired strap nearby, or when the sensor briefly disconnects.
-
-**Default**: enabled. Response level **Emergency** — same flow as a crash detection (configurable countdown + alert to contacts). The alert message uses your standard emergency message template; the `{reason}` placeholder reads "Medical episode detected".
-
-You can also override the on-screen popup's title and detail per rider — see [Custom alert text](#custom-alert-text) below.
-
-#### Wellness monitor
-
-A three-tier HR-based fatigue / overexertion / heat-stress monitor. Each tier is independent and can be turned on or off in the Health tab; the master toggle gates the whole monitor. Defaults are conservative — turn on the tier(s) that match your goals.
-
-| Tier | What it watches | Default trigger | Why |
-|---|---|---|---|
-| **Critical HR** | HR very high for a short time | 95 % of max HR (or 175 bpm absolute) sustained for **5 min** | Acute overexertion — early warning. |
-| **Sustained HR** | HR moderately high for a long time | 92 % of max HR (or 180 bpm absolute) sustained for **30 min** | Long-tail fatigue — same rule that existed before, kept for back-compat. |
-| **Cardiac decoupling** | HR / power ratio drift vs. baseline | 7 % drift sustained for **10 min** (after a 10-min baseline) | Clinical indicator of dehydration / heat stress; requires a paired power meter (auto-skips when no power data). |
-
-The HR-based tiers can use either **absolute bpm** thresholds (the legacy mode) or **% of max HR** read from the Karoo profile (auto-scales across riders, no biometric entry needed). The decoupling tier always uses % drift relative to the rider's own ride-specific baseline, so the absolute / % toggle does not apply to it.
-
-The streak resets if the watched signal drops below the tier's threshold even briefly — only **continuous** sustained excursions trigger the alert, not cumulative time. Per-tier cooldowns prevent spam during long climbs or sustained interval workouts.
-
-**Default**: master toggle off (opt-in — the right thresholds depend on rider age and fitness). When the master is on, all three tiers default to enabled. Response level **Warning** by default — on-screen notification + beep, **never** sent to emergency contacts unless you explicitly raise the response level to Emergency.
-
-#### Custom alert text
-
-Every HR-based on-screen alert (medical, plus each of the three wellness tiers) has its own customisable **title** and **detail** in the Health tab. The fields show the built-in default text as a placeholder when empty — leave blank to use the default, or write your own message. The text is rendered with `{token}` placeholders substituted at runtime so you can include the live data in your own wording:
-
-| Alert | Tokens you can use in title / detail |
-|---|---|
-| Medical | `{bpm}` |
-| Wellness Critical / Sustained | `{bpm}`, `{threshold}`, `{minutes}` |
-| Wellness Decoupling | `{drift}` (% drift, 1 decimal), `{minutes}` |
-
-For example, a critical-HR detail of `"HR at {bpm} bpm — slow down ({threshold} for {minutes} min)"` will render at fire time as something like *"HR at 178 bpm — slow down (175 for 5 min)"*.
-
-#### Response levels
-
-Each detector has a configurable response level:
-
-| Level | What happens |
-|-------|-------------|
-| **Silent** | Logged to calibration data only — useful for testing without producing UI noise |
-| **Warning** | On-screen notification + beep on the Karoo, no alert to emergency contacts |
-| **Emergency** | Full crash flow: countdown + alert to contacts |
-
-#### Privacy
-
-Heart-rate readings are consumed only by the on-device detectors. They are **never sent to your emergency contacts** unless a medical episode actually triggers an alert — and even then, the alert message is your standard emergency template. Your raw HR value itself is not included in the outgoing message.
-
-When calibration logging is enabled, anonymised HR data does appear in the local CSV (same handling as the accelerometer / cadence / grade data already collected) — see [Calibration Logging](#calibration-logging-optional).
+📘 **Full reference: [docs/health-fueling.md](docs/health-fueling.md)** — tier-by-tier thresholds, % of max HR vs absolute bpm modes, hysteresis, cooldowns, custom alert text, privacy.
 
 ### Fueling Tab
 
-> [!NOTE]
-> **Available from v2.0.** The Fueling tab — carb / hydration tracker, log-slot fields, customisable alert templates, FIT export — requires KSafe v2.0 or newer.
+KSafe's **preventive safety layer**: a per-second carb and fluid target while you ride, watches what you log, and warns you when you fall behind. **Disabled by default** because the right targets depend on each rider.
 
-> [!TIP]
-> The Fueling tab is KSafe's **preventive safety layer**. The other safety features (crash detection, medical episodes, SOS) react *after* something has gone wrong. Fueling tries to keep things from going wrong in the first place: a rider who is properly fueled and hydrated has clearer judgment, faster reaction time, and fewer mistakes — and is much less likely to crash, blow up, or need to be rescued. Bonking and dehydration are real, common causes of cycling incidents, not just performance problems.
+The carb target adapts in real time to your effort using HR / power zones from your Karoo profile (multiplier 0.7×–1.3×). Hydration uses a flat per-hour target by default, with an optional **dynamic estimate** mode that varies with HR, power, weight, temperature and humidity.
 
-The Fueling tab is **fully optional**. It is **disabled by default** because the right targets depend on each rider. When you enable it, KSafe begins integrating a per-second carb and fluid target while you ride, watches what you log, and warns you when you fall behind.
+| Setup | Carb multiplier source | Notes |
+|-------|------------------------|-------|
+| Power meter + power zones | 0.7..1.3 from your power zone | Most accurate |
+| HR sensor + HR zones (no power) | 0.7..1.3 from your HR zone | Good fallback |
+| Neither sensor present | 1.0 (neutral) | Flat target × time |
 
-#### How the carb target adapts to your effort
+Two combinable alert modes per category (**deficit** vs **time**), each with customisable title / detail templates and tokens (`{deficit}`, `{elapsed}`, `{target}`). Logging via 3 carb + 2 drink data fields (one tap = one log) and 2 SRAM AXS hardware buttons. Post-ride summary. **Cumulative carbs and hydration are written to the FIT file as developer fields** so they appear as graphs in Strava / Intervals.icu / TrainingPeaks.
 
-Carb burning depends heavily on intensity. KSafe reads your **HR zones** (5 zones, configured in your Karoo) and **power zones** (7 zones) directly from the Karoo's user profile — no manual entry of weight, FTP, max HR or anything else. From those zones it derives a real-time multiplier between **0.7×** (recovery / Z1) and **1.3×** (top zone) and applies it to your configured base target (e.g. 60 g/h):
-
-| Setup | Multiplier | Notes |
-|-------|------------|-------|
-| Power meter + power zones configured | 0.7..1.3 from your power zone | Most accurate — power is the cleanest intensity proxy |
-| HR sensor + HR zones configured (no power) | 0.7..1.3 from your HR zone | Good fallback |
-| Out-of-range readings (below Z1 or above the last zone) | Clamped to nearest edge | Coasting at low HR → recovery rate; sprinting above last zone → top rate |
-| Neither sensor present | 1.0 (neutral) | Tracker reverts to flat target × time — equivalent to "remind me every X min based on g/h" |
-
-Hydration uses a **flat per-hour target** because temperature (the main driver of sweat rate) isn't exposed to the SDK. You raise the target manually for hot days.
-
-#### Two combinable alert modes
-
-For each category (carbs, hydration) independently:
-
-- **Alert by deficit**: silent until `(target_so_far − logged) > threshold` (e.g. >25 g for carbs, >300 ml for hydration). Then beep + on-screen `InRideAlert` (full-screen overlay, auto-dismissable in 10 s).
-- **Alert by time**: silent until `time_since_last_log > interval` (e.g. >25 min for carbs, >20 min for hydration). Same alert UX.
-
-The time alert also has a per-category **initial delay** (default 30 min, configurable, set to 0 to disable). Most riders don't eat or drink in the first 20 minutes; the initial delay prevents a nag at minute 25 of an otherwise good ride. After the first alert fires or the user logs an item, normal interval logic takes over.
-
-Both modes can be on at the same time. A 5-minute cooldown prevents the two from firing within seconds of each other; once one fires, neither will fire again until the cooldown elapses.
-
-Both the **alert title** ("Eat something" / "Drink something") and the **detail line** ("Behind by 25g" / "30 min since last log") are customisable per category. Each field shows the default as placeholder when empty — leave blank to use the default, or write your own template. Tokens are substituted at fire time:
-
-| Token | Substituted with |
-|---|---|
-| `{deficit}` | Current deficit (g for carbs, ml for hydration) |
-| `{elapsed}` | Minutes since the last log entry |
-| `{target}` | Configured per-hour target |
-
-For example, a custom carb detail of `"You're {deficit}g down — eat now ({elapsed} min)"` renders at fire time as *"You're 35g down — eat now (15 min)"*. When the field is empty, the source-specific defaults are used (deficit alerts get *"Behind by Xg"*, time alerts get *"X min since last log"*).
-
-#### Logging in-ride
-
-Two complementary mechanisms:
-
-- **Data fields**: 3 carb log slots + 2 drink log slots, each with its own configurable **label** (e.g. *"Gel"*, *"Bar"*, *"Bottle"*), **amount** (g or ml), **idle background colour** (palette of 12 dark hues) and **icon** (emoji like 🍫 / 🥤 / 💧, or one of the two bundled vector drawables for sports gel pouch and cyclist bidón — Unicode has no good emoji for those shapes). One tap = one log. The slot flashes green for 2 seconds as confirmation, then returns to its idle label. Add as many or as few slots to your ride profile as you want.
-- **Hardware buttons (BonusActions, SRAM AXS only)**: KSafe registers two extra actions, *"KSafe: Log Carb"* and *"KSafe: Log Drink"*, both wired to slot 1 of each category. Map them to your AXS shifter buttons so you can log without looking at the screen.
-
-When the master Carb / Hydration toggle is off, the corresponding log fields render in grey with `OFF` and tap is disabled — the data field is still visible on the ride profile but clearly inactive, so a stray tap does nothing instead of silently no-op'ing. Re-enable the master in the Fueling tab and the colour / emoji come back.
-
-There are also two **status data fields** (carb status and hydration status) that show your current deficit at a glance, color-coded green / amber / red. Optional — if you don't add them to your ride profile, they don't appear.
-
-#### Post-ride summary
-
-When you stop the recording, KSafe shows an `InRideAlert` with totals: *"Carbs: 85/120g (71%) • Hyd: 1100/1500ml (73%)"*. Configurable on/off; nothing is sent to your contacts.
-
-#### Carbs and hydration in your FIT file (Strava / Intervals.icu / TrainingPeaks)
-
-KSafe writes the cumulative carbohydrates and hydration you log into the Karoo's FIT file as developer fields. When you upload the activity to Strava / Intervals.icu / TrainingPeaks, your fueling appears as **two extra graphs alongside HR / power / cadence** — coaches can correlate fueling with effort, and you can answer questions like *"I bonked at hour 4 → looking at the FIT, I had 0 g carbs that hour"* from the data instead of guessing.
-
-| Field | Type | Where in the FIT |
-|---|---|---|
-| `ksafe_carbs_g` | float32, units `"g"` | Per-second `record` (timeline graph) + `session` summary (activity header) |
-| `ksafe_hyd_ml`  | float32, units `"ml"` | Same |
-
-The values are cumulative — a step curve growing across the ride. Tools that prefer rate (g/h) can derive it locally with whatever averaging window suits the analysis.
-
-Toggleable via the **"Write to FIT"** switch in the Fueling tab. Default ON because the cost is negligible (~0.05 % battery over a 5 h ride, no perceptible CPU). Riders who don't want extra developer columns in their FIT can opt out cleanly.
-
-Pacing aligns with the Karoo's native 1 Hz Record sampling, so the developer fields land on the same timestamps as HR / power. Outside `Recording` (Idle / Paused) nothing is written.
-
-#### What you configure
-
-Per category (Carbs, Hydration) the Fueling tab lets you:
-- Enable / disable the tracker (master toggle — when off, the rest of the fields collapse for a tidier screen)
-- Set the per-hour target
-- Toggle the deficit alert + threshold
-- Toggle the time alert + interval + initial delay
-- Customise the alert **title** and **detail** templates (optional — placeholder shows the default; leave blank to use it, or write your own with `{deficit}` / `{elapsed}` / `{target}` tokens)
-- Configure each slot's label, amount, idle background colour, and icon (emoji or one of the bundled vector drawables for sports gel and bidón)
-- Toggle FIT export (default on; controls whether your fueling appears as developer fields in the Karoo's FIT file)
-
-That's it — no biometric data, no FTP, no zone numbers, no max HR. KSafe reads all of that from the Karoo profile.
-
-#### Privacy
-
-Carb and hydration logs **never leave your Karoo** unless calibration logging is enabled (in which case anonymised counters and HR/power zone snapshots appear in the local CSV — same handling as the existing crash and HR data).
+📘 **Full reference: [docs/health-fueling.md](docs/health-fueling.md)** — intensity multiplier curves, dynamic sweat-rate estimator with safety bias, alert modes, FIT export schema, privacy.
 
 ### Provider Tab
 
 Select which provider will be used to send alerts. You can configure credentials for all four providers — they are saved independently and switching between them does not erase anything. Only the **selected (active) provider** will be used when an alert is triggered.
-
-KSafe supports **four providers**:
 
 | Provider | Cost | Best for |
 |----------|------|----------|
@@ -429,138 +239,7 @@ KSafe supports **four providers**:
 | **CallMeBot (WhatsApp)** | Free | Recipients already use WhatsApp |
 | **Pushover** | Free trial, ~$5 one-time | Most reliable push notifications |
 
-#### ntfy (free and unlimited — easiest setup)
-
-ntfy.sh is the simplest option: no account, no registration, no limits. Just pick a topic name and subscribe to it in the ntfy app. Notifications are delivered instantly, for free, with no monthly caps.
-
-> [!NOTE]
-> The topic name acts like a "channel" — anyone who knows it can subscribe and receive your alerts. Use a long, random-looking name (e.g. `ksafe-alerts-r4nd0m42`) to keep it private. You can also self-host an ntfy server for full privacy.
-
-**Step 1 — Install ntfy and subscribe to your topic**
-
-1. Install the **ntfy** app on the phone that will receive alerts:
-   - [Android](https://play.google.com/store/apps/details?id=io.heckel.ntfy)
-   - [iOS](https://apps.apple.com/app/ntfy/id1625396347)
-2. Open the app and tap **+** to add a new subscription.
-3. Choose a **topic name** (e.g. `ksafe-alerts-myname`). You can use any name — just make it unique enough that others are unlikely to guess it.
-4. Tap **Subscribe**.
-
-**Step 2 — Configure KSafe**
-
-1. In the **Provider** tab, select **ntfy**.
-2. Enter the same **topic name** you subscribed to in Step 1.
-3. Tap **Test Send** — you should receive a push notification in the ntfy app immediately.
-
-> You can add the same topic on multiple phones to alert several people at once. Each person just subscribes to the same topic name in their ntfy app.
-
----
-
-#### WhatsApp via CallMeBot (free and easy)
-
-CallMeBot lets you send WhatsApp messages for free using a simple API. **Important: the setup must be done from the phone that will RECEIVE the alerts** (your emergency contact's phone), not yours.
-
-**Step 1 — Activate CallMeBot from the contact's phone**
-
-1. Open WhatsApp on the **destination phone** (your emergency contact's).
-2. Add the number `+34 644 31 95 65` to their contacts (save it as "CallMeBot" or any name).
-3. Send this exact message to that number via WhatsApp:
-   ```
-   I allow callmebot to send me messages
-   ```
-4. Within a few minutes CallMeBot will reply with your **API key** (a numeric code). Save it.
-
-> If the contact doesn't receive a reply, try again after a few minutes. The number may be busy. You can also try via the [CallMeBot website](https://www.callmebot.com/blog/free-api-whatsapp-messages/) for alternative activation methods.
-
-**Step 2 — Configure KSafe**
-
-1. In the **Provider** tab, select **CallMeBot**.
-2. Enter the **recipient's phone number** with the international prefix but **without the `+` sign** (e.g. `34675123123`) in the phone field.
-3. Enter the **API key** received in Step 1.
-4. Tap **Test Send** — your contact should receive a WhatsApp message within seconds.
-
----
-
-#### Telegram (free and unlimited)
-
-Telegram lets you send messages for free through a bot you create yourself. There are no rate limits or monthly caps — it is a great option if you want a reliable free provider with no restrictions.
-
-**Step 1 — Create a Telegram bot and get your Bot Token**
-
-1. Open Telegram and search for **@BotFather**.
-2. Start a chat and send `/newbot`.
-3. Follow the instructions: choose a name and a username for your bot (username must end in `bot`, e.g. `MySafetyBot`).
-4. BotFather will give you a **Bot Token** (e.g. `7123456789:AAFxxxxxxxxxxxxxxxxxxxxxx`). Copy it.
-
-**Step 2 — Get your Chat ID**
-
-The Chat ID tells the bot where to deliver the message. You can send alerts to a **personal chat**, a **group**, or a **channel**.
-
-For a **personal chat** (easiest):
-1. Search for your new bot in Telegram and tap **Start** (`/start`).
-2. **Send any message to the bot** (e.g. `hello`) — this is required so the bot has an update to return.
-3. Go to `https://api.telegram.org/bot<BOT_TOKEN>/getUpdates` in a browser (replace `<BOT_TOKEN>` with your bot token).
-4. Look for `"chat":{"id":XXXXXXX}` in the response — that number is your **Chat ID**.
-
-For a **group** or **channel**:
-1. Add the bot to the group/channel as an administrator.
-2. Send a message in the group, then fetch `getUpdates` as above — the Chat ID will be a negative number (e.g. `-1001234567890`).
-
-**Step 3 — Configure KSafe**
-
-1. In the **Provider** tab, select **Telegram**.
-2. Enter your **Bot Token** in the first field.
-3. Enter your **Chat ID** (recipient 1) in the second field.
-4. Optionally enter a second and third Chat ID to alert additional chats. In most cases one Chat ID is enough — if you want to alert multiple people at once, simply add the bot to a **Telegram group** and use the group's Chat ID.
-5. Tap **Test Send** — all configured chats should receive a message immediately.
-
-> If you don't receive the test message, make sure you have started a conversation with the bot first (send `/start` to it in Telegram).
-
----
-
-#### Pushover (recommended for reliability)
-
-Pushover delivers push notifications instantly to any phone or tablet. It works independently of WhatsApp — the emergency contact only needs the free Pushover app installed. Each user sets up their own independent account.
-
-Pushover is **free to try for 30 days**. After that, a **one-time payment of ~$5** is required to continue using it without restrictions (unlimited messages, emergency priority alerts, no monthly limits). This payment goes directly to Pushover — KSafe itself is always free and open-source. If you prefer a free alternative with no payment, use CallMeBot (WhatsApp) or ntfy (free, unlimited push notifications).
-
-Pushover requires **two separate keys** — this is a common point of confusion:
-
-| Key | What it is | Where to find it |
-|-----|-----------|-----------------|
-| **App Token** | Identifies the *application* sending the alert (KSafe) | Created once at pushover.net/apps/build |
-| **User Key** | Identifies the *device/account* that will receive the alert | Found in the Pushover app on each recipient's phone → Settings |
-
-Both are mandatory. Without the App Token, Pushover doesn't know which app is sending. Without the User Key, it doesn't know where to deliver the notification.
-
-KSafe supports **up to 3 User Keys** — one per field in the Provider tab. Each key belongs to a different person or device. The App Token is shared: you only create it once and use it for all recipients.
-
-**Step 1 — Create a Pushover account and get your User Key**
-
-1. Go to [pushover.net](https://pushover.net/) and create a free account.
-2. Install the **Pushover** app on the phone that will receive alerts (your emergency contact's phone or your own) and log in.
-3. Open the **Pushover app** on that phone → go to **Settings** — the **User Key** is shown there (e.g. `uQiRzpo4DXghDmr9QzzfQu`). Copy it. This key is tied to that specific device/account and is needed so KSafe knows where to deliver the notification.
-
-**Step 2 — Create a Pushover application and get your App Token**
-
-Each person who uses KSafe needs to create their own Pushover application (it is free and takes 1 minute):
-
-1. Go to [pushover.net/apps/build](https://pushover.net/apps/build) while logged in.
-2. Fill in:
-   - **Name**: `KSafe` (or anything you like)
-   - **Type**: Application
-   - **Description**: optional
-   - **URL**: optional
-3. Click **Create Application**. You will get an **App Token** (e.g. `azGDORePK8gMaC0QOYAMyEEuzJnyUi`). Copy it. This key identifies KSafe as the sender.
-
-**Step 3 — Configure KSafe**
-
-1. In the **Provider** tab, select **Pushover**.
-2. Enter your **App Token** in the first field (the application key from Step 2).
-3. Enter the **User Key** of the first recipient in the second field (from Step 1).
-4. Optionally enter a second and third User Key if you want to alert multiple people. Each recipient needs their own Pushover account and User Key — but they all share the same App Token you created in Step 2.
-5. Tap **Test Send** — all configured recipients should receive a push notification immediately.
-
-> Notifications are delivered even in silent/do-not-disturb mode when sent at high priority (which KSafe uses for emergencies).
+📘 **Setup guides: [docs/messaging-providers.md](docs/messaging-providers.md)** — step-by-step for each provider (where to click, what to copy, how to test).
 
 ## How It Works
 
@@ -585,77 +264,30 @@ Crash detection uses the Karoo's built-in accelerometer and gyroscope directly (
 4. **Confirmed**: If the device remains genuinely still for **4.5 consecutive seconds**, the emergency countdown starts.
 5. **Cooldown**: After a confirmed crash, impact detection is paused for **countdown + 30 s** to avoid duplicate triggers while the emergency countdown is already running (e.g. 60 s with the default 30 s countdown).
 
-**Why this works:** after hitting a pothole, bump, or terrain-change edge, a cyclist continues pedalling — the GPS keeps showing movement and the gyroscope never stays below 1 rad/s long enough to confirm a crash. On a slow climb the gyroscope can be very calm, but the GPS speed gate ensures this cannot be mistaken for a crash. After a real crash, the device lies on the ground with near-zero gyroscope and near-zero GPS speed for several seconds. The confirm speed is preset-aware: **3 km/h for Low** (MTB/gravel, where crashes at very low speed are common and post-crash sliding is slower) and **5 km/h for Medium/High** (road riding, where post-crash sliding at 4–5 km/h is plausible and should still trigger confirmation).
+**Why this works:** after hitting a pothole, bump, or terrain-change edge, a cyclist continues pedalling — the GPS keeps showing movement and the gyroscope never stays below 1 rad/s long enough to confirm a crash. After a real crash, the device lies on the ground with near-zero gyroscope and near-zero GPS speed for several seconds.
 
 ### Choosing the right sensitivity level
 
 > **Naming convention**: "High sensitivity" means a *lower* impact threshold — the system reacts to lighter impacts. This follows the standard sensor convention (higher sensitivity = detects smaller signals). It does NOT mean "better" or "safer" in all contexts.
 
-| Level | Impact threshold | Peak threshold | Min. speed | Confirm speed | Best for                                          |
-|-------|-----------------|----------------|------------|---------------|---------------------------------------------------|
-| ⛰ **Low** | 55 m/s² (~5.5g) | 60 m/s² | 3 km/h | 3 km/h | MTB, enduro,  technical terrain                   |
-| 🚴 **Medium** | 45 m/s² (~4.5g) | 50 m/s² | 10 km/h | 5 km/h | Road, MTB mixed, Gravel **(recommended default)** |
-| 🏁 **High** | 35 m/s² (~3.5g) | 40 m/s² | 15 km/h | 5 km/h | Smooth road only (velodrome, closed circuit)      |
-| 🔧 **Custom** | 20–70 m/s² slider | thr + 5 m/s² | You choose | You choose | Any specific use case                             |
+| Level | Impact threshold | Peak threshold | Min. speed | Confirm speed | Impact window | Best for |
+|-------|-----------------|----------------|------------|---------------|---------------|----------|
+| ⛰ **Low** | 55 m/s² (~5.5g) | 60 m/s² | 3 km/h | 3 km/h | 25 s | MTB, enduro, technical terrain |
+| 🚴 **Medium** | 45 m/s² (~4.5g) | 50 m/s² | 10 km/h | 5 km/h | 20 s | Road, MTB mixed, gravel **(recommended default)** |
+| 🏁 **High** | 35 m/s² (~3.5g) | 40 m/s² | 15 km/h | 5 km/h | 15 s | Smooth road only (velodrome, closed circuit) |
+| 🔧 **Custom** | 20–70 m/s² slider | thr + 5 m/s² | You choose | You choose | Preset-aware | Any specific use case |
 
-**Impact window** (time allowed between impact and stillness confirmation):
-- Low: 25 s — MTB bike may slide or tumble down a slope for a while
-- Medium: 20 s — mixed terrain
-- High: 15 s — road crashes settle quickly
+**Picking the right preset:**
 
-#### ⛰ Low — for MTB, gravel, enduro
-
-Requires a **very hard impact (~5.5g)** to trigger. MTB jump landings and drops typically generate 3–5g, staying safely below this threshold. Only a serious crash — hitting the ground hard at speed — reaches 5.5g+.
-
-- Min. speed **3 km/h**: technical climbs (*trialeras*) happen at walking pace. Crashes on steep technical sections can occur below 4 km/h.
-- Longer impact window (25 s): the bike may keep rolling down a slope after the crash before coming to rest.
-- If you still experience false positives on very rough terrain (e.g. large drops, aggressive landings with full stop), use **Custom** with a threshold of 60–65 m/s².
-
-#### 🚴 Medium — recommended default for most riders
-
-**Balanced threshold (~4.5g)**. A sensible starting point for road cyclists, gravel riders, and anyone combining road and trail. Normal road vibration, cobblestones, and moderate bumps stay well below 4.5g. Large potholes or expansion joints at high speed can reach this range — but with the continuous silence requirement, continued riding prevents any false alarm.
-
-- Min. speed **10 km/h**: filters out false positives from handling the bike at slow speeds (putting it on the car, slow track stands).
-- If you ride mostly MTB: lower the min. speed to 3 km/h or switch to **Low**.
-- If you ride exclusively on smooth tarmac and experience any residual false positives: raise min. speed to 15 km/h or switch to **High**.
-
-#### 🏁 High — smooth road only
-
-**More sensitive threshold (~3.5g)** — designed for perfectly smooth surfaces (velodromes, closed circuits, pristine tarmac) where normal riding never generates impacts above 3.5g. On such surfaces, any 3.5g+ impact is genuinely suspicious and likely a crash.
+- **Low** — requires a very hard impact (~5.5g). MTB jump landings and drops typically generate 3–5g and stay below this threshold. Use for technical MTB, enduro, gravel with aggressive features.
+- **Medium** — balanced default. Normal road vibration, cobblestones and moderate bumps stay below 4.5g. Large potholes at speed can reach this range — but the continuous-stillness requirement prevents false alarms when you keep riding.
+- **High** — only on perfectly smooth surfaces (velodromes, closed circuits, pristine tarmac). Any 3.5g+ impact on MTB or gravel will trigger the impact detector, even though the silence check rejects most of them.
+- **Custom** — set the slider to anything between 20 and 70 m/s². Useful when no preset fits exactly.
 
 > [!WARNING]
-> Do **not** use High on MTB trails, gravel, or roads with potholes/expansion joints. Any jump, drop, or large bump will regularly exceed 3.5g and trigger the impact detection. Even with the continuous silence check, a brief stop after a bump could produce false alarms.
+> Do **not** use High on MTB trails, gravel, or roads with potholes/expansion joints. Even with the continuous silence check, a brief stop after a bump could produce a false alarm.
 
-- Min. speed **15 km/h**: road crashes at very low speed are extremely rare.
-- Useful for: triathlon on closed circuits, velodrome training, road racing on premium tarmac.
-
-#### 🔧 Custom threshold
-
-Set the exact impact threshold with the slider (20–70 m/s²):
-- **Lower values** → more sensitive, triggers on lighter impacts.
-- **Higher values** → harder impact required, fewer false positives.
-
-Useful when no preset fits exactly — for example an aggressive enduro rider who wants something between Low and Medium, or a gravel rider on smoother surfaces.
-
-### Real-world scenarios
-
-| Scenario | Result | Why |
-|----------|--------|-----|
-| Hard crash on a descent, bike slides for a few seconds | ✅ Detected | Impact → brief movement → bike settles → 4.5 s continuous stillness confirmed |
-| Hard crash, bike stops immediately | ✅ Detected | Impact → quick stillness → confirmed |
-| Crash on descent, body slides at 4–5 km/h before stopping | ✅ Detected | Confirm speed is 5 km/h (Medium/High) — covers post-crash sliding |
-| Crash on a technical MTB climb at 3 km/h (Low) | ✅ Detected | Low threshold + 3 km/h min. speed + 3 km/h confirm speed — designed for this |
-| Large pothole at 40 km/h, continue riding | ✅ No false alarm | Impact threshold possibly exceeded, but GPS speed stays high + gyro keeps resetting the silence timer |
-| Expansion joint or speed bump, continue riding | ✅ No false alarm | Same as above — continuous movement prevents silence confirmation |
-| Transition dirt → asphalt (jolt), continue riding | ✅ No false alarm | Single-sample spike is smoothed by the 60 ms sliding window; never reaches sustained impact level |
-| Slow climb, handlebar bump while still pedalling | ✅ No false alarm | GPS speed gate: still moving → cannot enter or confirm silence check |
-| MTB jump landing, continue riding immediately | ✅ No false alarm | Impact → movement never stops → window expires → reset |
-| MTB jump landing, stop perfectly still for 5+ seconds | ⚠️ Possible false alarm | Impact + genuine stillness → algorithm may confirm; **the 30 s countdown is your safety net** |
-| Cobblestones or very rough road | ✅ No false alarm | Sustained vibration resets silence timer continuously |
-| Dropping bike carelessly while stopped | ✅ No false alarm | Minimum speed check: below threshold, impact ignored |
-| Pausing ride at a café, check-in timer was running | ✅ Timer paused | Check-in timer stops when ride is paused; restarts from zero when ride resumes |
-
-**Key principle**: the algorithm requires both a large sudden impact AND prolonged, uninterrupted stillness. Either one alone is not enough. The countdown (default 30 s) is the final line of defence — if a detection happens while you are fine, just tap CANCEL.
+📘 **Real-world scenarios, detailed level commentary, and the full algorithm internals: [docs/crash-detection-algorithm.md](docs/crash-detection-algorithm.md).** Pothole at 40 km/h, MTB jump landing, expansion joint, slow technical climb — all the edge cases enumerated and explained.
 
 ### Minimum speed reference
 
@@ -686,177 +318,64 @@ KSafe provides test buttons, all of which work **without an active ride**:
 
 The **Actions tab** contains two independent feature groups: **Custom Messages** (message buttons 1–3) and **Webhook Actions** (HTTP request slots 1–2). Both are configured in the same tab and can be assigned to Karoo hardware controller buttons via BonusAction.
 
-## Custom Messages
+### Custom Messages
 
 KSafe provides **three independent custom message buttons** — you can add one, two or all three to your ride screens. Each sends a different text and shows a different label on the field button. No countdown, no emergency — just a quick status update.
 
 **Use cases:**
+
 - *"OK👍"* → sends *"I'm OK! 👍"* — reassure your contacts after a long silent stretch
 - *"HOME"* → sends *"Heading home, ETA 45min"*
 - *"CREW"* → sends a message to your support crew
 - *"START"* → manual ride start notification without Karoo Live
 - Any short status you want to send on demand
 
-### Configuration
+**Configuration:**
 
 1. Open KSafe → **Actions tab**.
 2. For each message slot (1, 2, 3):
-   - Toggle **Enable message N**. When the slot is disabled, the rest of the row collapses for a tidier screen, and the on-ride field renders in grey with `OFF` (tap is suppressed — no more "ERR retry" flash on a disabled slot).
-   - Enter a **button label** (max 7 characters) — this appears on the Karoo field button. Examples: `OK👍`, `HOME`, `SAFE`, `CREW`. Defaults: `MSG`, `MSG2`, `MSG3`.
+   - Toggle **Enable message N**. When the slot is disabled, the rest of the row collapses for a tidier screen, and the on-ride field renders in grey with `OFF` (tap is suppressed).
+   - Enter a **button label** (max 7 characters) — appears on the Karoo field button. Examples: `OK👍`, `HOME`, `SAFE`, `CREW`. Defaults: `MSG`, `MSG2`, `MSG3`.
    - Enter the **message text** that will be sent when the field is tapped (any length).
-   - Choose the **idle colour** for the field — tap the colour swatch button to open the picker dialog (12 dark hues, organised as 6 families × 2 shades; reserved state colours like the SENT-flash green and the ERROR red are deliberately excluded so your idle pick can never collide with a state-machine signal).
+   - Choose the **idle colour** for the field using the colour swatch button (12 dark hues; reserved state colours are excluded so your pick can never collide with a state-machine signal).
    - Tap **Send Message N** to test it immediately from the app.
 3. Add **KSafe Message 1**, **KSafe Message 2**, and/or **KSafe Message 3** as data fields in your Karoo ride profile.
 
-> [!TIP]
-> You can put all three fields on the same screen — they are fully independent and each sends its own message when tapped.
+To assign **KSafe: Send Custom Message** (slot 1 only) to a SRAM AXS button: **Sensors → [your AXS groupset] → Configure Controls**, press the shifter button, select the KSafe action. **Short Press** and **Long Press** can be bound independently.
 
-### Hardware button
+### Webhook Actions
 
-To assign **KSafe: Send Custom Message** to a SRAM AXS button: on the Karoo go to **Sensors → [your AXS groupset] → Configure Controls**, press the physical shifter button you want to use, and select the KSafe action from the list. You can bind **Short Press** and **Long Press** independently. Once configured, a single press sends **Message 1** instantly — no need to unlock the screen or navigate to the app.
-
-## Webhook Actions
-
-KSafe provides **two configurable webhook action buttons** that you can assign to Karoo hardware controller buttons. Each button fires an HTTP request to any URL you configure — useful for triggering automations while riding without touching your phone.
+KSafe provides **two configurable webhook action buttons** that you can assign to Karoo hardware controller buttons. Each fires an HTTP request to any URL you configure — useful for triggering automations while riding without touching your phone.
 
 **Use cases:**
+
 - Open your garage door (Home Assistant, Shelly, any smart relay)
 - Send yourself a push notification (ntfy)
 - Trigger an IFTTT / n8n / Make automation
 - Toggle any smart home device
 - Call any REST API or webhook
 
-The requests are sent **via the Karoo network bridge** — the same mechanism used for emergency alerts. This means they work over Bluetooth tether even when the Karoo is not on Wi-Fi.
+The requests are sent **via the Karoo network bridge** — the same mechanism used for emergency alerts. They work over Bluetooth tether even when the Karoo is not on Wi-Fi.
 
-### Configuration
+**Configuration:**
 
 1. Open KSafe → **Actions tab**.
 2. For each webhook slot (1 and 2):
    - Toggle **Enable Webhook N**.
-   - Enter a **label** — shown in the in-ride notification when the action fires (e.g. *"Garage"*, *"Door"*).
+   - Enter a **label** — shown in the in-ride notification when the action fires.
    - Enter the **URL** of the endpoint to call.
    - Choose **GET** or **POST**.
    - Optionally enter a **header** (one line, format `Key: Value`) — required for authentication with many services.
    - For POST requests, optionally enter a **body** (JSON or `key=value` form-encoded).
-   - Choose the **idle colour** for the webhook field using the colour swatch row.
-   - **Only trigger when near location** *(optional)*: enable the geo-fence toggle, tap **Use current GPS location as target** (or enter coordinates manually), and set a radius in metres. The webhook will be blocked if the device is further away than the configured radius.
-   - **Show ride alert when triggered** *(optional)*: enable the alert toggle and enter a custom text (e.g. *"Garage door opened!"*). An on-screen notification with this text appears every time the action fires — useful to notice accidental button presses.
-   - Tap **Test Webhook N** to verify it works before assigning it to a button.
-3. Assign to a SRAM AXS button: go to **Sensors → [your AXS groupset] → Configure Controls** on the Karoo, press the physical shifter button you want, and select **KSafe: Webhook Action 1** or **KSafe: Webhook Action 2** from the list. Short Press and Long Press can be assigned independently.
+   - Choose the **idle colour** for the webhook field.
+   - **Only trigger when near location** *(optional)*: enable the geo-fence toggle, tap **Use current GPS location as target** (or enter coordinates manually), and set a radius in metres.
+   - **Show ride alert when triggered** *(optional)*: enable the alert toggle and enter a custom text. An on-screen notification appears every time the action fires — useful to notice accidental button presses.
+   - Tap **Test Webhook N** to verify it works before assigning to a button.
+3. Assign to a SRAM AXS button via **Sensors → [your AXS groupset] → Configure Controls**.
 
-When you press the configured button during a ride, the HTTP request fires immediately and you get an in-ride notification showing success or failure. If the webhook is **disabled** or the **URL is blank**, you will receive a notification explaining why the action was not fired — the field is always tappable so you can confirm at a glance why nothing happened.
+When you press the configured button during a ride, the HTTP request fires immediately and you get an in-ride notification showing success or failure. If the webhook is disabled or the URL is blank, you receive a notification explaining why — the field is always tappable so you can confirm at a glance.
 
-### Examples
-
-#### 🏠 Home Assistant — toggle a cover (garage door)
-
-Home Assistant exposes a REST API for every entity. To toggle a cover (garage door, roller shutter, etc.):
-
-| Field | Value |
-|-------|-------|
-| **URL** | `https://your-ha-instance.com/api/services/cover/toggle` |
-| **Method** | POST |
-| **Header** | `Authorization: Bearer YOUR_LONG_LIVED_TOKEN` |
-| **Body** | `{"entity_id": "cover.garage_door"}` |
-
-Replace `your-ha-instance.com` with your Home Assistant URL (local or via Nabu Casa), and `cover.garage_door` with your entity ID. Get a Long-Lived Access Token from **Home Assistant → Profile → Long-Lived Access Tokens**.
-
-> You can use any Home Assistant service: `light.toggle`, `switch.turn_on`, `script.my_script`, `input_boolean.toggle`, etc. The entity ID is found in HA under **Settings → Devices & Services → Entities**.
-
-#### 🔌 Shelly — toggle a relay (garage door motor)
-
-Shelly devices expose a simple local HTTP API — no cloud required.
-
-**Shelly 1 / 1PM / Plus 1 (local API):**
-
-| Field | Value |
-|-------|-------|
-| **URL** | `http://192.168.1.50/relay/0?turn=toggle` |
-| **Method** | GET |
-| **Header** | *(leave empty if no password set)* |
-| **Body** | *(not needed for GET)* |
-
-Replace `192.168.1.50` with your Shelly's local IP address. The Shelly must be on the same Wi-Fi network as your phone (the request goes through the Karoo → phone bridge).
-
-**Shelly via cloud (if not on the same network):**
-
-| Field | Value |
-|-------|-------|
-| **URL** | `https://shelly-103-eu.shelly.cloud/device/relay/control` |
-| **Method** | POST |
-| **Header** | `Content-Type: application/x-www-form-urlencoded` |
-| **Body** | `auth_key=YOUR_AUTH_KEY&id=YOUR_DEVICE_ID&channel=0&turn=on&timer=1` |
-
-> ⚠️ The Shelly Cloud API expects **form-urlencoded**, not JSON. Make sure the `Content-Type` header is set exactly as above and the body uses the `key=value&key=value` format.
-
-> **`timer=1` is key for garage doors** — it activates the relay for 1 second then releases it, which is exactly what a garage door push-button needs. Without it the relay stays on.
-
-**How to get your credentials from the Shelly app:**
-
-1. Open the **Shelly app** → tap your device → **Settings → User Settings → Authorization Cloud Key**.
-2. Note down:
-   - **`auth_key`** — your cloud authorisation key.
-   - **Cloud server** — shown as something like `shelly-103-eu.shelly.cloud` (use this as the hostname in the URL).
-   - **`id`** — the device ID shown in the device info screen.
-
-> [!TIP]
-> Test the call with `curl` or Postman before setting it up in KSafe:
-> ```bash
-> curl -X POST https://shelly-103-eu.shelly.cloud/device/relay/control \
->   -H "Content-Type: application/x-www-form-urlencoded" \
->   -d "auth_key=YOUR_AUTH_KEY&id=YOUR_DEVICE_ID&channel=0&turn=on&timer=1"
-> ```
-> You should hear the relay click. If it works there, it will work from KSafe.
-
-#### 📬 ntfy — send a push notification to yourself
-
-ntfy lets you send notifications to your own phone without any external service. Useful for confirming the action was triggered.
-
-| Field | Value |
-|-------|-------|
-| **URL** | `https://ntfy.sh/your-topic-name` |
-| **Method** | POST |
-| **Header** | `Title: KSafe Action` |
-| **Body** | `Garage door toggled from the bike!` |
-
-Replace `your-topic-name` with the topic you subscribed to in the ntfy app. The `Header` field can only hold one header — for ntfy the `Title` header sets the notification title. The body is the notification text.
-
-#### ⚡ IFTTT Webhook (Applets)
-
-IFTTT supports incoming webhooks to trigger any applet:
-
-| Field | Value |
-|-------|-------|
-| **URL** | `https://maker.ifttt.com/trigger/YOUR_EVENT/with/key/YOUR_IFTTT_KEY` |
-| **Method** | POST |
-| **Header** | `Content-Type: application/json` |
-| **Body** | `{"value1": "triggered from KSafe"}` |
-
-Replace `YOUR_EVENT` with your IFTTT event name and `YOUR_IFTTT_KEY` with your Webhooks key (found at [ifttt.com/maker_webhooks](https://ifttt.com/maker_webhooks)).
-
-#### 🔁 n8n / Make (generic webhook)
-
-Both n8n and Make expose webhook URLs that accept any HTTP request:
-
-| Field | Value |
-|-------|-------|
-| **URL** | Your webhook URL from n8n / Make |
-| **Method** | POST |
-| **Header** | *(optional, e.g. `Authorization: Bearer token` if protected)* |
-| **Body** | `{"source": "ksafe", "action": "button1"}` |
-
-Both platforms let you trigger any automation flow when the webhook fires.
-
-### Hardware button assignment
-
-After configuring a webhook slot:
-1. On the Karoo, go to **Sensors → [your AXS groupset] → Configure Controls**.
-2. Press the physical SRAM AXS shifter button you want to assign.
-3. Select **KSafe: Webhook Action 1** or **KSafe: Webhook Action 2** from the actions list. **Short Press** and **Long Press** can be configured independently on the same button.
-4. Press the button during a ride — the HTTP request fires instantly and you get an in-ride notification.
-
-> [!NOTE]
-> BonusActions are **exclusive to SRAM AXS controllers** (RED/Force AXS shifters with the additional button). Other ANT+ remotes or Garmin controllers do not expose this feature. If you do not have a SRAM AXS groupset, these actions cannot be assigned to any button. See the [official Hammerhead guide on SRAM AXS controllers](https://support.hammerhead.io/hc/en-us/articles/25672636525979-Karoo-OS-Controlling-Karoo-with-SRAM-AXS-Controllers) for full details.
+📘 **Recipe collection: [docs/webhooks-cookbook.md](docs/webhooks-cookbook.md)** — copy-paste examples for Home Assistant, Shelly (local + cloud), ntfy, IFTTT, n8n / Make.
 
 ## Field Colours
 
@@ -885,14 +404,12 @@ Each KSafe ride field has a customisable **idle background colour** — the colo
 | Sent ✓ | Green | Custom Messages |
 | Error | Red | Custom Messages |
 
-### Where to change colours
+**Where to change colours:**
 
 - **SOS field** → **Settings tab** → *SOS field colour* swatch row (near the top, under Countdown seconds).
 - **Safety Timer field** → **Settings tab** → *Timer field colour* swatch row (just below the Check-in interval setting).
 - **Custom Message 1 / 2 / 3** → **Actions tab** → expand the message slot → colour swatches below the message text field.
 - **Webhook 1 / 2** → **Actions tab** → expand the webhook slot → colour swatches below the label field.
-
----
 
 ## Backup and Restore
 
@@ -954,6 +471,7 @@ Typing long tokens (Pushover App Token, Telegram Bot Token, etc.) on the Karoo t
    | `telegram` | `chatId` / `chatId2` / `chatId3` | Up to 3 chat / channel / group IDs |
 
    Example after editing (showing Telegram and Pushover):
+
    ```json
    {
      "config": { "isActive": true, "crashDetectionEnabled": true },
@@ -979,7 +497,7 @@ Typing long tokens (Pushover App Token, Telegram Bot Token, etc.) on the Karoo t
    }
    ```
 
-   > **Telegram note**: the Chat ID is required — the bot needs to know which chat/group/channel to deliver to (a bot can be in many chats at once). See the Telegram setup section above to get yours.
+   > **Telegram note**: the Chat ID is required — the bot needs to know which chat/group/channel to deliver to (a bot can be in many chats at once). See [docs/messaging-providers.md](docs/messaging-providers.md) for how to get yours.
 
 4. Save the file and push it back as `ksafe_import.json`:
    ```bash
@@ -1028,21 +546,21 @@ There are many conditions under which KSafe may fail to detect an incident or de
 - All configuration is stored locally on your Karoo device.
 - When you use a third-party provider (CallMeBot, Pushover, ntfy, Telegram), your message content and identifiers (phone number, chat ID, user key…) can be shared with that provider. Please read and accept their terms and privacy policies before using KSafe.
 - KSafe has no relationship or partnership with any of these providers.
+- The optional **anonymous calibration data** toggle (Settings tab, disabled by default) records sensor / algorithm data only — no GPS coordinates, no messages, no personal identifier. See [docs/calibration-logging.md](docs/calibration-logging.md) for the full disclosure.
 - KSafe has no warranties. If you do not agree with this, please do not use it.
 
-### Calibration logging (optional, disabled by default)
+## Documentation
 
-If you enable the **"Send anonymous calibration data"** toggle in Settings, KSafe will record and transmit sensor data (accelerometer values, GPS speed, gyroscope readings, road grade, terrain noise, detection algorithm states) to the developer via a private Telegram bot. This data is used exclusively to improve and calibrate the crash detection algorithm.
+### User guides (`docs/`)
 
-**No personal information is ever included**: no GPS coordinates, no location data, no emergency messages, no contact information, no account identifiers. The data contains only raw sensor readings and algorithm states — it is not possible to identify you, your location, or your ride from it.
+- **[Messaging providers — full setup](docs/messaging-providers.md)** — step-by-step for ntfy, CallMeBot, Telegram, Pushover.
+- **[Health & Fueling — full reference](docs/health-fueling.md)** — every field of the Health and Fueling tabs, tier thresholds, FIT-file export schema, custom alert tokens.
+- **[Webhook cookbook](docs/webhooks-cookbook.md)** — copy-paste recipes for Home Assistant, Shelly, ntfy, IFTTT, n8n / Make + hardware button assignment.
+- **[Calibration logging](docs/calibration-logging.md)** — full disclosure of what the opt-in sensor logger records and how it is sent.
 
-Each log is tagged with a **random session ID** (e.g. `a3f9c2`) generated fresh each session. This ID contains no timestamp, no location, and no device fingerprint — it exists solely so the developer can tell multiple logs apart when several users send data at the same time. Two sessions from the same device will have different IDs.
+### Algorithm internals (for contributors and curious riders)
 
-This feature is **disabled by default**. Enabling it is entirely voluntary and helps make KSafe more accurate for all riders.
-
-## Technical documentation
-
-If you want to understand exactly how each detection / tracking algorithm works — the thresholds, the rationale behind each constant, the edge cases handled, and the open items — three companion documents in the `docs/` folder cover the technical details:
+If you want to understand exactly how each detection / tracking algorithm works — the thresholds, the rationale behind each constant, the edge cases handled, and the open items — three companion documents cover the technical details:
 
 - **[Crash detection algorithm](docs/crash-detection-algorithm.md)** — multi-stage confirmation pipeline (`MONITORING → IMPACT → SILENCE_CHECK → CRASH_CONFIRMED`), dual smoothed/peak detector, GPS-stale fallback, terrain-cluster boost, cadence gate, calibration history.
 - **[Medical episode & wellness algorithms](docs/medical-wellness-algorithm.md)** — HR-flatline + HR-collapse sub-detectors, the `% of max HR` wellness mode, why both sub-detectors complement each other, sensor-disconnect handling.
@@ -1063,4 +581,3 @@ These docs are aimed at contributors and at riders who want to understand the *w
 - [CallMeBot WhatsApp API](https://www.callmebot.com/blog/free-api-whatsapp-messages/)
 - [Telegram BotFather](https://t.me/BotFather)
 - [DC Rainmaker sideloading guide](https://www.dcrainmaker.com/2021/02/how-to-sideload-android-apps-on-your-hammerhead-karoo-1-karoo-2.html)
-
