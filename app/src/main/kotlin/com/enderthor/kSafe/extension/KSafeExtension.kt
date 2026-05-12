@@ -108,6 +108,8 @@ class KSafeExtension : KarooExtension("ksafe", BuildConfig.VERSION_NAME), Corout
             com.enderthor.kSafe.datatype.CarbLogDataType("carb-log-2", applicationContext, karooSystem, slot = 2),
             com.enderthor.kSafe.datatype.CarbLogDataType("carb-log-3", applicationContext, karooSystem, slot = 3),
             com.enderthor.kSafe.datatype.CarbStatusDataType("carb-status", applicationContext, karooSystem),
+            com.enderthor.kSafe.datatype.CarbBurnRateDataType("carb-burn-rate", applicationContext, karooSystem),
+            com.enderthor.kSafe.datatype.CarbsBurnedDataType("carbs-burned", applicationContext, karooSystem),
             com.enderthor.kSafe.datatype.HydrationLogDataType("hyd-log-1", applicationContext, karooSystem, slot = 1),
             com.enderthor.kSafe.datatype.HydrationLogDataType("hyd-log-2", applicationContext, karooSystem, slot = 2),
             com.enderthor.kSafe.datatype.HydrationStatusDataType("hyd-status", applicationContext, karooSystem),
@@ -1145,23 +1147,46 @@ class KSafeExtension : KarooExtension("ksafe", BuildConfig.VERSION_NAME), Corout
             nativeFieldNum = null,
             developerDataIndex = 0,
         )
+        // Carb burn-rate / cumulative-burned developer fields. Numbers 5 and 6 are
+        // immutable once shipped, same contract as fields 2..4 above.
+        val carbsBurnedField = DeveloperField(
+            fieldDefinitionNumber = 5,
+            fitBaseTypeId = 136,
+            fieldName = "ksafe_carbs_burned_g",
+            units = "g",
+            nativeFieldNum = null,
+            developerDataIndex = 0,
+        )
+        val burnRateField = DeveloperField(
+            fieldDefinitionNumber = 6,
+            fitBaseTypeId = 136,
+            fieldName = "ksafe_carb_burn_rate_gph",
+            units = "g/h",
+            nativeFieldNum = null,
+            developerDataIndex = 0,
+        )
 
         val job: Job = launch {
             karooSystem.streamDataFlow(DataType.Type.ELAPSED_TIME)
                 .mapNotNull { (it as? StreamState.Streaming)?.dataPoint?.singleValue }
                 .collect {
-                    val carbsG = (carbsTrackerOrNull()?.getStatus()?.cumLoggedG ?: 0).toDouble()
+                    val carbStatus = carbsTrackerOrNull()?.getStatus()
+                    val carbsG       = (carbStatus?.cumLoggedG ?: 0).toDouble()
+                    val carbsBurnedG = (carbStatus?.cumTargetG ?: 0).toDouble()
+                    val burnRateGph  = (carbStatus?.burnRateGph ?: 0).toDouble()
                     val hydMl  = (hydrationTrackerOrNull()?.getStatus()?.cumLoggedMl ?: 0).toDouble()
                     val wellness = wellnessMonitorOrNull()?.getSummary()
                     val driftPct    = wellness?.currentDriftPct?.toDouble() ?: 0.0
                     val maxDriftPct = wellness?.maxDriftPct?.toDouble() ?: 0.0
                     val fires       = wellness?.totalFires?.toDouble() ?: 0.0
                     val values = listOf(
-                        FieldValue(carbField,     carbsG),
-                        FieldValue(hydField,      hydMl),
-                        FieldValue(hrDriftField,  driftPct),
-                        FieldValue(maxDriftField, maxDriftPct),
-                        FieldValue(firesField,    fires),
+                        FieldValue(carbField,         carbsG),
+                        FieldValue(hydField,          hydMl),
+                        FieldValue(hrDriftField,      driftPct),
+                        FieldValue(maxDriftField,     maxDriftPct),
+                        FieldValue(firesField,        fires),
+                        FieldValue(carbsBurnedField,  carbsBurnedG),
+                        FieldValue(burnRateField,     burnRateGph),
                     )
                     when (currentRideState) {
                         is RideState.Recording -> {

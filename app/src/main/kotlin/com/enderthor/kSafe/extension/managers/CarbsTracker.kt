@@ -155,6 +155,7 @@ class CarbsTracker(
         deficitG = (cumTargetG - cumLoggedG).toInt(),
         deficitThresholdG = config.carbDeficitThresholdG,
         zoneSnapshot = lastZoneSnapshot,
+        burnRateGph = (config.carbTargetGperHour * lastZoneSnapshot.multiplier).toInt(),
     )
 
     fun getSummary(): CarbSummary = CarbSummary(
@@ -262,6 +263,7 @@ data class CarbStatus(
     val deficitG: Int,
     val deficitThresholdG: Int,
     val zoneSnapshot: ZoneSnapshot,
+    val burnRateGph: Int,
 )
 
 /** Totals captured at end-of-ride for the post-ride summary InRideAlert. */

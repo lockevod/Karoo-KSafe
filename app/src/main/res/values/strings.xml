@@ -52,7 +52,7 @@
     <string name="settings_master_hint">When OFF the extension stops monitoring everything — crash, speed-drop, check-in, Health (HR), Fueling. Notifications already configured (ride start/end, custom messages, webhooks) are also suppressed. Leave ON unless you want a hard stop.</string>
     <string name="actions_section_karoo_live">Karoo Live notifications</string>
     <string name="actions_section_karoo_live_tests">Test ride notifications</string>
-    <string name="fueling_fit_export_hint">Writes KSafe data into the recorded FIT so Strava / Intervals.icu / TrainingPeaks can plot it alongside HR and power. Includes cumulative carbs (g) and hydration (ml); plus, when wellness is enabled, current HR drift (%), max drift this ride, and wellness alert count.</string>
+    <string name="fueling_fit_export_hint">Writes KSafe data into the recorded FIT so Strava / Intervals.icu / TrainingPeaks can plot it alongside HR and power. Includes cumulative carbs logged (g), cumulative carbs burned (g), current carb burn rate (g/h) and hydration (ml); plus, when wellness is enabled, current HR drift (%), max drift this ride, and wellness alert count.</string>
     <string name="simulate_crash_label">Simulate Crash (send alert now)</string>
     <string name="simulate_crash_confirm_title">Send a real alert?</string>
     <string name="simulate_crash_confirm_body">This sends the configured emergency message through your active provider — no countdown, no cancel. Use this only to verify the channel works end-to-end.</string>
@@ -110,6 +110,10 @@
     <string name="carb_log_datatype_desc">Tap to log a configured carb item (e.g. gel, bar). Counts toward your hourly target.</string>
     <string name="carb_status_datatype_name">KSafe Carb Status</string>
     <string name="carb_status_datatype_desc">Shows current carb deficit relative to target. Color-coded by urgency.</string>
+    <string name="carb_burn_rate_datatype_name">KSafe Carb Burn Rate</string>
+    <string name="carb_burn_rate_datatype_desc">Current carb burn rate in g/h, modulated by your HR/power intensity zone. Falls back to the configured base target when no sensor data is available.</string>
+    <string name="carbs_burned_datatype_name">KSafe Carbs Burned</string>
+    <string name="carbs_burned_datatype_desc">Cumulative carbs burned this session in grams (zone-aware integrated target). Companion field to Carb Status (deficit).</string>
     <string name="hyd_log_1_datatype_name">KSafe Drink 1</string>
     <string name="hyd_log_2_datatype_name">KSafe Drink 2</string>
     <string name="hyd_log_datatype_desc">Tap to log a configured drink item (e.g. sip, bottle). Counts toward your hourly target.</string>
