@@ -107,6 +107,23 @@ When calibration logging is enabled, anonymised HR data does appear in the local
 
 The Fueling tab is **fully optional**. It is **disabled by default** because the right targets depend on each rider. When you enable it, KSafe begins integrating a per-second carb and fluid target while you ride, watches what you log, and warns you when you fall behind.
 
+### How it works (no biometrics required)
+
+KSafe **does not measure your blood glucose or hydration in real time** — there is no sensor on a bike that can. Instead the model compares two numbers and alerts when they diverge too much:
+
+| What | How it's obtained |
+|------|---|
+| **Target so far** | The per-hour rate you configure (e.g. 60 g/h for carbs, 750 ml/h for hydration), **integrated** over elapsed ride time. For carbs the rate is auto-modulated by HR / power zone (0.7×–1.3×). For hydration, optionally by the dynamic sweat-rate estimator (HR + power + weight + ambient temperature + humidity). |
+| **Logged so far** | The sum of every log-slot tap you make during the ride. |
+
+The difference is the **deficit**. When it exceeds the threshold you configure (defaults: 25 g for carbs, 300 ml for hydration) KSafe fires a beep + on-screen alert.
+
+Three consequences worth understanding *before* you trust the alerts:
+
+1. **The reference is the target you configure** — not a biometric measurement of you. Without a sensible per-hour target there is nothing to be behind on. The defaults (60 g/h, 750 ml/h) cover a 2–3 h endurance ride in mild weather, but they are not personal. See [Setting your initial targets](#how-to-pick-your-per-hour-targets) for the starting tables, then refine them with the [calibration workflow](#how-to-calibrate-against-a-real-ride) after 2–3 real rides.
+2. **If you eat or drink without tapping a slot, KSafe doesn't know.** The integrated target keeps climbing; the deficit grows until you tap. A missed log is indistinguishable from a missed gel. The slot's [on-screen undo](#logging-in-ride) (a second tap within ~5 s) protects against the opposite mistake — an accidental tap that didn't correspond to a real intake.
+3. **The model assumes you're riding "around" your configured intensity.** The zone multiplier handles surges and recoveries within the typical range, but if you spend two hours coasting downhill the integrated target overstates your actual burn, and a "deficit" alert isn't really telling you to eat. Likewise the hydration estimator is biased toward over-targeting in heat — see [SweatEstimator's accuracy notes](fueling-algorithm.md) for the rationale.
+
 ### How the carb target adapts to your effort
 
 Carb burning depends heavily on intensity. KSafe reads your **HR zones** (5 zones, configured in your Karoo) and **power zones** (7 zones) directly from the Karoo's user profile — no manual entry of weight, FTP, max HR or anything else. From those zones it derives a real-time multiplier between **0.7×** (recovery / Z1) and **1.3×** (top zone) and applies it to your configured base target (e.g. 60 g/h):
