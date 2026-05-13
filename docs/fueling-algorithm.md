@@ -347,7 +347,7 @@ Two complementary mechanisms:
 | `CarbStatusDataType` | 1 (carb-status) | Current deficit (color-coded) | Read-only |
 | `HydrationStatusDataType` | 1 (hyd-status) | Same in ml | Read-only |
 
-Tap behaviour: a `PendingIntent` fires a unique broadcast action (`com.enderthor.kSafe.TAP_CARB_LOG_$slot`) → `FieldTapReceiver` → `KSafeExtension.handleCarbLogTap(slot)` → `tracker.logEntry(slot)` → `CarbLogState` flips to LOGGED for 2 s (green flash) → back to IDLE.
+Tap behaviour: a `PendingIntent` fires a unique broadcast action (`com.enderthor.kSafe.TAP_CARB_LOG_$slot`) → `FieldTapReceiver` → `KSafeExtension.handleCarbLogTap(slot)`. The state machine for the slot is `IDLE → LOGGED (5 s window, tappable, hint "TAP UNDO") → IDLE` on timeout, or `IDLE → LOGGED → (tap during window) → UNDONE (1.5 s red flash) → IDLE` if the rider taps the same slot a second time within the 5 s window. The undo path calls `tracker.undoLastForSlot(slot)` which reverses the cumulative grams **and** restores the previous `lastLogMs` so a time-based alert clock isn't perturbed by the bad entry. The pending revert `Job` is stored per slot in `KSafeExtension.carbTapRevertJobs[]` and cancelled before launching a new one, so a stale `LOGGED → IDLE` timer from an earlier tap cannot clobber a fresher state set by a subsequent tap on the same slot.
 
 ### Hardware buttons (BonusActions, SRAM AXS only)
 
@@ -506,14 +506,18 @@ The `cancelAndJoin` inside the *new* coroutine ensures the previous tick loop is
 
 ## Calibration Logging
 
-| Event | Fields |
+| Event (CSV tag) | Fields |
 |---|---|
-| `FUELING_CARB_LOGGED` | `slot, grams, cum_logged, cum_target` |
-| `FUELING_CARB_FIRED` | `source(deficit|time), deficit_g, since_log_min, cum_target, cum_logged, zone, multiplier` |
-| `FUELING_CARB_PERIODIC` | every 2 min: `cum_target, cum_logged, deficit, zone_source, zone_idx, zone_total, multiplier, hr, power` |
-| `FUELING_HYDRATION_LOGGED` | `slot, ml, cum_logged, cum_target` |
-| `FUELING_HYDRATION_FIRED` | `source, deficit_ml, since_log_min, cum_target, cum_logged` |
-| `FUELING_HYDRATION_PERIODIC` | every 2 min: `cum_target, cum_logged, deficit` |
+| `FUELING_CARB_LOGGED` (`CARB_LOG`) | `slot, grams, cum_logged, cum_target` |
+| `FUELING_CARB_UNDONE` (`CARB_UNDO`) | `slot, grams (negative — the reversal amount), cum_logged, cum_target` |
+| `FUELING_CARB_FIRED` (`CARB_FIRE`) | `source(deficit|time), deficit_g, since_log_min, cum_target, cum_logged, zone, multiplier` |
+| `FUELING_CARB_PERIODIC` (`CARB_PERIODIC`) | every 2 min: `cum_target, cum_logged, deficit, zone_source, zone_idx, zone_total, multiplier, hr, power` |
+| `FUELING_HYDRATION_LOGGED` (`HYD_LOG`) | `slot, ml, cum_logged, cum_target` |
+| `FUELING_HYDRATION_UNDONE` (`HYD_UNDO`) | `slot, ml (negative — the reversal amount), cum_logged, cum_target` |
+| `FUELING_HYDRATION_FIRED` (`HYD_FIRE`) | `source, deficit_ml, since_log_min, cum_target, cum_logged` |
+| `FUELING_HYDRATION_PERIODIC` (`HYD_PERIODIC`) | every 2 min: `cum_target, cum_logged, deficit` |
+
+> **Counting intakes:** a parser that wants "how many times did the rider tap log" should filter by the `_LOGGED` tags only — `_UNDONE` rows are reversals, not intakes. A parser that sums `grams` / `ml` across **both** `_LOGGED` and `_UNDONE` rows nets out correctly (the negative undo cancels the original positive log). The distinct tag exists precisely so the two analyses don't conflict.
 
 The 2-minute cadence of `*_PERIODIC` matches the existing crash-detection `PERIODIC` event so calibration analysis can correlate timelines by timestamp without modifying crash code.
 
