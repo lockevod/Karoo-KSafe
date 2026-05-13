@@ -177,6 +177,35 @@ Defaults are a starting point — your true rate is rider-specific. The data fie
 
 After two or three calibration rides in varied conditions you'll have personalised numbers. The defaults are a starting hypothesis, not a prescription.
 
+#### Measuring your personal sweat rate
+
+The cheapest accurate calibration for hydration is to weigh yourself before and after a 1–2 h ride in representative conditions:
+
+```
+sweat_rate (L/h) = ((kg_before - kg_after) + litres_consumed) / hours
+```
+
+Subtract any urination volume if relevant. Repeat in cool, mild and hot conditions to build a personal curve — sweat rate can vary 2–3× between a 12 °C ride and a 32 °C ride for the same rider.
+
+#### References and further reading
+
+The tables above synthesise the following sources, which are the standard citations in the sports-nutrition literature and in the product copy of any serious hydration / fuelling brand:
+
+**Carbohydrates**
+- **Jeukendrup A. (2014)**. *A step towards personalized sports nutrition: carbohydrate intake during exercise.* Sports Medicine 44(Suppl 1):S25–S33. Open access. Origin of the duration-keyed ladder (30 → 60 → 90 → 120 g/h) and the multi-transportable-carbs rationale.
+- **Thomas DT, Erdman KA, Burke LM (2016)**. *Position of the Academy of Nutrition and Dietetics, Dietitians of Canada, and the American College of Sports Medicine: Nutrition and Athletic Performance.* MSSE 48(3):543–568. The joint position statement most often cited in cycling federations' nutrition guidance.
+- **[mysportscience.com](https://www.mysportscience.com)** — Jeukendrup's accessible blog; the carb-ladder infographics widely reused in cycling content originate here.
+
+**Hydration**
+- **Sawka MN et al. (2007)**. *ACSM Position Stand: Exercise and Fluid Replacement.* MSSE 39(2):377–390. Source of the "<2 % bodyweight loss" rule and of the by-intensity / by-environment ranges that this document's table mirrors.
+- **Baker LB (2017)**. *Sweating Rate and Sweat Na+ Concentration in Athletes: A Review of Methodology and Intra/Interindividual Variability.* Sports Medicine 47(Suppl 1):111–128. Open access. Documents the 0.5–2.5 L/h real-world spread and supports the dynamic-estimator's deliberate upper-bound bias.
+
+**Practical calculators (free)**
+- **Precision Fuel & Hydration Knowledge Hub** — `precisionhydration.com/knowledge` — articles by Andy Blow, free online sweat-test that returns a personalised ml/h and a sodium ladder.
+- **TrainingPeaks blog** — overlapping divulgation of the same methodology.
+
+These are starting hypotheses, not prescriptions. KSafe's `SweatEstimator` (see [fueling-algorithm.md](fueling-algorithm.md)) explicitly biases the hydration target toward the upper end of the literature because under-targeting fluids carries far more risk (heat illness, cramps, judgment collapse) than over-targeting (a few extra sips).
+
 ### Two combinable alert modes
 
 For each category (carbs, hydration) independently:
