@@ -89,6 +89,15 @@ class KSafeExtension : KarooExtension("ksafe", BuildConfig.VERSION_NAME), Corout
     /** True if there was an active ride (Recording or Paused) — used to detect ride end. */
     private var rideWasActive = false
 
+    /** Per-slot tap-feedback timer jobs (LOGGED→IDLE / UNDONE→IDLE delayed reverts).
+     *  Cancelled before a new launch so a stale timer from an earlier tap cannot
+     *  clobber a fresher state set by a subsequent tap on the same slot. Indices 1..3
+     *  for carbs, 1..2 for hydration; index 0 unused. Touched only from handleCarbLogTap /
+     *  handleHydrationLogTap, which run on the extension's Main dispatcher, so plain
+     *  arrays (no @Volatile) are safe. */
+    private val carbTapRevertJobs: Array<kotlinx.coroutines.Job?> = arrayOfNulls(4)
+    private val hydTapRevertJobs: Array<kotlinx.coroutines.Job?> = arrayOfNulls(3)
+
     companion object {
         // @Volatile: written from onCreate / onDestroy on the Main thread but read from
         // FieldTapReceiver (binder thread), DataType polling coroutines (Dispatchers.Default),
@@ -1028,18 +1037,24 @@ class KSafeExtension : KarooExtension("ksafe", BuildConfig.VERSION_NAME), Corout
         if (!activeConfig.isActive) return
         if (!activeConfig.carbsTrackerEnabled) return
         if (!this::carbsTracker.isInitialized) return
+        if (slot !in 1..3) return
+        // Cancel any pending revert from a previous tap on this slot. Without this a
+        // 3-tap sequence (log → undo → log within ~5 s) could leave a stale LOGGED→IDLE
+        // timer from the first tap, which would fire later and clobber the third tap's
+        // LOGGED state — flash disappears before the rider sees the confirmation.
+        carbTapRevertJobs[slot]?.cancel()
+        carbTapRevertJobs[slot] = null
+
         val state = com.enderthor.kSafe.datatype.CarbLogState.flowForSlot(slot).value
         if (state == com.enderthor.kSafe.datatype.CarbLogState.LOGGED) {
             // Second tap within the undo window — reverse the previous entry.
             val undone = carbsTracker.undoLastForSlot(slot)
             if (undone > 0) {
                 com.enderthor.kSafe.datatype.CarbLogState.update(slot, com.enderthor.kSafe.datatype.CarbLogState.UNDONE)
-                launch {
+                carbTapRevertJobs[slot] = launch {
                     kotlinx.coroutines.delay(1_500L)
-                    if (com.enderthor.kSafe.datatype.CarbLogState.flowForSlot(slot).value
-                        == com.enderthor.kSafe.datatype.CarbLogState.UNDONE) {
-                        com.enderthor.kSafe.datatype.CarbLogState.update(slot, com.enderthor.kSafe.datatype.CarbLogState.IDLE)
-                    }
+                    com.enderthor.kSafe.datatype.CarbLogState.update(slot, com.enderthor.kSafe.datatype.CarbLogState.IDLE)
+                    carbTapRevertJobs[slot] = null
                 }
             } else {
                 com.enderthor.kSafe.datatype.CarbLogState.update(slot, com.enderthor.kSafe.datatype.CarbLogState.IDLE)
@@ -1050,13 +1065,10 @@ class KSafeExtension : KarooExtension("ksafe", BuildConfig.VERSION_NAME), Corout
         // 5 s window: long enough to notice a wrong tap and undo, short enough that a
         // legitimate second log on the same slot isn't an annoying wait.
         com.enderthor.kSafe.datatype.CarbLogState.update(slot, com.enderthor.kSafe.datatype.CarbLogState.LOGGED)
-        launch {
+        carbTapRevertJobs[slot] = launch {
             kotlinx.coroutines.delay(5_000L)
-            // Guard against races with a subsequent tap that already changed the state.
-            if (com.enderthor.kSafe.datatype.CarbLogState.flowForSlot(slot).value
-                == com.enderthor.kSafe.datatype.CarbLogState.LOGGED) {
-                com.enderthor.kSafe.datatype.CarbLogState.update(slot, com.enderthor.kSafe.datatype.CarbLogState.IDLE)
-            }
+            com.enderthor.kSafe.datatype.CarbLogState.update(slot, com.enderthor.kSafe.datatype.CarbLogState.IDLE)
+            carbTapRevertJobs[slot] = null
         }
     }
 
@@ -1065,17 +1077,19 @@ class KSafeExtension : KarooExtension("ksafe", BuildConfig.VERSION_NAME), Corout
         if (!activeConfig.isActive) return
         if (!activeConfig.hydrationTrackerEnabled) return
         if (!this::hydrationTracker.isInitialized) return
+        if (slot !in 1..2) return
+        hydTapRevertJobs[slot]?.cancel()
+        hydTapRevertJobs[slot] = null
+
         val state = com.enderthor.kSafe.datatype.HydrationLogState.flowForSlot(slot).value
         if (state == com.enderthor.kSafe.datatype.HydrationLogState.LOGGED) {
             val undone = hydrationTracker.undoLastForSlot(slot)
             if (undone > 0) {
                 com.enderthor.kSafe.datatype.HydrationLogState.update(slot, com.enderthor.kSafe.datatype.HydrationLogState.UNDONE)
-                launch {
+                hydTapRevertJobs[slot] = launch {
                     kotlinx.coroutines.delay(1_500L)
-                    if (com.enderthor.kSafe.datatype.HydrationLogState.flowForSlot(slot).value
-                        == com.enderthor.kSafe.datatype.HydrationLogState.UNDONE) {
-                        com.enderthor.kSafe.datatype.HydrationLogState.update(slot, com.enderthor.kSafe.datatype.HydrationLogState.IDLE)
-                    }
+                    com.enderthor.kSafe.datatype.HydrationLogState.update(slot, com.enderthor.kSafe.datatype.HydrationLogState.IDLE)
+                    hydTapRevertJobs[slot] = null
                 }
             } else {
                 com.enderthor.kSafe.datatype.HydrationLogState.update(slot, com.enderthor.kSafe.datatype.HydrationLogState.IDLE)
@@ -1084,12 +1098,10 @@ class KSafeExtension : KarooExtension("ksafe", BuildConfig.VERSION_NAME), Corout
         }
         hydrationTracker.logEntry(slot)
         com.enderthor.kSafe.datatype.HydrationLogState.update(slot, com.enderthor.kSafe.datatype.HydrationLogState.LOGGED)
-        launch {
+        hydTapRevertJobs[slot] = launch {
             kotlinx.coroutines.delay(5_000L)
-            if (com.enderthor.kSafe.datatype.HydrationLogState.flowForSlot(slot).value
-                == com.enderthor.kSafe.datatype.HydrationLogState.LOGGED) {
-                com.enderthor.kSafe.datatype.HydrationLogState.update(slot, com.enderthor.kSafe.datatype.HydrationLogState.IDLE)
-            }
+            com.enderthor.kSafe.datatype.HydrationLogState.update(slot, com.enderthor.kSafe.datatype.HydrationLogState.IDLE)
+            hydTapRevertJobs[slot] = null
         }
     }
 

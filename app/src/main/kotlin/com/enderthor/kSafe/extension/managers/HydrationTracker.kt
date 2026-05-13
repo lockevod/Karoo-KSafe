@@ -81,9 +81,11 @@ class HydrationTracker(
     @Volatile private var lastSweatConfidence: SweatConfidence = SweatConfidence.LOW
 
     // ─── Per-slot undo state ────────────────────────────────────────────────
-    // See [CarbsTracker] for the same pattern. Indices 1..2; slot 0 is unused.
-    private val lastLoggedMlBySlot = IntArray(3)
-    private val lastLogMsBeforeBySlot = LongArray(3)
+    // See [CarbsTracker] for the same pattern. Hydration currently uses slots 1..2
+    // (slot 0 unused); sized to 4 for symmetry with CarbsTracker so a future third
+    // hydration slot can be added without touching the bookkeeping.
+    private val lastLoggedMlBySlot = IntArray(4)
+    private val lastLogMsBeforeBySlot = LongArray(4)
 
     @Volatile private var config = KSafeConfig()
     private var monitorJob: Job? = null

@@ -77,9 +77,13 @@ fun FieldColorPicker(
                 Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
                     // AUTO sits alone on the first row so it reads as the special "Karoo
                     // default" option rather than getting visually lumped with the warm-earth
-                    // hues that lead the painted palette.
-                    val (auto, painted) = FIELD_COLOR_PALETTE.partition { it == FIELD_COLOR_AUTO }
-                    val rows: List<List<Int>> = auto.map { listOf(it) } + painted.chunked(4)
+                    // hues that lead the painted palette. Cached: the palette is a top-level
+                    // constant — partition + chunked produce the same result every
+                    // recomposition, no need to recompute on each profile-editor redraw.
+                    val rows: List<List<Int>> = remember {
+                        val (auto, painted) = FIELD_COLOR_PALETTE.partition { it == FIELD_COLOR_AUTO }
+                        auto.map { listOf(it) } + painted.chunked(4)
+                    }
                     rows.forEach { rowColors ->
                         Row(
                             horizontalArrangement = Arrangement.spacedBy(12.dp),
