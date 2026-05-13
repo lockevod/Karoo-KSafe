@@ -116,7 +116,10 @@ class WebhookDataType(
             val initialConfig = runCatching { configManager.loadConfigFlow().first() }.getOrNull()
             if (initialConfig != null) {
                 val label     = labelFromConfig(initialConfig)
-                val enabled   = isEnabled(initialConfig)
+                // In preview render the configured idle colour even if the slot is disabled,
+                // so the profile-editor gallery shows what the field will look like once
+                // the rider enables the slot in the Actions tab.
+                val enabled   = config.preview || isEnabled(initialConfig)
                 val idleColor = idleColorFromConfig(initialConfig)
                 val bgColor   = if (enabled) idleColor else COLOR_DISABLED
                 val hint      = if (enabled) "tap" else "off"
@@ -132,7 +135,8 @@ class WebhookDataType(
                     configManager.loadConfigFlow()
                 ) { stateData, ksafeConfig ->
                     val label     = labelFromConfig(ksafeConfig)
-                    val enabled   = isEnabled(ksafeConfig)
+                    // In preview always render as enabled — see note in the primer above.
+                    val enabled   = config.preview || isEnabled(ksafeConfig)
                     val idleColor = idleColorFromConfig(ksafeConfig)
                     when (stateData.state) {
                         WebhookState.IDLE    -> {

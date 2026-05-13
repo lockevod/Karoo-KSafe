@@ -109,7 +109,10 @@ class CustomMessageDataType(
                 ) { state, ksafeConfig ->
                     val title = titleFromConfig(ksafeConfig)
                     val idleColor = idleColorFromConfig(ksafeConfig)
-                    if (!enabledFromConfig(ksafeConfig)) {
+                    if (!config.preview && !enabledFromConfig(ksafeConfig)) {
+                        // Slot disabled in Actions tab — show OFF in grey. Skipped in
+                        // preview so the profile-editor gallery shows the slot's
+                        // configured idle colour and title, not the disabled-state grey.
                         buildView(context, config, COLOR_OFF, title, "OFF", clickable = false)
                     } else when (state) {
                         CustomMessageState.IDLE    -> buildView(context, config, idleColor, title, "tap=send")

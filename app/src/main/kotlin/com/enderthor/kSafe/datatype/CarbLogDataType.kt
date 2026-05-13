@@ -135,8 +135,10 @@ class CarbLogDataType(
                     val leftDrawable = if (iconFromConfig(ksafeConfig) == FUEL_GEL_DRAWABLE) {
                         R.drawable.ic_fuel_gel
                     } else 0
-                    if (!ksafeConfig.carbsTrackerEnabled) {
-                        // Slot disabled — no drawable, just the OFF label.
+                    if (!config.preview && !ksafeConfig.carbsTrackerEnabled) {
+                        // Master tracker disabled — show OFF in grey. Skipped in preview
+                        // so the profile-editor gallery shows the slot's configured idle
+                        // colour and label, not the disabled-state grey.
                         buildView(context, config, COLOR_OFF, label, "OFF", clickable = false)
                     } else when (state) {
                         CarbLogState.IDLE    -> buildView(context, config, idleColorFromConfig(ksafeConfig), label, "${grams}g", leftDrawableRes = leftDrawable)
