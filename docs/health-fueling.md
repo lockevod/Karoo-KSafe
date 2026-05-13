@@ -217,6 +217,26 @@ The time alert also has a per-category **initial delay** (default 30 min, config
 
 Both modes can be on at the same time. A 5-minute cooldown prevents the two from firing within seconds of each other; once one fires, neither will fire again until the cooldown elapses.
 
+#### Picking the deficit threshold
+
+Defaults are **25 g** for carbs and **300 ml** for hydration. To pick a value that fires when you actually want it to, think in two reference frames:
+
+**As "minutes of intake behind"** — divide the threshold by your per-hour target. A 25 g threshold at a 60 g/h target = ~25 min behind; the same 25 g at a 90 g/h target = ~17 min behind. A 300 ml threshold at a 750 ml/h target = ~24 min behind; at 1200 ml/h = ~15 min. **The sweet spot is 15–25 min of buffer** — under 10 min you get false alarms every time you delay a sip by one descent, over 40 min the alert fires only once performance is already noticeably degrading.
+
+**As "one typical refuel item"** — a standard energy gel is ~22–30 g carbs, a sip-bag is ~30–35 g, a third of a 750 ml bottle is ~250 ml. Setting the threshold ≈ one refuel item means the first alert lands when you are *one item behind schedule* — actionable and unambiguous.
+
+| Rider profile | Carb threshold | Hydration threshold | Behaviour |
+|---|---|---|---|
+| Early-warner (long events, anti-bonk priority) | 15–20 g | 200–250 ml | Fires after one missed gel / one missed sip — tight monitoring |
+| **Default (most riders)** | **25 g** | **300 ml** | Fires after about one gel / a third of a bottle behind — the shipped defaults |
+| Late-warner (short rides, hates nags) | 35–45 g | 400–500 ml | Fires only after roughly two missed items — minimal interruption |
+
+**Two important guardrails:**
+- For hydration, the ACSM **"keep loss under 2 % body weight"** rule sets the upper bound. For a 75 kg rider that's 1500 ml total; a 300 ml threshold leaves a huge safety margin. Setting it above ~700 ml for a typical rider defeats the point of the alert.
+- For carbs, the bonk-protective ceiling is roughly **45–50 g of cumulative deficit**. Beyond that, blood glucose stability is already compromised and any "alert" arrives late. Don't set the threshold above ~40 g unless you're consciously running a fasted / low-carb ride.
+
+If your target is set sensibly (see the tables above), the default 25 g / 300 ml will land in the actionable window for the great majority of rides.
+
 Both the **alert title** ("Eat something" / "Drink something") and the **detail line** ("Behind by 25g" / "30 min since last log") are customisable per category. Each field shows the default as placeholder when empty — leave blank to use the default, or write your own template. Tokens are substituted at fire time:
 
 | Token | Substituted with |
