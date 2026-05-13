@@ -28,6 +28,7 @@ private const val COLOR_AHEAD  = 0xFF1565C0.toInt()  // blue — surplus, no con
 private const val COLOR_OK     = 0xFF2E7D32.toInt()  // green — within margin
 private const val COLOR_AMBER  = 0xFFE65100.toInt()  // amber — approaching threshold
 private const val COLOR_RED    = 0xFFB71C1C.toInt()  // red — over threshold
+private const val COLOR_NODATA = 0xFF424242.toInt()  // gray — no data yet (tracker not running)
 
 class CarbStatusDataType(
     datatype: String,
@@ -81,7 +82,10 @@ class CarbStatusDataType(
                 }
                 poll.collectLatest { status ->
                     val view = if (status == null) {
-                        buildView(config, COLOR_OK, "Carbs", "off")
+                        // Tracker not running yet (extension still booting, or no ride
+                        // started). Match the '---' convention used by CarbBurnRate and
+                        // CarbsBurned so the rider doesn't read 'off' as 'I disabled this'.
+                        buildView(config, COLOR_NODATA, "---", "carbs")
                     } else {
                         val color = colorFor(status.deficitG, status.deficitThresholdG)
                         buildView(config, color, displayMain(status.deficitG), "carbs")
