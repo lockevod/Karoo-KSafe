@@ -268,7 +268,7 @@ For example, a custom carb detail of `"You're {deficit}g down — eat now ({elap
 
 Two complementary mechanisms:
 
-- **Data fields**: 3 carb log slots + 2 drink log slots, each with its own configurable **label** (e.g. *"Gel"*, *"Bar"*, *"Bottle"*), **amount** (g or ml), **idle background colour** (palette of 16 dark hues — see [field-colours.md](field-colours.md)) and **icon** (emoji like 🍫 / 🥤 / 💧, or one of the two bundled vector drawables for sports gel pouch and cyclist bidón — Unicode has no good emoji for those shapes). One tap = one log. The slot flashes green for **5 seconds** showing `+Xg ✓` (or `+Xml`) with the hint `TAP UNDO`, then returns to its idle label. Add as many or as few slots to your ride profile as you want.
+- **Data fields**: 3 carb log slots + 2 drink log slots, each with its own configurable **label** (e.g. *"Gel"*, *"Bar"*, *"Bottle"*), **amount** (g or ml), **idle background colour** (Karoo default auto day/night, or any of 20 dark hues — see [field-colours.md](field-colours.md)) and **icon** (emoji like 🍫 / 🥤 / 💧, or one of the two bundled vector drawables for sports gel pouch and cyclist bidón — Unicode has no good emoji for those shapes). One tap = one log. The slot flashes green for **5 seconds** showing `+Xg ✓` (or `+Xml`) with the hint `TAP UNDO`, then returns to its idle label. Add as many or as few slots to your ride profile as you want.
   - **On-screen undo**: a **second tap on the same slot during the 5 s green window reverses the log**. The slot then flashes red `−Xg ✓` (or `−Xml`) for ~1.5 s as confirmation and returns to idle. Per-slot and one-shot: a third tap is a no-op until the next log populates the slot again. Undo restores the time-alert clock to its value before the wrong tap, so the next time-based alert isn't shifted by the bad entry.
 - **Hardware buttons (BonusActions, SRAM AXS only)**: KSafe registers two extra actions, *"KSafe: Log Carb"* and *"KSafe: Log Drink"*, both wired to slot 1 of each category. Map them to your AXS shifter buttons so you can log without looking at the screen.
 
@@ -317,7 +317,7 @@ Per category (Carbs, Hydration) the Fueling tab lets you:
 - Toggle the time alert + interval + initial delay
 - Customise the alert **title** and **detail** templates (optional — placeholder shows the default; leave blank to use it, or write your own with `{deficit}` / `{elapsed}` / `{target}` tokens)
 - Pick the **alert sound** (`Off` / `Single long` / `Double pip` / `Rising chime` / `Urgent pulse`) — see [Beep patterns](#beep-patterns)
-- Configure each slot's label, amount, idle background colour (16-hue palette — see [field-colours.md](field-colours.md)), and icon (emoji or one of the bundled vector drawables for sports gel and bidón)
+- Configure each slot's label, amount, idle background colour (Karoo default or one of 20 dark hues — see [field-colours.md](field-colours.md)), and icon (emoji or one of the bundled vector drawables for sports gel and bidón)
 - For hydration only: toggle the **dynamic estimate** mode
 - Toggle FIT export (default on; controls whether your fueling appears as developer fields in the Karoo's FIT file)
 

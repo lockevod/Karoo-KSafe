@@ -15,7 +15,7 @@ Everything that decides **when** and **how** an emergency fires lives here.
 
 ### Field colours
 
-- **SOS field colour**: Idle background colour for the SOS data field (shown in SAFE state). Palette of 16 preset dark hues with white text — see [field-colours.md](field-colours.md).
+- **SOS field colour**: Idle background colour for the SOS data field (shown in SAFE state). Picker offers Karoo default (auto day/night) plus 20 dark hues with white text — see [field-colours.md](field-colours.md).
 - **Timer field colour**: Idle colour for the Safety Timer field (shown when the timer is running normally). Warning (yellow) and expired (red) state colours are always preserved regardless of this setting.
 
 ### Emergency message

@@ -85,7 +85,7 @@ The Safety Timer **pauses automatically** when the ride is paused.
 | **Carbs burned** | Cumulative carbs burned this ride |
 | **Hydration status** | Current fluid deficit (ml behind target) |
 
-Idle colours for every field are picked from a 16-hue palette in the corresponding tab. Reserved state colours (red error, orange countdown, amber warning, green success, grey OFF) can't be selected — they belong to the state machine.
+Idle background for every field is chosen from a palette in the corresponding tab. The first entry is **Karoo default (auto day/night)** — the new default for fresh installs — which makes the field render with no custom background and theme-driven text, matching native Karoo fields. Below it sits a 20-hue painted palette for riders who want a coloured tap target. Reserved state colours (red error, orange countdown, amber warning, green success, grey OFF) can't be selected — they belong to the state machine. Every field also respects the **per-field horizontal alignment** (left / center / right) the rider sets in the Karoo profile editor.
 
 ## Hardware buttons (SRAM AXS)
 
