@@ -53,21 +53,21 @@ If the countdown completes, KSafe obtains a GPS fix and sends the configured eme
 
 KSafe exposes **16 custom data fields**. Add any combination from the Karoo profile editor; configure them inside the KSafe app.
 
-### Safety (5)
+### Safety (2)
 
 | Field | Idle | Tap action | Active states |
 |-------|------|-----------|---------------|
 | **SOS** | `SAFE` (green) | Trigger SOS countdown | Orange `CANCEL` + seconds · Red `ALERT SENT` |
 | **Safety Timer** | Remaining time, green→yellow→red | Reset check-in ("I'm OK") | Orange `CANCEL` during any emergency · `Timer OFF` |
-| **Custom Message 1 / 2 / 3** | Configured label (e.g. `OK👍`, `HOME`) | Send the slot's preset text — no countdown | Orange `SENDING…` · Green `SENT ✓` · Red `ERR retry` |
 
 The Safety Timer **pauses automatically** when the ride is paused.
 
-### Actions (2)
+### Actions (5)
 
-| Field | Tap action |
-|-------|-----------|
-| **Webhook 1 / 2** | Fire the configured HTTP request, with optional geo-fence and on-screen ride alert |
+| Field | Tap action | Active states |
+|-------|-----------|---------------|
+| **Custom Message 1 / 2 / 3** | Send the slot's preset text — no countdown | Orange `SENDING…` · Green `SENT ✓` · Red `ERR retry` |
+| **Webhook 1 / 2** | Fire the configured HTTP request, with optional geo-fence and on-screen ride alert | — |
 
 ### Fueling — logging (5, v2.0)
 
@@ -109,7 +109,7 @@ The KSafe app has **six tabs**, in this order:
 1. **Safety** — emergency message + tokens (`{location}`, `{reason}`, `{livetrack}`), countdown duration, SOS / Timer field colours, crash detection (sensitivity preset + custom slider, min speed, confirm speed, monitor-outside-ride toggles), speed-drop window, check-in interval.
 2. **Health** *(v2.0)* — HR-based detectors: medical episode (HR flatline / collapse) and wellness monitor (critical HR, sustained HR, HR–power decoupling). Each has Silent / Warning / Emergency response level and customisable `{bpm}` / `{threshold}` / `{minutes}` / `{drift}` templates. Requires a paired HR sensor.
 3. **Fueling** *(v2.0)* — per-second carb and fluid targets that adapt to your effort via HR / power zones (0.7×–1.3×). Two combinable alert modes per category (**deficit** and **time**), each with customisable templates (`{deficit}`, `{elapsed}`, `{target}`) and a per-category beep pattern. Optional dynamic sweat-rate estimate (HR, power, weight, temp, humidity) for hydration. Post-ride summary.
-4. **Actions** — Custom Messages 1–3 (enable, 7-char button label, message text, idle colour) and Webhook 1–2 (URL, GET/POST, headers, body, optional geo-fence, optional on-screen alert).
+4. **Actions** — three sub-blocks: **Karoo Live** (ride-start / ride-end toggles + messages, Karoo Live key, test buttons), **Custom Messages 1–3** (enable, 7-char button label, message text, idle colour), and **Webhook 1–2** (URL, GET/POST, headers, body, optional geo-fence, optional on-screen alert).
 5. **Provider** — pick the active messaging provider and enter credentials. All four configurations are saved independently.
 6. **Settings** — master kill switch, **test buttons** (Simulate Crash, Test ride start/end), **FIT export** *(v2.0)* of logged + burned carbs / burn rate / hydration / wellness drift as developer fields for Strava / Intervals.icu / TrainingPeaks, **anonymous calibration logging** *(opt-in)*, **Backup / Restore**.
 
@@ -125,7 +125,7 @@ All test buttons work **without an active ride**:
 |--------|-------|--------------|
 | **Test Send** | Provider | Sends a test message via the active provider, with a precise error string on failure |
 | **Simulate Crash** | Settings | Sends your real emergency message immediately — no countdown |
-| **Test ride start / end** | Safety | Sends the configured ride-start or ride-end message |
+| **Test ride start / end** | Actions | Sends the configured ride-start or ride-end message |
 | **Send Message 1 / 2 / 3** | Actions | Sends each custom message directly from the app |
 
 > **Simulate Crash** sends a real alert to your contact. Warn them first, or use **Test Send** for connectivity-only checks.
@@ -143,7 +143,9 @@ The algorithm is based on the same approach as Garmin's incident detection: **la
 
 You can override min-speed manually after picking a preset (`0` disables the speed gate — useful for testing).
 
-📘 Full pipeline (`MONITORING → IMPACT → SILENCE_CHECK → CRASH_CONFIRMED`), per-preset commentary, real-world scenarios (pothole at 40 km/h, MTB jump landing, expansion joint…) and the rationale for every threshold: [docs/crash-detection-algorithm.md](docs/crash-detection-algorithm.md).
+**When it fires and when it doesn't.** An impact only confirms as a crash if the device then stays genuinely still — accelerometer near gravity, gyroscope ≤ 2 rad/s, GPS speed below the confirm threshold — for **4.5 continuous seconds**. Any movement in that window resets the countdown. After hitting a pothole, expansion joint or a small jump, a rider keeps pedalling — the GPS keeps moving and the gyro never settles, so no alert fires. After a real crash the device lies on the ground with near-zero motion for several seconds and the countdown starts. Without a GPS fix (tunnel, dense tree cover) the speed gate degrades and only the inertial checks remain; **High** sensitivity is therefore unsafe on MTB / gravel because a hard landing followed by a brief pause can confirm.
+
+📘 Full pipeline (`MONITORING → IMPACT → SILENCE_CHECK → CRASH_CONFIRMED`), per-preset thresholds, real-world scenarios (pothole at 40 km/h, MTB jump landing, expansion joint…) and the rationale for every constant: [docs/crash-detection-algorithm.md](docs/crash-detection-algorithm.md).
 
 ## Webhooks
 

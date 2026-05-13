@@ -35,8 +35,8 @@ These colours override your idle choice when the field enters the corresponding 
 
 ## Where to change idle colours
 
-- **SOS field** → **Settings tab** → *SOS field colour* swatch row (near the top, under Countdown seconds).
-- **Safety Timer field** → **Settings tab** → *Timer field colour* swatch row (just below the Check-in interval setting).
+- **SOS field** → **Safety tab** → *SOS field colour* swatch row (near the top, under Countdown seconds).
+- **Safety Timer field** → **Safety tab** → *Timer field colour* swatch row (just below the Check-in interval setting).
 - **Custom Message 1 / 2 / 3** → **Actions tab** → expand the message slot → colour swatches below the message text field.
 - **Webhook 1 / 2** → **Actions tab** → expand the webhook slot → colour swatches below the label field.
 - **Carb / Hydration log slots** *(v2.0)* → **Fueling tab** → expand the slot → colour swatches alongside the icon picker.

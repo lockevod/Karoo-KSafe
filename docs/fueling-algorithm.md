@@ -577,7 +577,7 @@ All config fields live in `KSafeConfig` (`data/ConfigData.kt`).
 
 | Field | Default | UI exposed |
 |---|---|---|
-| `fuelingFitExportEnabled` | `true` | ✅ Switch — Fueling tab. Sampled once at FIT-pipeline start; mid-ride toggle takes effect on the next ride. |
+| `fuelingFitExportEnabled` | `true` | ✅ Switch — Settings tab. Sampled once at FIT-pipeline start; mid-ride toggle takes effect on the next ride. |
 
 Internal: developer-field definitions and pacing live in `extension/KSafeExtension.startFit`. Field names `ksafe_carbs_g` / `ksafe_hyd_ml` and field definition numbers `0` / `1` are stable identifiers — do not change once shipped.
 

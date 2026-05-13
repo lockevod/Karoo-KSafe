@@ -236,7 +236,7 @@ The logged / burned / hydration fields are cumulative step curves. The burn rate
 > [!NOTE]
 > Field-definition numbers 5 (`ksafe_carbs_burned_g`) and 6 (`ksafe_carb_burn_rate_gph`) join the original 0–4 as **immutable once shipped** — historical FIT files reference them by number, so they cannot be repurposed.
 
-Toggleable via the **"Write to FIT"** switch in the Fueling tab. Default ON because the cost is negligible (~0.05 % battery over a 5 h ride, no perceptible CPU). Riders who don't want extra developer columns in their FIT can opt out cleanly.
+Toggleable via the **"Write to FIT"** switch in the **Settings** tab. Default ON because the cost is negligible (~0.05 % battery over a 5 h ride, no perceptible CPU). Riders who don't want extra developer columns in their FIT can opt out cleanly.
 
 Pacing aligns with the Karoo's native 1 Hz Record sampling, so the developer fields land on the same timestamps as HR / power. Outside `Recording` (Idle / Paused) nothing is written.
 
