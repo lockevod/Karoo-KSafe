@@ -135,6 +135,11 @@ class CalibrationLogger(
         FUELING_CARB_START("CARB_START"),
         /** User logged a carb intake via tap or BonusAction. */
         FUELING_CARB_LOGGED("CARB_LOG"),
+        /** User reversed the previous carb log by tapping the same slot during its
+         *  on-screen undo window. Payload's `grams` value is the (negative) reversal so
+         *  a downstream sum still nets out; distinct tag from CARB_LOG so per-event
+         *  counters don't double-count the rider's intake. */
+        FUELING_CARB_UNDONE("CARB_UNDO"),
         /** Carb tracker fired an alert (deficit or time-interval). */
         FUELING_CARB_FIRED("CARB_FIRE"),
         /** Periodic 2-minute snapshot of carb tracker state, correlable with PERIODIC by timestamp. */
@@ -143,6 +148,8 @@ class CalibrationLogger(
         FUELING_HYDRATION_START("HYD_START"),
         /** User logged a hydration intake via tap or BonusAction. */
         FUELING_HYDRATION_LOGGED("HYD_LOG"),
+        /** User reversed the previous hydration log — same contract as [FUELING_CARB_UNDONE]. */
+        FUELING_HYDRATION_UNDONE("HYD_UNDO"),
         /** Hydration tracker fired an alert (deficit or time-interval). */
         FUELING_HYDRATION_FIRED("HYD_FIRE"),
         /** Periodic 2-minute snapshot of hydration tracker state. */

@@ -210,8 +210,8 @@ class HydrationTracker(
         lastLogMs = lastLogMsBeforeBySlot[slot]
         lastLoggedMlBySlot[slot] = 0
         lastLogMsBeforeBySlot[slot] = 0L
-        calibLogger?.log(CalibrationLogger.Event.FUELING_HYDRATION_LOGGED) {
-            "slot=$slot,ml=-$ml,cum_logged=$cumLoggedMl,cum_target=${cumTargetMl.toInt()},undo=true"
+        calibLogger?.log(CalibrationLogger.Event.FUELING_HYDRATION_UNDONE) {
+            "slot=$slot,ml=-$ml,cum_logged=$cumLoggedMl,cum_target=${cumTargetMl.toInt()}"
         }
         return ml
     }

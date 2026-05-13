@@ -188,8 +188,8 @@ class CarbsTracker(
         lastLogMs = lastLogMsBeforeBySlot[slot]
         lastLoggedGramsBySlot[slot] = 0
         lastLogMsBeforeBySlot[slot] = 0L
-        calibLogger?.log(CalibrationLogger.Event.FUELING_CARB_LOGGED) {
-            "slot=$slot,grams=-$grams,cum_logged=$cumLoggedG,cum_target=${cumTargetG.toInt()},undo=true"
+        calibLogger?.log(CalibrationLogger.Event.FUELING_CARB_UNDONE) {
+            "slot=$slot,grams=-$grams,cum_logged=$cumLoggedG,cum_target=${cumTargetG.toInt()}"
         }
         return grams
     }
