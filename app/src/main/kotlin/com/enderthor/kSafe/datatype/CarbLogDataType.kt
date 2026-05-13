@@ -3,6 +3,8 @@ package com.enderthor.kSafe.datatype
 import android.app.PendingIntent
 import android.content.Context
 import android.content.Intent
+import android.graphics.Color
+import android.view.Gravity
 import android.view.View
 import android.widget.RemoteViews
 import com.enderthor.kSafe.R
@@ -93,19 +95,29 @@ class CarbLogDataType(
         leftDrawableRes: Int = 0,   // 0 = no compound drawable
     ): RemoteViews {
         // Pick layout: FIELD_COLOR_AUTO sentinel → theme-aware layout (no custom bg,
-        // text colour resolves to ?android:textColorPrimary at inflate). Any real
-        // ARGB value → coloured layout (white text, custom bg via setBackgroundColor).
-        // State branches always pass a real colour so they stay loud (white-on-state).
+        // text colour set explicitly from night-mode detection). Any real ARGB →
+        // coloured layout with white text on the picked bg. State branches always
+        // pass a real colour so they stay loud (white-on-state).
+        // Tap-target field — always render text CENTERED. Per-field alignment from
+        // ViewConfig is reserved for the four passive status / info fields (carb
+        // burn rate, carbs burned, deficit fields) where it actually reads like
+        // data; on action surfaces, alignment makes the field look off-balance
+        // next to its neighbours.
         val isAuto = bgColor == FIELD_COLOR_AUTO
         val layout = if (isAuto) R.layout.field_view_auto else R.layout.field_view
-        val gravity = viewConfig.fieldGravity()
         val content = RemoteViews(context.packageName, layout).apply {
             if (!isAuto) setInt(R.id.field_container, "setBackgroundColor", bgColor)
             setTextViewText(R.id.field_text_main, main.take(9))
             setTextViewText(R.id.field_text_hint, hint.take(9))
             setViewVisibility(R.id.field_text_hint, if (hint.isEmpty()) View.GONE else View.VISIBLE)
-            setInt(R.id.field_text_main, "setGravity", gravity)
-            setInt(R.id.field_text_hint, "setGravity", gravity)
+            setInt(R.id.field_text_main, "setGravity", Gravity.CENTER)
+            setInt(R.id.field_text_hint, "setGravity", Gravity.CENTER)
+            if (isAuto) {
+                // Theme-aware text in auto mode — must match the host's day/night bg.
+                val dark = context.isKarooNightMode()
+                setTextColor(R.id.field_text_main, if (dark) Color.WHITE else Color.BLACK)
+                setTextColor(R.id.field_text_hint, if (dark) 0xCCFFFFFF.toInt() else 0xCC000000.toInt())
+            }
             // Compound drawables on the main TextView. Setting all four to 0 explicitly
             // CLEARS any drawable from a previous LOGGED → IDLE transition.
             setTextViewCompoundDrawables(R.id.field_text_main, leftDrawableRes, 0, 0, 0)

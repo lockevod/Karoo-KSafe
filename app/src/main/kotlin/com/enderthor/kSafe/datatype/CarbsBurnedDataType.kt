@@ -1,6 +1,7 @@
 package com.enderthor.kSafe.datatype
 
 import android.content.Context
+import android.graphics.Color
 import android.view.View
 import android.widget.RemoteViews
 import com.enderthor.kSafe.R
@@ -40,13 +41,18 @@ class CarbsBurnedDataType(
 ) : DataTypeImpl("ksafe", datatype) {
 
     private fun buildView(viewConfig: ViewConfig, main: String, hint: String): RemoteViews {
+        // See CarbBurnRateDataType — same passive-info contract (rider alignment
+        // honoured, runtime-detected text colour for theme contrast).
         val gravity = viewConfig.fieldGravity()
+        val dark = context.isKarooNightMode()
         return RemoteViews(context.packageName, R.layout.field_view_auto).apply {
             setTextViewText(R.id.field_text_main, main.take(9))
             setTextViewText(R.id.field_text_hint, hint.take(9))
             setViewVisibility(R.id.field_text_hint, if (hint.isEmpty()) View.GONE else View.VISIBLE)
             setInt(R.id.field_text_main, "setGravity", gravity)
             setInt(R.id.field_text_hint, "setGravity", gravity)
+            setTextColor(R.id.field_text_main, if (dark) Color.WHITE else Color.BLACK)
+            setTextColor(R.id.field_text_hint, if (dark) 0xCCFFFFFF.toInt() else 0xCC000000.toInt())
         }
     }
 

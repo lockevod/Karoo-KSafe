@@ -7,10 +7,14 @@
   CarbsBurned). Differences vs field_view.xml:
     - No background colour applied via RemoteViews — the host's container theme shows
       through, flipping black/white with the Karoo's day/night setting.
-    - Text colour resolves to ?android:attr/textColorPrimary / textColorSecondary at
-      inflate time on the host, so it flips correctly with the Karoo theme. RemoteViews
-      CANNOT pass theme attributes back to the host at update time; the only way to get
-      theme-aware text is to bake the attribute into the XML.
+    - Text colour is set EXPLICITLY at runtime via setTextColor() based on
+      Context.isKarooNightMode(): white text in night mode, black in day mode.
+      The hard-coded #FFFFFF below is just a placeholder for the IDE preview — it is
+      always overridden before the view is emitted. We do NOT use
+      `?android:attr/textColorPrimary` here because it did not resolve to the
+      contrasting colour on real Karoo hardware in testing (riders reported white
+      text on a white field, invisible). Detecting night mode from the extension's
+      Configuration is system-wide and matches what the Karoo OS actually renders.
 
   Same gravity contract as field_view.xml: not set in XML, applied at runtime from
   ViewConfig.alignment via setInt(R.id.field_text_*, "setGravity", …).
@@ -31,7 +35,7 @@
         android:autoSizeMinTextSize="6sp"
         android:autoSizeTextType="uniform"
         android:maxLines="2"
-        android:textColor="?android:attr/textColorPrimary"
+        android:textColor="#FFFFFF"
         android:textStyle="bold" />
 
     <TextView
@@ -43,6 +47,6 @@
         android:autoSizeMinTextSize="5sp"
         android:autoSizeTextType="uniform"
         android:maxLines="1"
-        android:textColor="?android:attr/textColorSecondary" />
+        android:textColor="#CCFFFFFF" />
 
 </LinearLayout>

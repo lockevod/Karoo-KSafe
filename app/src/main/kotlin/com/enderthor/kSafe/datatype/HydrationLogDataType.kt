@@ -3,6 +3,8 @@ package com.enderthor.kSafe.datatype
 import android.app.PendingIntent
 import android.content.Context
 import android.content.Intent
+import android.graphics.Color
+import android.view.Gravity
 import android.view.View
 import android.widget.RemoteViews
 import com.enderthor.kSafe.R
@@ -87,17 +89,22 @@ class HydrationLogDataType(
         clickable: Boolean = true,
         leftDrawableRes: Int = 0,   // 0 = no compound drawable
     ): RemoteViews {
-        // See CarbLogDataType.buildView — same layout-switch + alignment contract.
+        // See CarbLogDataType.buildView — same layout-switch + center alignment
+        // (tap-target field, not data display) + auto-mode text colour contract.
         val isAuto = bgColor == FIELD_COLOR_AUTO
         val layout = if (isAuto) R.layout.field_view_auto else R.layout.field_view
-        val gravity = viewConfig.fieldGravity()
         val content = RemoteViews(context.packageName, layout).apply {
             if (!isAuto) setInt(R.id.field_container, "setBackgroundColor", bgColor)
             setTextViewText(R.id.field_text_main, main.take(9))
             setTextViewText(R.id.field_text_hint, hint.take(9))
             setViewVisibility(R.id.field_text_hint, if (hint.isEmpty()) View.GONE else View.VISIBLE)
-            setInt(R.id.field_text_main, "setGravity", gravity)
-            setInt(R.id.field_text_hint, "setGravity", gravity)
+            setInt(R.id.field_text_main, "setGravity", Gravity.CENTER)
+            setInt(R.id.field_text_hint, "setGravity", Gravity.CENTER)
+            if (isAuto) {
+                val dark = context.isKarooNightMode()
+                setTextColor(R.id.field_text_main, if (dark) Color.WHITE else Color.BLACK)
+                setTextColor(R.id.field_text_hint, if (dark) 0xCCFFFFFF.toInt() else 0xCC000000.toInt())
+            }
             // Compound drawable on the main TextView. Setting all four to 0 explicitly
             // CLEARS any drawable from a previous LOGGED → IDLE transition.
             setTextViewCompoundDrawables(R.id.field_text_main, leftDrawableRes, 0, 0, 0)
