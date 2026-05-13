@@ -9,3 +9,7 @@ local.properties
 
 # Internal planning / design notes — kept local, not part of the public repo
 /docs/superpowers/
+
+# macOS Finder cruft
+.DS_Store
+**/.DS_Store
