@@ -24,13 +24,14 @@ import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.launch
 import timber.log.Timber
 
-private const val COLOR_NEUTRAL = 0xFF263238.toInt()  // dark slate — passive info field (live AND waiting-for-data)
 
 /**
  * Cumulative carbs burned this session in grams — i.e. the integrated zone-aware target.
  * Companion to [CarbBurnRateDataType] (instantaneous rate) and [CarbStatusDataType]
  * (deficit between burned and logged). Polled once per second from
  * [com.enderthor.kSafe.extension.managers.CarbsTracker].
+ *
+ * No rider-pickable colour: always inflates `field_view_auto.xml` (Karoo-theme passthrough).
  */
 class CarbsBurnedDataType(
     datatype: String,
@@ -38,12 +39,14 @@ class CarbsBurnedDataType(
     private val karooSystem: KarooSystemService,
 ) : DataTypeImpl("ksafe", datatype) {
 
-    private fun buildView(viewConfig: ViewConfig, bgColor: Int, main: String, hint: String): RemoteViews {
-        return RemoteViews(context.packageName, R.layout.field_view).apply {
-            setInt(R.id.field_container, "setBackgroundColor", bgColor)
+    private fun buildView(viewConfig: ViewConfig, main: String, hint: String): RemoteViews {
+        val gravity = viewConfig.fieldGravity()
+        return RemoteViews(context.packageName, R.layout.field_view_auto).apply {
             setTextViewText(R.id.field_text_main, main.take(9))
             setTextViewText(R.id.field_text_hint, hint.take(9))
             setViewVisibility(R.id.field_text_hint, if (hint.isEmpty()) View.GONE else View.VISIBLE)
+            setInt(R.id.field_text_main, "setGravity", gravity)
+            setInt(R.id.field_text_hint, "setGravity", gravity)
         }
     }
 
@@ -68,15 +71,8 @@ class CarbsBurnedDataType(
                     }
                 }
                 poll.collectLatest { status ->
-                    val view = if (status == null) {
-                        // No data yet — keep COLOR_NEUTRAL, NOT the disabled-style grey.
-                        // A status field waiting for data is not the same as a disabled
-                        // log slot / webhook / custom-message field.
-                        buildView(config, COLOR_NEUTRAL, "---", "burned")
-                    } else {
-                        buildView(config, COLOR_NEUTRAL, "${status.cumTargetG}g", "burned")
-                    }
-                    emitter.updateView(view)
+                    val main = if (status == null) "---" else "${status.cumTargetG}g"
+                    emitter.updateView(buildView(config, main, "burned"))
                 }
                 poller.cancel()
             } catch (_: CancellationException) {

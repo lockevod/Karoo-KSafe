@@ -137,9 +137,27 @@ val FUEL_EMOJI_DRINK: List<String> = listOf(
  * in this list. Adding new entries is also safe; removing one would break any rider
  * who had it selected.
  */
+/**
+ * Sentinel value meaning "use Karoo's day/night theme — no custom background, theme-aware text".
+ * Stored where a normal ARGB Int colour would be (e.g. `carb1Color`, `sosFieldColor`); when a
+ * DataType reads it back from config it inflates `field_view_auto.xml` instead of the standard
+ * `field_view.xml`, leaving the host's theme to flip text + background between day and night.
+ *
+ * = `Color.TRANSPARENT` (0). Cannot collide with any real palette colour because every other
+ * entry has alpha = 0xFF set in the high byte.
+ */
+const val FIELD_COLOR_AUTO: Int = 0
+
 val FIELD_COLOR_PALETTE: List<Int> = listOf(
-    // 20 entries laid out as 4 columns x 5 rows in the picker dialog. Each row is a
-    // coherent hue family ordered light->dark, walking the rainbow row-by-row.
+    // First entry = the Karoo-theme passthrough sentinel. Rendered specially in
+    // FieldColorPicker (half-white / half-black "day/night" swatch). Selecting it
+    // stores 0 in config; the DataType then renders without a custom background
+    // and with theme-driven text colour, so the field matches native Karoo fields
+    // (black-on-white in day mode, white-on-black at night).
+    FIELD_COLOR_AUTO,
+    // 20 painted entries laid out as 4 columns x 5 rows below the Auto entry in
+    // the picker dialog. Each row is a coherent hue family ordered light->dark,
+    // walking the rainbow row-by-row.
     //
     // Row 1 — Warm earth + green. Reserved orange/red/yellow zones rule out any
     // hotter hue, so the warm slot is browns + olive only.
@@ -326,13 +344,16 @@ data class KSafeConfig(
     // Calibration logging — writes detailed sensor events to CSV for threshold tuning
     val calibrationLoggingEnabled: Boolean = false,
     // Field colours — idle/ready background for each ride-screen widget
-    val sosFieldColor: Int = 0xFF2E7D32.toInt(),       // SOS: idle=SAFE (forest green)
-    val timerFieldColor: Int = 0xFF2E7D32.toInt(),     // Safety Timer: OK (forest green)
-    val customMsg1Color: Int = 0xFF1565C0.toInt(),     // Custom Message 1: idle (blue)
-    val customMsg2Color: Int = 0xFF1565C0.toInt(),     // Custom Message 2: idle (blue)
-    val customMsg3Color: Int = 0xFF1565C0.toInt(),     // Custom Message 3: idle (blue)
-    val webhook1Color: Int = 0xFF1565C0.toInt(),       // Webhook 1: idle (blue)
-    val webhook2Color: Int = 0xFF1565C0.toInt(),       // Webhook 2: idle (blue)
+    // Defaults are FIELD_COLOR_AUTO — fresh installs render in native Karoo theme
+    // (auto day/night, theme-driven text). Riders who prefer a coloured tap target
+    // can pick any palette entry; existing saved colour ints stay valid.
+    val sosFieldColor: Int = FIELD_COLOR_AUTO,
+    val timerFieldColor: Int = FIELD_COLOR_AUTO,
+    val customMsg1Color: Int = FIELD_COLOR_AUTO,
+    val customMsg2Color: Int = FIELD_COLOR_AUTO,
+    val customMsg3Color: Int = FIELD_COLOR_AUTO,
+    val webhook1Color: Int = FIELD_COLOR_AUTO,
+    val webhook2Color: Int = FIELD_COLOR_AUTO,
     // Webhook actions — generic HTTP buttons assignable to Karoo hardware buttons.
     // Each action fires a single HTTP request (GET or POST) to any endpoint.
     // Compatible with Home Assistant, ntfy, IFTTT, n8n, Make, and any webhook service.
@@ -393,9 +414,9 @@ data class KSafeConfig(
     val carbBeepPattern: BeepPattern = BeepPattern.SINGLE_LONG,
     /** Three logging slots, each user-configurable label + grams + idle background colour
      *  + optional emoji prefix. Empty `carbNIcon` = no emoji, label only. */
-    val carb1Label: String = "Gel",      val carb1Grams: Int = 25,    val carb1Color: Int = 0xFF1565C0.toInt(),    val carb1Icon: String = FUEL_GEL_DRAWABLE,
-    val carb2Label: String = "Bar",      val carb2Grams: Int = 30,    val carb2Color: Int = 0xFF1565C0.toInt(),    val carb2Icon: String = "🍫",
-    val carb3Label: String = "Fruit",    val carb3Grams: Int = 20,    val carb3Color: Int = 0xFF1565C0.toInt(),    val carb3Icon: String = "🍌",
+    val carb1Label: String = "Gel",      val carb1Grams: Int = 25,    val carb1Color: Int = FIELD_COLOR_AUTO,    val carb1Icon: String = FUEL_GEL_DRAWABLE,
+    val carb2Label: String = "Bar",      val carb2Grams: Int = 30,    val carb2Color: Int = FIELD_COLOR_AUTO,    val carb2Icon: String = "🍫",
+    val carb3Label: String = "Fruit",    val carb3Grams: Int = 20,    val carb3Color: Int = FIELD_COLOR_AUTO,    val carb3Icon: String = "🍌",
 
     // ─── Hydration tracker (flat target by time, no sensor input) ───────────
     val hydrationTrackerEnabled: Boolean = false,
@@ -422,8 +443,8 @@ data class KSafeConfig(
     val hydrationAlertCustomDetail: String = "",
     /** Beep pattern played when a hydration alert fires. OFF = visual only. */
     val hydBeepPattern: BeepPattern = BeepPattern.SINGLE_LONG,
-    val drink1Label: String = "Sip",     val drink1Ml: Int = 100,    val drink1Color: Int = 0xFF1565C0.toInt(),    val drink1Icon: String = "💧",
-    val drink2Label: String = "Bottle",  val drink2Ml: Int = 500,    val drink2Color: Int = 0xFF1565C0.toInt(),    val drink2Icon: String = FUEL_BOTTLE_DRAWABLE,
+    val drink1Label: String = "Sip",     val drink1Ml: Int = 100,    val drink1Color: Int = FIELD_COLOR_AUTO,    val drink1Icon: String = "💧",
+    val drink2Label: String = "Bottle",  val drink2Ml: Int = 500,    val drink2Color: Int = FIELD_COLOR_AUTO,    val drink2Icon: String = FUEL_BOTTLE_DRAWABLE,
 
     /** Write per-second cumulative carbs (g) and hydration (ml) into the FIT file as
      *  developer fields, plus the totals into the session message. Default ON because

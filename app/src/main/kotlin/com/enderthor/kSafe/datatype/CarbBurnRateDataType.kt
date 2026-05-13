@@ -25,14 +25,16 @@ import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.launch
 import timber.log.Timber
 
-private const val COLOR_NEUTRAL = 0xFF263238.toInt()  // dark slate — passive info field (live AND waiting-for-data)
-
 /**
  * Instantaneous carb burn rate in g/h, modulated by the rider's current intensity zone.
  * Until the first HR/power sample arrives the zone source is [ZoneSource.NONE] and the
  * field shows `---` instead of `base_target × 1.0`, which used to confuse riders into
  * thinking the body was already burning the configured per-hour target before the ride
  * had even started. Polled once per second from [com.enderthor.kSafe.extension.managers.CarbsTracker].
+ *
+ * No rider-pickable colour: this is a passive info field, so it always inflates
+ * `field_view_auto.xml` (Karoo-theme passthrough — black/white auto day/night, matches
+ * native Karoo data fields and KDouble's neutral fields).
  */
 class CarbBurnRateDataType(
     datatype: String,
@@ -40,12 +42,15 @@ class CarbBurnRateDataType(
     private val karooSystem: KarooSystemService,
 ) : DataTypeImpl("ksafe", datatype) {
 
-    private fun buildView(viewConfig: ViewConfig, bgColor: Int, main: String, hint: String): RemoteViews {
-        return RemoteViews(context.packageName, R.layout.field_view).apply {
-            setInt(R.id.field_container, "setBackgroundColor", bgColor)
+    private fun buildView(viewConfig: ViewConfig, main: String, hint: String): RemoteViews {
+        val gravity = viewConfig.fieldGravity()
+        return RemoteViews(context.packageName, R.layout.field_view_auto).apply {
+            // No setBackgroundColor — let the host theme show through.
             setTextViewText(R.id.field_text_main, main.take(9))
             setTextViewText(R.id.field_text_hint, hint.take(9))
             setViewVisibility(R.id.field_text_hint, if (hint.isEmpty()) View.GONE else View.VISIBLE)
+            setInt(R.id.field_text_main, "setGravity", gravity)
+            setInt(R.id.field_text_hint, "setGravity", gravity)
         }
     }
 
@@ -70,21 +75,15 @@ class CarbBurnRateDataType(
                     }
                 }
                 poll.collectLatest { status ->
-                    val view = when {
-                        // Both no-data branches keep COLOR_NEUTRAL — a status field is
-                        // not "disabled" just because the rider hasn't pressed Start
-                        // yet (status == null) or the first HR/power sample hasn't
-                        // arrived (zoneSnapshot.source == NONE). Disabled colours are
-                        // reserved for fields that actually got turned off in config.
-                        status == null ->
-                            buildView(config, COLOR_NEUTRAL, "---", "carb/h")
-                        status.zoneSnapshot.source == ZoneSource.NONE ->
-                            // No HR/power yet — don't display the base × 1.0 fallback.
-                            buildView(config, COLOR_NEUTRAL, "---", "carb/h")
-                        else ->
-                            buildView(config, COLOR_NEUTRAL, "${status.burnRateGph}", "carb/h")
+                    // Status field — always Karoo-themed (no rider-pickable colour).
+                    // Three "no real value yet" cases all render '---' identically; only the
+                    // last branch shows the live number once a zone snapshot is available.
+                    val main = when {
+                        status == null -> "---"
+                        status.zoneSnapshot.source == ZoneSource.NONE -> "---"
+                        else -> "${status.burnRateGph}"
                     }
-                    emitter.updateView(view)
+                    emitter.updateView(buildView(config, main, "carb/h"))
                 }
                 poller.cancel()
             } catch (_: CancellationException) {

@@ -9,8 +9,9 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.fillMaxHeight
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.CircleShape
@@ -31,6 +32,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.dp
+import com.enderthor.kSafe.data.FIELD_COLOR_AUTO
 import com.enderthor.kSafe.data.FIELD_COLOR_PALETTE
 
 /**
@@ -58,14 +60,7 @@ fun FieldColorPicker(
         onClick = { dialogOpen = true },
         contentPadding = PaddingValues(horizontal = 10.dp, vertical = 4.dp),
     ) {
-        Box(
-            modifier = Modifier
-                .size(22.dp)
-                .shadow(3.dp, CircleShape)
-                .clip(CircleShape)
-                .background(Color(selected))
-                .border(1.dp, Color(0x66FFFFFF), CircleShape)
-        )
+        SwatchPreview(colorInt = selected, sizeDp = 22)
         Spacer(Modifier.width(6.dp))
         Text(
             label,
@@ -80,7 +75,12 @@ fun FieldColorPicker(
             title = { Text(label) },
             text = {
                 Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                    FIELD_COLOR_PALETTE.chunked(4).forEach { rowColors ->
+                    // AUTO sits alone on the first row so it reads as the special "Karoo
+                    // default" option rather than getting visually lumped with the warm-earth
+                    // hues that lead the painted palette.
+                    val (auto, painted) = FIELD_COLOR_PALETTE.partition { it == FIELD_COLOR_AUTO }
+                    val rows: List<List<Int>> = auto.map { listOf(it) } + painted.chunked(4)
+                    rows.forEach { rowColors ->
                         Row(
                             horizontalArrangement = Arrangement.spacedBy(12.dp),
                             verticalAlignment = Alignment.CenterVertically,
@@ -91,7 +91,6 @@ fun FieldColorPicker(
                                     modifier = Modifier
                                         .size(38.dp)
                                         .clip(CircleShape)
-                                        .background(Color(colorInt))
                                         .then(
                                             if (isSelected)
                                                 Modifier.border(3.dp, Color.White, CircleShape)
@@ -102,7 +101,9 @@ fun FieldColorPicker(
                                             onSelected(colorInt)
                                             dialogOpen = false
                                         }
-                                )
+                                ) {
+                                    SwatchFill(colorInt)
+                                }
                             }
                         }
                     }
@@ -112,5 +113,41 @@ fun FieldColorPicker(
                 TextButton(onClick = { dialogOpen = false }) { Text("Close") }
             },
         )
+    }
+}
+
+/**
+ * The 38 dp circular fill used inside each swatch in the dialog. Renders the
+ * [FIELD_COLOR_AUTO] sentinel as a half-white / half-black split ("day on the
+ * left, night on the right") so it reads at a glance as "auto theme" without
+ * any text label; every other entry is a solid colour fill.
+ */
+@Composable
+private fun SwatchFill(colorInt: Int) {
+    if (colorInt == FIELD_COLOR_AUTO) {
+        Row(Modifier.fillMaxSize()) {
+            Box(Modifier.weight(1f).fillMaxHeight().background(Color.White))
+            Box(Modifier.weight(1f).fillMaxHeight().background(Color.Black))
+        }
+    } else {
+        Box(Modifier.fillMaxSize().background(Color(colorInt)))
+    }
+}
+
+/**
+ * Small swatch shown in the trigger button next to the picker label. Mirrors
+ * [SwatchFill] but sized for the inline button and wrapped in the original
+ * shadow + border styling.
+ */
+@Composable
+private fun SwatchPreview(colorInt: Int, sizeDp: Int) {
+    Box(
+        modifier = Modifier
+            .size(sizeDp.dp)
+            .shadow(3.dp, CircleShape)
+            .clip(CircleShape)
+            .border(1.dp, Color(0x66FFFFFF), CircleShape)
+    ) {
+        SwatchFill(colorInt)
     }
 }

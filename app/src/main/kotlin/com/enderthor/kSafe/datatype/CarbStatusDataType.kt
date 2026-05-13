@@ -49,11 +49,14 @@ class CarbStatusDataType(
     }
 
     private fun buildView(viewConfig: ViewConfig, bgColor: Int, main: String, hint: String): RemoteViews {
+        val gravity = viewConfig.fieldGravity()
         return RemoteViews(context.packageName, R.layout.field_view).apply {
             setInt(R.id.field_container, "setBackgroundColor", bgColor)
             setTextViewText(R.id.field_text_main, main.take(9))
             setTextViewText(R.id.field_text_hint, hint.take(9))
             setViewVisibility(R.id.field_text_hint, if (hint.isEmpty()) View.GONE else View.VISIBLE)
+            setInt(R.id.field_text_main, "setGravity", gravity)
+            setInt(R.id.field_text_hint, "setGravity", gravity)
         }
     }
 

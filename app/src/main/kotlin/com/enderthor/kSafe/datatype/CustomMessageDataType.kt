@@ -7,6 +7,7 @@ import android.view.View
 import android.widget.RemoteViews
 import com.enderthor.kSafe.R
 import com.enderthor.kSafe.activity.FieldTapReceiver
+import com.enderthor.kSafe.data.FIELD_COLOR_AUTO
 import com.enderthor.kSafe.data.KSafeConfig
 import com.enderthor.kSafe.extension.managers.ConfigurationManager
 import com.enderthor.kSafe.extension.util.safeTake
@@ -71,11 +72,17 @@ class CustomMessageDataType(
 
     /** Builds a field view with optional click PendingIntent. */
     private fun buildView(context: Context, viewConfig: ViewConfig, bgColor: Int, main: String, hint: String = "", clickable: Boolean = true): RemoteViews {
-        val content = RemoteViews(context.packageName, R.layout.field_view).apply {
-            setInt(R.id.field_container, "setBackgroundColor", bgColor)
+        // See CarbLogDataType.buildView — same layout-switch + alignment contract.
+        val isAuto = bgColor == FIELD_COLOR_AUTO
+        val layout = if (isAuto) R.layout.field_view_auto else R.layout.field_view
+        val gravity = viewConfig.fieldGravity()
+        val content = RemoteViews(context.packageName, layout).apply {
+            if (!isAuto) setInt(R.id.field_container, "setBackgroundColor", bgColor)
             setTextViewText(R.id.field_text_main, main.take(9))   // hard cap — autoSize needs room
             setTextViewText(R.id.field_text_hint, hint.take(9))
             setViewVisibility(R.id.field_text_hint, if (hint.isEmpty()) View.GONE else View.VISIBLE)
+            setInt(R.id.field_text_main, "setGravity", gravity)
+            setInt(R.id.field_text_hint, "setGravity", gravity)
         }
         if (!viewConfig.preview && clickable) {
             val pi = PendingIntent.getBroadcast(

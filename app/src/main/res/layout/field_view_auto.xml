@@ -1,0 +1,48 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Karoo-theme passthrough variant of field_view.xml.
+
+  Used when the rider has selected the FIELD_COLOR_AUTO sentinel (the "day/night auto"
+  swatch in the picker) and on the two always-neutral status fields (CarbBurnRate,
+  CarbsBurned). Differences vs field_view.xml:
+    - No background colour applied via RemoteViews — the host's container theme shows
+      through, flipping black/white with the Karoo's day/night setting.
+    - Text colour resolves to ?android:attr/textColorPrimary / textColorSecondary at
+      inflate time on the host, so it flips correctly with the Karoo theme. RemoteViews
+      CANNOT pass theme attributes back to the host at update time; the only way to get
+      theme-aware text is to bake the attribute into the XML.
+
+  Same gravity contract as field_view.xml: not set in XML, applied at runtime from
+  ViewConfig.alignment via setInt(R.id.field_text_*, "setGravity", …).
+-->
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:id="@+id/field_container"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:orientation="vertical"
+    android:padding="2dp">
+
+    <TextView
+        android:id="@+id/field_text_main"
+        android:layout_width="match_parent"
+        android:layout_height="0dp"
+        android:layout_weight="1.5"
+        android:autoSizeMaxTextSize="22sp"
+        android:autoSizeMinTextSize="6sp"
+        android:autoSizeTextType="uniform"
+        android:maxLines="2"
+        android:textColor="?android:attr/textColorPrimary"
+        android:textStyle="bold" />
+
+    <TextView
+        android:id="@+id/field_text_hint"
+        android:layout_width="match_parent"
+        android:layout_height="0dp"
+        android:layout_weight="1"
+        android:autoSizeMaxTextSize="11sp"
+        android:autoSizeMinTextSize="5sp"
+        android:autoSizeTextType="uniform"
+        android:maxLines="1"
+        android:textColor="?android:attr/textColorSecondary" />
+
+</LinearLayout>
