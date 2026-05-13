@@ -28,6 +28,7 @@ import kotlinx.coroutines.launch
 import timber.log.Timber
 
 private const val COLOR_LOGGED = 0xFF1B5E20.toInt()
+private const val COLOR_UNDONE = 0xFFB71C1C.toInt()  // red — undo confirmation flash
 private const val COLOR_OFF    = 0xFF424242.toInt()
 
 class HydrationLogDataType(
@@ -133,9 +134,13 @@ class HydrationLogDataType(
                         // Slot disabled — no drawable, just the OFF label.
                         buildView(context, config, COLOR_OFF, label, "OFF", clickable = false)
                     } else when (state) {
-                        HydrationLogState.IDLE   -> buildView(context, config, idleColorFromConfig(ksafeConfig), label, "${ml}ml", leftDrawableRes = leftDrawable)
-                        // LOGGED is the brief green "+500ml ✓" success flash — no drawable.
-                        HydrationLogState.LOGGED -> buildView(context, config, COLOR_LOGGED, "+${ml}ml", "✓", clickable = false)
+                        HydrationLogState.IDLE    -> buildView(context, config, idleColorFromConfig(ksafeConfig), label, "${ml}ml", leftDrawableRes = leftDrawable)
+                        // LOGGED stays tappable for the ~5 s undo window so a second tap
+                        // on the same slot reverses the entry. Hint advertises the action.
+                        HydrationLogState.LOGGED  -> buildView(context, config, COLOR_LOGGED, "+${ml}ml", "TAP UNDO")
+                        // UNDONE is the brief red "−Xml ✓" confirmation after a successful
+                        // undo. Not tappable — auto-resets to IDLE.
+                        HydrationLogState.UNDONE  -> buildView(context, config, COLOR_UNDONE, "−${ml}ml", "✓", clickable = false)
                     }
                 }.collect { view -> emitter.updateView(view) }
             } catch (_: CancellationException) {

@@ -80,6 +80,11 @@ class HydrationTracker(
     @Volatile private var lastSweatRateMlHr: Double = 0.0
     @Volatile private var lastSweatConfidence: SweatConfidence = SweatConfidence.LOW
 
+    // ─── Per-slot undo state ────────────────────────────────────────────────
+    // See [CarbsTracker] for the same pattern. Indices 1..2; slot 0 is unused.
+    private val lastLoggedMlBySlot = IntArray(3)
+    private val lastLogMsBeforeBySlot = LongArray(3)
+
     @Volatile private var config = KSafeConfig()
     private var monitorJob: Job? = null
 
@@ -99,6 +104,7 @@ class HydrationTracker(
         lastLogMs = now
         lastAlertMs = 0L
         lastPeriodicLogMs = 0L
+        for (i in lastLoggedMlBySlot.indices) { lastLoggedMlBySlot[i] = 0; lastLogMsBeforeBySlot[i] = 0L }
         monitorJob = scope.launch {
             oldJob?.cancelAndJoin()
             while (true) { delay(MONITOR_TICK_MS); tick() }
@@ -169,11 +175,33 @@ class HydrationTracker(
             2 -> config.drink2Ml
             else -> return
         }
+        // Save what we're about to mutate so an undo within the on-screen window can
+        // reverse exactly this entry — same pattern as CarbsTracker.
+        lastLogMsBeforeBySlot[slot] = lastLogMs
+        lastLoggedMlBySlot[slot] = ml
         cumLoggedMl += ml
         lastLogMs = System.currentTimeMillis()
         calibLogger?.log(CalibrationLogger.Event.FUELING_HYDRATION_LOGGED) {
             "slot=$slot,ml=$ml,cum_logged=$cumLoggedMl,cum_target=${cumTargetMl.toInt()}"
         }
+    }
+
+    /**
+     * Reverse the most recent [logEntry] for [slot]. Returns the ml undone, or `0` if the
+     * slot has nothing left to undo. See [CarbsTracker.undoLastForSlot] for the contract.
+     */
+    fun undoLastForSlot(slot: Int): Int {
+        if (slot !in 1..2) return 0
+        val ml = lastLoggedMlBySlot[slot]
+        if (ml <= 0) return 0
+        cumLoggedMl = (cumLoggedMl - ml).coerceAtLeast(0)
+        lastLogMs = lastLogMsBeforeBySlot[slot]
+        lastLoggedMlBySlot[slot] = 0
+        lastLogMsBeforeBySlot[slot] = 0L
+        calibLogger?.log(CalibrationLogger.Event.FUELING_HYDRATION_LOGGED) {
+            "slot=$slot,ml=-$ml,cum_logged=$cumLoggedMl,cum_target=${cumTargetMl.toInt()},undo=true"
+        }
+        return ml
     }
 
     /**

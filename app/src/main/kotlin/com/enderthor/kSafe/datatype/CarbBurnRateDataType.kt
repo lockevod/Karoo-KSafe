@@ -6,6 +6,7 @@ import android.widget.RemoteViews
 import com.enderthor.kSafe.R
 import com.enderthor.kSafe.extension.KSafeExtension
 import com.enderthor.kSafe.extension.managers.CarbStatus
+import com.enderthor.kSafe.extension.util.ZoneSource
 import io.hammerhead.karooext.KarooSystemService
 import io.hammerhead.karooext.extension.DataTypeImpl
 import io.hammerhead.karooext.internal.ViewEmitter
@@ -29,8 +30,10 @@ private const val COLOR_OFF     = 0xFF424242.toInt()  // gray — tracker disabl
 
 /**
  * Instantaneous carb burn rate in g/h, modulated by the rider's current intensity zone.
- * When no HR/power is available the zone multiplier is 1.0 and the field shows the
- * configured base target. Polled once per second from [com.enderthor.kSafe.extension.managers.CarbsTracker].
+ * Until the first HR/power sample arrives the zone source is [ZoneSource.NONE] and the
+ * field shows `---` instead of `base_target × 1.0`, which used to confuse riders into
+ * thinking the body was already burning the configured per-hour target before the ride
+ * had even started. Polled once per second from [com.enderthor.kSafe.extension.managers.CarbsTracker].
  */
 class CarbBurnRateDataType(
     datatype: String,
@@ -68,10 +71,14 @@ class CarbBurnRateDataType(
                     }
                 }
                 poll.collectLatest { status ->
-                    val view = if (status == null) {
-                        buildView(config, COLOR_OFF, "---", "carb/h")
-                    } else {
-                        buildView(config, COLOR_NEUTRAL, "${status.burnRateGph}", "carb/h")
+                    val view = when {
+                        status == null ->
+                            buildView(config, COLOR_OFF, "---", "carb/h")
+                        status.zoneSnapshot.source == ZoneSource.NONE ->
+                            // No HR/power yet — don't display the base × 1.0 fallback.
+                            buildView(config, COLOR_NEUTRAL, "---", "carb/h")
+                        else ->
+                            buildView(config, COLOR_NEUTRAL, "${status.burnRateGph}", "carb/h")
                     }
                     emitter.updateView(view)
                 }

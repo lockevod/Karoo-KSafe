@@ -9,7 +9,8 @@ import kotlinx.coroutines.flow.StateFlow
  */
 enum class HydrationLogState {
     IDLE,
-    LOGGED;
+    LOGGED,   // green "+Xml" confirmation; field remains tappable for ~5 s as an undo window
+    UNDONE;   // red "−Xml" confirmation after a successful undo, auto-resets to IDLE
 
     companion object {
         private val _flow1 = MutableStateFlow(IDLE)

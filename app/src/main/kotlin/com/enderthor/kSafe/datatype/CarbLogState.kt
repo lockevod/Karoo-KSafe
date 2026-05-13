@@ -9,8 +9,9 @@ import kotlinx.coroutines.flow.StateFlow
  * KSafeExtension transitions the state to LOGGED → IDLE on a tap.
  */
 enum class CarbLogState {
-    IDLE,    // ready — shows configured label
-    LOGGED;  // briefly green "+Xg" confirmation, auto-resets to IDLE
+    IDLE,     // ready — shows configured label
+    LOGGED,   // green "+Xg" confirmation; field remains tappable for ~5 s as an undo window
+    UNDONE;   // red "−Xg" confirmation after a successful undo, auto-resets to IDLE
 
     companion object {
         private val _flow1 = MutableStateFlow(IDLE)

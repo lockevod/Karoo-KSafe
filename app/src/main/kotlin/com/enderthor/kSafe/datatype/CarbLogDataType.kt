@@ -28,6 +28,7 @@ import kotlinx.coroutines.launch
 import timber.log.Timber
 
 private const val COLOR_LOGGED = 0xFF1B5E20.toInt()  // green confirmation flash
+private const val COLOR_UNDONE = 0xFFB71C1C.toInt()  // red — undo confirmation flash
 private const val COLOR_OFF    = 0xFF424242.toInt()  // gray — master tracker disabled
 
 class CarbLogDataType(
@@ -138,9 +139,13 @@ class CarbLogDataType(
                         // Slot disabled — no drawable, just the OFF label.
                         buildView(context, config, COLOR_OFF, label, "OFF", clickable = false)
                     } else when (state) {
-                        CarbLogState.IDLE   -> buildView(context, config, idleColorFromConfig(ksafeConfig), label, "${grams}g", leftDrawableRes = leftDrawable)
-                        // LOGGED is the brief green "+25g ✓" success flash — no drawable.
-                        CarbLogState.LOGGED -> buildView(context, config, COLOR_LOGGED, "+${grams}g", "✓", clickable = false)
+                        CarbLogState.IDLE    -> buildView(context, config, idleColorFromConfig(ksafeConfig), label, "${grams}g", leftDrawableRes = leftDrawable)
+                        // LOGGED stays tappable for the ~5 s undo window so a second tap
+                        // on the same slot reverses the entry. Hint advertises the action.
+                        CarbLogState.LOGGED  -> buildView(context, config, COLOR_LOGGED, "+${grams}g", "TAP UNDO")
+                        // UNDONE is the brief red "−Xg ✓" confirmation after a successful
+                        // undo. Not tappable — auto-resets to IDLE.
+                        CarbLogState.UNDONE  -> buildView(context, config, COLOR_UNDONE, "−${grams}g", "✓", clickable = false)
                     }
                 }.collect { view -> emitter.updateView(view) }
             } catch (_: CancellationException) {

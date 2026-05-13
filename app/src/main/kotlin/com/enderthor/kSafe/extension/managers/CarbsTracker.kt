@@ -65,6 +65,16 @@ class CarbsTracker(
     @Volatile private var lastZoneSnapshot = ZoneSnapshot(ZoneSource.NONE, -1, 0, 1f)
     @Volatile private var lastPeriodicLogMs = 0L
 
+    // ─── Per-slot undo state ────────────────────────────────────────────────
+    // After [logEntry] for slot N, [lastLoggedGramsBySlot][N] holds the grams added
+    // and [lastLogMsBeforeBySlot][N] holds the [lastLogMs] timestamp BEFORE the add,
+    // so [undoLastForSlot] can reverse exactly what was added and restore the time-alert
+    // clock to the value it had before the wrong tap. After a successful undo the slot's
+    // entry is zeroed out — a second undo on the same slot is therefore a no-op until
+    // a new [logEntry] populates it again. Indices 1..3; slot 0 is unused.
+    private val lastLoggedGramsBySlot = IntArray(4)
+    private val lastLogMsBeforeBySlot = LongArray(4)
+
     @Volatile private var config = KSafeConfig()
     private var monitorJob: Job? = null
 
@@ -87,6 +97,7 @@ class CarbsTracker(
         lastAlertMs = 0L
         lastPeriodicLogMs = 0L
         lastZoneSnapshot = ZoneSnapshot(ZoneSource.NONE, -1, 0, 1f)
+        for (i in lastLoggedGramsBySlot.indices) { lastLoggedGramsBySlot[i] = 0; lastLogMsBeforeBySlot[i] = 0L }
         monitorJob = scope.launch {
             oldJob?.cancelAndJoin()
             while (true) { delay(MONITOR_TICK_MS); tick() }
@@ -148,11 +159,35 @@ class CarbsTracker(
             3 -> config.carb3Grams
             else -> return
         }
+        // Save what we're about to mutate so an undo within the on-screen window can
+        // reverse exactly this entry without affecting unrelated state.
+        lastLogMsBeforeBySlot[slot] = lastLogMs
+        lastLoggedGramsBySlot[slot] = grams
         cumLoggedG += grams
         lastLogMs = System.currentTimeMillis()
         calibLogger?.log(CalibrationLogger.Event.FUELING_CARB_LOGGED) {
             "slot=$slot,grams=$grams,cum_logged=$cumLoggedG,cum_target=${cumTargetG.toInt()}"
         }
+    }
+
+    /**
+     * Reverse the most recent [logEntry] for [slot]. Returns the grams undone, or `0` if
+     * the slot has nothing left to undo (already undone, or never logged this session).
+     * Per-slot, single-shot — after an undo the slot's saved entry is cleared, so a
+     * second undo on the same slot before the next log is a no-op.
+     */
+    fun undoLastForSlot(slot: Int): Int {
+        if (slot !in 1..3) return 0
+        val grams = lastLoggedGramsBySlot[slot]
+        if (grams <= 0) return 0
+        cumLoggedG = (cumLoggedG - grams).coerceAtLeast(0)
+        lastLogMs = lastLogMsBeforeBySlot[slot]
+        lastLoggedGramsBySlot[slot] = 0
+        lastLogMsBeforeBySlot[slot] = 0L
+        calibLogger?.log(CalibrationLogger.Event.FUELING_CARB_LOGGED) {
+            "slot=$slot,grams=-$grams,cum_logged=$cumLoggedG,cum_target=${cumTargetG.toInt()},undo=true"
+        }
+        return grams
     }
 
     /**

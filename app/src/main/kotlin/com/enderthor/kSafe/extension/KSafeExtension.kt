@@ -1022,12 +1022,35 @@ class KSafeExtension : KarooExtension("ksafe", BuildConfig.VERSION_NAME), Corout
         if (!activeConfig.isActive) return
         if (!activeConfig.carbsTrackerEnabled) return
         if (!this::carbsTracker.isInitialized) return
+        val state = com.enderthor.kSafe.datatype.CarbLogState.flowForSlot(slot).value
+        if (state == com.enderthor.kSafe.datatype.CarbLogState.LOGGED) {
+            // Second tap within the undo window — reverse the previous entry.
+            val undone = carbsTracker.undoLastForSlot(slot)
+            if (undone > 0) {
+                com.enderthor.kSafe.datatype.CarbLogState.update(slot, com.enderthor.kSafe.datatype.CarbLogState.UNDONE)
+                launch {
+                    kotlinx.coroutines.delay(1_500L)
+                    if (com.enderthor.kSafe.datatype.CarbLogState.flowForSlot(slot).value
+                        == com.enderthor.kSafe.datatype.CarbLogState.UNDONE) {
+                        com.enderthor.kSafe.datatype.CarbLogState.update(slot, com.enderthor.kSafe.datatype.CarbLogState.IDLE)
+                    }
+                }
+            } else {
+                com.enderthor.kSafe.datatype.CarbLogState.update(slot, com.enderthor.kSafe.datatype.CarbLogState.IDLE)
+            }
+            return
+        }
         carbsTracker.logEntry(slot)
-        // Brief on-field feedback then back to idle. Mirrors CustomMessage behaviour.
+        // 5 s window: long enough to notice a wrong tap and undo, short enough that a
+        // legitimate second log on the same slot isn't an annoying wait.
         com.enderthor.kSafe.datatype.CarbLogState.update(slot, com.enderthor.kSafe.datatype.CarbLogState.LOGGED)
         launch {
-            kotlinx.coroutines.delay(2_000L)
-            com.enderthor.kSafe.datatype.CarbLogState.update(slot, com.enderthor.kSafe.datatype.CarbLogState.IDLE)
+            kotlinx.coroutines.delay(5_000L)
+            // Guard against races with a subsequent tap that already changed the state.
+            if (com.enderthor.kSafe.datatype.CarbLogState.flowForSlot(slot).value
+                == com.enderthor.kSafe.datatype.CarbLogState.LOGGED) {
+                com.enderthor.kSafe.datatype.CarbLogState.update(slot, com.enderthor.kSafe.datatype.CarbLogState.IDLE)
+            }
         }
     }
 
@@ -1036,11 +1059,31 @@ class KSafeExtension : KarooExtension("ksafe", BuildConfig.VERSION_NAME), Corout
         if (!activeConfig.isActive) return
         if (!activeConfig.hydrationTrackerEnabled) return
         if (!this::hydrationTracker.isInitialized) return
+        val state = com.enderthor.kSafe.datatype.HydrationLogState.flowForSlot(slot).value
+        if (state == com.enderthor.kSafe.datatype.HydrationLogState.LOGGED) {
+            val undone = hydrationTracker.undoLastForSlot(slot)
+            if (undone > 0) {
+                com.enderthor.kSafe.datatype.HydrationLogState.update(slot, com.enderthor.kSafe.datatype.HydrationLogState.UNDONE)
+                launch {
+                    kotlinx.coroutines.delay(1_500L)
+                    if (com.enderthor.kSafe.datatype.HydrationLogState.flowForSlot(slot).value
+                        == com.enderthor.kSafe.datatype.HydrationLogState.UNDONE) {
+                        com.enderthor.kSafe.datatype.HydrationLogState.update(slot, com.enderthor.kSafe.datatype.HydrationLogState.IDLE)
+                    }
+                }
+            } else {
+                com.enderthor.kSafe.datatype.HydrationLogState.update(slot, com.enderthor.kSafe.datatype.HydrationLogState.IDLE)
+            }
+            return
+        }
         hydrationTracker.logEntry(slot)
         com.enderthor.kSafe.datatype.HydrationLogState.update(slot, com.enderthor.kSafe.datatype.HydrationLogState.LOGGED)
         launch {
-            kotlinx.coroutines.delay(2_000L)
-            com.enderthor.kSafe.datatype.HydrationLogState.update(slot, com.enderthor.kSafe.datatype.HydrationLogState.IDLE)
+            kotlinx.coroutines.delay(5_000L)
+            if (com.enderthor.kSafe.datatype.HydrationLogState.flowForSlot(slot).value
+                == com.enderthor.kSafe.datatype.HydrationLogState.LOGGED) {
+                com.enderthor.kSafe.datatype.HydrationLogState.update(slot, com.enderthor.kSafe.datatype.HydrationLogState.IDLE)
+            }
         }
     }
 
