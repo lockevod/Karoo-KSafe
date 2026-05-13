@@ -108,7 +108,7 @@ The KSafe app has **six tabs**, in this order:
 
 1. **Safety** — emergency message + tokens (`{location}`, `{reason}`, `{livetrack}`), countdown duration, SOS / Timer field colours, crash detection (sensitivity preset + custom slider, min speed, confirm speed, monitor-outside-ride toggles), speed-drop window, check-in interval.
 2. **Health** *(v2.0)* — HR-based detectors: medical episode (HR flatline / collapse) and wellness monitor (critical HR, sustained HR, HR–power decoupling). Each has Silent / Warning / Emergency response level and customisable `{bpm}` / `{threshold}` / `{minutes}` / `{drift}` templates. Requires a paired HR sensor.
-3. **Fueling** *(v2.0)* — per-second carb and fluid targets that adapt to your effort via HR / power zones (0.7×–1.3×). Two combinable alert modes per category (**deficit** and **time**), each with customisable templates (`{deficit}`, `{elapsed}`, `{target}`) and a per-category beep pattern. Optional dynamic sweat-rate estimate (HR, power, weight, temp, humidity) for hydration. Post-ride summary. 📘 Starting-value tables (g/h by duration, ml/h by temperature), the pre/post-ride weigh-in formula and the underlying ACSM / Jeukendrup / Sawka references are in [health-fueling.md → Setting your initial targets](docs/health-fueling.md#how-to-pick-your-per-hour-targets).
+3. **Fueling** *(v2.0)* — per-second carb and fluid targets that adapt to your effort via HR / power zones (0.7×–1.3×). Two combinable alert modes per category (**deficit** and **time**), each with customisable templates (`{deficit}`, `{elapsed}`, `{target}`) and a per-category beep pattern. Optional dynamic sweat-rate estimate (HR, power, weight, temp, humidity) for hydration. Post-ride summary.
 4. **Actions** — three sub-blocks: **Karoo Live** (ride-start / ride-end toggles + messages, Karoo Live key, test buttons), **Custom Messages 1–3** (enable, 7-char button label, message text, idle colour), and **Webhook 1–2** (URL, GET/POST, headers, body, optional geo-fence, optional on-screen alert).
 5. **Provider** — pick the active messaging provider and enter credentials. All four configurations are saved independently.
 6. **Settings** — master kill switch, **test buttons** (Simulate Crash, Test ride start/end), **FIT export** *(v2.0)* of logged + burned carbs / burn rate / hydration / wellness drift as developer fields for Strava / Intervals.icu / TrainingPeaks, **anonymous calibration logging** *(opt-in)*, **Backup / Restore**.
@@ -116,6 +116,7 @@ The KSafe app has **six tabs**, in this order:
 Detailed field references:
 - 📘 [Safety / Settings — field reference](docs/configuration-reference.md)
 - 📘 [Health & Fueling — full reference](docs/health-fueling.md) (tier thresholds, FIT schema, alert tokens)
+- 📘 [Setting your initial fueling targets](docs/health-fueling.md#how-to-pick-your-per-hour-targets) — g/h by ride duration, ml/h by temperature, pre/post-ride weigh-in formula, ACSM / Jeukendrup / Sawka references
 
 ## Testing
 
