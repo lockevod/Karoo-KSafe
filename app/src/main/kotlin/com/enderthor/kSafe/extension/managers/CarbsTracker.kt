@@ -140,10 +140,14 @@ class CarbsTracker(
         Timber.d("CarbsTracker resumed (cumTargetG=${cumTargetG.toInt()}, cumLoggedG=$cumLoggedG)")
     }
 
-    fun updateConfig(config: KSafeConfig) {
+    /**
+     * See [HydrationTracker.updateConfig] for the rationale of the [isRecording] gate
+     * on the auto-start branch. Same shape, same reason.
+     */
+    fun updateConfig(config: KSafeConfig, isRecording: Boolean) {
         val wasEnabled = this.config.carbsTrackerEnabled
         this.config = config
-        if (!wasEnabled && config.carbsTrackerEnabled) start(config)
+        if (!wasEnabled && config.carbsTrackerEnabled && isRecording) start(config)
         else if (wasEnabled && !config.carbsTrackerEnabled) stop()
     }
 

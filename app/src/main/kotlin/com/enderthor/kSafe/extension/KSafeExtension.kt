@@ -191,10 +191,16 @@ class KSafeExtension : KarooExtension("ksafe", BuildConfig.VERSION_NAME), Corout
                 val prevActive = activeConfig.isActive
                 activeConfig = config
                 crashManager.updateConfig(config)
-                medicalDetector.updateConfig(config)
-                wellnessMonitor.updateConfig(config)
-                carbsTracker.updateConfig(config)
-                hydrationTracker.updateConfig(config)
+                // Auto-start branch of the four trackers is gated on the current ride state
+                // so a config emission at extension boot (or a settings save while idle) does
+                // NOT spin up integration / monitoring coroutines outside a ride. Crash is
+                // intentionally not gated here — its updateConfig never auto-starts; ride
+                // lifecycle and applyIdleMonitoring own the start/stop calls instead.
+                val isRecording = currentRideState is RideState.Recording
+                medicalDetector.updateConfig(config, isRecording)
+                wellnessMonitor.updateConfig(config, isRecording)
+                carbsTracker.updateConfig(config, isRecording)
+                hydrationTracker.updateConfig(config, isRecording)
                 // Toggle calibration logging based on config
                 if (config.calibrationLoggingEnabled && !calibLogger.isEnabled) {
                     calibLogger.enable()

@@ -232,5 +232,7 @@ private fun MedicalEpisodeDetector.applyConfig(config: KSafeConfig) {
     // through the public `updateConfig` is benign because both branches (start/stop) are
     // gated on the disabled→enabled or enabled→disabled transition, and a fresh detector
     // starts with `medicalEpisodeEnabled = false` in the default KSafeConfig.
-    this.updateConfig(config)
+    // Pass isRecording = false so the auto-start branch never fires under tests — tests
+    // that need an active monitor call start() directly. See the updateConfig contract.
+    this.updateConfig(config, isRecording = false)
 }

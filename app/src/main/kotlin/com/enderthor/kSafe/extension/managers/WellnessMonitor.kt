@@ -145,10 +145,14 @@ class WellnessMonitor(
         Timber.d("WellnessMonitor resumed (sessionMaxHr=$sessionMaxHr, criticalFires=$criticalFires, sustainedFires=$sustainedFires)")
     }
 
-    fun updateConfig(config: KSafeConfig) {
+    /**
+     * See [HydrationTracker.updateConfig] for the rationale of the [isRecording] gate
+     * on the auto-start branch. Same shape, same reason.
+     */
+    fun updateConfig(config: KSafeConfig, isRecording: Boolean) {
         val wasEnabled = this.config.wellnessEnabled
         this.config = config
-        if (!wasEnabled && config.wellnessEnabled) start(config)
+        if (!wasEnabled && config.wellnessEnabled && isRecording) start(config)
         else if (wasEnabled && !config.wellnessEnabled) stop()
     }
 

@@ -149,10 +149,20 @@ class HydrationTracker(
         Timber.d("HydrationTracker resumed (cumTargetMl=${cumTargetMl.toInt()}, cumLoggedMl=$cumLoggedMl)")
     }
 
-    fun updateConfig(config: KSafeConfig) {
+    /**
+     * Adopt a new config. The auto-start branch (`disabled → enabled`) requires
+     * [isRecording] = true so a config flow emission at extension boot — or any
+     * config save the rider makes while the bike is idle — does NOT spin up the
+     * integration coroutine outside a ride. Without this gate the deficit field
+     * grew steadily on the apps screen even though the rider had not pressed Start.
+     *
+     * Stop is always honoured regardless of ride state: an `enabled → disabled`
+     * mid-ride must take effect immediately.
+     */
+    fun updateConfig(config: KSafeConfig, isRecording: Boolean) {
         val wasEnabled = this.config.hydrationTrackerEnabled
         this.config = config
-        if (!wasEnabled && config.hydrationTrackerEnabled) start(config)
+        if (!wasEnabled && config.hydrationTrackerEnabled && isRecording) start(config)
         else if (wasEnabled && !config.hydrationTrackerEnabled) stop()
     }
 
