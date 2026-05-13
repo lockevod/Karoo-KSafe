@@ -24,8 +24,7 @@ import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.launch
 import timber.log.Timber
 
-private const val COLOR_NEUTRAL = 0xFF263238.toInt()  // dark slate — passive info field
-private const val COLOR_OFF     = 0xFF424242.toInt()  // gray — tracker disabled
+private const val COLOR_NEUTRAL = 0xFF263238.toInt()  // dark slate — passive info field (live AND waiting-for-data)
 
 /**
  * Cumulative carbs burned this session in grams — i.e. the integrated zone-aware target.
@@ -70,7 +69,10 @@ class CarbsBurnedDataType(
                 }
                 poll.collectLatest { status ->
                     val view = if (status == null) {
-                        buildView(config, COLOR_OFF, "---", "burned")
+                        // No data yet — keep COLOR_NEUTRAL, NOT the disabled-style grey.
+                        // A status field waiting for data is not the same as a disabled
+                        // log slot / webhook / custom-message field.
+                        buildView(config, COLOR_NEUTRAL, "---", "burned")
                     } else {
                         buildView(config, COLOR_NEUTRAL, "${status.cumTargetG}g", "burned")
                     }

@@ -25,8 +25,7 @@ import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.launch
 import timber.log.Timber
 
-private const val COLOR_NEUTRAL = 0xFF263238.toInt()  // dark slate — passive info field
-private const val COLOR_OFF     = 0xFF424242.toInt()  // gray — tracker disabled
+private const val COLOR_NEUTRAL = 0xFF263238.toInt()  // dark slate — passive info field (live AND waiting-for-data)
 
 /**
  * Instantaneous carb burn rate in g/h, modulated by the rider's current intensity zone.
@@ -72,8 +71,13 @@ class CarbBurnRateDataType(
                 }
                 poll.collectLatest { status ->
                     val view = when {
+                        // Both no-data branches keep COLOR_NEUTRAL — a status field is
+                        // not "disabled" just because the rider hasn't pressed Start
+                        // yet (status == null) or the first HR/power sample hasn't
+                        // arrived (zoneSnapshot.source == NONE). Disabled colours are
+                        // reserved for fields that actually got turned off in config.
                         status == null ->
-                            buildView(config, COLOR_OFF, "---", "carb/h")
+                            buildView(config, COLOR_NEUTRAL, "---", "carb/h")
                         status.zoneSnapshot.source == ZoneSource.NONE ->
                             // No HR/power yet — don't display the base × 1.0 fallback.
                             buildView(config, COLOR_NEUTRAL, "---", "carb/h")

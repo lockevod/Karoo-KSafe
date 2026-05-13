@@ -24,11 +24,10 @@ import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.launch
 import timber.log.Timber
 
-private const val COLOR_AHEAD  = 0xFF1565C0.toInt()
-private const val COLOR_OK     = 0xFF2E7D32.toInt()
-private const val COLOR_AMBER  = 0xFFE65100.toInt()
-private const val COLOR_RED    = 0xFFB71C1C.toInt()
-private const val COLOR_NODATA = 0xFF424242.toInt()  // gray — no data yet (tracker not running)
+private const val COLOR_AHEAD = 0xFF1565C0.toInt()
+private const val COLOR_OK    = 0xFF2E7D32.toInt()
+private const val COLOR_AMBER = 0xFFE65100.toInt()
+private const val COLOR_RED   = 0xFFB71C1C.toInt()
 
 class HydrationStatusDataType(
     datatype: String,
@@ -81,8 +80,9 @@ class HydrationStatusDataType(
                 poll.collectLatest { status ->
                     val view = if (status == null) {
                         // See CarbStatusDataType — '---' beats 'off' so the rider doesn't
-                        // read 'off' as 'I disabled this'.
-                        buildView(config, COLOR_NODATA, "---", "hyd")
+                        // read 'off' as 'I disabled this'. Colour stays COLOR_OK because
+                        // the field is waiting for data, not disabled.
+                        buildView(config, COLOR_OK, "---", "hyd")
                     } else {
                         val color = colorFor(status.deficitMl, status.deficitThresholdMl)
                         buildView(config, color, displayMain(status.deficitMl), "hyd")
