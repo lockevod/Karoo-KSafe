@@ -73,15 +73,15 @@ The Safety Timer **pauses automatically** when the ride is paused.
 
 | Field | Tap action |
 |-------|-----------|
-| **Carb log 1 / 2 / 3** | Log one serving of the slot's configured grams |
-| **Hydration log 1 / 2** | Log one serving of the slot's configured ml |
+| **Carb log 1 / 2 / 3** | Log one serving of the slot's configured grams. A second tap on the same slot within ~5 s of the green `+Xg` flash **undoes** the entry (red `−Xg` confirmation) |
+| **Hydration log 1 / 2** | Log one serving of the slot's configured ml. Same on-screen undo: second tap within ~5 s reverses the log |
 
 ### Fueling — status (4, v2.0)
 
 | Field | Shows |
 |-------|-------|
 | **Carb status** | Current carb deficit (grams behind target) |
-| **Carb burn rate** | Instantaneous g/h based on HR / power |
+| **Carb burn rate** | Instantaneous g/h based on HR / power. Shows `---` until the first HR / power sample arrives, then switches to the live zone-modulated rate |
 | **Carbs burned** | Cumulative carbs burned this ride |
 | **Hydration status** | Current fluid deficit (ml behind target) |
 

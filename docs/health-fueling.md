@@ -251,7 +251,8 @@ For example, a custom carb detail of `"You're {deficit}g down — eat now ({elap
 
 Two complementary mechanisms:
 
-- **Data fields**: 3 carb log slots + 2 drink log slots, each with its own configurable **label** (e.g. *"Gel"*, *"Bar"*, *"Bottle"*), **amount** (g or ml), **idle background colour** (palette of 16 dark hues — see [field-colours.md](field-colours.md)) and **icon** (emoji like 🍫 / 🥤 / 💧, or one of the two bundled vector drawables for sports gel pouch and cyclist bidón — Unicode has no good emoji for those shapes). One tap = one log. The slot flashes green for 2 seconds as confirmation, then returns to its idle label. Add as many or as few slots to your ride profile as you want.
+- **Data fields**: 3 carb log slots + 2 drink log slots, each with its own configurable **label** (e.g. *"Gel"*, *"Bar"*, *"Bottle"*), **amount** (g or ml), **idle background colour** (palette of 16 dark hues — see [field-colours.md](field-colours.md)) and **icon** (emoji like 🍫 / 🥤 / 💧, or one of the two bundled vector drawables for sports gel pouch and cyclist bidón — Unicode has no good emoji for those shapes). One tap = one log. The slot flashes green for **5 seconds** showing `+Xg ✓` (or `+Xml`) with the hint `TAP UNDO`, then returns to its idle label. Add as many or as few slots to your ride profile as you want.
+  - **On-screen undo**: a **second tap on the same slot during the 5 s green window reverses the log**. The slot then flashes red `−Xg ✓` (or `−Xml`) for ~1.5 s as confirmation and returns to idle. Per-slot and one-shot: a third tap is a no-op until the next log populates the slot again. Undo restores the time-alert clock to its value before the wrong tap, so the next time-based alert isn't shifted by the bad entry.
 - **Hardware buttons (BonusActions, SRAM AXS only)**: KSafe registers two extra actions, *"KSafe: Log Carb"* and *"KSafe: Log Drink"*, both wired to slot 1 of each category. Map them to your AXS shifter buttons so you can log without looking at the screen.
 
 When the master Carb / Hydration toggle is off, the corresponding log fields render in grey with `OFF` and tap is disabled — the data field is still visible on the ride profile but clearly inactive, so a stray tap does nothing instead of silently no-op'ing. Re-enable the master in the Fueling tab and the colour / emoji come back.
@@ -261,7 +262,7 @@ There are also four **status data fields** for carbs (deficit, burn rate, cumula
 | Field | What it shows |
 |---|---|
 | **KSafe Carb Status** (`carb-status`) | Current carb deficit (target − logged), colour-coded green / amber / red |
-| **KSafe Carb Burn Rate** (`carb-burn-rate`) | Instantaneous burn rate in g/h (`target × zone multiplier`). With no HR/power the multiplier is 1.0 and the field shows the configured base target — useful to confirm the zone-aware modulation is doing what you expect. |
+| **KSafe Carb Burn Rate** (`carb-burn-rate`) | Instantaneous burn rate in g/h (`target × zone multiplier`). Shows `---` until the first HR/power sample arrives (otherwise the field would display `base × 1.0`, which riders consistently read as "the app already thinks I'm burning 60 g/h before I've clipped in"). Once a zone is computed it switches to the live zone-modulated rate. |
 | **KSafe Carbs Burned** (`carbs-burned`) | Cumulative g the body should have burned this session — companion to the deficit field, lets you see "total need" alongside "currently behind". |
 | **KSafe Hydration Status** (`hyd-status`) | Current hydration deficit (target − logged), colour-coded |
 
