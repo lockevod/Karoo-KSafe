@@ -1,6 +1,6 @@
 # Field Colours and Alignment
 
-Each KSafe ride field has a customisable **idle background colour** and respects the **per-field alignment** (left / center / right) the rider sets in the Karoo profile editor.
+Each KSafe ride field has a customisable **idle background colour**. Two of them (the passive info readouts **Carb burn rate** and **Carbs burned**) also follow the **per-field alignment** (left / center / right) the rider sets in the Karoo profile editor; the rest are always centered.
 
 ## Idle background colour
 
@@ -58,11 +58,20 @@ These override your idle pick (whether painted or Auto) whenever the field enter
 
 ## Alignment (horizontal)
 
-KSafe respects the **per-field alignment** (`LEFT` / `CENTER` / `RIGHT`) the rider sets in the Karoo profile editor for every field — same convention native Karoo fields and KDouble follow. The default if you haven't changed it is `RIGHT`, which matches Hammerhead's own default.
+Only two fields follow the **per-field alignment** (`LEFT` / `CENTER` / `RIGHT`) the rider sets in the Karoo profile editor:
 
-The setting applies to the main text and the hint line. State branches (LOGGED flash, SENDING…, OFF, etc.) follow the same alignment, so the field stays visually coherent across states.
+- **Carb burn rate**
+- **Carbs burned**
 
-Older karoo-ext SDKs (pre-1.1.2) did not surface alignment to extensions; KSafe falls back to `RIGHT` on those devices.
+These are passive numeric readouts that sit alongside native Karoo data fields (HR, power, speed…); inheriting the rider's alignment choice lets them blend in instead of standing out as misaligned.
+
+Every other field is **always centered**. They are either tap targets (SOS, Safety Timer, Custom Messages, Webhooks, Carb/Hydration log slots) where center balances the touch surface, or coloured state indicators (Carb status, Hydration status) where the deficit text reads better centered inside the semaphore-coloured field.
+
+For the two alignment-respecting fields, the default if the rider hasn't changed it is `RIGHT` (matches Hammerhead's own default for native fields). karoo-ext < 1.1.2 didn't surface alignment to extensions; KSafe falls back to `RIGHT` on those devices.
+
+## Karoo-theme text colour (implementation note)
+
+When a field is in **Karoo default** mode (no painted background, theme-driven appearance), KSafe sets the text colour explicitly at render time based on the system-wide night-mode flag (`Configuration.UI_MODE_NIGHT_MASK`): **white text in night mode, black in day mode** — matching whatever background the Karoo OS will draw underneath the field. We do not rely on theme attributes (`?android:attr/textColorPrimary`) baked into the layout because on Karoo hardware they did not resolve to a contrasting colour in testing (riders reported white text on a white field — invisible).
 
 ## Where to change idle colours
 
