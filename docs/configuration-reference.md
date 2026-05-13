@@ -24,12 +24,17 @@ Everything that decides **when** and **how** an emergency fires lives here.
   - `{location}` — GPS coordinates as a Google Maps link.
   - `{reason}` — reason for the alert (crash / check-in expired / manual SOS / speed drop).
   - `{livetrack}` — Karoo Live real-time tracking link (only if a key is configured in the Actions tab).
-- **Countdown seconds**: How long the cancellation countdown lasts before alerts are sent (default: 30 s).
+- **Countdown seconds**: How long the cancellation countdown lasts before alerts are sent (default: **30 s**). The post-crash cooldown is derived as `countdown + 30 s`, so changing this also changes how long the impact detector ignores new spikes after a confirmed crash (15 s countdown → 45 s cooldown; 60 s countdown → 90 s cooldown). Shorter values (15–20 s) get the alert out faster after a real crash but leave less time to cancel a false positive; longer values (45–60 s) tolerate rough terrain better but delay real alerts. The default 30 s matches Garmin / Wahoo conventions and is the recommended starting point.
 
 ### Crash detection
 
 - **Crash detection**: Enable/disable automatic crash detection. Configure sensitivity and minimum speed (see the [Crash Detection](../README.md#crash-detection) section of the README for which preset to pick).
-- **Max. speed to confirm crash**: The GPS speed below which the rider is considered stopped after an impact (default: **3 km/h** for Low, **5 km/h** for Medium/High). Increase to 8 km/h for MTB/gravel where sliding after a crash is common; lower to 3 km/h for strict road use.
+- **Max. speed to confirm crash**: The GPS speed below which the rider is considered stopped after an impact. Defaults are preset-keyed: **3 km/h** for Low, **5 km/h** for Medium / High. Framework to pick a value:
+  - **3 km/h** (strict road) — a crashed rider on tarmac is essentially motionless. Use only on smooth road where sliding is unlikely.
+  - **5 km/h** (mixed road + gravel) — allows a few extra metres of slide before confirming. Default for general use.
+  - **8 km/h** (MTB / enduro) — on dirt and descents a crashed bike + rider can drift further from the impact point before stopping. Set higher to avoid the silence check timing out before the rider has truly stopped.
+  
+  Higher values trade a small extra false-positive rate (a rider who hits a bump and brakes hard *might* dip below 8 km/h for the 4.5 s silence window without crashing) against fewer missed alerts on sliding crashes. Lower values do the opposite trade-off.
 - **Monitor crash when not riding**: Keeps crash detection active even when no ride is recording. Useful for warm-ups or quick spins without starting a recording.
 - **Monitor crash when not riding — any speed**: Same as above but ignores the minimum speed threshold (detects crashes even while stationary). ⚠ More false positives — use with caution.
 - **Speed drop detection**: Enable/disable detection of prolonged speed drops. Configure the time window (minutes) with no movement before triggering.

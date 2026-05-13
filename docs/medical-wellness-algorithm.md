@@ -219,6 +219,46 @@ Phase 2 — Drift evaluation (every tick, after baseline):
 | Rider starts cold and warms up gradually | Baseline is established at minute 10, by which point HR/W has stabilised. Drift is measured against this warm-baseline. |
 | Long ride with no rest stops | Cooldown of 30 min between fires; rider could see 1-2 alerts on a 4-hour ride if drift is really severe. Acceptable. |
 
+### Picking your wellness tier values
+
+The defaults are tuned for a "general endurance rider" — moderate weekly volume, occasional threshold work, no structured Z5 interval programme. If your riding doesn't match that profile, the three tiers reward tuning. Same structure as the [deficit-threshold guidance for Fueling](health-fueling.md#picking-the-deficit-threshold): pick a profile column, then respect the hard guardrails.
+
+#### Critical HR — duration (default 5 min)
+
+Catches **acute** overexertion at ≥ 95 % maxHR / 175 bpm. The default is short on purpose: at that intensity, 5 min is already in cardiac-stress territory.
+
+| Rider profile | Duration | Reasoning |
+|---|---|---|
+| Cardiac history / returning from illness | 3 min | Earlier warning, at the cost of false fires during sprints |
+| **Default** (general endurance / recreational) | **5 min** | Real overexertion; rejects intervals shorter than 5 min |
+| Trained interval / VO2max worker | 8 min | Stops false fires during deliberate 5-min Z5 intervals |
+
+**Hard guardrails**: don't go below **2 min** (every short Z5 interval fires) or above **10 min** (≥ 95 % maxHR sustained beyond 10 min is borderline cardiac-event territory — alerting later is alerting too late).
+
+#### Sustained HR — duration (default 30 min)
+
+Long-tail fatigue: HR ≥ 92 % maxHR / 180 bpm sustained. Catches the rider who is over-extended but not yet acutely critical.
+
+| Rider profile | Duration | Reasoning |
+|---|---|---|
+| Long endurance / hot day / dehydration risk | 20 min | Earlier warning before blow-up |
+| **Default** | **30 min** | Long enough to reject hard interval workouts; short enough to be actionable |
+| Racer doing FTP / threshold sessions | 45 min | A 40-min threshold effort is intentional, not an alert |
+
+**Hard guardrails**: below **15 min**, any solid threshold workout fires the alert; above **60 min**, by the time it fires the rider has already overcooked themselves and the warning is moot.
+
+#### Cardiac decoupling — threshold % and duration (defaults 7 % / 10 min)
+
+The early warning of **dehydration / heat stress**. Requires a power meter and steady-ish power output, because drift is measured against the rider's own ride-specific baseline.
+
+| Rider profile | Threshold | Duration | Reasoning |
+|---|---|---|---|
+| Hot weather / known dehydration tendency | 5 % | 7 min | Catches drift earlier when conditions make heat stress likely |
+| **Default** | **7 %** | **10 min** | Sport-science consensus: > 5 % over an hour = mild dehydration, > 10 % = significant. 7 % at 10 min is the actionable middle |
+| Noisy power meter / very rolling terrain | 10 % | 15 min | Reduces false fires from sensor jitter or constant power changes |
+
+**Hard guardrails**: below **5 %**, normal physiological drift on a long steady ride (2–4 % per hour even when properly hydrated) will trigger false fires; above **12 %**, the rider is already deep into heat stress and the warning is late.
+
 ### Effective threshold — two modes (Critical & Sustained tiers)
 
 The HR threshold for tiers 1 and 2 depends on `wellnessUseMaxHrPercent`:
