@@ -32,12 +32,27 @@ You can save credentials for all four; only the **selected** one is used. Setup 
 
 ## Installation
 
-1. Open `https://github.com/lockevod/Karoo-KSafe/releases/latest/download/ksafe.apk` on your phone.
-2. Share the file with the Hammerhead Companion app and install.
+### Karoo store *(recommended)*
+
+The simplest path — no sideloading, no APK file, no Companion-app gymnastics. On the Karoo:
+
+1. Open the **Karoo's Extensions store** from the main menu.
+2. Find **KSafe** in the list, tap **Install**.
 3. **Restart the Karoo** (shut down and start again).
 4. Open KSafe — it will prompt for **"Draw over other apps"** permission (required for the SOS cancel overlay). Toggle KSafe → Allow and press Back. If you miss the prompt, a yellow banner inside the app lets you grant it later.
 
-Without the overlay permission the SOS overlay won't appear, but you can still cancel via the SOS/Timer data fields or a hardware button.
+KSafe is published by Hammerhead in the store so any rider can install it directly without enabling developer options or using ADB.
+
+### Sideloading *(advanced / pre-release builds)*
+
+For riders who want a pre-release build, a custom fork, or who need to install before a version reaches the store:
+
+1. Open `https://github.com/lockevod/Karoo-KSafe/releases/latest/download/ksafe.apk` on your phone.
+2. Share the file with the Hammerhead Companion app and install.
+3. **Restart the Karoo** (shut down and start again).
+4. Grant the **"Draw over other apps"** permission as above.
+
+Without the overlay permission the SOS overlay won't appear, but you can still cancel via the SOS/Timer data fields or a hardware button — regardless of which install method you used.
 
 ## Cancelling an emergency
 
