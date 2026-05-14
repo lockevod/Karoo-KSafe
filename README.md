@@ -223,6 +223,7 @@ Algorithm internals (for contributors):
 - Uses the [Karoo Extensions Framework](https://github.com/hammerheadnav/karoo-ext) by Hammerhead.
 - Optionally talks to Telegram, ntfy, CallMeBot (WhatsApp) or Pushover. Each has its own terms; KSafe has no affiliation.
 - Thanks to Hammerhead for the Karoo and the extensions API.
+- Thanks to **[Tim Kluge (timklge)](https://github.com/timklge)** for [**karoo-headwind**](https://github.com/timklge/karoo-headwind). When installed alongside KSafe, headwind publishes real meteo data (ambient temperature, humidity) as Karoo streams that the **Fueling tab's dynamic sweat-rate estimator** consumes instead of the device's heat-biased onboard temperature sensor — a noticeably better hydration target on hot rides. KSafe degrades cleanly to the onboard sensor when headwind isn't installed.
 
 ## Useful links
 
