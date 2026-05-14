@@ -32,16 +32,18 @@ You can save credentials for all four; only the **selected** one is used. Setup 
 
 ## Installation
 
-### Karoo store *(recommended)*
+### Hammerhead's Karoo Extensions store *(recommended)*
 
-The simplest path — no sideloading, no APK file, no Companion-app gymnastics. On the Karoo:
+KSafe is **officially distributed by Hammerhead** in the Karoo's built-in Extensions store. This is the supported path for the great majority of riders: no APK file, no sideloading, no Companion-app workaround, no developer options, no ADB. Hammerhead handles signing, hosting and update delivery, so installs and version bumps land on the device the same way every other Karoo-native feature does.
 
-1. Open the **Karoo's Extensions store** from the main menu.
+On the Karoo:
+
+1. Open the **Extensions store** from the main menu.
 2. Find **KSafe** in the list, tap **Install**.
 3. **Restart the Karoo** (shut down and start again).
 4. Open KSafe — it will prompt for **"Draw over other apps"** permission (required for the SOS cancel overlay). Toggle KSafe → Allow and press Back. If you miss the prompt, a yellow banner inside the app lets you grant it later.
 
-KSafe is published by Hammerhead in the store so any rider can install it directly without enabling developer options or using ADB.
+Updates published by Hammerhead arrive in the same store entry — no manual re-install needed.
 
 ### Sideloading *(advanced / pre-release builds)*
 
