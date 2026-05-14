@@ -257,9 +257,9 @@ Each of the three carb slots and two hydration slots carries an idle background 
 
 | Config field | Default | Used by |
 |---|---|---|
-| `carbNColor` (N=1..3) | `0xFF1565C0` (palette dark blue) | `CarbLogDataType.idleColorFromConfig` for the `IDLE` state's background. |
+| `carbNColor` (N=1..3) | `FIELD_COLOR_AUTO` (the Karoo-theme passthrough sentinel = `Color.TRANSPARENT` = 0) | `CarbLogDataType.idleColorFromConfig` for the `IDLE` state's background. When the value is the AUTO sentinel the field inflates `field_view_auto.xml` and skips `setBackgroundColor`; any other value uses `field_view.xml` and paints the bg with that ARGB int. |
 | `carbNIcon` (N=1..3) | `FUEL_GEL_DRAWABLE`, `🍫`, `🍌` | Prepended to the field's main label (`"$emoji $label"`); empty string = no prefix; the `FUEL_GEL_DRAWABLE` sentinel renders as a real vector drawable instead — see below. |
-| `drinkNColor` (N=1..2) | `0xFF1565C0` | `HydrationLogDataType.idleColorFromConfig`. |
+| `drinkNColor` (N=1..2) | `FIELD_COLOR_AUTO` | `HydrationLogDataType.idleColorFromConfig`. Same AUTO-vs-painted layout-switch as carbs. |
 | `drinkNIcon` (N=1..2) | `💧`, `FUEL_BOTTLE_DRAWABLE` | Same prefix logic, with the bottle sentinel rendering the bidón vector drawable. |
 
 The colour palette is shared across the whole app (`FIELD_COLOR_PALETTE` = 1 Karoo-default sentinel + 20 dark hues — see [field-colours.md](field-colours.md) for the exact swatches and per-row layout). The reserved state colours (bright red / orange / amber / bright dark green / mid grey — used by SOS, Timer, CustomMessage's SENT/SENDING/ERROR/OFF flashes and the `LOGGED` flash here) are deliberately excluded so a rider's idle pick can never collide with a state-machine signal.

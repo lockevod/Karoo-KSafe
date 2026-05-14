@@ -1,6 +1,6 @@
 # Field Colours and Alignment
 
-Each KSafe ride field has a customisable **idle background colour**. Two of them (the passive info readouts **Carb burn rate** and **Carbs burned**) also follow the **per-field alignment** (left / center / right) the rider sets in the Karoo profile editor; the rest are always centered.
+Nine of KSafe's 16 ride fields have a **rider-pickable idle background colour** (SOS, Safety Timer, Custom Message 1–3, Webhook 1–2, Carb Log 1–3, Hydration Log 1–2). The remaining four — Carb Burn Rate, Carbs Burned, Carb Status, Hydration Status — have no picker; their background is determined automatically (always Karoo theme for the two info readouts, deficit-driven semaphore for the two status fields). Two of those four (Carb Burn Rate and Carbs Burned) also follow the **per-field alignment** (left / center / right) the rider sets in the Karoo profile editor; everything else is always centered.
 
 ## Idle background colour
 
@@ -26,14 +26,23 @@ The 20 hues are arranged 4 columns × 5 rows in the picker dialog, walking the r
 
 All entries are at Material 700–900 luminance, so white text stays at ≥7:1 contrast (the threshold for primary numbers per the design guide).
 
-## Always-Karoo-default fields (no picker)
+## Fields without a picker
 
-Two status fields have **no rider-pickable colour** — they always render in Karoo theme:
+Four fields have **no rider-pickable colour** — their background is determined automatically by what the field shows.
 
-- **Carb Burn Rate** — passive readout of the instantaneous burn rate (g/h).
-- **Carbs Burned** — passive readout of the cumulative session target (g).
+**Always Karoo theme** (passive numeric readouts that should look native):
 
-They were intentionally left without a picker because they're informational data fields, not action surfaces. Rendering them in auto theme makes them look identical to the rest of the rider's data page.
+- **Carb Burn Rate** — instantaneous burn rate (g/h).
+- **Carbs Burned** — cumulative session target (g).
+
+These two also follow the **per-field horizontal alignment** the rider sets in the Karoo profile editor — they read as data alongside native Karoo fields, so blending in is the point.
+
+**Always deficit-driven semaphore** (colour conveys the value):
+
+- **Carb status** — blue ahead, green within margin, amber approaching threshold, red over threshold. White text on the coloured bg, centered.
+- **Hydration status** — same scheme in ml.
+
+A picker would make no sense on these two: the colour *is* the information. They show `---` in their normal colour (not grey) while waiting for the first tracker tick — see the state-driven table below for the contract.
 
 ## State-driven colours (always preserved)
 
