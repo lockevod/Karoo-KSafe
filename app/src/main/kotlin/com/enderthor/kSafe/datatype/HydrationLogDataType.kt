@@ -95,8 +95,9 @@ class HydrationLogDataType(
         val layout = if (isAuto) R.layout.field_view_auto else R.layout.field_view
         val content = RemoteViews(context.packageName, layout).apply {
             if (!isAuto) setInt(R.id.field_container, "setBackgroundColor", bgColor)
-            setTextViewText(R.id.field_text_main, main.take(9))
-            setTextViewText(R.id.field_text_hint, hint.take(9))
+            // safeTake — see CarbLogDataType.buildView for the surrogate-pair rationale.
+            setTextViewText(R.id.field_text_main, main.safeTake(9))
+            setTextViewText(R.id.field_text_hint, hint.safeTake(9))
             setViewVisibility(R.id.field_text_hint, if (hint.isEmpty()) View.GONE else View.VISIBLE)
             setInt(R.id.field_text_main, "setGravity", Gravity.CENTER)
             setInt(R.id.field_text_hint, "setGravity", Gravity.CENTER)

@@ -107,8 +107,15 @@ class CarbLogDataType(
         val layout = if (isAuto) R.layout.field_view_auto else R.layout.field_view
         val content = RemoteViews(context.packageName, layout).apply {
             if (!isAuto) setInt(R.id.field_container, "setBackgroundColor", bgColor)
-            setTextViewText(R.id.field_text_main, main.take(9))
-            setTextViewText(R.id.field_text_hint, hint.take(9))
+            // safeTake (not .take) — labels can contain rider-picked emoji from
+            // FUEL_EMOJI_CARB (🍫 🍌 etc.) which are supplementary-plane code points
+            // that .take() would split on a surrogate-pair boundary, producing a tofu
+            // box. The label feeding into here is already safeTake'd to 7 chars in
+            // labelFromConfig, so this is defensive — but the LOGGED/UNDONE branches
+            // pass "+${grams}g" etc. directly, and a future hint change could include
+            // emoji too. Keep both call sites surrogate-pair safe by default.
+            setTextViewText(R.id.field_text_main, main.safeTake(9))
+            setTextViewText(R.id.field_text_hint, hint.safeTake(9))
             setViewVisibility(R.id.field_text_hint, if (hint.isEmpty()) View.GONE else View.VISIBLE)
             setInt(R.id.field_text_main, "setGravity", Gravity.CENTER)
             setInt(R.id.field_text_hint, "setGravity", Gravity.CENTER)

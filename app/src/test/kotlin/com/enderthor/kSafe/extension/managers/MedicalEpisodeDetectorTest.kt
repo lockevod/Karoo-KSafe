@@ -75,7 +75,7 @@ class MedicalEpisodeDetectorTest {
             f.hr(20)
             if (sec % 5 == 0) f.detector.tick()
         }
-        assertTrue("flatline should have fired: $${f.captured}", f.captured != null)
+        assertTrue("flatline should have fired: ${f.captured}", f.captured != null)
         assertEquals(EmergencyReason.MEDICAL_FLATLINE, f.captured!!.first)
         assertEquals("20", f.captured!!.second["bpm"])
     }

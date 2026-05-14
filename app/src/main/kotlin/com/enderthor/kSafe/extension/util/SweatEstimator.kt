@@ -10,12 +10,15 @@ import kotlin.math.sqrt
  *
  * ## Model
  *
- * Three multiplicative components:
+ * Four multiplicative components:
  *
  *  1. **Metabolic rate** (kcal/hr) — preferred from power (cycling efficiency ≈ 25 %), fallback
  *     to a Keytel et al. 2005 HR-derived estimate (gender-averaged because the Karoo profile
- *     does not expose gender). A floor at 60 kcal/hr (~resting metabolism) is applied so a
- *     pre-ride or dropped-HR sample cannot produce 0 ml/hr.
+ *     does not expose gender). The HR-derived branch applies a per-minute floor (`coerceAtLeast(1.0)`)
+ *     so a pre-ride or dropped-HR sample cannot produce 0 kcal/min → 0 ml/hr; that floor is
+ *     1 kcal/min ≈ 60 kcal/hr. When **neither** a HR nor power signal is available, the
+ *     fallback is `DEFAULT_KCAL_HR = 350` kcal/hr (moderate-ride placeholder) — see the
+ *     "Not modelled" section below; this is reported as LOW confidence.
  *
  *  2. **Base sweat rate** = `metabolic_kcal_hr * 0.85`. The 0.85 mL/kcal coefficient is the
  *     middle of the 0.7–1.0 range reported in Sawka 1992 / ACSM Position Stand 2007 / Baker
