@@ -1,7 +1,7 @@
 # KSafe - Safety Extension for Karoo
 
 > [!IMPORTANT]
-> **Available from v2.0** — the **Health tab** (medical episode detection, three-tier wellness / HR monitor, customisable HR alert templates) and the **Fueling tab** (carb and hydration tracker, log slots with custom colours and icons, customisable alert templates, FIT-file export) require KSafe **v2.0 or newer**. Earlier installs only ship the safety / SOS / messaging features. Update via the Hammerhead Companion app once v2.0 is released.
+> **Available from v2.0** — the **Health tab** (medical episode detection, three-tier wellness / HR monitor, customisable HR alert templates) and the **Fueling tab** (carb and hydration tracker, log slots with custom colours and icons, customisable alert templates, FIT-file export) require KSafe **v2.0 or newer**. Earlier installs only ship the safety / SOS / messaging features. Update via the Hammerhead Companion app or Karoo Store once v2.0 is released.
 
 > [!NOTE]
 > If you want to **help improve crash detection**, enable the anonymous calibration data toggle in the app (Settings tab) and send the data after your rides. This data is completely anonymous. The more data collected, the better the algorithm gets tuned for all users. See [Calibration Logging](#calibration-logging-optional) for details.
