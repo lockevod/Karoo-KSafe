@@ -87,6 +87,15 @@ class KSafeExtension : KarooExtension("ksafe", BuildConfig.VERSION_NAME), Corout
      *  Headwind's meteo data. Reset implicitly on process restart — Headwind re-emits early
      *  on subscription so we re-flip within seconds if it's still installed. */
     @Volatile private var hasHeadwindTemp = false
+
+    /** Parent Job for the "Recording-only" stream collectors (POWER, HR, TEMPERATURE,
+     *  Headwind temp + humidity, UserProfile). Their consumers — the fueling trackers,
+     *  WellnessMonitor, MedicalEpisodeDetector — only do real work during a recording,
+     *  so the upstream SDK subscriptions waste IPC + collector wakes outside a ride.
+     *  Cancelled on the Idle transition; (re-)launched on the first Recording entry.
+     *  Idempotent — extra calls to [startRecordingCollectors] while already active
+     *  are no-ops. */
+    @Volatile private var recordingCollectorsJob: kotlinx.coroutines.Job? = null
     /** True if there was an active ride (Recording or Paused) — used to detect ride end. */
     private var rideWasActive = false
 
@@ -108,6 +117,26 @@ class KSafeExtension : KarooExtension("ksafe", BuildConfig.VERSION_NAME), Corout
         @Volatile private var instance: KSafeExtension? = null
         fun getInstance(): KSafeExtension? = instance
         internal fun setInstance(ext: KSafeExtension) { instance = ext }
+
+        /**
+         * Tracker readiness signals. The status DataTypes (CarbStatus, CarbsBurned,
+         * CarbBurnRate, HydrationStatus) used to spin a `while (tracker == null)
+         * delay(1_000)` loop in their startView until the extension finished
+         * initialising — burning a wake-per-second per field, and re-running on
+         * every `startView` re-entry (page swap, profile change, etc.).
+         *
+         * Now: the extension publishes the live tracker references here as soon as
+         * they're constructed. DataTypes do `.filterNotNull().first()` once and then
+         * collect from the tracker's own `statusFlow` indefinitely — a single
+         * suspension instead of N polls.
+         *
+         * Survives across extension restarts: a destroyed extension nulls these out
+         * in [onDestroy] so a stale reference can't outlive its service.
+         */
+        val carbsTrackerFlow = kotlinx.coroutines.flow.MutableStateFlow<
+            com.enderthor.kSafe.extension.managers.CarbsTracker?>(null)
+        val hydrationTrackerFlow = kotlinx.coroutines.flow.MutableStateFlow<
+            com.enderthor.kSafe.extension.managers.HydrationTracker?>(null)
     }
 
     override val types by lazy {
@@ -182,6 +211,11 @@ class KSafeExtension : KarooExtension("ksafe", BuildConfig.VERSION_NAME), Corout
             context = applicationContext,
             calibLogger = calibLogger,
         )
+        // Publish tracker references so the status DataTypes can suspend on the flow
+        // instead of polling getInstance every second. See companion's tracker-flow
+        // docs for the rationale.
+        carbsTrackerFlow.value = carbsTracker
+        hydrationTrackerFlow.value = hydrationTracker
 
         karooSystem.connect { connected ->
             if (connected) {
@@ -347,87 +381,113 @@ class KSafeExtension : KarooExtension("ksafe", BuildConfig.VERSION_NAME), Corout
                 }
         }
 
-        launch {
+        // The POWER, HR, TEMPERATURE, Headwind temp/humidity and UserProfile streams
+        // are gated by RideState — their consumers (fueling trackers, WellnessMonitor,
+        // MedicalEpisodeDetector) only do real work during a recording, and an idle
+        // device sitting on the dock has no reason to wake the collector coroutines
+        // ~once per second per stream. Started via [startRecordingCollectors] from
+        // [handleRideState] on the Recording transition and cancelled on Idle.
+    }
+
+    /**
+     * Launches the Recording-only stream collectors (POWER, HR, TEMPERATURE,
+     * Headwind temp+humidity, UserProfile). Idempotent — extra calls while a job
+     * is already active are no-ops. Cancellation is via [stopRecordingCollectors]
+     * on the Idle transition, which lets the upstream SDK subscriptions close
+     * cleanly so they stop consuming IPC bandwidth while the device is on the dock.
+     */
+    private fun startRecordingCollectors() {
+        if (recordingCollectorsJob?.isActive == true) return
+        recordingCollectorsJob = launch {
             // Power meter stream — optional. carbsTracker uses it for the zone multiplier; the
             // wellnessMonitor's cardiac-decoupling tier uses it for the HR/W ratio; the
             // hydrationTracker uses it as the preferred metabolic-rate input for the sweat
             // estimator. If absent, the carb tracker falls back to HR zones, decoupling
             // auto-skips, and hydration falls back to HR-derived metabolic rate.
-            karooSystem.streamDataFlow(io.hammerhead.karooext.models.DataType.Type.POWER)
-                .collect { streamState ->
-                    val w = streamState.powerW() ?: return@collect
-                    carbsTracker.updatePower(w)
-                    wellnessMonitor.updatePower(w)
-                    hydrationTracker.updatePower(w)
-                }
-        }
+            launch {
+                karooSystem.streamDataFlow(io.hammerhead.karooext.models.DataType.Type.POWER)
+                    .collect { streamState ->
+                        val w = streamState.powerW() ?: return@collect
+                        carbsTracker.updatePower(w)
+                        wellnessMonitor.updatePower(w)
+                        hydrationTracker.updatePower(w)
+                    }
+            }
 
-        launch {
-            // Rider profile (weight, max HR, FTP, HR zones, power zones). Read continuously —
-            // if the rider edits their profile in the Karoo settings mid-ride, the new values
-            // propagate immediately. The carb tracker uses it for HR/power zone multiplier,
-            // the wellness monitor for the optional % of max HR threshold mode, and the
-            // hydration tracker for the body-mass scaling factor in the sweat estimator.
-            karooSystem.streamUserProfile()
-                .collect { profile ->
-                    carbsTracker.updateUserProfile(profile)
-                    wellnessMonitor.updateUserProfile(profile)
-                    hydrationTracker.updateUserProfile(profile)
-                }
-        }
+            // Rider profile (weight, max HR, FTP, HR zones, power zones). Read continuously
+            // while recording — if the rider edits their profile in the Karoo settings
+            // mid-ride, the new values propagate immediately. The carb tracker uses it for
+            // HR/power zone multiplier, the wellness monitor for the optional % of max HR
+            // threshold mode, and the hydration tracker for the body-mass scaling factor
+            // in the sweat estimator.
+            launch {
+                karooSystem.streamUserProfile()
+                    .collect { profile ->
+                        carbsTracker.updateUserProfile(profile)
+                        wellnessMonitor.updateUserProfile(profile)
+                        hydrationTracker.updateUserProfile(profile)
+                    }
+            }
 
-        launch {
             // HR stream (ANT+/BLE). Optional: silent when no sensor is paired.
-            karooSystem.streamDataFlow(io.hammerhead.karooext.models.DataType.Type.HEART_RATE)
-                .collect { streamState ->
-                    val hr = streamState.heartRateBpm() ?: return@collect
-                    medicalDetector.updateHr(hr)
-                    wellnessMonitor.updateHr(hr)
-                    carbsTracker.updateHr(hr)
-                    hydrationTracker.updateHr(hr)
-                }
-        }
+            launch {
+                karooSystem.streamDataFlow(io.hammerhead.karooext.models.DataType.Type.HEART_RATE)
+                    .collect { streamState ->
+                        val hr = streamState.heartRateBpm() ?: return@collect
+                        medicalDetector.updateHr(hr)
+                        wellnessMonitor.updateHr(hr)
+                        carbsTracker.updateHr(hr)
+                        hydrationTracker.updateHr(hr)
+                    }
+            }
 
-        // ── HydrationTracker — ambient temperature + humidity streams ─────────
-        // Power, user profile and HR are pushed into the hydration tracker from the
-        // collectors above. The remaining inputs (temperature, humidity) live here
-        // because the hydration tracker is their only consumer.
-        launch {
             // Onboard Karoo temperature sensor. Device-heat biased (typically reads
             // +3–8 °C above ambient when in direct sun / after warm-up), but always
             // available — used as fallback when Headwind isn't publishing.
-            karooSystem.streamDataFlow(io.hammerhead.karooext.models.DataType.Type.TEMPERATURE)
-                .collect { streamState ->
-                    val s = streamState as? io.hammerhead.karooext.models.StreamState.Streaming
-                        ?: return@collect
-                    val tempC = s.dataPoint.singleValue ?: return@collect
-                    if (!hasHeadwindTemp) hydrationTracker.updateAmbientTemp(tempC)
-                }
+            launch {
+                karooSystem.streamDataFlow(io.hammerhead.karooext.models.DataType.Type.TEMPERATURE)
+                    .collect { streamState ->
+                        val s = streamState as? io.hammerhead.karooext.models.StreamState.Streaming
+                            ?: return@collect
+                        val tempC = s.dataPoint.singleValue ?: return@collect
+                        if (!hasHeadwindTemp) hydrationTracker.updateAmbientTemp(tempC)
+                    }
+            }
+
+            // ── Headwind extension streams (TYPE_EXT::karoo-headwind::xxx) ────
+            // If the karoo-headwind extension is installed on the rider's Karoo, prefer
+            // its weather data (real meteo API) over the onboard sensor. The streams
+            // below are silent on devices without Headwind — no error, just no emissions.
+            // TypeId convention documented at https://github.com/timklge/karoo-headwind.
+            launch {
+                karooSystem.streamDataFlow("TYPE_EXT::karoo-headwind::temperature")
+                    .collect { streamState ->
+                        val s = streamState as? io.hammerhead.karooext.models.StreamState.Streaming
+                            ?: return@collect
+                        val tempC = s.dataPoint.singleValue ?: return@collect
+                        hasHeadwindTemp = true
+                        hydrationTracker.updateAmbientTemp(tempC)
+                    }
+            }
+            launch {
+                karooSystem.streamDataFlow("TYPE_EXT::karoo-headwind::relativeHumidity")
+                    .collect { streamState ->
+                        val s = streamState as? io.hammerhead.karooext.models.StreamState.Streaming
+                            ?: return@collect
+                        val rh = s.dataPoint.singleValue ?: return@collect
+                        hydrationTracker.updateHumidity(rh.toInt().coerceIn(0, 100))
+                    }
+            }
         }
-        // ── Headwind extension streams (TYPE_EXT::karoo-headwind::xxx) ────────
-        // If the karoo-headwind extension is installed on the rider's Karoo, prefer its
-        // weather data (real meteo API) over the onboard sensor. The streams below are
-        // silent on devices without Headwind — no error, just no emissions.
-        // TypeId convention documented at https://github.com/timklge/karoo-headwind.
-        launch {
-            karooSystem.streamDataFlow("TYPE_EXT::karoo-headwind::temperature")
-                .collect { streamState ->
-                    val s = streamState as? io.hammerhead.karooext.models.StreamState.Streaming
-                        ?: return@collect
-                    val tempC = s.dataPoint.singleValue ?: return@collect
-                    hasHeadwindTemp = true
-                    hydrationTracker.updateAmbientTemp(tempC)
-                }
-        }
-        launch {
-            karooSystem.streamDataFlow("TYPE_EXT::karoo-headwind::relativeHumidity")
-                .collect { streamState ->
-                    val s = streamState as? io.hammerhead.karooext.models.StreamState.Streaming
-                        ?: return@collect
-                    val rh = s.dataPoint.singleValue ?: return@collect
-                    hydrationTracker.updateHumidity(rh.toInt().coerceIn(0, 100))
-                }
-        }
+    }
+
+    private fun stopRecordingCollectors() {
+        recordingCollectorsJob?.cancel()
+        recordingCollectorsJob = null
+        // Reset Headwind detection — if the rider's setup changes between rides
+        // (uninstalls Headwind, for instance) we want the onboard temperature
+        // fallback to engage cleanly on the next ride.
+        hasHeadwindTemp = false
     }
 
     private fun handleRideState(state: RideState) {
@@ -436,6 +496,10 @@ class KSafeExtension : KarooExtension("ksafe", BuildConfig.VERSION_NAME), Corout
         when (state) {
             is RideState.Recording -> {
                 if (activeConfig.isActive) {
+                    // Spin up the Recording-only sensor streams (POWER, HR, TEMPERATURE,
+                    // Headwind, UserProfile). Idempotent — a Paused→Recording resume hits
+                    // this same branch and the call is a no-op if collectors are still alive.
+                    startRecordingCollectors()
                     // Distinguish the very first Recording event of a session (where the
                     // accumulating trackers must do a clean start() and reset cum* state)
                     // from a Paused→Recording resume (where resume() preserves the rider's
@@ -496,6 +560,11 @@ class KSafeExtension : KarooExtension("ksafe", BuildConfig.VERSION_NAME), Corout
                 wellnessMonitor.stop()
                 carbsTracker.stop()
                 hydrationTracker.stop()
+                // Cancel the Recording-only sensor streams now that no consumer needs
+                // them. The SPEED / CADENCE / GRADE / RideProfile collectors keep
+                // running because crash detection may continue outside the ride
+                // (crashMonitorOutsideRide).
+                stopRecordingCollectors()
                 applyIdleMonitoring(activeConfig)
                 // Reset per-ride flags
                 rideStartNotificationSent = false
@@ -548,9 +617,15 @@ class KSafeExtension : KarooExtension("ksafe", BuildConfig.VERSION_NAME), Corout
             wellnessMonitor.stop()
             carbsTracker.stop()
             hydrationTracker.stop()
+            // No consumer for POWER/HR/TEMPERATURE while the master switch is off,
+            // so cancel those collectors too. They restart on the ON branch below.
+            stopRecordingCollectors()
             emergencyManager.stopCheckinTimer()
         } else {
             Timber.d("Master switch ON mid-ride — resuming monitoring (preserving session totals)")
+            // Re-arm the Recording-only collectors (idempotent if they were never
+            // cancelled, e.g. brief flicker before the OFF branch reached this).
+            startRecordingCollectors()
             crashManager.start(activeConfig)
             medicalDetector.start(activeConfig)
             wellnessMonitor.resume(activeConfig)
@@ -1380,6 +1455,11 @@ class KSafeExtension : KarooExtension("ksafe", BuildConfig.VERSION_NAME), Corout
         calibLogger.disable()
         karooSystem.disconnect()
         job.cancel()
+        // Null out the published tracker references so any DataType that re-enters
+        // `startView` after a service restart sees the cleared state and waits for
+        // the new extension instance to republish them.
+        carbsTrackerFlow.value = null
+        hydrationTrackerFlow.value = null
         instance = null
         super.onDestroy()
     }

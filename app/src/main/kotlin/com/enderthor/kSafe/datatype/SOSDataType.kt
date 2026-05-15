@@ -26,9 +26,12 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.awaitCancellation
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.filter
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.merge
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.withTimeoutOrNull
 import timber.log.Timber
 
 private const val COLOR_COUNTDOWN = 0xFFE65100.toInt()
@@ -94,25 +97,40 @@ class SOSDataType(
 
         val viewJob = scope.launch {
             try {
-                // Track config changes in a child coroutine so idleColor stays current
-                var idleColor = 0xFF1B5E20.toInt()
+                // Track config-driven idle colour in its own StateFlow so the IDLE branch
+                // can suspend on `merge(uiState, colorFlow)` instead of polling every 5 s.
+                // Previous code did `withTimeoutOrNull(5_000L) { uiState.first { ≠ IDLE } }`
+                // — woke the coroutine every 5 s for the whole ride just to redraw on a
+                // colour change. With the merge below, a colour change in config produces
+                // its own emission and the IDLE branch redraws exactly when it needs to.
+                val colorFlow = MutableStateFlow(0xFF1B5E20.toInt())
                 launch {
-                    configManager.loadConfigFlow().collect { c -> idleColor = c.sosFieldColor }
+                    configManager.loadConfigFlow().collect { c -> colorFlow.value = c.sosFieldColor }
                 }
                 while (true) {
                     val state = EmergencyManager.uiState.value
                     when (state.status) {
                         EmergencyStatus.IDLE -> {
-                            emitter.updateView(buildView(context, config, idleColor, "SAFE", "tap=SOS"))
-                            // Wait for state change; timeout to pick up colour changes from config
-                            withTimeoutOrNull(5_000L) {
-                                EmergencyManager.uiState.first { it.status != EmergencyStatus.IDLE }
-                            }
+                            val renderedColor = colorFlow.value
+                            emitter.updateView(buildView(context, config, renderedColor, "SAFE", "tap=SOS"))
+                            // Suspend until EITHER the emergency state changes OR the
+                            // configured idle colour changes — no timeout-based wakeups.
+                            // `filter { it != snapshot }` makes the wait race-free: a state
+                            // transition that already happened between rendering and the
+                            // subscribe call still triggers an immediate wake-up (StateFlow
+                            // emits the current value on subscription, which the predicate
+                            // catches when it differs from our snapshot). Without this guard
+                            // a `drop(1)`-based variant could leave the IDLE branch stuck
+                            // displaying SAFE while the countdown is already running.
+                            merge(
+                                EmergencyManager.uiState.filter { it != state }.map { Unit },
+                                colorFlow.filter { it != renderedColor }.map { Unit },
+                            ).first()
                         }
                         EmergencyStatus.COUNTDOWN -> {
                             val secs = state.countdownRemaining()
                             emitter.updateView(buildView(context, config, COLOR_COUNTDOWN, "SOS ${secs}s", "tap=cancel"))
-                            delay(1_000L)
+                            kotlinx.coroutines.delay(1_000L)
                         }
                         EmergencyStatus.ALERTING -> {
                             emitter.updateView(buildView(context, config, COLOR_ALERTING, "ALERT\nSENT", clickable = false))

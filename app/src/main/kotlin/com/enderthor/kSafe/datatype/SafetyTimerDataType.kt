@@ -27,7 +27,11 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.awaitCancellation
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.filter
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.merge
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withTimeoutOrNull
 import timber.log.Timber
@@ -97,9 +101,12 @@ class SafetyTimerDataType(
 
         val viewJob = scope.launch {
             try {
-                var okColor = 0xFF1B5E20.toInt()
+                // Config-driven idle colour exposed as its own StateFlow so the OK / WARNING
+                // / IDLE-OFF branches can merge it into their wait-for-change signal —
+                // see SOSDataType for the same pattern + rationale.
+                val okColorFlow = MutableStateFlow(0xFF1B5E20.toInt())
                 launch {
-                    configManager.loadConfigFlow().collect { c -> okColor = c.timerFieldColor }
+                    configManager.loadConfigFlow().collect { c -> okColorFlow.value = c.timerFieldColor }
                 }
                 // Cache the last emitted "frame" key so we skip the RemoteViews build +
                 // updateView IPC when neither the displayed text nor the colour changed.
@@ -130,10 +137,11 @@ class SafetyTimerDataType(
                             val remaining = state.checkinRemainingMinutes()
                             val isExpired = remaining <= 0
                             val isWarning = remaining in 1..CHECKIN_WARNING_THRESHOLD_MINUTES
+                            val renderedColor = okColorFlow.value
                             val bgColor = when {
                                 isExpired -> COLOR_EXPIRED
                                 isWarning -> COLOR_WARNING
-                                else      -> okColor
+                                else      -> renderedColor
                             }
                             val mainText = when {
                                 isExpired -> "CHECK\nIN!"
@@ -145,8 +153,24 @@ class SafetyTimerDataType(
                             }
                             val hintText = if (isExpired) "" else "tap=ok"
                             emit(bgColor, mainText, hintText, clickable = true)
-                            withTimeoutOrNull(30_000L) {
-                                EmergencyManager.uiState.first { it != state }
+                            // The display value changes when the minute counter rolls over.
+                            // Compute the time until the next minute boundary so we can wake
+                            // up exactly when the displayed number actually needs updating,
+                            // instead of polling every 30 s. With `lastEmitKey` already
+                            // suppressing redundant emits, this cuts the per-emergency
+                            // wake count from 2/min to ~1/min, and gives the rider a fresh
+                            // value the instant the minute ticks. Also merges with the
+                            // colour-flow so config edits update the field immediately.
+                            val now = System.currentTimeMillis()
+                            val msUntilNextMinute = if (state.checkinStartTime > 0L) {
+                                val msSinceStart = now - state.checkinStartTime
+                                60_000L - (msSinceStart % 60_000L)
+                            } else 30_000L
+                            withTimeoutOrNull(msUntilNextMinute) {
+                                merge(
+                                    EmergencyManager.uiState.filter { it != state }.map { Unit },
+                                    okColorFlow.filter { it != renderedColor }.map { Unit },
+                                ).first()
                             }
                         }
                     }

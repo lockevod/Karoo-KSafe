@@ -19,8 +19,9 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.awaitCancellation
 import kotlinx.coroutines.cancel
-import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.collectLatest
+import kotlinx.coroutines.flow.filterNotNull
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import timber.log.Timber
 
@@ -77,11 +78,7 @@ class CarbBurnRateDataType(
         val viewJob = scope.launch {
             try {
                 // Push-based — see CarbStatusDataType for the rationale.
-                var tracker = KSafeExtension.getInstance()?.carbsTrackerOrNull()
-                while (tracker == null) {
-                    delay(1_000)
-                    tracker = KSafeExtension.getInstance()?.carbsTrackerOrNull()
-                }
+                val tracker = KSafeExtension.carbsTrackerFlow.filterNotNull().first()
                 tracker.statusFlow.collectLatest { status ->
                     // Coherent with the rest of the carb fields: show `---` whenever
                     // integration is NOT happening (no tracker, or movement gate

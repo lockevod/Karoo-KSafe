@@ -18,8 +18,9 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.awaitCancellation
 import kotlinx.coroutines.cancel
-import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.collectLatest
+import kotlinx.coroutines.flow.filterNotNull
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import timber.log.Timber
 
@@ -87,15 +88,13 @@ class CarbStatusDataType(
         // and on every logEntry, so the field reflects logs immediately on tap.
         val viewJob = scope.launch {
             try {
-                // Push-based: wait for the tracker to become available, then collect
-                // its StateFlow forever. The tracker publishes on every tick (15 s),
-                // log/undo, movement-gate crossing, and lifecycle event — coherent with
-                // the integrator and ~95% cheaper than the previous 1-Hz polling loop.
-                var tracker = KSafeExtension.getInstance()?.carbsTrackerOrNull()
-                while (tracker == null) {
-                    delay(1_000)
-                    tracker = KSafeExtension.getInstance()?.carbsTrackerOrNull()
-                }
+                // Push-based: suspend on the published tracker reference until the
+                // extension finishes booting (one suspension instead of N polls), then
+                // collect from its StateFlow forever. The tracker publishes on every
+                // tick (15 s), log/undo, movement-gate crossing, and lifecycle event —
+                // coherent with the integrator and ~95% cheaper than the previous
+                // 1-Hz polling loop.
+                val tracker = KSafeExtension.carbsTrackerFlow.filterNotNull().first()
                 tracker.statusFlow.collectLatest { status ->
                     val view = if (status == null) {
                         // Tracker not running yet (extension still booting, or no ride

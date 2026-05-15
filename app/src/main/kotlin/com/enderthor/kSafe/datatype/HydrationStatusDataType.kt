@@ -18,8 +18,9 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.awaitCancellation
 import kotlinx.coroutines.cancel
-import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.collectLatest
+import kotlinx.coroutines.flow.filterNotNull
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import timber.log.Timber
 
@@ -82,11 +83,7 @@ class HydrationStatusDataType(
         val viewJob = scope.launch {
             try {
                 // Push-based — see CarbStatusDataType for the rationale.
-                var tracker = KSafeExtension.getInstance()?.hydrationTrackerOrNull()
-                while (tracker == null) {
-                    delay(1_000)
-                    tracker = KSafeExtension.getInstance()?.hydrationTrackerOrNull()
-                }
+                val tracker = KSafeExtension.hydrationTrackerFlow.filterNotNull().first()
                 tracker.statusFlow.collectLatest { status ->
                     val view = if (status == null) {
                         // See CarbStatusDataType — '---' beats 'off' so the rider doesn't
