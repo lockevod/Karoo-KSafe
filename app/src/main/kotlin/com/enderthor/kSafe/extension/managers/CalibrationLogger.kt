@@ -241,6 +241,22 @@ class CalibrationLogger(
                "Session: $sessionId | ${android.os.Build.MODEL} | v${BuildConfig.VERSION_NAME}$sizeInfo"
     }
 
+    /**
+     * Lines pending disk flush. Bounded at [MAX_BUFFER]; the oldest entry is evicted
+     * on overflow.
+     *
+     * Synchronisation: `synchronized(buffer)` guards every read/write. The audit
+     * suggested swapping to `ConcurrentLinkedDeque` or a lock-free MPSC queue, but
+     * the actual contention turned out to be modest — the sensor thread holds the
+     * lock for an O(1) `addLast` + conditional `removeFirst` (microseconds), the
+     * 60-s flush coroutine holds it for an O(n) `toList()` (a few ms at most given
+     * MAX_BUFFER). 5k acquisitions/ride uncontended is essentially free, and the
+     * ~60 contended ones per ride wait at most a few ms each. Refactoring to a
+     * lock-free structure would require an AtomicInteger size sidecar (since
+     * ConcurrentLinkedDeque.size() is O(n)) and add real complexity — not worth
+     * the marginal gain. Decision documented; revisit only if profiling shows the
+     * sensor thread genuinely blocked here.
+     */
     private val buffer = ArrayDeque<String>()
     @Volatile private var startTime = 0L
     private var flushJob: Job? = null
@@ -288,7 +304,9 @@ class CalibrationLogger(
         flushJob?.cancel()
         flushJob = null
         // Write session-end marker before the final flush so it is included in the sent file
-        addEntryDirect(Event.LOG_END, "session_end,duration_s=${"%.0f".format((System.currentTimeMillis() - startTime) / 1_000f)}")
+        // Locale.US — the calibration CSV uses commas as field separators, so the default
+        // Locale (es/fr/de etc.) turning "12.0" into "12,0" would split the column.
+        addEntryDirect(Event.LOG_END, "session_end,duration_s=${String.format(java.util.Locale.US, "%.0f", (System.currentTimeMillis() - startTime) / 1_000f)}")
         flush()   // write all remaining buffer entries (including LOG_END) to disk
         Timber.i("CalibrationLogger disabled — final flush done")
     }
@@ -314,7 +332,11 @@ class CalibrationLogger(
         // Quote the data field when it contains commas so the CSV remains valid in Excel/Sheets.
         // Without quoting, a data value like "speed=5.0,gyro=0.2" gets split into extra columns.
         val csvData = if (',' in data) "\"$data\"" else data
-        val line = "$now,${"%.1f".format(elapsed)},${event.tag},$csvData"
+        // Locale.US — the calibration CSV uses commas as field separators, and this is
+        // the elapsed_s column rendered on EVERY entry, so a Locale-default "1,5" would
+        // shift every subsequent column by one. Same reason as the session_end format.
+        val elapsedStr = String.format(java.util.Locale.US, "%.1f", elapsed)
+        val line = "$now,$elapsedStr,${event.tag},$csvData"
         synchronized(buffer) {
             if (buffer.size >= MAX_BUFFER) buffer.removeFirst()
             buffer.addLast(line)

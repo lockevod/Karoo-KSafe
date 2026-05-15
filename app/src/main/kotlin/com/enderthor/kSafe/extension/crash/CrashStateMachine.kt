@@ -3,6 +3,7 @@ package com.enderthor.kSafe.extension.crash
 import com.enderthor.kSafe.extension.managers.CalibrationLogger
 import com.enderthor.kSafe.extension.util.Clock
 import com.enderthor.kSafe.extension.util.SystemClock
+import com.enderthor.kSafe.extension.util.formatUs
 import kotlin.math.abs
 
 /**
@@ -214,7 +215,7 @@ class CrashStateMachine(
         }
         calibLogger?.log(CalibrationLogger.Event.IMPACT_ENTER) {
             "peak=%.2f,smoothed=%.2f,gyro=%.2f,speed=%.1f,gps_stale=$lastSpeedGpsStale,reason=$reason"
-                .format(sample.peakMagnitude, sample.smoothedMagnitude, sample.gyroMag, lastSpeedKmh)
+                .formatUs(sample.peakMagnitude, sample.smoothedMagnitude, sample.gyroMag, lastSpeedKmh)
         }
         return Decision.EnterImpact(reason)
     }
@@ -309,7 +310,7 @@ class CrashStateMachine(
                 // CONFIRMED.
                 calibLogger?.log(CalibrationLogger.Event.CRASH_CONFIRMED) {
                     "total_ms=$timeSinceImpact,deviation=%.2f,speed=%.1f,gps_stale=$gpsStale"
-                        .format(deviation, lastSpeedKmh)
+                        .formatUs(deviation, lastSpeedKmh)
                 }
                 resetTimers()
                 state = State.MONITORING

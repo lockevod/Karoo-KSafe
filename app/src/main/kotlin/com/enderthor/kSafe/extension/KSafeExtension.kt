@@ -7,6 +7,7 @@ import com.enderthor.kSafe.data.EmergencyState
 import com.enderthor.kSafe.data.EmergencyStatus
 import com.enderthor.kSafe.extension.util.EmergencyResume
 import com.enderthor.kSafe.extension.util.decideResume
+import com.enderthor.kSafe.extension.util.formatUs
 import com.enderthor.kSafe.data.KSafeConfig
 import com.enderthor.kSafe.data.ProviderType
 import com.enderthor.kSafe.data.RideWellnessRecord
@@ -295,6 +296,13 @@ class KSafeExtension : KarooExtension("ksafe", BuildConfig.VERSION_NAME), Corout
             // Stream speed to crash detector + fueling trackers. The fueling trackers
             // gate integration on speed (no accumulation when stationary), so they need
             // every emission too — fan out here rather than duplicating the stream.
+            //
+            // NOTE: do NOT apply `distinctUntilChanged` upstream. The downstream
+            // GPS-stale detection in CrashDetectionManager + SpeedDropMonitor + fueling
+            // trackers relies on the *absence* of value changes to detect that the SDK
+            // is repeating its last known value (the canonical GPS-lost signature).
+            // Filtering identical emissions upstream would defeat that — the consumers
+            // would never see the repeats and the gpsStale signal would never propagate.
             karooSystem.streamDataFlow(io.hammerhead.karooext.models.DataType.Type.SPEED)
                 .collect { streamState ->
                     val speedKmh = streamState.speedKmh() ?: return@collect
@@ -975,7 +983,7 @@ class KSafeExtension : KarooExtension("ksafe", BuildConfig.VERSION_NAME), Corout
                 }
                 val distance = distanceMeters(curLat, curLon, targetLat, targetLon)
                 if (distance > radiusM) {
-                    val distKm = if (distance >= 1000) "${"%.1f".format(distance/1000)}km" else "${distance.toInt()}m"
+                    val distKm = if (distance >= 1000) "${"%.1f".formatUs(distance/1000)}km" else "${distance.toInt()}m"
                     WebhookState.update(slot, WebhookState.ERROR, "geo $distKm")
                     launch { kotlinx.coroutines.delay(5_000L); WebhookState.update(slot, WebhookState.IDLE) }
                     dispatchWebhookFeedback(
@@ -1063,11 +1071,11 @@ class KSafeExtension : KarooExtension("ksafe", BuildConfig.VERSION_NAME), Corout
         carbTapRevertJobs[slot] = null
 
         val state = com.enderthor.kSafe.datatype.CarbLogState.flowForSlot(slot).value
-        if (state == com.enderthor.kSafe.datatype.CarbLogState.LOGGED) {
+        if (state is com.enderthor.kSafe.datatype.CarbLogState.LOGGED) {
             // Second tap within the undo window — reverse the previous entry.
             val undone = carbsTracker.undoLastForSlot(slot)
             if (undone > 0) {
-                com.enderthor.kSafe.datatype.CarbLogState.update(slot, com.enderthor.kSafe.datatype.CarbLogState.UNDONE)
+                com.enderthor.kSafe.datatype.CarbLogState.update(slot, com.enderthor.kSafe.datatype.CarbLogState.UNDONE(undone))
                 carbTapRevertJobs[slot] = launch {
                     kotlinx.coroutines.delay(1_500L)
                     com.enderthor.kSafe.datatype.CarbLogState.update(slot, com.enderthor.kSafe.datatype.CarbLogState.IDLE)
@@ -1081,12 +1089,12 @@ class KSafeExtension : KarooExtension("ksafe", BuildConfig.VERSION_NAME), Corout
         // UNDONE is the brief red confirmation flash after a successful undo. The rider
         // should be able to re-log immediately (mis-tap recovery) without waiting for
         // the 1.5 s auto-reset to IDLE. Falls through to the regular log path below.
-        carbsTracker.logEntry(slot)
+        val logged = carbsTracker.logEntry(slot)
         // 8 s window: long enough that the rider can react after the confirmation flash
         // even with gloves on rough terrain, short enough that a legitimate second log
         // isn't an annoying wait. Extended from 5 s after field reports of rapid taps
         // being missed during the IDLE→LOGGED state transition.
-        com.enderthor.kSafe.datatype.CarbLogState.update(slot, com.enderthor.kSafe.datatype.CarbLogState.LOGGED)
+        com.enderthor.kSafe.datatype.CarbLogState.update(slot, com.enderthor.kSafe.datatype.CarbLogState.LOGGED(logged))
         carbTapRevertJobs[slot] = launch {
             kotlinx.coroutines.delay(8_000L)
             com.enderthor.kSafe.datatype.CarbLogState.update(slot, com.enderthor.kSafe.datatype.CarbLogState.IDLE)
@@ -1104,10 +1112,10 @@ class KSafeExtension : KarooExtension("ksafe", BuildConfig.VERSION_NAME), Corout
         hydTapRevertJobs[slot] = null
 
         val state = com.enderthor.kSafe.datatype.HydrationLogState.flowForSlot(slot).value
-        if (state == com.enderthor.kSafe.datatype.HydrationLogState.LOGGED) {
+        if (state is com.enderthor.kSafe.datatype.HydrationLogState.LOGGED) {
             val undone = hydrationTracker.undoLastForSlot(slot)
             if (undone > 0) {
-                com.enderthor.kSafe.datatype.HydrationLogState.update(slot, com.enderthor.kSafe.datatype.HydrationLogState.UNDONE)
+                com.enderthor.kSafe.datatype.HydrationLogState.update(slot, com.enderthor.kSafe.datatype.HydrationLogState.UNDONE(undone))
                 hydTapRevertJobs[slot] = launch {
                     kotlinx.coroutines.delay(1_500L)
                     com.enderthor.kSafe.datatype.HydrationLogState.update(slot, com.enderthor.kSafe.datatype.HydrationLogState.IDLE)
@@ -1119,9 +1127,9 @@ class KSafeExtension : KarooExtension("ksafe", BuildConfig.VERSION_NAME), Corout
             return
         }
         // UNDONE falls through to re-log — see handleCarbLogTap for the rationale.
-        hydrationTracker.logEntry(slot)
+        val logged = hydrationTracker.logEntry(slot)
         // 8 s window — see handleCarbLogTap.
-        com.enderthor.kSafe.datatype.HydrationLogState.update(slot, com.enderthor.kSafe.datatype.HydrationLogState.LOGGED)
+        com.enderthor.kSafe.datatype.HydrationLogState.update(slot, com.enderthor.kSafe.datatype.HydrationLogState.LOGGED(logged))
         hydTapRevertJobs[slot] = launch {
             kotlinx.coroutines.delay(8_000L)
             com.enderthor.kSafe.datatype.HydrationLogState.update(slot, com.enderthor.kSafe.datatype.HydrationLogState.IDLE)
@@ -1319,6 +1327,16 @@ class KSafeExtension : KarooExtension("ksafe", BuildConfig.VERSION_NAME), Corout
                     val driftPct    = wellness?.currentDriftPct?.toDouble() ?: 0.0
                     val maxDriftPct = wellness?.maxDriftPct?.toDouble() ?: 0.0
                     val fires       = wellness?.totalFires?.toDouble() ?: 0.0
+                    // Allocates 7 FieldValues + a list per tick at 1 Hz. The audit
+                    // flagged this as ~29 k allocs/h. Reusing a mutable list between
+                    // WriteToRecordMesg/WriteToSessionMesg is unsafe unless the SDK
+                    // copies eagerly — without that guarantee, a retained reference
+                    // would let the SECOND mutation corrupt the FIRST message in
+                    // flight. FieldValue itself is an SDK data class we can't mutate
+                    // in place. The remaining allocations are young-gen short-lived
+                    // (each tick's list is dead before the next one), so on real
+                    // hardware the GC pressure is invisible. Decision: leave as-is
+                    // and revisit only if profiling exposes a problem.
                     val values = listOf(
                         FieldValue(carbField,         carbsG),
                         FieldValue(hydField,          hydMl),

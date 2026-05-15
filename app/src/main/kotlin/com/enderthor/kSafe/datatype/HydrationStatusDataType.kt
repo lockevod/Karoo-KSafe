@@ -19,7 +19,6 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.awaitCancellation
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.delay
-import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.launch
 import timber.log.Timber
@@ -82,15 +81,13 @@ class HydrationStatusDataType(
 
         val viewJob = scope.launch {
             try {
-                val poll = MutableStateFlow<HydrationStatus?>(null)
-                val poller = scope.launch {
-                    while (true) {
-                        val tracker = KSafeExtension.getInstance()?.hydrationTrackerOrNull()
-                        poll.value = tracker?.getStatus()
-                        delay(1_000)
-                    }
+                // Push-based — see CarbStatusDataType for the rationale.
+                var tracker = KSafeExtension.getInstance()?.hydrationTrackerOrNull()
+                while (tracker == null) {
+                    delay(1_000)
+                    tracker = KSafeExtension.getInstance()?.hydrationTrackerOrNull()
                 }
-                poll.collectLatest { status ->
+                tracker.statusFlow.collectLatest { status ->
                     val view = if (status == null) {
                         // See CarbStatusDataType — '---' beats 'off' so the rider doesn't
                         // read 'off' as 'I disabled this'. Colour stays COLOR_OK because
@@ -102,7 +99,6 @@ class HydrationStatusDataType(
                     }
                     emitter.updateView(view)
                 }
-                poller.cancel()
             } catch (_: CancellationException) {
                 // normal
             } catch (e: Exception) {

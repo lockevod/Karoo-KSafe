@@ -8,6 +8,7 @@ import com.enderthor.kSafe.data.KSafeConfig
 import com.enderthor.kSafe.extension.managers.CalibrationLogger
 import com.enderthor.kSafe.extension.util.Clock
 import com.enderthor.kSafe.extension.util.SystemClock
+import com.enderthor.kSafe.extension.util.formatUs
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
@@ -110,7 +111,16 @@ class CrashDetectionManager(
     @Volatile private var config = KSafeConfig()
     @Volatile private var lastCrashTime = 0L
     @Volatile private var currentSpeedKmh = 0.0
-    @Volatile private var speedLastUpdatedTime = 0L
+    /** Timestamp of the most recent [updateSpeed] emission — any emission, even one that
+     *  carries the same value as the previous one. Used for dv/dt math in [updateSpeed]. */
+    @Volatile private var speedLastEmissionMs = 0L
+    /** Timestamp of the most recent emission where the speed value actually CHANGED,
+     *  plus a whitelist for explicit-zero emissions (rider stopped at lights with GPS
+     *  still alive). [isGpsStale] keys off this — the SDK returns the LAST known speed
+     *  bit-exact when GPS lock is lost, so a stretch of identical non-zero emissions
+     *  is the tell-tale sign of stale GPS. Replaces the old `speedLastUpdatedTime` which
+     *  was stamped on every emission and therefore could never trip the staleness check. */
+    @Volatile private var speedLastChangeMs = 0L
     @Volatile private var speedDataReceived = false
     @Volatile private var startTime = 0L
     @Volatile private var lastDecelerationKmhPerS = 0.0
@@ -236,7 +246,7 @@ class CrashDetectionManager(
 
     fun updateSpeed(speedKmh: Double) {
         val now = clock.nowMs()
-        val elapsed = if (speedLastUpdatedTime > 0) (now - speedLastUpdatedTime) / 1000.0 else 0.0
+        val elapsed = if (speedLastEmissionMs > 0) (now - speedLastEmissionMs) / 1000.0 else 0.0
         if (elapsed >= 0.2 && speedDataReceived) {
             lastDecelerationKmhPerS = (speedKmh - currentSpeedKmh) / elapsed
         }
@@ -244,14 +254,21 @@ class CrashDetectionManager(
             speedDataReceived = true
             Timber.d("Cold-start guard lifted: first speed data received (%.1f km/h)", speedKmh)
         }
+        val changed = speedKmh != currentSpeedKmh
         currentSpeedKmh = speedKmh
-        speedLastUpdatedTime = now
+        speedLastEmissionMs = now
+        // Stamp speedLastChangeMs on real value changes, on explicit-zero emissions
+        // (rider stopped — GPS still alive even if value is bit-exact 0.0 across
+        // emissions), and on the very first emission (bootstrap). A stuck non-zero
+        // value across emissions is exactly the SDK's GPS-lost behaviour, so leaving
+        // speedLastChangeMs untouched is what trips [isGpsStale] after GPS_STALE_MS.
+        if (changed || speedKmh == 0.0 || speedLastChangeMs == 0L) speedLastChangeMs = now
 
         // Push to the state machine — this is the ONLY path that marks "real speed update
         // received", which the cold-start guard keys off. The per-sample staleness view
         // travels on [SensorSample.gpsStale] (filled in by [onSensorSample]).
         stateMachine.onSpeedUpdate(speedKmh)
-        speedDropMonitor.onSpeedUpdate(speedKmh)
+        speedDropMonitor.onSpeedUpdate(speedKmh, isGpsStale(now))
     }
 
     fun updateCadence(cadenceRpm: Double) {
@@ -293,7 +310,7 @@ class CrashDetectionManager(
             lastGpsStaleState = gpsCurrentlyStale
             if (gpsCurrentlyStale) {
                 calibLogger?.log(CalibrationLogger.Event.GPS_STALE) {
-                    "stale=true,since_ms=${now - speedLastUpdatedTime},last_speed=%.1f,state=${stateMachine.state}".format(currentSpeedKmh)
+                    "stale=true,since_ms=${now - speedLastChangeMs},last_speed=%.1f,state=${stateMachine.state}".formatUs(currentSpeedKmh)
                 }
             }
         }
@@ -404,7 +421,7 @@ class CrashDetectionManager(
             val boostLeft = ((postImpactBoostUntil - now).coerceAtLeast(0L)) / 1000L
             val gBoost = gradeBoost(currentGrade)
             calibLogger.log(CalibrationLogger.Event.PERIODIC) {
-                "state=${stateMachine.state},speed=%.1f,accel_dev=%.2f,gyro=%.2f,grade=%.1f,cadence=%.0f,noise=%.2f,profile=$currentRoutingPreference,preset=${config.crashSensitivity},thr=%.1f,pthr=%.1f,eff_pthr=%.1f,grade_boost=%.0f,min_spd=${config.minSpeedForCrashKmh},gps_stale=$gpsCurrentlyStale,boost_s_left=$boostLeft".format(
+                "state=${stateMachine.state},speed=%.1f,accel_dev=%.2f,gyro=%.2f,grade=%.1f,cadence=%.0f,noise=%.2f,profile=$currentRoutingPreference,preset=${config.crashSensitivity},thr=%.1f,pthr=%.1f,eff_pthr=%.1f,grade_boost=%.0f,min_spd=${config.minSpeedForCrashKmh},gps_stale=$gpsCurrentlyStale,boost_s_left=$boostLeft".formatUs(
                     currentSpeedKmh, abs(sample.rawMagnitude - GRAVITY), sample.gyroMag,
                     currentGrade, currentCadence, sensorReader.accelStdDev(),
                     cachedSmoothedThr, cachedPeakThr, cachedEffectivePeakThr, gBoost
@@ -430,9 +447,9 @@ class CrashDetectionManager(
             sample.rawMagnitude, sample.smoothedMagnitude, cachedSmoothedThr,
             cachedEffectivePeakThr, boostActive, currentSpeedKmh)
         calibLogger?.log(CalibrationLogger.Event.IMPACT_ENTER) {
-            val bufStr = sensorReader.magnitudeBufferSnapshot().joinToString("|") { "%.1f".format(it) }
+            val bufStr = sensorReader.magnitudeBufferSnapshot().joinToString("|") { "%.1f".formatUs(it) }
             val gBoost = gradeBoost(currentGrade)
-            "source=$reason,raw=%.1f,smooth=%.1f,thr=%.1f,pthr=%.1f,eff_pthr=%.1f,speed=%.1f,decel=%.1f,grade=%.1f,grade_boost=%.0f,cadence=%.0f,gyro=%.2f,buf=$bufStr,noise=%.2f,profile=$currentRoutingPreference,preset=${config.crashSensitivity},boost_active=$boostActive".format(
+            "source=$reason,raw=%.1f,smooth=%.1f,thr=%.1f,pthr=%.1f,eff_pthr=%.1f,speed=%.1f,decel=%.1f,grade=%.1f,grade_boost=%.0f,cadence=%.0f,gyro=%.2f,buf=$bufStr,noise=%.2f,profile=$currentRoutingPreference,preset=${config.crashSensitivity},boost_active=$boostActive".formatUs(
                 sample.rawMagnitude, sample.smoothedMagnitude, cachedSmoothedThr,
                 cachedPeakThr, cachedEffectivePeakThr, currentSpeedKmh, lastDecelerationKmhPerS,
                 currentGrade, gBoost, currentCadence, sample.gyroMag, sensorReader.accelStdDev()
@@ -445,7 +462,7 @@ class CrashDetectionManager(
         Timber.d(">>> SILENCE_CHECK started (deviation=%.2f gyro=%.2f speed=%.1fkm/h)",
             deviation, sample.gyroMag, currentSpeedKmh)
         calibLogger?.log(CalibrationLogger.Event.SILENCE_ENTER) {
-            "deviation=%.2f,gyro=%.2f,speed=%.1f,gps_stale=${lastGpsStaleState}".format(
+            "deviation=%.2f,gyro=%.2f,speed=%.1f,gps_stale=${lastGpsStaleState}".formatUs(
                 deviation, sample.gyroMag, currentSpeedKmh)
         }
     }
@@ -458,7 +475,7 @@ class CrashDetectionManager(
         Timber.d(">>> CRASH CONFIRMED (accel dev=%.2f speed=%.1fkm/h gyro=%.2f gpsStale=%b)",
             deviation, currentSpeedKmh, sample.gyroMag, gpsStale)
         calibLogger?.log(CalibrationLogger.Event.CRASH_CONFIRMED) {
-            "deviation=%.2f,speed=%.1f,confirm_spd_thr=${config.crashConfirmSpeedKmh},grade=%.1f,cadence=%.0f,gps_stale=$gpsStale,preset=${config.crashSensitivity},effective_dev_max=$effectiveDevMax,effective_silence_ms=$effectiveSilenceMs,countdown_s=${config.countdownSeconds}".format(
+            "deviation=%.2f,speed=%.1f,confirm_spd_thr=${config.crashConfirmSpeedKmh},grade=%.1f,cadence=%.0f,gps_stale=$gpsStale,preset=${config.crashSensitivity},effective_dev_max=$effectiveDevMax,effective_silence_ms=$effectiveSilenceMs,countdown_s=${config.countdownSeconds}".formatUs(
                 deviation, currentSpeedKmh, currentGrade, currentCadence)
         }
     }
@@ -493,7 +510,7 @@ class CrashDetectionManager(
 
             Timber.d("Impact window timeout (%dms) → false alarm, resetting", windowMs)
             calibLogger?.log(CalibrationLogger.Event.IMPACT_TIMEOUT) {
-                "window_ms=$windowMs,speed=%.1f,gyro=%.2f,deviation=%.2f,grade=%.1f,cadence=%.0f,preset=${config.crashSensitivity},why_no_silence=$whyNoSilence,max_smooth=%.1f,min_spd=%.1f,min_dev=%.2f,boost_s=%.0f,cluster=$isCluster".format(
+                "window_ms=$windowMs,speed=%.1f,gyro=%.2f,deviation=%.2f,grade=%.1f,cadence=%.0f,preset=${config.crashSensitivity},why_no_silence=$whyNoSilence,max_smooth=%.1f,min_spd=%.1f,min_dev=%.2f,boost_s=%.0f,cluster=$isCluster".formatUs(
                     currentSpeedKmh, sample.gyroMag, deviation,
                     currentGrade, currentCadence,
                     maxSmoothedInWindow, minSpeedInWindow, minDeviationInWindow,
@@ -516,14 +533,14 @@ class CrashDetectionManager(
                 Timber.d("CADENCE gate: rider pedalling %.0f RPM during SILENCE_CHECK → not a crash, resetting",
                     currentCadence)
                 calibLogger?.log(CalibrationLogger.Event.CADENCE_GATE) {
-                    "cadence=%.0f,speed=%.1f,deviation=%.2f,grade=%.1f".format(
+                    "cadence=%.0f,speed=%.1f,deviation=%.2f,grade=%.1f".formatUs(
                         currentCadence, currentSpeedKmh, deviation, currentGrade)
                 }
             } else {
                 Timber.d("Silence never achieved → false alarm, resetting")
                 calibLogger?.log(CalibrationLogger.Event.SILENCE_TIMEOUT) {
                     val effDev = if (lastGpsStaleState) GPS_STALE_DEVIATION_MAX else SILENCE_DEVIATION_MAX
-                    "window_ms=$windowMs,deviation=%.2f,eff_max=$effDev,speed=%.1f,gps_stale=${lastGpsStaleState},preset=${config.crashSensitivity}".format(
+                    "window_ms=$windowMs,deviation=%.2f,eff_max=$effDev,speed=%.1f,gps_stale=${lastGpsStaleState},preset=${config.crashSensitivity}".formatUs(
                         deviation, currentSpeedKmh)
                 }
                 schedulePostResetSnapshot("SIL_TMO")
@@ -543,7 +560,7 @@ class CrashDetectionManager(
             // Crossed threshold but speed gate rejected.
             impactDetected && !speedOk -> {
                 calibLogger?.log(CalibrationLogger.Event.IMPACT_SPEED_REJECTED) {
-                    "raw=%.1f,smooth=%.1f,thr=%.1f,speed=%.1f,min_speed=$minSpeed,preset=${config.crashSensitivity}".format(
+                    "raw=%.1f,smooth=%.1f,thr=%.1f,speed=%.1f,min_speed=$minSpeed,preset=${config.crashSensitivity}".formatUs(
                         sample.rawMagnitude, sample.smoothedMagnitude, cachedSmoothedThr, currentSpeedKmh)
                 }
             }
@@ -554,7 +571,7 @@ class CrashDetectionManager(
                     val gBoost = gradeBoost(currentGrade)
                     val boostActive = now < postImpactBoostUntil
                     calibLogger?.log(CalibrationLogger.Event.HIGH_MAG_NORISING) {
-                        "raw=%.1f,smooth=%.1f,thr=%.1f,pthr=%.1f,eff_pthr=%.1f,speed=%.1f,gyro=%.2f,grade=%.1f,grade_boost=%.0f,preset=${config.crashSensitivity},boost=$boostActive".format(
+                        "raw=%.1f,smooth=%.1f,thr=%.1f,pthr=%.1f,eff_pthr=%.1f,speed=%.1f,gyro=%.2f,grade=%.1f,grade_boost=%.0f,preset=${config.crashSensitivity},boost=$boostActive".formatUs(
                             sample.rawMagnitude, sample.smoothedMagnitude, cachedSmoothedThr,
                             cachedPeakThr, cachedEffectivePeakThr, currentSpeedKmh, sample.gyroMag,
                             currentGrade, gBoost)
@@ -573,7 +590,7 @@ class CrashDetectionManager(
             if ((now - lastGyroBlockedLogMs) > CalibrationLogger.GYRO_BLOCKED_INTERVAL_MS) {
                 lastGyroBlockedLogMs = now
                 calibLogger?.log(CalibrationLogger.Event.GYRO_BLOCKED) {
-                    "gyro=%.2f,gyro_max=$GYRO_MOVING_MAX,deviation=%.2f,speed=%.1f".format(
+                    "gyro=%.2f,gyro_max=$GYRO_MOVING_MAX,deviation=%.2f,speed=%.1f".formatUs(
                         sample.gyroMag, deviation, currentSpeedKmh)
                 }
             }
@@ -587,7 +604,7 @@ class CrashDetectionManager(
             if (now - lastSilenceBrokenMs > CalibrationLogger.SILENCE_BROKEN_INTERVAL_MS) {
                 lastSilenceBrokenMs = now
                 calibLogger?.log(CalibrationLogger.Event.SILENCE_BROKEN) {
-                    "deviation=%.2f,eff_max=$effDev,speed=%.1f,gps_stale=${lastGpsStaleState}".format(
+                    "deviation=%.2f,eff_max=$effDev,speed=%.1f,gps_stale=${lastGpsStaleState}".formatUs(
                         deviation, currentSpeedKmh)
                 }
             }
@@ -655,7 +672,7 @@ class CrashDetectionManager(
     // ─── Helpers ─────────────────────────────────────────────────────────────
 
     private fun isGpsStale(now: Long): Boolean =
-        speedLastUpdatedTime > 0 && (now - speedLastUpdatedTime) > GPS_STALE_MS
+        speedLastChangeMs > 0 && (now - speedLastChangeMs) > GPS_STALE_MS
 
     private fun isSpeedDropConfirmed(now: Long): Boolean {
         if (!speedDataReceived && (now - startTime) < COLD_START_GUARD_MS) return false
@@ -680,7 +697,7 @@ class CrashDetectionManager(
         scope.launch {
             delay(2_000L)
             calibLogger.log(CalibrationLogger.Event.POST_RESET_SNAP) {
-                "cancelled_by=$cancelledBy,speed=%.1f,gyro=%.2f,state=${stateMachine.state},gps_stale=${isGpsStale(clock.nowMs())}".format(
+                "cancelled_by=$cancelledBy,speed=%.1f,gyro=%.2f,state=${stateMachine.state},gps_stale=${isGpsStale(clock.nowMs())}".formatUs(
                     currentSpeedKmh, sensorReader.lastGyroMag)
             }
         }

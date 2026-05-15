@@ -49,6 +49,21 @@ class CarbLogDataType(
     // requestCode: 110, 111, 112 — distinct per slot to avoid PendingIntent collisions
     private val requestCode = 109 + slot
 
+    // Cached PendingIntent — stable for the DataType instance's lifetime since
+    // (action, requestCode, package) never change. Previously a fresh PI was built
+    // on every emission (1+ Hz on the LOGGED → IDLE auto-revert), each call
+    // round-tripping into ActivityManager. PendingIntent.FLAG_UPDATE_CURRENT made
+    // the system de-duplicate them but the IPC cost was paid every time.
+    @Volatile private var cachedPi: PendingIntent? = null
+    private fun pendingIntentFor(context: Context): PendingIntent {
+        cachedPi?.let { return it }
+        return PendingIntent.getBroadcast(
+            context, requestCode,
+            Intent(tapAction).setPackage(context.packageName),
+            PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
+        ).also { cachedPi = it }
+    }
+
     private val configManager = ConfigurationManager(context)
 
     private fun iconFromConfig(c: KSafeConfig): String = when (slot) {
@@ -139,12 +154,7 @@ class CarbLogDataType(
         if (viewConfig.preview) return content
         val wrapper = RemoteViews(context.packageName, R.layout.field_tap_wrapper)
         if (clickable) {
-            val pi = PendingIntent.getBroadcast(
-                context, requestCode,
-                Intent(tapAction).setPackage(context.packageName),
-                PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
-            )
-            wrapper.setOnClickPendingIntent(R.id.field_tap_wrapper, pi)
+            wrapper.setOnClickPendingIntent(R.id.field_tap_wrapper, pendingIntentFor(context))
         }
         wrapper.addView(R.id.field_tap_wrapper, content)
         return wrapper
@@ -185,16 +195,18 @@ class CarbLogDataType(
                         // colour and label, not the disabled-state grey.
                         buildView(context, config, COLOR_OFF, label, "OFF", clickable = false)
                     } else when (state) {
-                        CarbLogState.IDLE    -> buildView(context, config, idleColorFromConfig(ksafeConfig), label, "${grams}g", leftDrawableRes = leftDrawable)
-                        // LOGGED stays tappable for the ~5 s undo window so a second tap
-                        // on the same slot reverses the entry. Hint advertises the action.
-                        CarbLogState.LOGGED  -> buildView(context, config, COLOR_LOGGED, "+${grams}g", "TAP UNDO")
+                        is CarbLogState.IDLE   -> buildView(context, config, idleColorFromConfig(ksafeConfig), label, "${grams}g", leftDrawableRes = leftDrawable)
+                        // LOGGED stays tappable for the 8 s undo window so a second tap
+                        // on the same slot reverses the entry. The grams shown are the
+                        // ones actually logged at tap time, so editing the slot config
+                        // mid-window can't desync the flash from the stored entry.
+                        is CarbLogState.LOGGED -> buildView(context, config, COLOR_LOGGED, "+${state.grams}g", "TAP UNDO")
                         // UNDONE is the brief red "−Xg ✓" confirmation after a successful
                         // undo. Tappable so a third quick tap re-logs (mis-tap recovery
                         // without waiting for the 1.5 s auto-reset to IDLE — handled in
                         // KSafeExtension.handleCarbLogTap by falling through to the
-                        // regular log path).
-                        CarbLogState.UNDONE  -> buildView(context, config, COLOR_UNDONE, "−${grams}g", "✓")
+                        // regular log path). Same captured-grams contract as LOGGED.
+                        is CarbLogState.UNDONE -> buildView(context, config, COLOR_UNDONE, "−${state.grams}g", "✓")
                     }
                 }.collect { view -> emitter.updateView(view) }
             } catch (_: CancellationException) {

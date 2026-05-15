@@ -16,6 +16,8 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.launch
 import timber.log.Timber
 
@@ -54,6 +56,14 @@ class CarbsTracker(
      */
     private val MOVING_GATE_KMH = 2.0
 
+    /**
+     * If the SDK has been emitting the same bit-exact speed value for longer than
+     * this, treat as stale (probable GPS lock loss in a tunnel / forest) and stop
+     * integrating. Real GPS readings vary by ≥0.1 km/h between emissions even at
+     * cruise, so cruise control doesn't hit this. Matches [CrashDetectionManager.GPS_STALE_MS].
+     */
+    private val SPEED_STALE_MS = 10_000L
+
     private val ALERT_BG_COLOR = 0xFFE65100.toInt()  // amber
     private val ALERT_TX_COLOR = 0xFFFFFFFF.toInt()  // white
     private val AUTO_DISMISS_MS = 10_000L
@@ -65,6 +75,11 @@ class CarbsTracker(
     /** Latest speed reading in km/h. `null` until the SDK first emits — used by the
      *  movement gate in [tick] to skip integration when stationary. */
     @Volatile private var lastSpeedKmh: Double? = null
+    /** Wall-clock timestamp (ms) of the most recent emission whose value actually
+     *  changed (or the first emission ever). The SDK keeps re-emitting the last value
+     *  bit-exact when GPS is lost, so a stretch without changes here is the GPS-stale
+     *  signal — see [SPEED_STALE_MS] and the gate inside [tick]. */
+    @Volatile private var lastSpeedChangeMs: Long = 0L
 
     // ─── Session state (reset by start()) ────────────────────────────────────
     @Volatile private var cumTargetG = 0f
@@ -88,6 +103,27 @@ class CarbsTracker(
 
     @Volatile private var config = KSafeConfig()
     private var monitorJob: Job? = null
+
+    // ─── Status publisher ───────────────────────────────────────────────────
+    /**
+     * Push-based status feed for the carb / burn-rate / burned data fields. Replaces
+     * the previous 1-Hz polling loop they each ran independently:
+     *  - 4 fields × 3600 polls/h × N hours of riding got expensive on Karoo.
+     *  - getStatus() allocated a fresh CarbStatus each poll regardless of whether
+     *    anything had changed.
+     *
+     * Published from every place that mutates the integrator state: [tick],
+     * [logEntry], [undoLastForSlot], [start], [resume], [stop], and from
+     * [updateSpeed] but only on transitions across the movement gate so the
+     * frequent same-state speed updates don't pull us back to 1-Hz wakeups.
+     *
+     * `null` means "no published snapshot yet" — consumers must render `---`
+     * (same convention as the old polling code: `tracker?.getStatus()`).
+     */
+    private val _statusFlow = MutableStateFlow<CarbStatus?>(null)
+    val statusFlow: StateFlow<CarbStatus?> get() = _statusFlow
+
+    private fun publishStatus() { _statusFlow.value = getStatus() }
 
     // ─── Public API ──────────────────────────────────────────────────────────
 
@@ -123,6 +159,7 @@ class CarbsTracker(
                 "beep=${config.carbBeepPattern}"
         }
         Timber.d("CarbsTracker started, target=${config.carbTargetGperHour} g/h")
+        publishStatus()
     }
 
     fun stop() {
@@ -131,6 +168,8 @@ class CarbsTracker(
         Timber.d("CarbsTracker stopped")
         // State is intentionally retained so getSummary() / getStatus() remain readable
         // for the post-ride summary. Reset happens on the next start().
+        // Publish so subscribers see isIntegrating = false (monitorJob is now null).
+        publishStatus()
     }
 
     /**
@@ -149,6 +188,7 @@ class CarbsTracker(
             while (true) { delay(MONITOR_TICK_MS); tick() }
         }
         Timber.d("CarbsTracker resumed (cumTargetG=${cumTargetG.toInt()}, cumLoggedG=$cumLoggedG)")
+        publishStatus()
     }
 
     /**
@@ -165,15 +205,39 @@ class CarbsTracker(
     fun updateUserProfile(p: UserProfile) { lastUserProfile = p }
     fun updateHr(bpm: Int)                { lastHrBpm = bpm }
     fun updatePower(w: Int)               { lastPowerW = w }
-    fun updateSpeed(kmh: Double)          { lastSpeedKmh = kmh }
+    fun updateSpeed(kmh: Double) {
+        val prev = lastSpeedKmh
+        // Stamp lastSpeedChangeMs on real value changes, on explicit-zero emissions
+        // (rider stopped at the lights — GPS is alive even if 0.0 repeats bit-exact),
+        // and on the very first emission. Mirrors CrashDetectionManager.updateSpeed
+        // so the "stopped at lights" case isn't misclassified as "GPS-stuck stale".
+        if (prev == null || prev != kmh || kmh == 0.0) {
+            lastSpeedChangeMs = System.currentTimeMillis()
+        }
+        // Detect movement-gate crossings so the status flow re-publishes when the
+        // integrator's isIntegrating bit flips. We deliberately do NOT publish on
+        // every speed emission (~1 Hz) — that would defeat the polling→push
+        // optimisation. Inside-gate transitions and staleness transitions are
+        // picked up by the 15-s tick() publish.
+        val wasMoving = prev != null && prev >= MOVING_GATE_KMH
+        val isMoving = kmh >= MOVING_GATE_KMH
+        lastSpeedKmh = kmh
+        if (wasMoving != isMoving) publishStatus()
+    }
 
-    /** Log a single tap on slot 1, 2 or 3. Adds the configured grams to the cumulative log. */
-    fun logEntry(slot: Int) {
+    /**
+     * Log a single tap on slot 1, 2 or 3. Adds the configured grams to the cumulative
+     * log. Returns the grams that were actually added — the caller uses it to render
+     * the LOGGED flash with the value frozen at log time, so a later config edit to
+     * the slot's grams doesn't desync the UI from what's stored. Returns `0` for an
+     * invalid slot.
+     */
+    fun logEntry(slot: Int): Int {
         val grams = when (slot) {
             1 -> config.carb1Grams
             2 -> config.carb2Grams
             3 -> config.carb3Grams
-            else -> return
+            else -> return 0
         }
         // Save what we're about to mutate so an undo within the on-screen window can
         // reverse exactly this entry without affecting unrelated state.
@@ -184,6 +248,8 @@ class CarbsTracker(
         calibLogger?.log(CalibrationLogger.Event.FUELING_CARB_LOGGED) {
             "slot=$slot,grams=$grams,cum_logged=$cumLoggedG,cum_target=${cumTargetG.toInt()}"
         }
+        publishStatus()
+        return grams
     }
 
     /**
@@ -203,6 +269,7 @@ class CarbsTracker(
         calibLogger?.log(CalibrationLogger.Event.FUELING_CARB_UNDONE) {
             "slot=$slot,grams=-$grams,cum_logged=$cumLoggedG,cum_target=${cumTargetG.toInt()}"
         }
+        publishStatus()
         return grams
     }
 
@@ -219,9 +286,14 @@ class CarbsTracker(
         zoneSnapshot = lastZoneSnapshot,
         burnRateGph = computeBurnRateGph(),
         // Integration is happening iff the monitor loop is alive AND the movement
-        // gate is currently passing. Mirrors the gate inside tick() so the UI is
-        // always coherent with what the integrator actually does.
-        isIntegrating = monitorJob != null && (lastSpeedKmh ?: 0.0) >= MOVING_GATE_KMH,
+        // gate is currently passing AND the speed reading is fresh (not stuck on a
+        // last-known value from a lost GPS fix). Mirrors the gate inside tick().
+        isIntegrating = monitorJob != null && run {
+            val speed = lastSpeedKmh ?: return@run false
+            val stale = lastSpeedChangeMs > 0 &&
+                (System.currentTimeMillis() - lastSpeedChangeMs) > SPEED_STALE_MS
+            !stale && speed >= MOVING_GATE_KMH
+        },
     )
 
     /**
@@ -249,10 +321,18 @@ class CarbsTracker(
 
         // Movement gate — no integration when stationary. Cycling: you only burn the
         // carbs you need to replace when moving (pedalling OR coasting). Bench tests
-        // and traffic-light stops correctly freeze the cumulative target. lastSpeedKmh
-        // stays null until the SDK first emits SPEED, so a freshly-booted device with
-        // no GPS lock yet also freezes — exactly the behaviour the rider expects.
-        val moving = (lastSpeedKmh ?: 0.0) >= MOVING_GATE_KMH
+        // and traffic-light stops correctly freeze the cumulative target.
+        //
+        // Two ways to be "not moving":
+        //  1. SDK reading is below MOVING_GATE_KMH (stopped or never started).
+        //  2. SDK reading is stale — the value hasn't changed for SPEED_STALE_MS, which
+        //     means GPS lock is lost and the SDK is repeating the last known value.
+        //     If we trusted the stuck value we'd integrate during a long tunnel even
+        //     after the rider has stopped inside it. Pessimistic: stale ⇒ frozen.
+        //     Resumes automatically on the first emission with a new value.
+        val speed = lastSpeedKmh
+        val stale = lastSpeedChangeMs > 0 && (now - lastSpeedChangeMs) > SPEED_STALE_MS
+        val moving = !stale && speed != null && speed >= MOVING_GATE_KMH
 
         if (lastTickMs != 0L && moving) {
             // coerceAtLeast(0L): a wall-clock NTP correction can push `now` backwards by
@@ -268,6 +348,11 @@ class CarbsTracker(
         evaluateDeficitAlert(now)
         evaluateTimeAlert(now)
         maybePeriodicLog(now)
+        // Re-publish at the end so subscribers see the updated deficit, burn rate,
+        // and isIntegrating (covers staleness transitions that updateSpeed can't see
+        // because no value change triggers them). 15-s cadence — the carb / hyd
+        // data fields used to poll at 1 Hz, so this is a 95 % wakeup reduction.
+        publishStatus()
     }
 
     private fun evaluateDeficitAlert(now: Long) {

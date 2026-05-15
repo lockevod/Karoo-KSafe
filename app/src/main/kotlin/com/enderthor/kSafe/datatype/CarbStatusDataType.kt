@@ -19,7 +19,6 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.awaitCancellation
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.delay
-import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.launch
 import timber.log.Timber
@@ -88,15 +87,16 @@ class CarbStatusDataType(
         // and on every logEntry, so the field reflects logs immediately on tap.
         val viewJob = scope.launch {
             try {
-                val poll = MutableStateFlow<CarbStatus?>(null)
-                val poller = scope.launch {
-                    while (true) {
-                        val tracker = KSafeExtension.getInstance()?.carbsTrackerOrNull()
-                        poll.value = tracker?.getStatus()
-                        delay(1_000)
-                    }
+                // Push-based: wait for the tracker to become available, then collect
+                // its StateFlow forever. The tracker publishes on every tick (15 s),
+                // log/undo, movement-gate crossing, and lifecycle event — coherent with
+                // the integrator and ~95% cheaper than the previous 1-Hz polling loop.
+                var tracker = KSafeExtension.getInstance()?.carbsTrackerOrNull()
+                while (tracker == null) {
+                    delay(1_000)
+                    tracker = KSafeExtension.getInstance()?.carbsTrackerOrNull()
                 }
-                poll.collectLatest { status ->
+                tracker.statusFlow.collectLatest { status ->
                     val view = if (status == null) {
                         // Tracker not running yet (extension still booting, or no ride
                         // started). Show '---' so the rider doesn't read 'off' as
@@ -111,7 +111,6 @@ class CarbStatusDataType(
                     }
                     emitter.updateView(view)
                 }
-                poller.cancel()
             } catch (_: CancellationException) {
                 // normal
             } catch (e: Exception) {

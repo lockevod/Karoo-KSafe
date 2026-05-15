@@ -67,6 +67,16 @@ class EmergencyManager(
     }
 
     private var countdownJob: Job? = null
+    /** Outgoing sender retry job. Kept here so [cancelEmergency] / [stopAll] can
+     *  abort an in-flight emergency alert. Without this, a rider who taps Cancel
+     *  right after the countdown reaches 0 would still have the sender retry for
+     *  up to ~30 minutes (3 cycles × 3 attempts × 60-180 s back-offs + 5/10 min
+     *  inter-cycle delays) — defeating the cancel button.
+     *
+     *  `@Volatile` so cross-thread reads from [cancelEmergency] (which may run on
+     *  any coroutine scope launched from the UI) see writes from [sendAlerts]
+     *  (running on the service `scope`) without an explicit lock. */
+    @Volatile private var alertJob: Job? = null
     private var checkinJob: Job? = null
     private var checkinWarningJob: Job? = null
     var currentStatus = EmergencyStatus.IDLE
@@ -87,13 +97,27 @@ class EmergencyManager(
     }
 
     suspend fun cancelEmergency(config: KSafeConfig? = null) {
-        if (currentStatus != EmergencyStatus.COUNTDOWN) return
+        // Allow cancelling from COUNTDOWN (normal case) OR from ALERTING (rider
+        // realises they're fine right after the countdown hits 0 and the sender
+        // has just kicked off). Without the ALERTING branch a Cancel tap during
+        // the ~5 s post-countdown window or any later retry cycle is ignored,
+        // and the sender keeps retrying for up to half an hour.
+        if (currentStatus != EmergencyStatus.COUNTDOWN &&
+            currentStatus != EmergencyStatus.ALERTING) return
 
         // Capture reason before clearing — needed for CRASH_NO calibration log.
         val cancelledReason = currentReason
         val howLongMs = if (countdownStartedAt > 0L) System.currentTimeMillis() - countdownStartedAt else 0L
 
         countdownJob?.cancel()
+        // Capture-and-null before cancelling so a concurrent assignment from sendAlerts
+        // can't clobber the reference and leak a running job. The sendAlerts finally
+        // block runs on cancellation and resets currentStatus/uiState/DataStore back
+        // to IDLE — we still set them here defensively in case the cancel races with
+        // a brand-new sendAlerts launch.
+        val previousAlertJob = alertJob
+        alertJob = null
+        previousAlertJob?.cancel()
         currentStatus = EmergencyStatus.IDLE
         currentReason = null
         countdownStartedAt = 0L
@@ -198,6 +222,10 @@ class EmergencyManager(
 
     fun stopAll() {
         countdownJob?.cancel()
+        // Capture-and-null before cancel — see cancelEmergency for rationale.
+        val previousAlertJob = alertJob
+        alertJob = null
+        previousAlertJob?.cancel()
         checkinJob?.cancel()
         checkinWarningJob?.cancel()
         currentStatus = EmergencyStatus.IDLE
@@ -486,21 +514,35 @@ class EmergencyManager(
 
         Timber.d("Sending emergency alert via ${config.activeProvider}")
 
-        scope.launch {
+        alertJob = scope.launch {
             try {
                 sender.sendAlert(message, config.activeProvider)
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                // Cancelled via cancelEmergency / stopAll — propagate so the
+                // structured concurrency contract is honoured.
+                throw e
             } catch (e: Exception) {
                 Timber.e(e, "Error sending emergency alert")
+            } finally {
+                // Roll back to IDLE only when WE are still the live ALERTING source.
+                // If cancelEmergency / stopAll cancelled us, those callers already
+                // set currentStatus to IDLE *and* may have started a new check-in
+                // timer via [startCheckinJobs] (which writes the new check-in state
+                // into _uiState + DataStore). Without the guard the cancelled job's
+                // finally runs after the new state has been published and silently
+                // clobbers it back to a blank EmergencyState — wiping the check-in
+                // restart the rider just earned by tapping Cancel.
+                if (currentStatus == EmergencyStatus.ALERTING) {
+                    currentStatus = EmergencyStatus.IDLE
+                    currentReason = null
+                    _uiState.value = EmergencyState()
+                    configManager.saveEmergencyState(EmergencyState())
+                }
+                alertJob = null
             }
         }
 
         karooSystem.dispatch(TurnScreenOn)
         karooSystem.dispatch(BEEP_LONG)
-
-        delay(5_000L)
-        currentStatus = EmergencyStatus.IDLE
-        currentReason = null
-        _uiState.value = EmergencyState()
-        configManager.saveEmergencyState(EmergencyState())
     }
 }

@@ -56,8 +56,17 @@ class SpeedDropMonitor(
         startedAtMs = 0L
     }
 
-    fun onSpeedUpdate(speedKmh: Double) {
-        if (speedKmh <= 0.0) {
+    /**
+     * @param speedKmh raw SDK speed reading
+     * @param gpsStale `true` when the manager detected that the SDK is repeating the
+     *   last known value (GPS lock lost). Treat the reading as zero in that case —
+     *   without this the watchdog can never start a zero-speed window for a rider who
+     *   crashed in a tunnel / dense forest, because the SDK keeps emitting the last
+     *   pre-crash speed bit-exact and the `speedKmh > 0` branch always wins.
+     */
+    fun onSpeedUpdate(speedKmh: Double, gpsStale: Boolean = false) {
+        val effective = if (gpsStale) 0.0 else speedKmh
+        if (effective <= 0.0) {
             if (startedAtMs == 0L) startedAtMs = clock.nowMs()
         } else {
             startedAtMs = 0L

@@ -20,7 +20,6 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.awaitCancellation
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.delay
-import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.launch
 import timber.log.Timber
@@ -68,19 +67,16 @@ class CarbsBurnedDataType(
 
         val viewJob = scope.launch {
             try {
-                val poll = MutableStateFlow<CarbStatus?>(null)
-                val poller = scope.launch {
-                    while (true) {
-                        val tracker = KSafeExtension.getInstance()?.carbsTrackerOrNull()
-                        poll.value = tracker?.getStatus()
-                        delay(1_000)
-                    }
+                // Push-based — see CarbStatusDataType for the rationale.
+                var tracker = KSafeExtension.getInstance()?.carbsTrackerOrNull()
+                while (tracker == null) {
+                    delay(1_000)
+                    tracker = KSafeExtension.getInstance()?.carbsTrackerOrNull()
                 }
-                poll.collectLatest { status ->
+                tracker.statusFlow.collectLatest { status ->
                     val main = if (status == null) "---" else "${status.cumTargetG}g"
                     emitter.updateView(buildView(config, main, "burned"))
                 }
-                poller.cancel()
             } catch (_: CancellationException) {
                 // normal
             } catch (e: Exception) {

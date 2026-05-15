@@ -16,6 +16,8 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.launch
 import timber.log.Timber
 
@@ -46,6 +48,9 @@ class HydrationTracker(
 
     /** See [CarbsTracker.MOVING_GATE_KMH] — same rationale and value for symmetry. */
     private val MOVING_GATE_KMH = 2.0
+
+    /** See [CarbsTracker.SPEED_STALE_MS]. */
+    private val SPEED_STALE_MS = 10_000L
     private val ALERT_COOLDOWN_MS       = 5L * 60_000L
     private val PERIODIC_LOG_INTERVAL_MS = 120_000L
 
@@ -79,6 +84,9 @@ class HydrationTracker(
     /** Latest speed reading in km/h. `null` until the SDK first emits — used by the
      *  movement gate in [tick] to skip integration when stationary. */
     @Volatile private var lastSpeedKmh: Double? = null
+    /** See [CarbsTracker.lastSpeedChangeMs] — staleness tracking for the SDK's
+     *  last-known-value behaviour when GPS lock is lost. */
+    @Volatile private var lastSpeedChangeMs: Long = 0L
     @Volatile private var lastWeightKg: Double? = null
     @Volatile private var lastAmbientTempC: Double? = null
     @Volatile private var lastHumidityPct: Int? = null
@@ -95,6 +103,12 @@ class HydrationTracker(
 
     @Volatile private var config = KSafeConfig()
     private var monitorJob: Job? = null
+
+    // ─── Status publisher (see CarbsTracker._statusFlow for the rationale) ──
+    private val _statusFlow = MutableStateFlow<HydrationStatus?>(null)
+    val statusFlow: StateFlow<HydrationStatus?> get() = _statusFlow
+
+    private fun publishStatus() { _statusFlow.value = getStatus() }
 
     // ─── Public API ──────────────────────────────────────────────────────────
 
@@ -128,6 +142,7 @@ class HydrationTracker(
                 "beep=${config.hydBeepPattern}"
         }
         Timber.d("HydrationTracker started, target=${config.hydrationTargetMlPerHour} ml/h")
+        publishStatus()
     }
 
     fun stop() {
@@ -136,6 +151,7 @@ class HydrationTracker(
         Timber.d("HydrationTracker stopped")
         // State is intentionally retained so getSummary() / getStatus() remain readable
         // for the post-ride summary.
+        publishStatus()
     }
 
     /**
@@ -155,6 +171,7 @@ class HydrationTracker(
             while (true) { delay(MONITOR_TICK_MS); tick() }
         }
         Timber.d("HydrationTracker resumed (cumTargetMl=${cumTargetMl.toInt()}, cumLoggedMl=$cumLoggedMl)")
+        publishStatus()
     }
 
     /**
@@ -180,19 +197,35 @@ class HydrationTracker(
 
     fun updateHr(bpm: Int)            { lastHrBpm = bpm }
     fun updatePower(w: Int)           { lastPowerW = w }
-    fun updateSpeed(kmh: Double)      { lastSpeedKmh = kmh }
+    fun updateSpeed(kmh: Double) {
+        val prev = lastSpeedKmh
+        // See CarbsTracker.updateSpeed — stamp on value change OR explicit zero OR
+        // bootstrap so a stopped rider isn't misclassified as GPS-stale.
+        if (prev == null || prev != kmh || kmh == 0.0) {
+            lastSpeedChangeMs = System.currentTimeMillis()
+        }
+        // Publish only on movement-gate crossings — see CarbsTracker.updateSpeed.
+        val wasMoving = prev != null && prev >= MOVING_GATE_KMH
+        val isMoving = kmh >= MOVING_GATE_KMH
+        lastSpeedKmh = kmh
+        if (wasMoving != isMoving) publishStatus()
+    }
     fun updateUserProfile(p: UserProfile) {
         if (p.weight > 0) lastWeightKg = p.weight.toDouble()
     }
     fun updateAmbientTemp(c: Double)  { lastAmbientTempC = c }
     fun updateHumidity(pct: Int)      { lastHumidityPct = pct }
 
-    /** Log a single tap on slot 1 or 2. Adds the configured millilitres to the cumulative log. */
-    fun logEntry(slot: Int) {
+    /**
+     * Log a single tap on slot 1 or 2. Adds the configured millilitres to the cumulative
+     * log. Returns the ml actually added — see [CarbsTracker.logEntry] for the rationale.
+     * Returns `0` for an invalid slot.
+     */
+    fun logEntry(slot: Int): Int {
         val ml = when (slot) {
             1 -> config.drink1Ml
             2 -> config.drink2Ml
-            else -> return
+            else -> return 0
         }
         // Save what we're about to mutate so an undo within the on-screen window can
         // reverse exactly this entry — same pattern as CarbsTracker.
@@ -203,6 +236,8 @@ class HydrationTracker(
         calibLogger?.log(CalibrationLogger.Event.FUELING_HYDRATION_LOGGED) {
             "slot=$slot,ml=$ml,cum_logged=$cumLoggedMl,cum_target=${cumTargetMl.toInt()}"
         }
+        publishStatus()
+        return ml
     }
 
     /**
@@ -220,6 +255,7 @@ class HydrationTracker(
         calibLogger?.log(CalibrationLogger.Event.FUELING_HYDRATION_UNDONE) {
             "slot=$slot,ml=-$ml,cum_logged=$cumLoggedMl,cum_target=${cumTargetMl.toInt()}"
         }
+        publishStatus()
         return ml
     }
 
@@ -235,9 +271,14 @@ class HydrationTracker(
         currentRateMlPerHour = if (config.hydrationDynamicEstimateEnabled) lastSweatRateMlHr.toInt()
                                else config.hydrationTargetMlPerHour,
         estimateConfidence = if (config.hydrationDynamicEstimateEnabled) lastSweatConfidence else null,
-        // See CarbsTracker.getStatus — mirrors the movement gate in tick() so
-        // consumers can keep their UI coherent with the integrator.
-        isIntegrating = monitorJob != null && (lastSpeedKmh ?: 0.0) >= MOVING_GATE_KMH,
+        // See CarbsTracker.getStatus — mirrors the movement + staleness gate in
+        // tick() so UI consumers stay coherent with the integrator.
+        isIntegrating = monitorJob != null && run {
+            val speed = lastSpeedKmh ?: return@run false
+            val stale = lastSpeedChangeMs > 0 &&
+                (System.currentTimeMillis() - lastSpeedChangeMs) > SPEED_STALE_MS
+            !stale && speed >= MOVING_GATE_KMH
+        },
     )
 
     fun getSummary(): HydrationSummary = HydrationSummary(
@@ -251,10 +292,12 @@ class HydrationTracker(
 
     private fun tick() {
         val now = System.currentTimeMillis()
-        // Movement gate — see CarbsTracker.tick(). Hydration also pauses when
-        // stationary so the bench-test / traffic-light case doesn't accumulate
-        // a ghost deficit.
-        val moving = (lastSpeedKmh ?: 0.0) >= MOVING_GATE_KMH
+        // Movement gate — see CarbsTracker.tick() for the full rationale and the
+        // GPS-staleness branch. Same shape: stop integrating when stationary OR when
+        // the SDK's last reading has been stuck unchanged for SPEED_STALE_MS.
+        val speed = lastSpeedKmh
+        val stale = lastSpeedChangeMs > 0 && (now - lastSpeedChangeMs) > SPEED_STALE_MS
+        val moving = !stale && speed != null && speed >= MOVING_GATE_KMH
         if (lastTickMs != 0L && moving) {
             // Clamp negative dt — see CarbsTracker.tick() for rationale (NTP correction).
             val dtSec = (now - lastTickMs).coerceAtLeast(0L) / 1000f
@@ -291,6 +334,9 @@ class HydrationTracker(
         evaluateDeficitAlert(now)
         evaluateTimeAlert(now)
         maybePeriodicLog(now)
+        // See CarbsTracker.tick — re-publish to drive the status data fields off
+        // a push channel (15-s cadence) instead of the old 1-Hz polling loops.
+        publishStatus()
     }
 
     private fun evaluateDeficitAlert(now: Long) {

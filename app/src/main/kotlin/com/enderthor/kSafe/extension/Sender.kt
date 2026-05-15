@@ -27,10 +27,15 @@ class Sender(
     private val cycleDelayMinutes = listOf(5, 10)
 
     companion object {
-        /** Per-HTTP-request timeout for single-attempt sends (test path + single-recipient flows). */
+        /** Per-HTTP-request timeout for a single recipient call (test path + every
+         *  recipient in the multi-recipient retry block). */
         private const val ATTEMPT_TIMEOUT_MS = 15_000L
-        /** Per-HTTP-request timeout for the full multi-recipient retry attempt block. */
-        private const val ATTEMPT_BLOCK_TIMEOUT_MS = 30_000L
+        /** Hard cap on the WHOLE multi-recipient `attemptSend` block. Each recipient
+         *  has its own [ATTEMPT_TIMEOUT_MS] now, so this must be at least
+         *  `MAX_RECIPIENTS * ATTEMPT_TIMEOUT_MS + slack`. 3 recipients × 15 s = 45 s →
+         *  60 s leaves headroom for JSON building, log writes, and the brief gap
+         *  between recipient calls without prematurely killing the third recipient. */
+        private const val ATTEMPT_BLOCK_TIMEOUT_MS = 60_000L
     }
 
     // ─── Entry points ─────────────────────────────────────────────────────────
@@ -282,7 +287,15 @@ class Sender(
                 var anyOk = false
                 for ((phone, key) in recipients) {
                     val url = "https://api.callmebot.com/whatsapp.php?phone=$phone&text=$encodedMsg&apikey=$key"
-                    val response = karooSystem.httpRequest("GET", url)
+                    // Per-recipient timeout so a hung first recipient doesn't starve
+                    // recipients 2/3 of the outer attempt's 30 s block.
+                    val response = withTimeoutOrNull(ATTEMPT_TIMEOUT_MS) {
+                        karooSystem.httpRequest("GET", url)
+                    }
+                    if (response == null) {
+                        Timber.e("CallMeBot timeout (phone=$phone)")
+                        continue
+                    }
                     val body = response.body?.toString(Charsets.UTF_8) ?: ""
                     val ok = response.statusCode in 200..299 && !body.contains("ERROR")
                     if (ok) anyOk = true
@@ -306,11 +319,18 @@ class Sender(
                         // Info: priority 0 (normal)
                         put("priority", if (isEmergency) 1 else 0)
                     }.toString()
-                    val response = karooSystem.httpRequest(
-                        "POST", "https://api.pushover.net/1/messages.json",
-                        mapOf("Content-Type" to "application/json"),
-                        jsonBody.toByteArray()
-                    )
+                    // Per-recipient timeout so a hung first recipient doesn't starve 2/3.
+                    val response = withTimeoutOrNull(ATTEMPT_TIMEOUT_MS) {
+                        karooSystem.httpRequest(
+                            "POST", "https://api.pushover.net/1/messages.json",
+                            mapOf("Content-Type" to "application/json"),
+                            jsonBody.toByteArray()
+                        )
+                    }
+                    if (response == null) {
+                        Timber.e("Pushover timeout (userKey=$key)")
+                        continue
+                    }
                     val body = response.body?.toString(Charsets.UTF_8) ?: ""
                     val ok = response.statusCode in 200..299 && body.contains("\"status\":1")
                     if (ok) anyOk = true
@@ -323,16 +343,22 @@ class Sender(
                 if (config.apiKey.isBlank()) return false
                 val title    = if (isEmergency) "KSafe Emergency" else "KSafe"
                 val priority = if (isEmergency) "urgent" else "default"
-                val response = karooSystem.httpRequest(
-                    "POST",
-                    "https://ntfy.sh/${config.apiKey.trim()}",
-                    mapOf(
-                        "Content-Type" to "text/plain",
-                        "Title"        to title,
-                        "Priority"     to priority,
-                    ),
-                    message.toByteArray()
-                )
+                val response = withTimeoutOrNull(ATTEMPT_TIMEOUT_MS) {
+                    karooSystem.httpRequest(
+                        "POST",
+                        "https://ntfy.sh/${config.apiKey.trim()}",
+                        mapOf(
+                            "Content-Type" to "text/plain",
+                            "Title"        to title,
+                            "Priority"     to priority,
+                        ),
+                        message.toByteArray()
+                    )
+                }
+                if (response == null) {
+                    Timber.e("ntfy timeout")
+                    return false
+                }
                 val ok = response.statusCode in 200..299
                 if (!ok) Timber.e("ntfy error ${response.statusCode}: ${response.body?.toString(Charsets.UTF_8)}")
                 ok
@@ -348,12 +374,19 @@ class Sender(
                         put("chat_id", chatId.trim())
                         put("text", message)
                     }.toString()
-                    val response = karooSystem.httpRequest(
-                        "POST",
-                        "https://api.telegram.org/bot${config.apiKey.trim()}/sendMessage",
-                        mapOf("Content-Type" to "application/json"),
-                        jsonBody.toByteArray()
-                    )
+                    // Per-recipient timeout — see CallMeBot branch for the rationale.
+                    val response = withTimeoutOrNull(ATTEMPT_TIMEOUT_MS) {
+                        karooSystem.httpRequest(
+                            "POST",
+                            "https://api.telegram.org/bot${config.apiKey.trim()}/sendMessage",
+                            mapOf("Content-Type" to "application/json"),
+                            jsonBody.toByteArray()
+                        )
+                    }
+                    if (response == null) {
+                        Timber.e("Telegram timeout (chatId=$chatId)")
+                        continue
+                    }
                     val body = response.body?.toString(Charsets.UTF_8) ?: ""
                     val ok = response.statusCode in 200..299 && body.contains("\"ok\":true")
                     if (ok) anyOk = true

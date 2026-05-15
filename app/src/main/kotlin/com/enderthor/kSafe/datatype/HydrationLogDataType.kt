@@ -48,6 +48,17 @@ class HydrationLogDataType(
     // requestCode: 120, 121
     private val requestCode = 119 + slot
 
+    // Cached PendingIntent — see CarbLogDataType.
+    @Volatile private var cachedPi: PendingIntent? = null
+    private fun pendingIntentFor(context: Context): PendingIntent {
+        cachedPi?.let { return it }
+        return PendingIntent.getBroadcast(
+            context, requestCode,
+            Intent(tapAction).setPackage(context.packageName),
+            PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
+        ).also { cachedPi = it }
+    }
+
     private val configManager = ConfigurationManager(context)
 
     private fun iconFromConfig(c: KSafeConfig): String = when (slot) {
@@ -116,12 +127,7 @@ class HydrationLogDataType(
         if (viewConfig.preview) return content
         val wrapper = RemoteViews(context.packageName, R.layout.field_tap_wrapper)
         if (clickable) {
-            val pi = PendingIntent.getBroadcast(
-                context, requestCode,
-                Intent(tapAction).setPackage(context.packageName),
-                PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
-            )
-            wrapper.setOnClickPendingIntent(R.id.field_tap_wrapper, pi)
+            wrapper.setOnClickPendingIntent(R.id.field_tap_wrapper, pendingIntentFor(context))
         }
         wrapper.addView(R.id.field_tap_wrapper, content)
         return wrapper
@@ -160,14 +166,12 @@ class HydrationLogDataType(
                         // colour and label, not the disabled-state grey.
                         buildView(context, config, COLOR_OFF, label, "OFF", clickable = false)
                     } else when (state) {
-                        HydrationLogState.IDLE    -> buildView(context, config, idleColorFromConfig(ksafeConfig), label, "${ml}ml", leftDrawableRes = leftDrawable)
-                        // LOGGED stays tappable for the ~5 s undo window so a second tap
-                        // on the same slot reverses the entry. Hint advertises the action.
-                        HydrationLogState.LOGGED  -> buildView(context, config, COLOR_LOGGED, "+${ml}ml", "TAP UNDO")
-                        // UNDONE is the brief red "−Xml ✓" confirmation after a successful
-                        // undo. Tappable so a third quick tap re-logs immediately — see
-                        // CarbLogDataType for the rationale.
-                        HydrationLogState.UNDONE  -> buildView(context, config, COLOR_UNDONE, "−${ml}ml", "✓")
+                        is HydrationLogState.IDLE   -> buildView(context, config, idleColorFromConfig(ksafeConfig), label, "${ml}ml", leftDrawableRes = leftDrawable)
+                        // LOGGED / UNDONE carry the actual ml that were added/removed at
+                        // tap time, so editing the slot config mid-undo-window cannot
+                        // desync the flash from the stored entry. See CarbLogDataType.
+                        is HydrationLogState.LOGGED -> buildView(context, config, COLOR_LOGGED, "+${state.ml}ml", "TAP UNDO")
+                        is HydrationLogState.UNDONE -> buildView(context, config, COLOR_UNDONE, "−${state.ml}ml", "✓")
                     }
                 }.collect { view -> emitter.updateView(view) }
             } catch (_: CancellationException) {
