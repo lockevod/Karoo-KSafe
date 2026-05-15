@@ -35,11 +35,16 @@ class CarbStatusDataType(
     private val karooSystem: KarooSystemService,
 ) : DataTypeImpl("ksafe", datatype) {
 
+    // Bands tuned after field reports of the field sitting in amber/red most of the
+    // ride. The deficit threshold is the rider-configured alert level; the green band
+    // now covers everything BELOW that threshold (the "you're fine" range), amber is
+    // a 50 % overshoot warning zone, and red is the genuinely-behind territory.
+    // Blue = surplus (logged more than the cumulative target).
     private fun colorFor(deficit: Int, threshold: Int): Int = when {
-        deficit < 0                 -> COLOR_AHEAD
-        deficit < threshold / 2     -> COLOR_OK
-        deficit < threshold         -> COLOR_AMBER
-        else                        -> COLOR_RED
+        deficit < 0                     -> COLOR_AHEAD
+        deficit < threshold             -> COLOR_OK
+        deficit < threshold * 3 / 2     -> COLOR_AMBER
+        else                            -> COLOR_RED
     }
 
     private fun displayMain(deficit: Int): String = when {
@@ -64,6 +69,12 @@ class CarbStatusDataType(
     }
 
     override fun startView(context: Context, config: ViewConfig, emitter: ViewEmitter) {
+        // Synchronous seed frame BEFORE launching any coroutine. See HydrationStatusDataType
+        // for the rationale — without this, Karoo paints the host theme background while
+        // waiting for the first Dispatchers.Default emission, which in day mode shows up
+        // as a fully white field (white text on white host bg).
+        emitter.updateView(buildView(config, COLOR_OK, "---", "carbs"))
+
         val scopeJob = Job()
         val scope = CoroutineScope(Dispatchers.Default + scopeJob)
 

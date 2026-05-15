@@ -110,18 +110,21 @@ class HydrationLogDataType(
             // CLEARS any drawable from a previous LOGGED → IDLE transition.
             setTextViewCompoundDrawables(R.id.field_text_main, leftDrawableRes, 0, 0, 0)
         }
-        if (!viewConfig.preview && clickable) {
+        // See CarbLogDataType — always wrap in field_tap_wrapper in non-preview mode
+        // so Karoo doesn't re-attach the click handler on state transitions and rapid
+        // taps stop being lost. Only the PendingIntent attachment varies by state.
+        if (viewConfig.preview) return content
+        val wrapper = RemoteViews(context.packageName, R.layout.field_tap_wrapper)
+        if (clickable) {
             val pi = PendingIntent.getBroadcast(
                 context, requestCode,
                 Intent(tapAction).setPackage(context.packageName),
                 PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
             )
-            val wrapper = RemoteViews(context.packageName, R.layout.field_tap_wrapper)
             wrapper.setOnClickPendingIntent(R.id.field_tap_wrapper, pi)
-            wrapper.addView(R.id.field_tap_wrapper, content)
-            return wrapper
         }
-        return content
+        wrapper.addView(R.id.field_tap_wrapper, content)
+        return wrapper
     }
 
     override fun startView(context: Context, config: ViewConfig, emitter: ViewEmitter) {
@@ -142,8 +145,14 @@ class HydrationLogDataType(
                 ) { state, ksafeConfig ->
                     val label = labelFromConfig(ksafeConfig)
                     val ml = mlFromConfig(ksafeConfig)
+                    // See CarbLogDataType — pick the dark-fill drawable when the slot's
+                    // idle background is FIELD_COLOR_AUTO and the Karoo is in day mode,
+                    // otherwise the white default would vanish on the host's white bg.
+                    val idleIsAutoDay =
+                        idleColorFromConfig(ksafeConfig) == FIELD_COLOR_AUTO &&
+                        !context.isKarooNightMode()
                     val leftDrawable = if (iconFromConfig(ksafeConfig) == FUEL_BOTTLE_DRAWABLE) {
-                        R.drawable.ic_fuel_bottle
+                        if (idleIsAutoDay) R.drawable.ic_fuel_bottle_dark else R.drawable.ic_fuel_bottle
                     } else 0
                     if (!config.preview && !ksafeConfig.hydrationTrackerEnabled) {
                         // Master tracker disabled — show OFF in grey. Skipped in preview
@@ -156,8 +165,9 @@ class HydrationLogDataType(
                         // on the same slot reverses the entry. Hint advertises the action.
                         HydrationLogState.LOGGED  -> buildView(context, config, COLOR_LOGGED, "+${ml}ml", "TAP UNDO")
                         // UNDONE is the brief red "−Xml ✓" confirmation after a successful
-                        // undo. Not tappable — auto-resets to IDLE.
-                        HydrationLogState.UNDONE  -> buildView(context, config, COLOR_UNDONE, "−${ml}ml", "✓", clickable = false)
+                        // undo. Tappable so a third quick tap re-logs immediately — see
+                        // CarbLogDataType for the rationale.
+                        HydrationLogState.UNDONE  -> buildView(context, config, COLOR_UNDONE, "−${ml}ml", "✓")
                     }
                 }.collect { view -> emitter.updateView(view) }
             } catch (_: CancellationException) {

@@ -292,12 +292,16 @@ class KSafeExtension : KarooExtension("ksafe", BuildConfig.VERSION_NAME), Corout
         }
 
         launch {
-            // Stream speed to crash detector
+            // Stream speed to crash detector + fueling trackers. The fueling trackers
+            // gate integration on speed (no accumulation when stationary), so they need
+            // every emission too — fan out here rather than duplicating the stream.
             karooSystem.streamDataFlow(io.hammerhead.karooext.models.DataType.Type.SPEED)
                 .collect { streamState ->
                     val speedKmh = streamState.speedKmh() ?: return@collect
                     crashManager.updateSpeed(speedKmh)
                     medicalDetector.updateSpeed(speedKmh)
+                    if (this@KSafeExtension::carbsTracker.isInitialized) carbsTracker.updateSpeed(speedKmh)
+                    if (this@KSafeExtension::hydrationTracker.isInitialized) hydrationTracker.updateSpeed(speedKmh)
                 }
         }
 
@@ -1061,12 +1065,17 @@ class KSafeExtension : KarooExtension("ksafe", BuildConfig.VERSION_NAME), Corout
             }
             return
         }
+        // UNDONE is the brief red confirmation flash after a successful undo. The rider
+        // should be able to re-log immediately (mis-tap recovery) without waiting for
+        // the 1.5 s auto-reset to IDLE. Falls through to the regular log path below.
         carbsTracker.logEntry(slot)
-        // 5 s window: long enough to notice a wrong tap and undo, short enough that a
-        // legitimate second log on the same slot isn't an annoying wait.
+        // 8 s window: long enough that the rider can react after the confirmation flash
+        // even with gloves on rough terrain, short enough that a legitimate second log
+        // isn't an annoying wait. Extended from 5 s after field reports of rapid taps
+        // being missed during the IDLE→LOGGED state transition.
         com.enderthor.kSafe.datatype.CarbLogState.update(slot, com.enderthor.kSafe.datatype.CarbLogState.LOGGED)
         carbTapRevertJobs[slot] = launch {
-            kotlinx.coroutines.delay(5_000L)
+            kotlinx.coroutines.delay(8_000L)
             com.enderthor.kSafe.datatype.CarbLogState.update(slot, com.enderthor.kSafe.datatype.CarbLogState.IDLE)
             carbTapRevertJobs[slot] = null
         }
@@ -1096,10 +1105,12 @@ class KSafeExtension : KarooExtension("ksafe", BuildConfig.VERSION_NAME), Corout
             }
             return
         }
+        // UNDONE falls through to re-log — see handleCarbLogTap for the rationale.
         hydrationTracker.logEntry(slot)
+        // 8 s window — see handleCarbLogTap.
         com.enderthor.kSafe.datatype.HydrationLogState.update(slot, com.enderthor.kSafe.datatype.HydrationLogState.LOGGED)
         hydTapRevertJobs[slot] = launch {
-            kotlinx.coroutines.delay(5_000L)
+            kotlinx.coroutines.delay(8_000L)
             com.enderthor.kSafe.datatype.HydrationLogState.update(slot, com.enderthor.kSafe.datatype.HydrationLogState.IDLE)
             hydTapRevertJobs[slot] = null
         }

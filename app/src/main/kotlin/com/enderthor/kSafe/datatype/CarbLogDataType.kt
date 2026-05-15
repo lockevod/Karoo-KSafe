@@ -129,18 +129,25 @@ class CarbLogDataType(
             // CLEARS any drawable from a previous LOGGED → IDLE transition.
             setTextViewCompoundDrawables(R.id.field_text_main, leftDrawableRes, 0, 0, 0)
         }
-        if (!viewConfig.preview && clickable) {
+        // Always wrap in field_tap_wrapper in non-preview mode so the structural
+        // RemoteViews layout stays identical across IDLE / LOGGED / UNDONE / OFF.
+        // Karoo's OS re-attaches the click handler whenever the top-level RemoteViews
+        // structure changes; before this fix the OFF / UNDONE branches returned the
+        // raw content (no wrapper) and rapid taps during the structural swap were
+        // being lost. Only the PendingIntent attachment varies now — the wrapper
+        // itself is always present.
+        if (viewConfig.preview) return content
+        val wrapper = RemoteViews(context.packageName, R.layout.field_tap_wrapper)
+        if (clickable) {
             val pi = PendingIntent.getBroadcast(
                 context, requestCode,
                 Intent(tapAction).setPackage(context.packageName),
                 PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
             )
-            val wrapper = RemoteViews(context.packageName, R.layout.field_tap_wrapper)
             wrapper.setOnClickPendingIntent(R.id.field_tap_wrapper, pi)
-            wrapper.addView(R.id.field_tap_wrapper, content)
-            return wrapper
         }
-        return content
+        wrapper.addView(R.id.field_tap_wrapper, content)
+        return wrapper
     }
 
     override fun startView(context: Context, config: ViewConfig, emitter: ViewEmitter) {
@@ -161,8 +168,16 @@ class CarbLogDataType(
                 ) { state, ksafeConfig ->
                     val label = labelFromConfig(ksafeConfig)
                     val grams = gramsFromConfig(ksafeConfig)
+                    // Pick the dark-fill variant when the slot's idle background is
+                    // FIELD_COLOR_AUTO and the Karoo is in day mode — the host then
+                    // paints a white field bg, so the white default drawable would be
+                    // invisible. Night-mode + AUTO and every painted-palette colour
+                    // (always dark) keep the regular white drawable.
+                    val idleIsAutoDay =
+                        idleColorFromConfig(ksafeConfig) == FIELD_COLOR_AUTO &&
+                        !context.isKarooNightMode()
                     val leftDrawable = if (iconFromConfig(ksafeConfig) == FUEL_GEL_DRAWABLE) {
-                        R.drawable.ic_fuel_gel
+                        if (idleIsAutoDay) R.drawable.ic_fuel_gel_dark else R.drawable.ic_fuel_gel
                     } else 0
                     if (!config.preview && !ksafeConfig.carbsTrackerEnabled) {
                         // Master tracker disabled — show OFF in grey. Skipped in preview
@@ -175,8 +190,11 @@ class CarbLogDataType(
                         // on the same slot reverses the entry. Hint advertises the action.
                         CarbLogState.LOGGED  -> buildView(context, config, COLOR_LOGGED, "+${grams}g", "TAP UNDO")
                         // UNDONE is the brief red "−Xg ✓" confirmation after a successful
-                        // undo. Not tappable — auto-resets to IDLE.
-                        CarbLogState.UNDONE  -> buildView(context, config, COLOR_UNDONE, "−${grams}g", "✓", clickable = false)
+                        // undo. Tappable so a third quick tap re-logs (mis-tap recovery
+                        // without waiting for the 1.5 s auto-reset to IDLE — handled in
+                        // KSafeExtension.handleCarbLogTap by falling through to the
+                        // regular log path).
+                        CarbLogState.UNDONE  -> buildView(context, config, COLOR_UNDONE, "−${grams}g", "✓")
                     }
                 }.collect { view -> emitter.updateView(view) }
             } catch (_: CancellationException) {

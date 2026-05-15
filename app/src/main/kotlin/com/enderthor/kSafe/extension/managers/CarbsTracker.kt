@@ -46,6 +46,14 @@ class CarbsTracker(
     private val ALERT_COOLDOWN_MS       = 5L * 60_000L
     private val PERIODIC_LOG_INTERVAL_MS = 120_000L
 
+    /**
+     * Speed below which the rider is treated as stationary and carb integration
+     * pauses. 2 km/h sits below a slow walking pace, so any actual riding (even
+     * pushing the bike up a hill) keeps integrating. Bench tests and traffic-light
+     * stops correctly freeze the target. Same threshold used in [HydrationTracker].
+     */
+    private val MOVING_GATE_KMH = 2.0
+
     private val ALERT_BG_COLOR = 0xFFE65100.toInt()  // amber
     private val ALERT_TX_COLOR = 0xFFFFFFFF.toInt()  // white
     private val AUTO_DISMISS_MS = 10_000L
@@ -54,6 +62,9 @@ class CarbsTracker(
     @Volatile private var lastUserProfile: UserProfile? = null
     @Volatile private var lastHrBpm: Int? = null
     @Volatile private var lastPowerW: Int? = null
+    /** Latest speed reading in km/h. `null` until the SDK first emits — used by the
+     *  movement gate in [tick] to skip integration when stationary. */
+    @Volatile private var lastSpeedKmh: Double? = null
 
     // ─── Session state (reset by start()) ────────────────────────────────────
     @Volatile private var cumTargetG = 0f
@@ -154,6 +165,7 @@ class CarbsTracker(
     fun updateUserProfile(p: UserProfile) { lastUserProfile = p }
     fun updateHr(bpm: Int)                { lastHrBpm = bpm }
     fun updatePower(w: Int)               { lastPowerW = w }
+    fun updateSpeed(kmh: Double)          { lastSpeedKmh = kmh }
 
     /** Log a single tap on slot 1, 2 or 3. Adds the configured grams to the cumulative log. */
     fun logEntry(slot: Int) {
@@ -231,13 +243,22 @@ class CarbsTracker(
         val zone = IntensityZoneCalculator.calculate(lastUserProfile, lastHrBpm, lastPowerW)
         lastZoneSnapshot = zone
 
-        if (lastTickMs != 0L) {
+        // Movement gate — no integration when stationary. Cycling: you only burn the
+        // carbs you need to replace when moving (pedalling OR coasting). Bench tests
+        // and traffic-light stops correctly freeze the cumulative target. lastSpeedKmh
+        // stays null until the SDK first emits SPEED, so a freshly-booted device with
+        // no GPS lock yet also freezes — exactly the behaviour the rider expects.
+        val moving = (lastSpeedKmh ?: 0.0) >= MOVING_GATE_KMH
+
+        if (lastTickMs != 0L && moving) {
             // coerceAtLeast(0L): a wall-clock NTP correction can push `now` backwards by
             // seconds — we never want cumTargetG to decrease, so clamp negative dt to 0.
             val dtSec = (now - lastTickMs).coerceAtLeast(0L) / 1000f
             val ratePerSec = config.carbTargetGperHour / 3600f
             cumTargetG += dtSec * ratePerSec * zone.multiplier
         }
+        // Update lastTickMs on every tick (moving or not) so a stationary→moving
+        // transition doesn't claim the entire stationary period in one big dt.
         lastTickMs = now
 
         evaluateDeficitAlert(now)

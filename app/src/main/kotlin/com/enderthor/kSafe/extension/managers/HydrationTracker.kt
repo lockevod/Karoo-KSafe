@@ -43,6 +43,9 @@ class HydrationTracker(
     // the wakeup count vs. the original 5 s. The deficit and time-alert thresholds
     // both have minute-level granularity downstream, so 15 s polling is fine.
     private val MONITOR_TICK_MS         = 15_000L
+
+    /** See [CarbsTracker.MOVING_GATE_KMH] — same rationale and value for symmetry. */
+    private val MOVING_GATE_KMH = 2.0
     private val ALERT_COOLDOWN_MS       = 5L * 60_000L
     private val PERIODIC_LOG_INTERVAL_MS = 120_000L
 
@@ -73,6 +76,9 @@ class HydrationTracker(
     // for adjacent ticks.
     @Volatile private var lastHrBpm: Int? = null
     @Volatile private var lastPowerW: Int? = null
+    /** Latest speed reading in km/h. `null` until the SDK first emits — used by the
+     *  movement gate in [tick] to skip integration when stationary. */
+    @Volatile private var lastSpeedKmh: Double? = null
     @Volatile private var lastWeightKg: Double? = null
     @Volatile private var lastAmbientTempC: Double? = null
     @Volatile private var lastHumidityPct: Int? = null
@@ -174,6 +180,7 @@ class HydrationTracker(
 
     fun updateHr(bpm: Int)            { lastHrBpm = bpm }
     fun updatePower(w: Int)           { lastPowerW = w }
+    fun updateSpeed(kmh: Double)      { lastSpeedKmh = kmh }
     fun updateUserProfile(p: UserProfile) {
         if (p.weight > 0) lastWeightKg = p.weight.toDouble()
     }
@@ -241,7 +248,11 @@ class HydrationTracker(
 
     private fun tick() {
         val now = System.currentTimeMillis()
-        if (lastTickMs != 0L) {
+        // Movement gate — see CarbsTracker.tick(). Hydration also pauses when
+        // stationary so the bench-test / traffic-light case doesn't accumulate
+        // a ghost deficit.
+        val moving = (lastSpeedKmh ?: 0.0) >= MOVING_GATE_KMH
+        if (lastTickMs != 0L && moving) {
             // Clamp negative dt — see CarbsTracker.tick() for rationale (NTP correction).
             val dtSec = (now - lastTickMs).coerceAtLeast(0L) / 1000f
             val ratePerHour: Float = if (config.hydrationDynamicEstimateEnabled) {
