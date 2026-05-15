@@ -26,6 +26,7 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.awaitCancellation
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.launch
 import timber.log.Timber
 
@@ -123,25 +124,31 @@ class CustomMessageDataType(
 
         val viewJob = scope.launch {
             try {
+                // See CarbLogDataType — Frame + distinctUntilChanged dedups identical frames
+                // so an unrelated config edit doesn't force a wasted buildView + IPC.
                 combine(
                     CustomMessageState.flowForSlot(slot),
                     configManager.loadConfigFlow()
                 ) { state, ksafeConfig ->
                     val title = titleFromConfig(ksafeConfig)
                     val idleColor = idleColorFromConfig(ksafeConfig)
-                    if (!config.preview && !enabledFromConfig(ksafeConfig)) {
-                        // Slot disabled in Actions tab — show OFF in grey. Skipped in
-                        // preview so the profile-editor gallery shows the slot's
-                        // configured idle colour and title, not the disabled-state grey.
-                        buildView(context, config, COLOR_OFF, title, "OFF", clickable = false)
-                    } else when (state) {
-                        CustomMessageState.IDLE    -> buildView(context, config, idleColor, title, "tap=send")
-                        CustomMessageState.SENDING -> buildView(context, config, COLOR_SENDING, title, "Sending…", clickable = false)
-                        CustomMessageState.SENT    -> buildView(context, config, COLOR_SENT, title, "SENT ✓", clickable = false)
-                        CustomMessageState.ERROR   -> buildView(context, config, COLOR_ERROR, title, "ERR retry")
+                    when {
+                        !config.preview && !enabledFromConfig(ksafeConfig) ->
+                            // Slot disabled in Actions tab — show OFF in grey. Skipped in
+                            // preview so the profile-editor gallery shows the slot's
+                            // configured idle colour and title, not the disabled-state grey.
+                            Frame(COLOR_OFF, title, "OFF", clickable = false)
+                        state == CustomMessageState.SENDING ->
+                            Frame(COLOR_SENDING, title, "Sending…", clickable = false)
+                        state == CustomMessageState.SENT ->
+                            Frame(COLOR_SENT, title, "SENT ✓", clickable = false)
+                        state == CustomMessageState.ERROR ->
+                            Frame(COLOR_ERROR, title, "ERR retry", clickable = true)
+                        else -> // IDLE
+                            Frame(idleColor, title, "tap=send", clickable = true)
                     }
-                }.collect { view ->
-                    emitter.updateView(view)
+                }.distinctUntilChanged().collect { f ->
+                    emitter.updateView(buildView(context, config, f.bgColor, f.main, f.hint, f.clickable))
                 }
             } catch (_: CancellationException) {
                 // normal
@@ -157,4 +164,12 @@ class CustomMessageDataType(
             scopeJob.cancel()
         }
     }
+
+    /** See [CarbLogDataType.Frame] — dedup snapshot for the upstream `combine`. */
+    private data class Frame(
+        val bgColor: Int,
+        val main: String,
+        val hint: String,
+        val clickable: Boolean,
+    )
 }

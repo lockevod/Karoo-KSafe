@@ -27,6 +27,7 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.awaitCancellation
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.launch
 import timber.log.Timber
 
@@ -145,35 +146,36 @@ class HydrationLogDataType(
 
         val viewJob = scope.launch {
             try {
+                // See CarbLogDataType — Frame + distinctUntilChanged dedups unrelated
+                // config edits that would otherwise force a wasted buildView + IPC.
                 combine(
                     HydrationLogState.flowForSlot(slot),
                     configManager.loadConfigFlow()
                 ) { state, ksafeConfig ->
                     val label = labelFromConfig(ksafeConfig)
                     val ml = mlFromConfig(ksafeConfig)
-                    // See CarbLogDataType — pick the dark-fill drawable when the slot's
-                    // idle background is FIELD_COLOR_AUTO and the Karoo is in day mode,
-                    // otherwise the white default would vanish on the host's white bg.
                     val idleIsAutoDay =
                         idleColorFromConfig(ksafeConfig) == FIELD_COLOR_AUTO &&
                         !context.isKarooNightMode()
                     val leftDrawable = if (iconFromConfig(ksafeConfig) == FUEL_BOTTLE_DRAWABLE) {
                         if (idleIsAutoDay) R.drawable.ic_fuel_bottle_dark else R.drawable.ic_fuel_bottle
                     } else 0
-                    if (!config.preview && !ksafeConfig.hydrationTrackerEnabled) {
-                        // Master tracker disabled — show OFF in grey. Skipped in preview
-                        // so the profile-editor gallery shows the slot's configured idle
-                        // colour and label, not the disabled-state grey.
-                        buildView(context, config, COLOR_OFF, label, "OFF", clickable = false)
-                    } else when (state) {
-                        is HydrationLogState.IDLE   -> buildView(context, config, idleColorFromConfig(ksafeConfig), label, "${ml}ml", leftDrawableRes = leftDrawable)
-                        // LOGGED / UNDONE carry the actual ml that were added/removed at
-                        // tap time, so editing the slot config mid-undo-window cannot
-                        // desync the flash from the stored entry. See CarbLogDataType.
-                        is HydrationLogState.LOGGED -> buildView(context, config, COLOR_LOGGED, "+${state.ml}ml", "TAP UNDO")
-                        is HydrationLogState.UNDONE -> buildView(context, config, COLOR_UNDONE, "−${state.ml}ml", "✓")
+                    when {
+                        !config.preview && !ksafeConfig.hydrationTrackerEnabled ->
+                            Frame(COLOR_OFF, label, "OFF", clickable = false, leftDrawableRes = 0)
+                        state is HydrationLogState.LOGGED ->
+                            // LOGGED / UNDONE carry the actual ml that were added/removed at
+                            // tap time, so editing the slot config mid-undo-window cannot
+                            // desync the flash from the stored entry. See CarbLogDataType.
+                            Frame(COLOR_LOGGED, "+${state.ml}ml", "TAP UNDO", clickable = true, leftDrawableRes = 0)
+                        state is HydrationLogState.UNDONE ->
+                            Frame(COLOR_UNDONE, "−${state.ml}ml", "✓", clickable = true, leftDrawableRes = 0)
+                        else -> // IDLE
+                            Frame(idleColorFromConfig(ksafeConfig), label, "${ml}ml", clickable = true, leftDrawableRes = leftDrawable)
                     }
-                }.collect { view -> emitter.updateView(view) }
+                }.distinctUntilChanged().collect { f ->
+                    emitter.updateView(buildView(context, config, f.bgColor, f.main, f.hint, f.clickable, f.leftDrawableRes))
+                }
             } catch (_: CancellationException) {
                 // normal
             } catch (e: Exception) {
@@ -188,4 +190,13 @@ class HydrationLogDataType(
             scopeJob.cancel()
         }
     }
+
+    /** See [CarbLogDataType.Frame] — dedup snapshot for the upstream `combine`. */
+    private data class Frame(
+        val bgColor: Int,
+        val main: String,
+        val hint: String,
+        val clickable: Boolean,
+        val leftDrawableRes: Int,
+    )
 }

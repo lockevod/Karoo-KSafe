@@ -27,6 +27,7 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.awaitCancellation
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.launch
 import timber.log.Timber
 
@@ -172,6 +173,11 @@ class CarbLogDataType(
 
         val viewJob = scope.launch {
             try {
+                // Build a lightweight Frame from (state, config) — primitives + strings only —
+                // then `.distinctUntilChanged()` skips the entire RemoteViews construction +
+                // IPC when nothing visible changed. Without this, an unrelated config edit
+                // (e.g. changing the SOS field colour from the Provider tab) re-emits this
+                // field too, paying the buildView + updateView round-trip for nothing.
                 combine(
                     CarbLogState.flowForSlot(slot),
                     configManager.loadConfigFlow()
@@ -189,26 +195,31 @@ class CarbLogDataType(
                     val leftDrawable = if (iconFromConfig(ksafeConfig) == FUEL_GEL_DRAWABLE) {
                         if (idleIsAutoDay) R.drawable.ic_fuel_gel_dark else R.drawable.ic_fuel_gel
                     } else 0
-                    if (!config.preview && !ksafeConfig.carbsTrackerEnabled) {
-                        // Master tracker disabled — show OFF in grey. Skipped in preview
-                        // so the profile-editor gallery shows the slot's configured idle
-                        // colour and label, not the disabled-state grey.
-                        buildView(context, config, COLOR_OFF, label, "OFF", clickable = false)
-                    } else when (state) {
-                        is CarbLogState.IDLE   -> buildView(context, config, idleColorFromConfig(ksafeConfig), label, "${grams}g", leftDrawableRes = leftDrawable)
-                        // LOGGED stays tappable for the 8 s undo window so a second tap
-                        // on the same slot reverses the entry. The grams shown are the
-                        // ones actually logged at tap time, so editing the slot config
-                        // mid-window can't desync the flash from the stored entry.
-                        is CarbLogState.LOGGED -> buildView(context, config, COLOR_LOGGED, "+${state.grams}g", "TAP UNDO")
-                        // UNDONE is the brief red "−Xg ✓" confirmation after a successful
-                        // undo. Tappable so a third quick tap re-logs (mis-tap recovery
-                        // without waiting for the 1.5 s auto-reset to IDLE — handled in
-                        // KSafeExtension.handleCarbLogTap by falling through to the
-                        // regular log path). Same captured-grams contract as LOGGED.
-                        is CarbLogState.UNDONE -> buildView(context, config, COLOR_UNDONE, "−${state.grams}g", "✓")
+                    when {
+                        !config.preview && !ksafeConfig.carbsTrackerEnabled ->
+                            // Master tracker disabled — show OFF in grey. Skipped in preview
+                            // so the profile-editor gallery shows the slot's configured idle
+                            // colour and label, not the disabled-state grey.
+                            Frame(COLOR_OFF, label, "OFF", clickable = false, leftDrawableRes = 0)
+                        state is CarbLogState.LOGGED ->
+                            // LOGGED stays tappable for the 8 s undo window so a second tap
+                            // on the same slot reverses the entry. The grams shown are the
+                            // ones actually logged at tap time, so editing the slot config
+                            // mid-window can't desync the flash from the stored entry.
+                            Frame(COLOR_LOGGED, "+${state.grams}g", "TAP UNDO", clickable = true, leftDrawableRes = 0)
+                        state is CarbLogState.UNDONE ->
+                            // UNDONE is the brief red "−Xg ✓" confirmation after a successful
+                            // undo. Tappable so a third quick tap re-logs (mis-tap recovery
+                            // without waiting for the 1.5 s auto-reset to IDLE — handled in
+                            // KSafeExtension.handleCarbLogTap by falling through to the
+                            // regular log path). Same captured-grams contract as LOGGED.
+                            Frame(COLOR_UNDONE, "−${state.grams}g", "✓", clickable = true, leftDrawableRes = 0)
+                        else -> // IDLE
+                            Frame(idleColorFromConfig(ksafeConfig), label, "${grams}g", clickable = true, leftDrawableRes = leftDrawable)
                     }
-                }.collect { view -> emitter.updateView(view) }
+                }.distinctUntilChanged().collect { f ->
+                    emitter.updateView(buildView(context, config, f.bgColor, f.main, f.hint, f.clickable, f.leftDrawableRes))
+                }
             } catch (_: CancellationException) {
                 // normal
             } catch (e: Exception) {
@@ -223,4 +234,18 @@ class CarbLogDataType(
             scopeJob.cancel()
         }
     }
+
+    /**
+     * Snapshot of everything that affects the rendered field. Used as the dedup key
+     * for the upstream [combine] so an unrelated config edit doesn't force a wasted
+     * RemoteViews build + updateView IPC. Data-class equality compares all fields,
+     * so two identical Frames are `==` and `distinctUntilChanged` filters them out.
+     */
+    private data class Frame(
+        val bgColor: Int,
+        val main: String,
+        val hint: String,
+        val clickable: Boolean,
+        val leftDrawableRes: Int,
+    )
 }

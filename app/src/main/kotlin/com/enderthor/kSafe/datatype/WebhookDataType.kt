@@ -25,6 +25,7 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.awaitCancellation
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import timber.log.Timber
@@ -150,6 +151,8 @@ class WebhookDataType(
 
         val viewJob = scope.launch {
             try {
+                // See CarbLogDataType — Frame + distinctUntilChanged dedups identical frames
+                // so an unrelated config edit doesn't force a wasted buildView + IPC.
                 combine(
                     WebhookState.flowForSlot(slot),
                     configManager.loadConfigFlow()
@@ -159,17 +162,17 @@ class WebhookDataType(
                     val enabled   = config.preview || isEnabled(ksafeConfig)
                     val idleColor = idleColorFromConfig(ksafeConfig)
                     when (stateData.state) {
-                        WebhookState.IDLE    -> {
+                        WebhookState.IDLE -> {
                             val bgColor = if (enabled) idleColor else COLOR_DISABLED
                             val hint    = if (enabled) "tap" else "off"
-                            buildView(context, config, bgColor, label, hint)
+                            Frame(bgColor, label, hint, clickable = true)
                         }
-                        WebhookState.FIRING  -> buildView(context, config, COLOR_FIRING,  label, "firing…", clickable = false)
-                        WebhookState.SUCCESS -> buildView(context, config, COLOR_SUCCESS,  label, stateData.message.ifBlank { "OK ✓" }, clickable = false)
-                        WebhookState.ERROR   -> buildView(context, config, COLOR_ERROR,    label, stateData.message.ifBlank { "ERR retry" })
+                        WebhookState.FIRING  -> Frame(COLOR_FIRING,  label, "firing…", clickable = false)
+                        WebhookState.SUCCESS -> Frame(COLOR_SUCCESS, label, stateData.message.ifBlank { "OK ✓" }, clickable = false)
+                        WebhookState.ERROR   -> Frame(COLOR_ERROR,   label, stateData.message.ifBlank { "ERR retry" }, clickable = true)
                     }
-                }.collect { view ->
-                    emitter.updateView(view)
+                }.distinctUntilChanged().collect { f ->
+                    emitter.updateView(buildView(context, config, f.bgColor, f.main, f.hint, f.clickable))
                 }
             } catch (_: CancellationException) {
                 // normal
@@ -185,4 +188,12 @@ class WebhookDataType(
             scopeJob.cancel()
         }
     }
+
+    /** See [CarbLogDataType.Frame] — dedup snapshot for the upstream `combine`. */
+    private data class Frame(
+        val bgColor: Int,
+        val main: String,
+        val hint: String,
+        val clickable: Boolean,
+    )
 }
