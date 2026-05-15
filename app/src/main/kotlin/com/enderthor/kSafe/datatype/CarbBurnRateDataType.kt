@@ -7,7 +7,6 @@ import android.widget.RemoteViews
 import com.enderthor.kSafe.R
 import com.enderthor.kSafe.extension.KSafeExtension
 import com.enderthor.kSafe.extension.managers.CarbStatus
-import com.enderthor.kSafe.extension.util.ZoneSource
 import io.hammerhead.karooext.KarooSystemService
 import io.hammerhead.karooext.extension.DataTypeImpl
 import io.hammerhead.karooext.internal.ViewEmitter
@@ -28,10 +27,13 @@ import timber.log.Timber
 
 /**
  * Instantaneous carb burn rate in g/h, modulated by the rider's current intensity zone.
- * Until the first HR/power sample arrives the zone source is [ZoneSource.NONE] and the
- * field shows `---` instead of `base_target × 1.0`, which used to confuse riders into
- * thinking the body was already burning the configured per-hour target before the ride
- * had even started. Polled once per second from [com.enderthor.kSafe.extension.managers.CarbsTracker].
+ * The field shows `---` whenever the tracker is NOT integrating (no ride, movement gate
+ * blocking from a bench / traffic-light stop, GPS not yet emitting). Once integration is
+ * active the live rate is shown — equal to the configured base g/h when no HR/power
+ * sensors are paired (neutral multiplier = 1.0), and scaled by the intensity zone when
+ * sensors are available. Coherent with the burned / deficit fields, which freeze under
+ * the exact same gate.
+ * Polled once per second from [com.enderthor.kSafe.extension.managers.CarbsTracker].
  *
  * No rider-pickable colour: this is a passive info field, so it always inflates
  * `field_view_auto.xml` (Karoo-theme passthrough — black/white auto day/night, matches
@@ -84,13 +86,18 @@ class CarbBurnRateDataType(
                     }
                 }
                 poll.collectLatest { status ->
-                    // Status field — always Karoo-themed (no rider-pickable colour).
-                    // Three "no real value yet" cases all render '---' identically; only the
-                    // last branch shows the live number once a zone snapshot is available.
+                    // Coherent with the rest of the carb fields: show `---` whenever
+                    // integration is NOT happening (no tracker, or movement gate
+                    // blocking — bench tests, traffic-light stops, GPS-stale start).
+                    // When integration IS happening, show the live rate regardless of
+                    // whether sensors are connected: without HR/power the zone
+                    // multiplier is the neutral 1.0 and the displayed value equals
+                    // the configured base g/h — the same rate the burned / deficit
+                    // fields are integrating with at that moment.
                     val main = when {
-                        status == null -> "---"
-                        status.zoneSnapshot.source == ZoneSource.NONE -> "---"
-                        else -> "${status.burnRateGph}"
+                        status == null         -> "---"
+                        !status.isIntegrating  -> "---"
+                        else                   -> "${status.burnRateGph}"
                     }
                     emitter.updateView(buildView(config, main, "carb/h"))
                 }

@@ -218,6 +218,10 @@ class CarbsTracker(
         deficitThresholdG = config.carbDeficitThresholdG,
         zoneSnapshot = lastZoneSnapshot,
         burnRateGph = computeBurnRateGph(),
+        // Integration is happening iff the monitor loop is alive AND the movement
+        // gate is currently passing. Mirrors the gate inside tick() so the UI is
+        // always coherent with what the integrator actually does.
+        isIntegrating = monitorJob != null && (lastSpeedKmh ?: 0.0) >= MOVING_GATE_KMH,
     )
 
     /**
@@ -365,6 +369,12 @@ data class CarbStatus(
     val deficitThresholdG: Int,
     val zoneSnapshot: ZoneSnapshot,
     val burnRateGph: Int,
+    /** True when the tracker is actively integrating right now (movement gate
+     *  passing + tracker running). Used by [CarbBurnRateDataType] to decide
+     *  whether to display the live rate or `---`, keeping all three carb fields
+     *  (burn rate, burned, status) coherent: if integration is paused, every
+     *  field is frozen; if it's running, every field shows a live number. */
+    val isIntegrating: Boolean,
 )
 
 /** Totals captured at end-of-ride for the post-ride summary InRideAlert. */

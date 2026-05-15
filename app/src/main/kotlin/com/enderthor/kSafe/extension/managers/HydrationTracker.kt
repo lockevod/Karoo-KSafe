@@ -235,6 +235,9 @@ class HydrationTracker(
         currentRateMlPerHour = if (config.hydrationDynamicEstimateEnabled) lastSweatRateMlHr.toInt()
                                else config.hydrationTargetMlPerHour,
         estimateConfidence = if (config.hydrationDynamicEstimateEnabled) lastSweatConfidence else null,
+        // See CarbsTracker.getStatus — mirrors the movement gate in tick() so
+        // consumers can keep their UI coherent with the integrator.
+        isIntegrating = monitorJob != null && (lastSpeedKmh ?: 0.0) >= MOVING_GATE_KMH,
     )
 
     fun getSummary(): HydrationSummary = HydrationSummary(
@@ -382,6 +385,10 @@ data class HydrationStatus(
     val currentRateMlPerHour: Int = 0,
     /** Confidence of the dynamic estimate. Null when in fixed mode. */
     val estimateConfidence: SweatConfidence? = null,
+    /** See [CarbStatus.isIntegrating] — true when the movement gate is passing and
+     *  the tracker is running. Lets a future hydration-rate field stay coherent
+     *  with the burn-rate field on the carbs side. */
+    val isIntegrating: Boolean = false,
 )
 
 /** Totals captured at end-of-ride for the post-ride summary InRideAlert. */
