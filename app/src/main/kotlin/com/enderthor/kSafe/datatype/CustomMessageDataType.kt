@@ -52,6 +52,17 @@ class CustomMessageDataType(
     // requestCode: 103 = slot1, 104 = slot2, 105 = slot3
     private val requestCode = 102 + slot
 
+    // Cached PendingIntent — see CarbLogDataType.
+    @Volatile private var cachedPi: PendingIntent? = null
+    private fun pendingIntentFor(context: Context): PendingIntent {
+        cachedPi?.let { return it }
+        return PendingIntent.getBroadcast(
+            context, requestCode,
+            Intent(tapAction).setPackage(context.packageName),
+            PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
+        ).also { cachedPi = it }
+    }
+
     private val configManager = ConfigurationManager(context)
 
     private fun titleFromConfig(config: KSafeConfig) = when (slot) {
@@ -92,13 +103,8 @@ class CustomMessageDataType(
             }
         }
         if (!viewConfig.preview && clickable) {
-            val pi = PendingIntent.getBroadcast(
-                context, requestCode,
-                Intent(tapAction).setPackage(context.packageName),
-                PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
-            )
             val wrapper = RemoteViews(context.packageName, R.layout.field_tap_wrapper)
-            wrapper.setOnClickPendingIntent(R.id.field_tap_wrapper, pi)
+            wrapper.setOnClickPendingIntent(R.id.field_tap_wrapper, pendingIntentFor(context))
             wrapper.addView(R.id.field_tap_wrapper, content)
             return wrapper
         }

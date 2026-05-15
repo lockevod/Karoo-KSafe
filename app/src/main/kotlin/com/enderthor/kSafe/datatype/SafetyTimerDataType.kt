@@ -45,6 +45,18 @@ class SafetyTimerDataType(
 
     private val configManager = ConfigurationManager(context)
 
+    // Cached PendingIntent — see CarbLogDataType. Particularly impactful here because
+    // the countdown branch emits a new view every 1 s for 30 s on every emergency.
+    @Volatile private var cachedPi: PendingIntent? = null
+    private fun pendingIntentFor(context: Context): PendingIntent {
+        cachedPi?.let { return it }
+        return PendingIntent.getBroadcast(
+            context, 102,
+            Intent(FieldTapReceiver.ACTION_TIMER).setPackage(context.packageName),
+            PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
+        ).also { cachedPi = it }
+    }
+
     /** Builds a field view with optional click PendingIntent (requestCode 102 = Timer). */
     private fun buildView(context: Context, config: ViewConfig, bgColor: Int, main: String, hint: String = "", clickable: Boolean = true): RemoteViews {
         // See CarbLogDataType.buildView — same layout-switch + center alignment
@@ -65,13 +77,8 @@ class SafetyTimerDataType(
             }
         }
         if (!config.preview && clickable) {
-            val pi = PendingIntent.getBroadcast(
-                context, 102,
-                Intent(FieldTapReceiver.ACTION_TIMER).setPackage(context.packageName),
-                PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
-            )
             val wrapper = RemoteViews(context.packageName, R.layout.field_tap_wrapper)
-            wrapper.setOnClickPendingIntent(R.id.field_tap_wrapper, pi)
+            wrapper.setOnClickPendingIntent(R.id.field_tap_wrapper, pendingIntentFor(context))
             wrapper.addView(R.id.field_tap_wrapper, content)
             return wrapper
         }
@@ -94,16 +101,29 @@ class SafetyTimerDataType(
                 launch {
                     configManager.loadConfigFlow().collect { c -> okColor = c.timerFieldColor }
                 }
+                // Cache the last emitted "frame" key so we skip the RemoteViews build +
+                // updateView IPC when neither the displayed text nor the colour changed.
+                // Common case: the idle branch's 30 s re-evaluate timeout falls through
+                // with the same minute count (or the countdown branch's 1 Hz tick lands
+                // on the same integer second after sub-second drift). Worth ~1 emit/min
+                // saved continuously across long rides.
+                var lastEmitKey: String? = null
+                fun emit(bgColor: Int, main: String, hint: String, clickable: Boolean) {
+                    val key = "$bgColor|$main|$hint|$clickable"
+                    if (key == lastEmitKey) return
+                    lastEmitKey = key
+                    emitter.updateView(buildView(context, config, bgColor, main, hint, clickable))
+                }
                 while (true) {
                     val state = EmergencyManager.uiState.value
                     when {
                         state.status == EmergencyStatus.COUNTDOWN -> {
                             val secs = state.countdownRemaining()
-                            emitter.updateView(buildView(context, config, COLOR_CANCEL, "CANCEL\n${secs}s"))
+                            emit(COLOR_CANCEL, "CANCEL\n${secs}s", "", clickable = true)
                             delay(1_000L)
                         }
                         !state.checkinEnabled -> {
-                            emitter.updateView(buildView(context, config, COLOR_DISABLED, "Timer\nOFF", clickable = false))
+                            emit(COLOR_DISABLED, "Timer\nOFF", "", clickable = false)
                             EmergencyManager.uiState.first { it != state }
                         }
                         else -> {
@@ -124,7 +144,7 @@ class SafetyTimerDataType(
                                 }
                             }
                             val hintText = if (isExpired) "" else "tap=ok"
-                            emitter.updateView(buildView(context, config, bgColor, mainText, hintText))
+                            emit(bgColor, mainText, hintText, clickable = true)
                             withTimeoutOrNull(30_000L) {
                                 EmergencyManager.uiState.first { it != state }
                             }

@@ -83,8 +83,13 @@ class SensorReader(
         private set
 
     // ── Buffers (sensor-thread only, mutated under no lock) ──────────────────
-    private val magnitudeBuffer = ArrayDeque<Double>(IMPACT_FILTER_WINDOW)
-    private val varianceBuffer = ArrayDeque<Double>(VARIANCE_WINDOW)
+    // Primitive ring buffers — replace the old `ArrayDeque<Double>` to eliminate
+    // autoboxing on the 50 Hz sensor thread. Each addLast/removeFirst on the deque
+    // boxed one Double per op; over a 4 h ride that was ~1.4 M short-lived `Double`
+    // objects across the two buffers. DoubleArray-backed rings cost zero alloc on
+    // the hot path. Sizes match the existing constants exactly.
+    private val magnitudeBuffer = DoubleRingBuffer(IMPACT_FILTER_WINDOW)
+    private val varianceBuffer = DoubleRingBuffer(VARIANCE_WINDOW)
 
     @Volatile private var registered = false
 
@@ -179,7 +184,7 @@ class SensorReader(
         if (buf.size < 10) return 0.0
         val mean = buf.average()
         var sumSq = 0.0
-        for (v in buf) {
+        buf.forEach { v ->
             val d = v - mean
             sumSq += d * d
         }
@@ -191,7 +196,7 @@ class SensorReader(
      * the calibration logger's `buf=` field on IMPACT_ENTER. Returns an immutable copy
      * so callers cannot mutate the internal deque.
      */
-    fun magnitudeBufferSnapshot(): List<Double> = magnitudeBuffer.toList()
+    fun magnitudeBufferSnapshot(): List<Double> = magnitudeBuffer.snapshot()
 
     override fun onSensorChanged(event: SensorEvent?) {
         if (event == null) return
@@ -228,14 +233,12 @@ class SensorReader(
         }
 
         // Sliding 3-sample average (~60 ms at 50 Hz) — same as production.
-        magnitudeBuffer.addLast(rawMagnitude)
-        if (magnitudeBuffer.size > IMPACT_FILTER_WINDOW) magnitudeBuffer.removeFirst()
+        magnitudeBuffer.add(rawMagnitude)
         val smoothedMagnitude = magnitudeBuffer.average()
 
         // Terrain-noise variance buffer (250 samples ≈ 5 s @ 50 Hz). std-dev is
         // computed only on demand via [accelStdDev], never on the hot path.
-        varianceBuffer.addLast(rawMagnitude)
-        if (varianceBuffer.size > VARIANCE_WINDOW) varianceBuffer.removeFirst()
+        varianceBuffer.add(rawMagnitude)
 
         // Production has no rolling peak window — its peak detector compares the raw
         // single sample against the peak threshold. Emit peakMagnitude == rawMagnitude
@@ -274,5 +277,63 @@ class SensorReader(
          * SENSOR_DELAY_GAME (~50 Hz). See [start] for the reasoning.
          */
         const val BATCH_MAX_LATENCY_US = 100_000
+    }
+}
+
+/**
+ * Fixed-capacity primitive-double ring buffer used by [SensorReader] for the
+ * smoothed-magnitude window and the terrain-noise variance window. Replaces
+ * `ArrayDeque<Double>` to eliminate autoboxing on the 50 Hz sensor thread.
+ *
+ * NOT thread-safe — [SensorReader]'s buffers are touched only from the sensor
+ * callback thread, so no synchronisation is needed.
+ */
+internal class DoubleRingBuffer(@PublishedApi internal val capacity: Int) {
+    init { require(capacity > 0) { "capacity must be positive" } }
+    @PublishedApi internal val data = DoubleArray(capacity)
+    @PublishedApi internal var head = 0      // index of oldest element
+    var size: Int = 0
+        internal set
+
+    /** Append [value]; evicts the oldest when the buffer is full. O(1). */
+    fun add(value: Double) {
+        if (size < capacity) {
+            data[(head + size) % capacity] = value
+            size++
+        } else {
+            data[head] = value
+            head = (head + 1) % capacity
+        }
+    }
+
+    fun clear() { head = 0; size = 0 }
+
+    /** Mean of live elements, or `0.0` when empty. Matches `Iterable<Double>.average()` semantics. */
+    fun average(): Double {
+        if (size == 0) return 0.0
+        var sum = 0.0
+        forEach { sum += it }
+        return sum / size
+    }
+
+    /** Snapshot of live elements in insertion order. Allocates — call only off the hot path. */
+    fun snapshot(): List<Double> {
+        if (size == 0) return emptyList()
+        val out = ArrayList<Double>(size)
+        forEach { out.add(it) }
+        return out
+    }
+
+    /** Inline iteration in insertion order; primitive-double param means no boxing. */
+    inline fun forEach(action: (Double) -> Unit) {
+        val n = size
+        val h = head
+        val cap = capacity
+        val arr = data
+        var i = 0
+        while (i < n) {
+            action(arr[(h + i) % cap])
+            i++
+        }
     }
 }

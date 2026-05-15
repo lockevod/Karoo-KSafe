@@ -42,6 +42,18 @@ class SOSDataType(
 
     private val configManager = ConfigurationManager(context)
 
+    // Cached PendingIntent — see CarbLogDataType for the rationale (PI identity is
+    // stable across emissions, so build once and reuse).
+    @Volatile private var cachedPi: PendingIntent? = null
+    private fun pendingIntentFor(context: Context): PendingIntent {
+        cachedPi?.let { return it }
+        return PendingIntent.getBroadcast(
+            context, 101,
+            Intent(FieldTapReceiver.ACTION_SOS).setPackage(context.packageName),
+            PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
+        ).also { cachedPi = it }
+    }
+
     /** Builds a field view with optional click PendingIntent (requestCode 101 = SOS). */
     private fun buildView(context: Context, config: ViewConfig, bgColor: Int, main: String, hint: String = "", clickable: Boolean = true): RemoteViews {
         // See CarbLogDataType.buildView — same layout-switch + center alignment
@@ -62,13 +74,8 @@ class SOSDataType(
             }
         }
         if (!config.preview && clickable) {
-            val pi = PendingIntent.getBroadcast(
-                context, 101,
-                Intent(FieldTapReceiver.ACTION_SOS).setPackage(context.packageName),
-                PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
-            )
             val wrapper = RemoteViews(context.packageName, R.layout.field_tap_wrapper)
-            wrapper.setOnClickPendingIntent(R.id.field_tap_wrapper, pi)
+            wrapper.setOnClickPendingIntent(R.id.field_tap_wrapper, pendingIntentFor(context))
             wrapper.addView(R.id.field_tap_wrapper, content)
             return wrapper
         }

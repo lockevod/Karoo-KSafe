@@ -66,6 +66,12 @@ class WellnessMonitor(
     @Volatile private var decouplingExceededSinceMs = 0L
     @Volatile private var lastDecouplingTriggerMs = 0L
     private val ratioSamples = ArrayDeque<Pair<Long, Float>>()    // (timestamp, hr/w)
+    /** Running sum of [ratioSamples]'s `.second` values. Maintained incrementally on
+     *  add + eviction so we never need a per-tick `sumOf` iteration. Buffer size is
+     *  small (~10 entries over a 5-min window at the 30-s tick) so the absolute saving
+     *  is modest, but the running-sum pattern is consistent with the larger Medical
+     *  detector optimisation and removes a per-tick autoboxing pass over the Pairs. */
+    private var ratioRunningSum = 0.0
 
     // ─── Session accumulators (consumed by FIT export + Health tab) ─────────
     // Granularity is MONITOR_TICK_MS (~30 s) for the time-in-zone buckets — exact
@@ -100,6 +106,7 @@ class WellnessMonitor(
         lastSustainedTriggerMs = 0L
         lastDecouplingTriggerMs = 0L
         ratioSamples.clear()
+        ratioRunningSum = 0.0
         // Reset session accumulators — fresh ride, fresh totals.
         sessionMaxHr = 0
         cumMsCriticalAbove = 0L
@@ -259,8 +266,11 @@ class WellnessMonitor(
         val ratio = hr.toFloat() / w.toFloat()
 
         // Maintain a rolling 5-min window of HR/W samples, taken once per tick (every 30 s).
+        // Update the running sum on add + on eviction so the per-tick average is O(1).
         ratioSamples.addLast(now to ratio)
+        ratioRunningSum += ratio.toDouble()
         while (ratioSamples.isNotEmpty() && now - ratioSamples.first().first > DECOUPLING_ROLLING_WINDOW_MS) {
+            ratioRunningSum -= ratioSamples.first().second.toDouble()
             ratioSamples.removeFirst()
         }
 
@@ -268,8 +278,7 @@ class WellnessMonitor(
         // enough samples in the rolling window. Captures the rider's "fresh" ratio.
         if (decouplingBaselineHrPerW == 0f) {
             if (now - sessionStartMs >= DECOUPLING_BASELINE_WAIT_MS && ratioSamples.size >= DECOUPLING_MIN_SAMPLES) {
-                val sum = ratioSamples.sumOf { it.second.toDouble() }
-                decouplingBaselineHrPerW = (sum / ratioSamples.size).toFloat()
+                decouplingBaselineHrPerW = (ratioRunningSum / ratioSamples.size).toFloat()
                 calibLogger?.log(CalibrationLogger.Event.WELLNESS_FIRED) {
                     String.format(Locale.US, "subkind=decoupling_baseline,baseline_hr_per_w=%.4f,samples=%d", decouplingBaselineHrPerW, ratioSamples.size)
                 }
@@ -280,8 +289,7 @@ class WellnessMonitor(
 
         if (ratioSamples.size < DECOUPLING_MIN_SAMPLES) return  // not enough current data
 
-        val currentSum = ratioSamples.sumOf { it.second.toDouble() }
-        val currentAvg = (currentSum / ratioSamples.size).toFloat()
+        val currentAvg = (ratioRunningSum / ratioSamples.size).toFloat()
         val driftPct = ((currentAvg / decouplingBaselineHrPerW) - 1f) * 100f
 
         // Expose the current drift for FIT export + Health tab. Also track the session peak.
