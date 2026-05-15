@@ -132,6 +132,11 @@ fun FuelingScreen(vm: MainViewModel) {
                     onCommit = { carbTarget = it; vm.saveConfig(config.copy(carbTargetGperHour = it.toInt())) },
                     onTextChange = { carbTarget = it },
                 )
+                Text(
+                    text = stringResource(R.string.fueling_target_carb_hint),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
                 HorizontalDivider()
                 FuelingRow(label = stringResource(R.string.fueling_alert_deficit_label)) {
                     Switch(
@@ -280,6 +285,11 @@ fun FuelingScreen(vm: MainViewModel) {
                         onCommit = { hydTarget = it; vm.saveConfig(config.copy(hydrationTargetMlPerHour = it.toInt())) },
                         onTextChange = { hydTarget = it },
                     )
+                    Text(
+                        text = stringResource(R.string.fueling_target_hyd_hint),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
                 }
                 HorizontalDivider()
                 FuelingRow(label = stringResource(R.string.fueling_alert_deficit_label)) {
@@ -371,6 +381,16 @@ fun FuelingScreen(vm: MainViewModel) {
                 }  // end if (hydEnabled)
             }
         }
+
+        // Discreet footer with the GitHub docs reference. Karoo cannot open URLs from a
+        // Compose Activity, so this is plain text the rider reads and looks up later
+        // on their phone — same pattern as the provider descriptions.
+        Text(
+            text = stringResource(R.string.fueling_full_guide_hint),
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier.padding(top = 4.dp),
+        )
     }
 }
 

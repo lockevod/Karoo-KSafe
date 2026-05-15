@@ -65,7 +65,9 @@
     <string name="fueling_carb_section">Carbs</string>
     <string name="fueling_hyd_section">Hydration</string>
     <string name="fueling_target_carb_label">Target (g/h)</string>
+    <string name="fueling_target_carb_hint">Typical: 60–90 g/h easy rides, 90–120 g/h hard or long rides. Beginners: 40–60 g/h.</string>
     <string name="fueling_target_hyd_label">Target (ml/h)</string>
+    <string name="fueling_target_hyd_hint">Typical: 500–750 ml/h. Hot, humid or long rides: 1000+ ml/h.</string>
     <string name="fueling_alert_deficit_label">Alert by deficit</string>
     <string name="fueling_alert_time_label">Alert by time</string>
     <string name="fueling_deficit_threshold_g_label">Threshold (g)</string>
@@ -97,6 +99,11 @@
     <string name="readiness_at_ride_start_hint">Reads the last 10 rides\' wellness summaries and shows a brief InRideAlert at the start of the next ride if the rider should take it easy. Silent when fully recovered — no per-ride spam. Default ON.</string>
     <string name="readiness_alert_caution_title">Caution today</string>
     <string name="readiness_alert_take_easy_title">Take it easy today</string>
+
+    <!-- Footer link to the full docs on GitHub — Karoo can't open URLs, so this is a
+         plain-text reference the rider remembers and looks up on their phone later. -->
+    <string name="fueling_full_guide_hint">More tips and full guide: github.com/lockevod/Karoo-KSafe → docs/health-fueling.md</string>
+    <string name="settings_docs_footer">Help and full docs: github.com/lockevod/Karoo-KSafe → docs/</string>
 
     <!-- Hydration dynamic estimate -->
     <string name="fueling_hyd_dynamic_label">Estimate hydration target dynamically</string>

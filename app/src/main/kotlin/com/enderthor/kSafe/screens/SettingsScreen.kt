@@ -308,5 +308,13 @@ fun SettingsScreen(vm: MainViewModel) {
                 )
             }
         }
+
+        // Discreet docs footer. Karoo can't open URLs from a Compose Activity, so this
+        // is plain text the rider reads and looks up later on their phone.
+        Text(
+            text = stringResource(R.string.settings_docs_footer),
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
     }
 }
