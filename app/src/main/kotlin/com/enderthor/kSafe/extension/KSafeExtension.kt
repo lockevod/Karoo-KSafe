@@ -428,11 +428,24 @@ class KSafeExtension : KarooExtension("ksafe", BuildConfig.VERSION_NAME), Corout
         when (state) {
             is RideState.Recording -> {
                 if (activeConfig.isActive) {
+                    // Distinguish the very first Recording event of a session (where the
+                    // accumulating trackers must do a clean start() and reset cum* state)
+                    // from a Paused→Recording resume (where resume() preserves the rider's
+                    // logged carbs/ml and the cumulative target so a café stop doesn't
+                    // wipe an hour of fueling work). Crash + medical have no rider-visible
+                    // accumulator, so .start() is safe in either case.
+                    val isResumeFromPause = rideStartNotificationSent
                     crashManager.start(activeConfig)
                     medicalDetector.start(activeConfig)
-                    wellnessMonitor.start(activeConfig)
-                    carbsTracker.start(activeConfig)
-                    hydrationTracker.start(activeConfig)
+                    if (isResumeFromPause) {
+                        wellnessMonitor.resume(activeConfig)
+                        carbsTracker.resume(activeConfig)
+                        hydrationTracker.resume(activeConfig)
+                    } else {
+                        wellnessMonitor.start(activeConfig)
+                        carbsTracker.start(activeConfig)
+                        hydrationTracker.start(activeConfig)
+                    }
                     emergencyManager.startCheckinTimer(activeConfig)
                     // Only send the start notification on the very first Recording event.
                     // Resuming from Pause also triggers Recording — we skip it there.
