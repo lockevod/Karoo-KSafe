@@ -137,6 +137,7 @@ Detailed field references:
 - 📘 [Safety / Settings — field reference](docs/configuration-reference.md)
 - 📘 [Health & Fueling — full reference](docs/health-fueling.md) (tier thresholds, FIT schema, alert tokens)
 - 📘 [Setting your initial fueling targets](docs/health-fueling.md#how-to-pick-your-per-hour-targets) — g/h by ride duration, ml/h by temperature, pre/post-ride weigh-in formula, ACSM / Jeukendrup / Sawka references
+- 📘 [What KSafe does in each ride state](docs/ride-state-behavior.md) — Idle / Recording / Paused: which subsystems run, what the status fields show, day/night theme handling
 
 ## Testing
 
