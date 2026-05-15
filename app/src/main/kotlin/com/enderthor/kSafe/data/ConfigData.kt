@@ -467,6 +467,12 @@ data class SenderConfig(
     val userKey2: String = "",      // Pushover: second user key (optional)
     val userKey3: String = "",      // Pushover: third user key (optional)
     val phoneNumber: String = "",   // CallMeBot: recipient WhatsApp number (with country code)
+    // CallMeBot only accepts a single (phone, apiKey) pair per request, so each extra recipient
+    // needs its own credential pair. All empty = single-recipient behaviour (back-compat).
+    val apiKey2: String = "",       // CallMeBot: second recipient API key (optional)
+    val phoneNumber2: String = "",  // CallMeBot: second recipient WhatsApp number (optional)
+    val apiKey3: String = "",       // CallMeBot: third recipient API key (optional)
+    val phoneNumber3: String = "",  // CallMeBot: third recipient WhatsApp number (optional)
 )
 
 // ─── Emergency state (shared between extension and DataTypes via DataStore) ───
@@ -510,11 +516,17 @@ data class EmergencyState(
 // Each class only contains the fields that the provider actually uses,
 // with human-readable names so the exported file works as a clear template.
 
-/** CallMeBot (WhatsApp) — needs an API key + the recipient's WhatsApp phone number. */
+/** CallMeBot (WhatsApp) — needs an API key + the recipient's WhatsApp phone number.
+ *  Optional 2nd / 3rd recipients each have their own (apiKey, phoneNumber) pair because
+ *  CallMeBot cannot fan-out to multiple recipients from a single request. */
 @Serializable
 data class CallMeBotConfig(
-    val apiKey: String = "",       // API key obtained from callmebot.com
-    val phoneNumber: String = "",  // Recipient WhatsApp number with country code (e.g. +34612345678)
+    val apiKey: String = "",        // API key obtained from callmebot.com
+    val phoneNumber: String = "",   // Recipient WhatsApp number with country code (e.g. +34612345678)
+    val apiKey2: String = "",       // Optional: second recipient's API key
+    val phoneNumber2: String = "",  // Optional: second recipient's WhatsApp number
+    val apiKey3: String = "",       // Optional: third recipient's API key
+    val phoneNumber3: String = "",  // Optional: third recipient's WhatsApp number
 )
 
 /** Pushover — app token (from pushover.net) + up to 3 recipient user/group keys. */
@@ -566,7 +578,11 @@ data class KSafeBackupExport(
 fun KSafeBackupExport.toSenderConfigs(): List<SenderConfig> = listOf(
     SenderConfig(ProviderType.CALLMEBOT,
         apiKey = callmebot.apiKey,
-        phoneNumber = callmebot.phoneNumber),
+        phoneNumber = callmebot.phoneNumber,
+        apiKey2 = callmebot.apiKey2,
+        phoneNumber2 = callmebot.phoneNumber2,
+        apiKey3 = callmebot.apiKey3,
+        phoneNumber3 = callmebot.phoneNumber3),
     SenderConfig(ProviderType.PUSHOVER,
         apiKey = pushover.appToken,
         userKey = pushover.userKey,
@@ -590,7 +606,14 @@ fun List<SenderConfig>.toBackupExport(config: KSafeConfig): KSafeBackupExport {
     val tg  = find(ProviderType.TELEGRAM)
     return KSafeBackupExport(
         config     = config,
-        callmebot  = CallMeBotConfig(apiKey = cmb.apiKey, phoneNumber = cmb.phoneNumber),
+        callmebot  = CallMeBotConfig(
+            apiKey = cmb.apiKey,
+            phoneNumber = cmb.phoneNumber,
+            apiKey2 = cmb.apiKey2,
+            phoneNumber2 = cmb.phoneNumber2,
+            apiKey3 = cmb.apiKey3,
+            phoneNumber3 = cmb.phoneNumber3,
+        ),
         pushover   = PushoverConfig(appToken = po.apiKey, userKey = po.userKey, userKey2 = po.userKey2, userKey3 = po.userKey3),
         ntfy       = NtfyConfig(topic = sp.apiKey),
         telegram   = TelegramConfig(botToken = tg.apiKey, chatId = tg.userKey, chatId2 = tg.userKey2, chatId3 = tg.userKey3),

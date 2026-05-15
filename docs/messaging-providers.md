@@ -60,9 +60,15 @@ CallMeBot lets you send WhatsApp messages for free using a simple API. **Importa
 ### Step 2 — Configure KSafe
 
 1. In the **Provider** tab, select **CallMeBot**.
-2. Enter the **recipient's phone number** with the international prefix but **without the `+` sign** (e.g. `34675123123`) in the phone field.
-3. Enter the **API key** received in Step 1.
+2. Enter the **Recipient 1 phone number** with the international prefix but **without the `+` sign** (e.g. `34675123123`).
+3. Enter the **Recipient 1 API Key** received in Step 1.
 4. Tap **Test Send** — your contact should receive a WhatsApp message within seconds.
+
+### Optional — add a second and third recipient
+
+CallMeBot supports a single recipient per request, so to alert several people KSafe sends one WhatsApp message per recipient. Each extra recipient needs **their own phone number and their own API key**: repeat Step 1 from each contact's phone (CallMeBot returns a different key for each WhatsApp number) and fill in the **Recipient 2** and **Recipient 3** fields. Leave them blank if you only want to alert one person.
+
+A failed delivery to one recipient does not block the others, and the **Test Send** result is reported per recipient so you can spot a misconfigured slot.
 
 ---
 

@@ -74,11 +74,26 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         userKey: String = "",
         userKey2: String = "",
         userKey3: String = "",
-        phoneNumber: String = ""
+        phoneNumber: String = "",
+        apiKey2: String = "",
+        phoneNumber2: String = "",
+        apiKey3: String = "",
+        phoneNumber3: String = "",
     ) {
         val updated = senderConfigs.value.toMutableList()
         val idx = updated.indexOfFirst { it.provider == provider }
-        val newConfig = SenderConfig(provider, apiKey, userKey, userKey2, userKey3, phoneNumber)
+        val newConfig = SenderConfig(
+            provider = provider,
+            apiKey = apiKey,
+            userKey = userKey,
+            userKey2 = userKey2,
+            userKey3 = userKey3,
+            phoneNumber = phoneNumber,
+            apiKey2 = apiKey2,
+            phoneNumber2 = phoneNumber2,
+            apiKey3 = apiKey3,
+            phoneNumber3 = phoneNumber3,
+        )
         if (idx >= 0) updated[idx] = newConfig else updated.add(newConfig)
         saveSenderConfigs(updated)
     }

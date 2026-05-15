@@ -169,8 +169,13 @@
     <string name="provider_title">Message Provider</string>
     <string name="provider_active_hint">Credentials are saved per provider. Only the selected provider will be used to send alerts.</string>
     <string name="api_key_hint">API Key</string>
-    <string name="callmebot_phone_hint">Recipient phone (with country code, e.g. +34612345678)</string>
-    <string name="callmebot_description">WhatsApp via CallMeBot. Free — the recipient must activate their API key first.</string>
+    <string name="callmebot_phone_hint">Recipient 1 phone (with country code, e.g. +34612345678)</string>
+    <string name="callmebot_apikey_hint">Recipient 1 API Key</string>
+    <string name="callmebot_phone2_hint">Recipient 2 phone — optional</string>
+    <string name="callmebot_apikey2_hint">Recipient 2 API Key — optional</string>
+    <string name="callmebot_phone3_hint">Recipient 3 phone — optional</string>
+    <string name="callmebot_apikey3_hint">Recipient 3 API Key — optional</string>
+    <string name="callmebot_description">WhatsApp via CallMeBot. Free — up to 3 recipients; each one must activate their own API key from their own phone. Recipients 2 and 3 are optional.</string>
     <string name="pushover_app_token_hint">App Token</string>
     <string name="pushover_user_key_hint">User Key (recipient 1)</string>
     <string name="pushover_user_key2_hint">User Key — recipient 2 (optional)</string>

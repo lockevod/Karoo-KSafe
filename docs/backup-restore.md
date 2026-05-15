@@ -49,8 +49,8 @@ Typing long tokens (Pushover App Token, Telegram Bot Token, etc.) on the Karoo t
 
    | Provider block | Field | Description |
    |----------------|-------|-------------|
-   | `callmebot` | `apiKey` | API key obtained from callmebot.com |
-   | `callmebot` | `phoneNumber` | Recipient WhatsApp number with international prefix, no `+` (e.g. `34612345678`) |
+   | `callmebot` | `apiKey` / `apiKey2` / `apiKey3` | Up to 3 API keys, one per recipient (each WhatsApp number gets its own key from callmebot.com) |
+   | `callmebot` | `phoneNumber` / `phoneNumber2` / `phoneNumber3` | Up to 3 recipient WhatsApp numbers with international prefix, no `+` (e.g. `34612345678`) |
    | `pushover` | `appToken` | Application token from pushover.net |
    | `pushover` | `userKey` / `userKey2` / `userKey3` | Up to 3 recipient user/group keys |
    | `ntfy` | `topic` | Topic name chosen by you (e.g. `ksafe-alerts-myname`) |
@@ -64,7 +64,11 @@ Typing long tokens (Pushover App Token, Telegram Bot Token, etc.) on the Karoo t
      "config": { "isActive": true, "crashDetectionEnabled": true },
      "callmebot": {
        "apiKey": "1234567",
-       "phoneNumber": "34612345678"
+       "phoneNumber": "34612345678",
+       "apiKey2": "",
+       "phoneNumber2": "",
+       "apiKey3": "",
+       "phoneNumber3": ""
      },
      "pushover": {
        "appToken": "azGDORePK8gMaC0QP344AMyzxxxx",

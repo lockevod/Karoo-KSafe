@@ -57,21 +57,31 @@ class Sender(
                 ProviderType.CALLMEBOT -> {
                     if (config.phoneNumber.isBlank()) return "Missing phone number."
                     if (config.apiKey.isBlank())      return "Missing API key."
-                    val url = "https://api.callmebot.com/whatsapp.php" +
-                        "?phone=${config.phoneNumber.trim()}" +
-                        "&text=${Uri.encode("KSafe test — alerts are configured correctly.")}" +
-                        "&apikey=${config.apiKey}"
-                    val response = withTimeoutOrNull(ATTEMPT_TIMEOUT_MS) { karooSystem.httpRequest("GET", url) }
-                        ?: return "No response — check your internet connection."
-                    val body = response.body?.toString(Charsets.UTF_8) ?: ""
-                    when {
-                        response.statusCode in 200..299 && !body.contains("ERROR") ->
-                            "Test sent! Check your WhatsApp."
-                        body.contains("not authorized", ignoreCase = true) ||
-                        body.contains("apikey", ignoreCase = true) ->
-                            "Invalid API key — re-check it in CallMeBot."
-                        else -> "Error ${response.statusCode}: ${body.take(120)}"
+                    val recipients = callMeBotRecipients(config)
+                    val results = mutableListOf<String>()
+                    for ((i, pair) in recipients.withIndex()) {
+                        val (phone, key) = pair
+                        val label = "Recipient ${i + 1}"
+                        val url = "https://api.callmebot.com/whatsapp.php" +
+                            "?phone=$phone" +
+                            "&text=${Uri.encode("KSafe test — alerts are configured correctly.")}" +
+                            "&apikey=$key"
+                        val response = withTimeoutOrNull(ATTEMPT_TIMEOUT_MS) { karooSystem.httpRequest("GET", url) }
+                        if (response == null) {
+                            results.add("$label: no response — check connection.")
+                            continue
+                        }
+                        val body = response.body?.toString(Charsets.UTF_8) ?: ""
+                        when {
+                            response.statusCode in 200..299 && !body.contains("ERROR") ->
+                                results.add("$label: sent ✓")
+                            body.contains("not authorized", ignoreCase = true) ||
+                            body.contains("apikey", ignoreCase = true) ->
+                                results.add("$label: invalid API key.")
+                            else -> results.add("$label: HTTP ${response.statusCode} ${body.take(80)}")
+                        }
                     }
+                    results.joinToString("\n")
                 }
 
                 ProviderType.PUSHOVER -> {
@@ -268,12 +278,17 @@ class Sender(
             ProviderType.CALLMEBOT -> {
                 if (config.phoneNumber.isBlank() || config.apiKey.isBlank()) return false
                 val encodedMsg = Uri.encode(message)
-                val url = "https://api.callmebot.com/whatsapp.php?phone=${config.phoneNumber.trim()}&text=$encodedMsg&apikey=${config.apiKey}"
-                val response = karooSystem.httpRequest("GET", url)
-                val body = response.body?.toString(Charsets.UTF_8) ?: ""
-                val ok = response.statusCode in 200..299 && !body.contains("ERROR")
-                if (!ok) Timber.e("CallMeBot error ${response.statusCode}: $body")
-                ok
+                val recipients = callMeBotRecipients(config)
+                var anyOk = false
+                for ((phone, key) in recipients) {
+                    val url = "https://api.callmebot.com/whatsapp.php?phone=$phone&text=$encodedMsg&apikey=$key"
+                    val response = karooSystem.httpRequest("GET", url)
+                    val body = response.body?.toString(Charsets.UTF_8) ?: ""
+                    val ok = response.statusCode in 200..299 && !body.contains("ERROR")
+                    if (ok) anyOk = true
+                    else Timber.e("CallMeBot error (phone=$phone) ${response.statusCode}: $body")
+                }
+                anyOk
             }
 
             ProviderType.PUSHOVER -> {
@@ -347,5 +362,24 @@ class Sender(
                 anyOk
             }
         }
+    }
+
+    /**
+     * Builds the list of `(phone, apiKey)` pairs to deliver a CallMeBot message to.
+     * CallMeBot cannot fan-out a single request, so every recipient needs its own
+     * credential pair. Slots with either half blank are dropped — three slots total,
+     * mirroring Pushover / Telegram.
+     */
+    private fun callMeBotRecipients(config: SenderConfig): List<Pair<String, String>> {
+        fun pair(phone: String, key: String): Pair<String, String>? {
+            val p = phone.trim()
+            val k = key.trim()
+            return if (p.isNotBlank() && k.isNotBlank()) p to k else null
+        }
+        return listOfNotNull(
+            pair(config.phoneNumber,  config.apiKey),
+            pair(config.phoneNumber2, config.apiKey2),
+            pair(config.phoneNumber3, config.apiKey3),
+        )
     }
 }
