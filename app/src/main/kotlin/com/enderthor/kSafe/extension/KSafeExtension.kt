@@ -844,23 +844,30 @@ class KSafeExtension : KarooExtension("ksafe", BuildConfig.VERSION_NAME), Corout
         launch { emergencyManager.cancelEmergency(activeConfig) }
     }
 
-    /** Sends a ride-start notification with the Karoo Live link if the feature is enabled and a key is set. */
+    /**
+     * Sends a ride-start notification when the feature is enabled. The Karoo Live key
+     * is optional — if present, `{livetrack}` is substituted with the live-tracking
+     * URL; if absent, the placeholder is stripped so the rider doesn't receive a
+     * literal `{livetrack}` token. Mirrors [sendRideEndNotification]: a blank
+     * resulting message is skipped silently.
+     */
     private fun sendRideStartNotification() {
         val config = activeConfig
         if (!config.karooLiveEnabled) return
-        if (config.karooLiveKey.isBlank()) {
-            Timber.d("Karoo Live: feature enabled but no key configured, skipping ride start notification")
-            return
+        val message = if (config.karooLiveKey.isBlank()) {
+            config.karooLiveStartMessage.replace("{livetrack}", "").trim()
+        } else {
+            val liveLink = com.enderthor.kSafe.data.KAROO_LIVE_BASE_URL + config.karooLiveKey.trim()
+            config.karooLiveStartMessage.replace("{livetrack}", liveLink)
         }
-        val liveLink = com.enderthor.kSafe.data.KAROO_LIVE_BASE_URL + config.karooLiveKey.trim()
-        val message = config.karooLiveStartMessage.replace("{livetrack}", liveLink)
+        if (message.isBlank()) return
 
-        Timber.d("Karoo Live: sending ride start notification")
+        Timber.d("KSafe: sending ride start notification")
         launch {
             try {
                 sender.sendInfo(message, config.activeProvider)
             } catch (e: Exception) {
-                Timber.e(e, "Karoo Live: error sending ride start notification")
+                Timber.e(e, "KSafe: error sending ride start notification")
             }
         }
     }
