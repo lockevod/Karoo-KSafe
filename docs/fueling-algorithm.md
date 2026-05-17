@@ -1,6 +1,6 @@
 # KSafe — Nutrition & Hydration Algorithms
 
-> **Version:** May 2026 (revision 1 — initial release with v2.1.0)
+> **Version:** May 2026 (revision 2 — burn-rate-tracking multiplier; ride-type presets)
 > **Files:** `CarbsTracker.kt`, `HydrationTracker.kt`, `IntensityZoneCalculator.kt`
 > **Sensors:** Karoo SDK heart-rate stream + power stream + `streamUserProfile()` (HR / power zones)
 
@@ -23,7 +23,8 @@ A rider who is properly fueled and hydrated has clearer judgment and faster reac
        ▼
 ┌──────────────────────────┐    ┌──────────────────────────┐
 │ IntensityZoneCalculator  │    │ Configured per-hour      │
-│  → 0.7..1.3 multiplier   │    │ targets (g/h, ml/h)      │
+│  → 0.4..1.5 multiplier   │    │ targets (g/h, ml/h)      │
+│  + 90 g/h gut cap        │    │                          │
 └──────┬───────────────────┘    └──────┬───────────────────┘
        │                               │
        ▼                               ▼
@@ -65,7 +66,7 @@ data class ZoneSnapshot(
     val source: ZoneSource,    // POWER | HR | NONE
     val index: Int,            // 0-based; 0 = Z1; -1 if NONE
     val total: Int,            // typically 5 for HR, 7 for power; 0 if NONE
-    val multiplier: Float,     // 0.7..1.3 within configured zones, 1.0 if NONE
+    val multiplier: Float,     // 0.4..1.5 within configured zones, 1.0 if NONE
 )
 ```
 
@@ -81,74 +82,74 @@ Power is preferred because it's a cleaner intensity proxy than HR (HR lags effor
 
 ### Zone-to-multiplier mapping
 
-The multiplier scales linearly across the rider's configured zones from **0.7** (recovery) to **1.3** (top zone). The Karoo uses a 5-zone HR model and a 7-zone power model — both fit the same formula because we use **zone index relative to the total**:
+The multiplier scales linearly across the rider's configured zones from **0.4** (recovery) to **1.5** (top zone), with an absolute **90 g/h gut-absorption cap** applied at integration time so the cumulative target can never advance faster than a recreational rider can absorb. The Karoo uses a 5-zone HR model and a 7-zone power model — both fit the same formula because we use **zone index relative to the total**:
 
 ```kotlin
 ratio      = idx / (total - 1)               // 0.0 .. 1.0
 multiplier = MIN_MULT + ratio × (MAX_MULT - MIN_MULT)
+// effective g/h = min(ABSORPTION_CAP_GPH, baseTarget × multiplier)
 ```
 
 Concrete values:
 
 | HR zone (5-zone model) | Multiplier | Power zone (7-zone Coggan) | Multiplier |
 |---|---|---|---|
-| Z1 (recovery) | 0.70 | Z1 (Active recovery) | 0.70 |
-| Z2 (endurance) | 0.85 | Z2 (Endurance) | 0.80 |
-| Z3 (tempo) | 1.00 | Z3 (Tempo) | 0.90 |
-| Z4 (threshold) | 1.15 | Z4 (Lactate threshold) | 1.00 |
-| Z5 (VO2max) | 1.30 | Z5 (VO2max) | 1.10 |
-| — | — | Z6 (Anaerobic) | 1.20 |
-| — | — | Z7 (Neuromuscular) | 1.30 |
+| Z1 (recovery) | 0.40 | Z1 (Active recovery) | 0.40 |
+| Z2 (endurance) | 0.68 | Z2 (Endurance) | 0.58 |
+| Z3 (tempo) | 0.95 | Z3 (Tempo) | 0.77 |
+| Z4 (threshold) | 1.23 | Z4 (Lactate threshold) | 0.95 |
+| Z5 (VO2max) | 1.50 | Z5 (VO2max) | 1.13 |
+| — | — | Z6 (Anaerobic) | 1.32 |
+| — | — | Z7 (Neuromuscular) | 1.50 |
 
 ### Out-of-range readings
 
 If `currentHr` is below `heartRateZones[0].min` (rider coasting at very low HR) or above the last zone's max (sprinting beyond configured Z5), the calculator **clamps to the nearest zone edge**:
 
-- Below Z1: returns Z1 multiplier (≈ 0.7) with `source = HR/POWER`
-- Above last zone: returns last-zone multiplier (≈ 1.3) with `source = HR/POWER`
+- Below Z1: returns Z1 multiplier (= 0.4) with `source = HR/POWER`
+- Above last zone: returns last-zone multiplier (= 1.5) with `source = HR/POWER`
 
 This is meaningfully different from `source = NONE`. Calibration analysis can distinguish "no sensor data" (NONE) from "sensor present, just outside configured zones" (HR/POWER, clamped index).
 
 ---
 
-## Multiplier rationale — target rate vs. burn rate
+## Multiplier rationale — burn-rate tracking with a gut-absorption ceiling
 
-> This is the most important conceptual point in the whole design. The multiplier is a **fueling strategy**, not a **physiological match**. Read this section before tuning the constants.
+> This is the most important conceptual point in the whole design. The multiplier targets the rider's **actual carb burn rate** while a hard ceiling at 90 g/h keeps the per-tick rate within what the gut can absorb. Read this section before tuning the constants.
 
-A rider's **actual carb burn rate** in each zone is roughly:
+Real cycling carb burn rates (Brooks 2018; Romijn 1993; Coyle 1997):
 
 | Zone | Approx burn (g/h) | Notes |
 |---|---|---|
-| Z1 (recovery) | ~25 | Mostly fat metabolism — carb use is low |
-| Z3 (tempo) | ~60 | Balanced 50 / 50 fat + carb |
-| Z5+ (VO2max / sprint) | ~90+ | Almost all carb, but the gut absorbs ≤ 90 g/h regardless |
+| Z1 (~50% VO2max) | ~20-25 | Mostly fat oxidation — carb use is low |
+| Z3 (~70% VO2max) | ~50-60 | Balanced 50 / 50 fat + carb |
+| Z5 (~90% VO2max) | ~80-90 | Almost all carb, but gut absorption capped at ≈90 g/h |
 
-If the multiplier reflected burn rate strictly, it would need a wider range — roughly **0.4 to 1.5** (a ~3× spread between low and high effort).
+KSafe maps these directly via the **0.4 to 1.5** multiplier band. At the default base target of 50 g/h (Endurance preset):
 
-KSafe deliberately uses a **narrower** range (**0.7 to 1.3**, ~2× spread) for one reason: **anti-bonk priority**.
+- Z1: 0.4 × 50 = **20 g/h** — matches real recovery burn
+- Z3: 1.0 × 50 = **50 g/h** — matches real tempo burn
+- Z5: 1.5 × 50 = **75 g/h** — close to real sprint burn
 
-The reasoning:
+### Why a ceiling, not a wider top end
 
-1. When you're cruising in Z1 (descending, recovering between climbs, drafting), you don't need many carbs *for the current effort*. But you should still be eating, because:
-   - Glycogen is finite (~500 g total in muscles + liver). Once depleted, ride performance collapses (the *bonk*).
-   - The rider doesn't know in advance when intensity will rise. Eating consistently across the ride keeps glycogen ready for the next climb / attack / surge.
-   - Modern endurance fueling guidance (Asker Jeukendrup, ISSN, etc.) advises **steady intake throughout the ride at near-target rate**, not "match what you're burning right now".
+Modern recreational gut-absorption ceiling for a glucose+fructose mix is **~90 g/h** (Jeukendrup 2014; ISSN 2017; IOC 2019 consensus). Race-trained gut adapts to 120-150 g/h after months of training, but recreational riders cannot absorb more than ~90 g/h sustainably without GI distress. The integrator clamps `base × multiplier` at this ceiling so a Race preset (75 g/h base) × top-zone multiplier (1.5) still integrates at 90 g/h, not 112 g/h. Riders who have done genuine gut training can manually raise the base further; the clamp protects everyone else.
 
-2. If the multiplier were 0.4 in Z1, the rider on a long descent would consume only 24 g/h (0.4 × 60). Combined with the 4–5 hours required for a typical century, that's a meaningful glycogen deficit accumulating before the next climb.
+### Why a low floor
 
-3. The ceiling at 1.3 is similarly intentional. The gut absorbs ≤ 90 g/h regardless of demand. Pushing the target above ~80 g/h would set the rider up for **GI distress**, not better fueling.
+Earlier versions used a 0.7 floor as an anti-bonk reserve: at recovery the rider was told to keep eating ~70% of base target even on long descents, to preserve glycogen for the next climb. Field testing (and a closer reading of the ISSN/IOC guidance) showed this **over-fueled recovery periods by 50-80%** vs. actual burn. The modern recommendation is closer to "fuel for the work you're doing, not for the work you anticipate", with the periodic time-alert acting as the anti-bonk safety net for riders who genuinely forget to eat. The 0.4 floor lands within the range modern coaches recommend for recreational riders and aligns with the burn-rate research.
 
-**Practical examples** with `target = 60 g/h`:
+### Ride-type presets
 
-| Effort | Multiplier | g/h target |
-|---|---|---|
-| Z1 recovery / descent | 0.70 | 42 g/h |
-| Z3 tempo (e.g. group ride pace) | 1.00 | 60 g/h |
-| Z5 sprint / hard climb | 1.30 | 78 g/h |
+The Fueling tab exposes three quick presets that set `carbTargetGperHour` to a sensible value for the rider's intent. The presets are one-shot apply actions — tapping fills the target, and manual edits afterwards leave the target wherever the rider moved it (no stored "current preset" state).
 
-This is the range modern coaches recommend. The rider is told to keep eating reasonably even when easy, and to slightly increase intake when working hard — **not** to perfectly match burn rate.
+| Preset | base g/h | Z1 effective | Z3 | Z5 (with cap) | Use case |
+|---|---|---|---|---|---|
+| **Casual / Recovery** | 30 | 12 | 30 | 45 | Sub-2h easy rides, recovery |
+| **Endurance** (default) | 50 | 20 | 50 | 75 | Typical 2-3h training |
+| **Race / Long ride** | 75 | 30 | 75 | **90** (clamped) | Long events, partially-trained gut |
 
-If a future revision wants to lean further into burn-rate matching (e.g. for ultra-distance riders with stronger fat oxidation training), widening to 0.5–1.5 is a single-line change. Defer until calibration data justifies it.
+The presets and floor / ceiling values land within the ranges in **Jeukendrup 2014** (Sports Medicine 44 Suppl 1), **ISSN 2017** (JISSN 14:33), and the **IOC 2019** consensus statement on nutrition for endurance and ultra-endurance athletes.
 
 ---
 
@@ -179,8 +180,13 @@ Every 5 s, the tick coroutine:
 val zone = IntensityZoneCalculator.calculate(profile, hr, power)
 if (lastTickMs != 0L) {
     val dtSec = (now - lastTickMs) / 1000f
-    val ratePerSec = config.carbTargetGperHour / 3600f
-    cumTargetG += dtSec * ratePerSec * zone.multiplier
+    // Effective rate = base × multiplier, capped at ABSORPTION_CAP_GPH (90 g/h)
+    // so a Race-preset base × top-zone multiplier still integrates within
+    // gut-absorbable limits.
+    val effectiveGph = (config.carbTargetGperHour * zone.multiplier)
+        .coerceAtMost(ABSORPTION_CAP_GPH)
+    val ratePerSec = effectiveGph / 3600f
+    cumTargetG += dtSec * ratePerSec
 }
 lastTickMs = now
 ```
@@ -189,40 +195,49 @@ The `lastTickMs == 0L` guard prevents a spurious 5 s spike on the first tick aft
 
 ### Alert evaluation
 
-**Two combinable alert modes**, both gated by a single 5-minute cooldown so they can't fire within seconds of each other:
+**Two combinable alert modes**. The deficit alert is gated by a fixed 5-minute cooldown; the time alert's cooldown is `min(5 min, interval)` so a 1-min interval (typical for testing) truly fires every minute as configured.
 
 ```
 Deficit alert:
    if carbDeficitAlertEnabled
       AND (cumTargetG - cumLoggedG) >= carbDeficitThresholdG
       AND (now - lastAlertMs) >= ALERT_COOLDOWN_MS (5 min)
+      AND (deficit-initial-delay grace passed; see below)
    → fire
 
 Time alert:
    if carbTimeAlertEnabled
       AND (now - lastLogMs) >= carbTimeIntervalMin minutes
-      AND (now - lastAlertMs) >= ALERT_COOLDOWN_MS
-      AND (initial-delay grace passed; see below)
+      AND (now - lastAlertMs) >= min(ALERT_COOLDOWN_MS, intervalMs)
+      AND (time-initial-delay grace passed; see below)
    → fire
 ```
 
-### Initial delay (time alert only)
+### Initial delay (both deficit and time alerts)
 
-The time-based alert has a **per-tracker initial grace period**. The motivation: most riders don't eat or drink in the first 20 minutes of a multi-hour ride; firing a "time to eat!" alert at minute 25 of a 4-hour effort is a nag, not safety.
+Both alert paths have a **per-tracker initial grace period**. The motivation:
+
+- **Time alert**: most riders don't eat or drink in the first 20-30 minutes of a multi-hour ride; firing a "time to eat!" alert at minute 25 of a 4-hour effort is a nag, not safety.
+- **Deficit alert**: the integrator runs from t=0, so on a fresh ride the deficit crosses threshold purely from elapsed time without any rider misconduct. Without this gate the rider sees a "behind 25 g" nag at minute ~25 of a fresh ride, which reads as the app malfunctioning.
 
 ```kotlin
+// Same shape for both alert sources:
 val isFirstAlert = lastAlertMs == 0L && cumLoggedG == 0
-if (isFirstAlert && carbTimeInitialDelayMin > 0) {
-    if ((now - sessionStartMs) < carbTimeInitialDelayMin × 60_000) return
+if (isFirstAlert && initialDelayMin > 0) {
+    if ((now - sessionStartMs) < initialDelayMin × 60_000) return
 }
 ```
 
-The grace period only applies to the **first** alert in a session. Once any alert fires (`lastAlertMs > 0`) or the rider logs an item (`cumLoggedG > 0`), the regular interval logic takes over for subsequent alerts.
+The grace period only applies to the **first** alert in a session. Once any alert fires (`lastAlertMs > 0`) or the rider logs an item (`cumLoggedG > 0`), the regular logic takes over for subsequent alerts.
 
-| Default | Effect |
-|---|---|
-| `carbTimeInitialDelayMin = 30` | First time-alert can't fire before minute 30 of the session |
-| `carbTimeInitialDelayMin = 0` | Disabled — first alert fires after `carbTimeIntervalMin` from session start (original behaviour) |
+| Field | Default | Effect when default |
+|---|---|---|
+| `carbTimeInitialDelayMin` | 30 | First time-alert can't fire before minute 30 of the session |
+| `carbDeficitInitialDelayMin` | 30 | First deficit-alert can't fire before minute 30 of the session |
+| `hydrationTimeInitialDelayMin` | 30 | (mirror for hydration) |
+| `hydrationDeficitInitialDelayMin` | 30 | (mirror for hydration) |
+
+All four can be set to `0` to disable the grace and fire as soon as the trigger condition is met (original pre-v11 behaviour).
 
 ### Custom alert title and detail
 
@@ -543,12 +558,15 @@ All config fields live in `KSafeConfig` (`data/ConfigData.kt`).
 | Field | Default | UI exposed |
 |---|---|---|
 | `carbsTrackerEnabled` | `false` (opt-in master — gates all sub-fields and collapses them when off) | ✅ |
-| `carbTargetGperHour` | 60 | ✅ |
+| `carbTargetGperHour` | 50 | ✅ — preset chips (Casual 30 / Endurance 50 / Race 75) above the field |
 | `carbDeficitAlertEnabled` | `true` | ✅ |
 | `carbDeficitThresholdG` | 25 g | ✅ |
+| `carbDeficitInitialDelayMin` | 30 | ✅ (0 = off — fire as soon as threshold crossed) |
 | `carbTimeAlertEnabled` | `false` | ✅ |
-| `carbTimeIntervalMin` | 25 | ✅ |
+| `carbTimeIntervalMin` | 25 | ✅ (1-60 min) |
 | `carbTimeInitialDelayMin` | 30 | ✅ (0 = off) |
+| `carbAlertBgColor` | `FUELING_ALERT_COLOR_ORANGE` | ✅ — swatch picker (6 colours) |
+| `carbBeepPattern` | `SINGLE_LONG` | ✅ — beep pattern picker |
 | `carbAlertCustomTitle` | `""` (use default) | ✅ |
 | `carbAlertCustomDetail` | `""` (use source-specific default) | ✅ — supports `{deficit}`, `{elapsed}`, `{target}` |
 | `carb1Label` / `carb1Grams` / `carb1Color` / `carb1Icon` | "Gel" / 25 / palette-blue / 🧴 | ✅ (per-slot row + colour & icon pickers) |
@@ -563,9 +581,12 @@ All config fields live in `KSafeConfig` (`data/ConfigData.kt`).
 | `hydrationTargetMlPerHour` | 750 | ✅ |
 | `hydrationDeficitAlertEnabled` | `true` | ✅ |
 | `hydrationDeficitThresholdMl` | 300 ml | ✅ |
+| `hydrationDeficitInitialDelayMin` | 30 | ✅ (0 = off) |
 | `hydrationTimeAlertEnabled` | `false` | ✅ |
-| `hydrationTimeIntervalMin` | 20 | ✅ |
+| `hydrationTimeIntervalMin` | 20 | ✅ (1-60 min) |
 | `hydrationTimeInitialDelayMin` | 30 | ✅ (0 = off) |
+| `hydrationAlertBgColor` | `FUELING_ALERT_COLOR_BLUE` (water-coloured by default) | ✅ — swatch picker (6 colours) |
+| `hydBeepPattern` | `SINGLE_LONG` | ✅ — beep pattern picker |
 | `hydrationAlertCustomTitle` | `""` | ✅ |
 | `hydrationAlertCustomDetail` | `""` (use source-specific default) | ✅ — supports `{deficit}`, `{elapsed}`, `{target}` |
 | `drink1Label` / `drink1Ml` / `drink1Color` / `drink1Icon` | "Sip" / 100 / palette-blue / 💧 | ✅ |

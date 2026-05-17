@@ -13,3 +13,5 @@ local.properties
 # macOS Finder cruft
 .DS_Store
 **/.DS_Store
+/logs/
+/logs/logs_sergi/

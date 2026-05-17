@@ -59,6 +59,16 @@ import kotlin.math.pow
 import kotlin.math.sin
 import kotlin.math.sqrt
 
+private const val FUELING_PERSIST_INTERVAL_MS: Long = 30_000L
+/** Auto-send the calibration log every 20 minutes while a ride is recording so a
+ *  long ride with intermittent coverage still trickles data out instead of waiting
+ *  for the post-ride upload (which may itself fail). On success, the file is
+ *  truncated and the next 20-minute window accumulates fresh. */
+private const val CALIBRATION_PERIODIC_SEND_INTERVAL_MS: Long = 20L * 60_000L
+/** Health-check the calibration logger every minute while recording — restart the
+ *  flush coroutine if it has stopped writing. Cheap (one atomic read + age compare). */
+private const val CALIBRATION_HEALTH_CHECK_INTERVAL_MS: Long = 60_000L
+
 class KSafeExtension : KarooExtension("ksafe", BuildConfig.VERSION_NAME), CoroutineScope {
 
     private val job = SupervisorJob()
@@ -98,6 +108,12 @@ class KSafeExtension : KarooExtension("ksafe", BuildConfig.VERSION_NAME), Corout
     @Volatile private var recordingCollectorsJob: kotlinx.coroutines.Job? = null
     /** True if there was an active ride (Recording or Paused) — used to detect ride end. */
     private var rideWasActive = false
+
+    /** Snapshot of the persisted fueling state loaded once on extension boot. Consumed by
+     *  the first `Recording` transition to restore an in-flight ride that was interrupted
+     *  by an extension crash (OOM / update / Android process kill). Cleared after consumption
+     *  so a Paused→Recording resume doesn't re-apply it on top of in-memory state. */
+    @Volatile private var pendingFuelingRestore: com.enderthor.kSafe.data.FuelingState? = null
 
     /** Per-slot tap-feedback timer jobs (LOGGED→IDLE / UNDONE→IDLE delayed reverts).
      *  Cancelled before a new launch so a stale timer from an earlier tap cannot
@@ -318,6 +334,106 @@ class KSafeExtension : KarooExtension("ksafe", BuildConfig.VERSION_NAME), Corout
         }
 
         launch {
+            // Load persisted fueling snapshot BEFORE we start observing ride state — the
+            // first Recording event must see `pendingFuelingRestore` already populated so
+            // the restore-vs-fresh-start decision in [handleRideState] picks the right
+            // branch. A snapshot older than FUELING_RESTORE_MAX_AGE_MS is discarded as
+            // stale (rider stopped the ride deliberately, or device sat unused).
+            val persisted = configManager.loadFuelingState()
+            val age = System.currentTimeMillis() - persisted.savedAtMs
+            pendingFuelingRestore = if (persisted.savedAtMs > 0 &&
+                age in 0..com.enderthor.kSafe.data.FUELING_RESTORE_MAX_AGE_MS) {
+                Timber.i("FuelingState eligible for restore: age=${age / 1000}s, " +
+                    "carb_target=${persisted.carb.cumTargetG.toInt()}g, " +
+                    "hyd_target=${persisted.hyd.cumTargetMl.toInt()}ml")
+                persisted
+            } else {
+                if (persisted.savedAtMs > 0) {
+                    Timber.i("FuelingState too old to restore: age=${age / 1000}s (max ${com.enderthor.kSafe.data.FUELING_RESTORE_MAX_AGE_MS / 1000}s)")
+                    configManager.clearFuelingState()
+                }
+                null
+            }
+        }
+
+        launch {
+            // Periodic persistence loop. Runs forever; the inner check gates writes on
+            // "tracker actively integrating" so we don't burn DataStore writes when no
+            // ride is in progress. 30 s window means a worst-case extension crash loses
+            // at most ~30 s of integrated target — well under one carb tick.
+            while (true) {
+                kotlinx.coroutines.delay(FUELING_PERSIST_INTERVAL_MS)
+                if (currentRideState !is RideState.Recording) continue
+                if (!this@KSafeExtension::carbsTracker.isInitialized) continue
+                val carbState = carbsTracker.getPersistableState()
+                val hydState  = hydrationTracker.getPersistableState()
+                // Skip the write if both trackers are at zero — no accumulation worth
+                // persisting yet (e.g. rider just pressed Start, hasn't moved).
+                if (carbState.cumTargetG <= 0f && carbState.cumLoggedG == 0 &&
+                    hydState.cumTargetMl <= 0f && hydState.cumLoggedMl == 0) continue
+                configManager.saveFuelingState(
+                    com.enderthor.kSafe.data.FuelingState(
+                        carb = carbState,
+                        hyd = hydState,
+                        savedAtMs = System.currentTimeMillis(),
+                    )
+                )
+            }
+        }
+
+        launch {
+            // Calibration log periodic auto-send. Fires every 20 min while a ride is
+            // Recording AND logging is enabled. On success the file is truncated and
+            // the next window accumulates fresh — if the upload fails (no coverage,
+            // Telegram down, timeout) the file is kept and the next tick retries the
+            // larger payload. Idle/Paused are skipped because there's no fresh data
+            // accumulating that we'd lose by waiting for the end-of-ride upload.
+            while (true) {
+                kotlinx.coroutines.delay(CALIBRATION_PERIODIC_SEND_INTERVAL_MS)
+                if (currentRideState !is RideState.Recording) continue
+                if (!this@KSafeExtension::calibLogger.isInitialized) continue
+                if (!calibLogger.isEnabled) continue
+                val content = calibLogger.getFileContent()
+                if (content.isBlank()) continue
+                val lineCount = content.count { it == '\n' }
+                Timber.d("Calibration periodic send: ${lineCount} lines")
+                launch(Dispatchers.IO) {
+                    val result = LogReporter.sendLogFile(
+                        content = content,
+                        fileName = calibLogger.fileNameForSession,
+                        caption = "Periodic — ${calibLogger.captionForSession(lineCount)}",
+                        karooSystem = karooSystem,
+                    )
+                    if (result.ok) {
+                        calibLogger.truncateAfterSuccessfulSend()
+                    } else {
+                        // Quiet failure — likely no coverage. Will retry in 20 min with the
+                        // grown payload; if it still fails the end-of-ride upload eventually
+                        // catches everything.
+                        Timber.w("Calibration periodic send failed (will retry next window): ${result.message}")
+                    }
+                }
+            }
+        }
+
+        launch {
+            // Calibration logger health-check. If the rider has logging enabled and the
+            // flush coroutine has stopped writing for HEALTH_STALE_THRESHOLD_MS, restart
+            // the flush job in place (no buffer / file wipe, just relaunch the loop).
+            // Covers the "logger seems on but isn't writing — disable+enable fixes it"
+            // pattern that's been reported anecdotally.
+            while (true) {
+                kotlinx.coroutines.delay(CALIBRATION_HEALTH_CHECK_INTERVAL_MS)
+                if (!this@KSafeExtension::calibLogger.isInitialized) continue
+                if (!calibLogger.isEnabled) continue
+                if (!calibLogger.isHealthy()) {
+                    Timber.w("Calibration logger unhealthy — restarting flush job")
+                    calibLogger.restartFlushJob()
+                }
+            }
+        }
+
+        launch {
             // Observe ride state
             karooSystem.streamRide()
                 .distinctUntilChanged()
@@ -515,8 +631,14 @@ class KSafeExtension : KarooExtension("ksafe", BuildConfig.VERSION_NAME), Corout
                         hydrationTracker.resume(activeConfig)
                     } else {
                         wellnessMonitor.start(activeConfig)
-                        carbsTracker.start(activeConfig)
-                        hydrationTracker.start(activeConfig)
+                        // Consume the pending fueling restore (if any) on the FIRST Recording
+                        // event after extension boot. `null` falls through to the fresh-start
+                        // path inside each tracker. We zero out the field after this branch
+                        // so a future Recording (new ride) does NOT re-apply the same totals.
+                        val restore = pendingFuelingRestore
+                        pendingFuelingRestore = null
+                        carbsTracker.start(activeConfig, restore?.carb)
+                        hydrationTracker.start(activeConfig, restore?.hyd)
                     }
                     emergencyManager.startCheckinTimer(activeConfig)
                     // Only send the start notification on the very first Recording event.
@@ -560,6 +682,10 @@ class KSafeExtension : KarooExtension("ksafe", BuildConfig.VERSION_NAME), Corout
                 wellnessMonitor.stop()
                 carbsTracker.stop()
                 hydrationTracker.stop()
+                // Ride ended cleanly — drop the persisted fueling snapshot so the next ride
+                // starts from zero. Fire-and-forget on IO; if the write loses to a process
+                // kill the next boot's stale-age check (FUELING_RESTORE_MAX_AGE_MS) catches it.
+                launch(Dispatchers.IO) { configManager.clearFuelingState() }
                 // Cancel the Recording-only sensor streams now that no consumer needs
                 // them. The SPEED / CADENCE / GRADE / RideProfile collectors keep
                 // running because crash detection may continue outside the ride
@@ -784,10 +910,12 @@ class KSafeExtension : KarooExtension("ksafe", BuildConfig.VERSION_NAME), Corout
      * RECOVERED never reaches here — [decideReadiness] returns null and the caller skips.
      */
     private fun fireReadinessAdvice(advice: ReadinessAdvice) {
-        val (titleRes, bgColor) = when (advice.level) {
+        // InRideAlert color contract: see res/values/colors.xml. backgroundColor and
+        // textColor are @ColorRes — packed ARGB ints crash the ride app.
+        val (titleRes, bgColorRes) = when (advice.level) {
             ReadinessLevel.RECOVERED -> return   // never fires — defensive
-            ReadinessLevel.CAUTION -> R.string.readiness_alert_caution_title to 0xFFEF6C00.toInt()
-            ReadinessLevel.TAKE_IT_EASY -> R.string.readiness_alert_take_easy_title to 0xFFB71C1C.toInt()
+            ReadinessLevel.CAUTION -> R.string.readiness_alert_caution_title to R.color.alert_orange_light
+            ReadinessLevel.TAKE_IT_EASY -> R.string.readiness_alert_take_easy_title to R.color.alert_red
         }
         karooSystem.dispatch(InRideAlert(
             id = "ksafe-readiness-${System.currentTimeMillis()}",
@@ -795,8 +923,8 @@ class KSafeExtension : KarooExtension("ksafe", BuildConfig.VERSION_NAME), Corout
             title = getString(titleRes),
             detail = advice.reasons.joinToString(" • "),
             autoDismissMs = 15_000L,
-            backgroundColor = bgColor,
-            textColor = 0xFFFFFFFF.toInt(),
+            backgroundColor = bgColorRes,
+            textColor = R.color.alert_text_white,
         ))
     }
 
@@ -860,25 +988,52 @@ class KSafeExtension : KarooExtension("ksafe", BuildConfig.VERSION_NAME), Corout
      * The file is sent regardless of whether logging is currently active.
      */
     suspend fun sendCalibrationLog(): String {
+        // 1) Previous-session file (preserved by enable() when the rider had logging on
+        //    during a previous ride that crashed before sending). Send it first so the
+        //    rider's data isn't lost; success deletes it, failure keeps it around for
+        //    the next attempt.
+        val previousResult = calibLogger.getPreviousFileContent()?.let { prev ->
+            Timber.d("Sending previous-session calibration log")
+            val result = LogReporter.sendLogFile(
+                content  = prev,
+                fileName = calibLogger.previousFileNameForSession(),
+                caption  = "Recovered previous session (${prev.count { it == '\n' }} lines)",
+                karooSystem = karooSystem,
+            )
+            if (result.ok) calibLogger.deletePreviousFile()
+            result
+        }
+
+        // 2) Current session
         val logContent = calibLogger.getFileContent()
-        if (logContent.isBlank()) return "No calibration data on disk yet."
+        if (logContent.isBlank()) {
+            // No current data — surface the previous-result if it ran.
+            return previousResult?.message ?: "No calibration data on disk yet."
+        }
         Timber.d("Sending calibration log manually via Telegram")
-        val ok = LogReporter.sendLogFile(
+        val result = LogReporter.sendLogFile(
             content  = logContent,
             fileName = calibLogger.fileNameForSession,
             caption  = calibLogger.captionForSession(logContent.count { it == '\n' }),
             karooSystem = karooSystem,
         )
-        return if (ok) "Calibration log sent via Telegram ✓"
-               else "Send failed — check Telegram credentials or connection."
+        // Combine messages when previous-send happened
+        return when {
+            previousResult != null && result.ok ->
+                "Calibration log sent ✓ (previous: ${if (previousResult.ok) "✓" else "failed"})"
+            else -> if (result.ok) "Calibration log sent ✓" else result.message
+        }
     }
 
     /** Returns a string with file location info for display in the Settings UI. */
     fun getCalibrationLogInfo(): String {
         val count = calibLogger.getEntryCount()
         val file = calibLogger.getLogFile()
-        return if (file != null) "$count entries | ${file.path}"
-               else "$count entries (not yet flushed to disk)"
+        val previousPending = calibLogger.getPreviousFileContent() != null
+        val base = if (file != null) "$count entries | ${file.path}"
+                   else "$count entries (not yet flushed to disk)"
+        return if (previousPending) "$base\n⚠ Previous unsent session detected — tap Send to recover."
+               else base
     }
 
     fun clearCalibrationLog() {
@@ -953,18 +1108,38 @@ class KSafeExtension : KarooExtension("ksafe", BuildConfig.VERSION_NAME), Corout
      * mid-ride. The webhook tap is rider-initiated so suppression isn't the right call
      * (the rider IS expecting feedback) — switching channel is.
      */
-    private fun dispatchWebhookFeedback(id: String, header: String, message: String, bgColor: Int = 0xFF263238.toInt()) {
-        if (currentRideState is RideState.Recording) {
+    /**
+     * @param bgColorRes Android @ColorRes ID (e.g. `R.color.alert_red`). NOT a packed
+     *   ARGB int — the Karoo SDK's InRideAlert.backgroundColor passes its argument to
+     *   `Context.getColor()`, which interprets a packed int as a resource ID and crashes
+     *   the ride app with `Resources$NotFoundException`. See `res/values/colors.xml`.
+     */
+    private fun dispatchWebhookFeedback(
+        id: String, header: String, message: String,
+        bgColorRes: Int = R.color.alert_slate,
+    ) {
+        // Both Recording AND Paused count as "rider is on the ride screen" — autopause
+        // (traffic light, café stop) keeps the data screen up, so InRideAlert is still
+        // the visible-feedback channel. Previously this only checked Recording, which
+        // meant a webhook tap during autopause silently fell through to SystemNotification
+        // (drawer-only) and the rider thought the action had failed.
+        val onRideScreen = currentRideState is RideState.Recording ||
+                           currentRideState is RideState.Paused
+        if (onRideScreen) {
             karooSystem.dispatch(InRideAlert(
                 id = id,
                 icon = R.drawable.ic_ksafe,
                 title = header,
                 detail = message,
                 autoDismissMs = 4_000L,
-                backgroundColor = bgColor,
-                textColor = 0xFFFFFFFF.toInt(),
+                backgroundColor = bgColorRes,
+                textColor = R.color.alert_text_white,
             ))
         } else {
+            // Idle — rider is in the launcher / KSafe Settings. SystemNotification is
+            // visible there. A system overlay (SosOverlayManager-style) would be richer
+            // but requires SYSTEM_ALERT_WINDOW permission; the rider may not have granted
+            // it. Keep SystemNotification as the Idle fallback for now — see TODO above.
             karooSystem.dispatch(SystemNotification(id = id, header = header, message = message))
         }
     }
@@ -991,7 +1166,7 @@ class KSafeExtension : KarooExtension("ksafe", BuildConfig.VERSION_NAME), Corout
                     id = "ksafe-webhook-$slot-master-off",
                     header = label,
                     message = "Extension is disabled — enable it in Settings first.",
-                    bgColor = 0xFFB71C1C.toInt(),
+                    bgColorRes = R.color.alert_red,
                 )
                 return
             }
@@ -1006,7 +1181,7 @@ class KSafeExtension : KarooExtension("ksafe", BuildConfig.VERSION_NAME), Corout
                     id = "ksafe-webhook-$slot-disabled",
                     header = label,
                     message = "Webhook disabled — enable it in the Actions tab",
-                    bgColor = 0xFFB71C1C.toInt(),
+                    bgColorRes = R.color.alert_red,
                 )
                 return
             }
@@ -1021,7 +1196,7 @@ class KSafeExtension : KarooExtension("ksafe", BuildConfig.VERSION_NAME), Corout
                     id = "ksafe-webhook-$slot-nourl",
                     header = label,
                     message = "No URL configured — set one in the Actions tab",
-                    bgColor = 0xFFB71C1C.toInt(),
+                    bgColorRes = R.color.alert_red,
                 )
                 return
             }
@@ -1041,7 +1216,7 @@ class KSafeExtension : KarooExtension("ksafe", BuildConfig.VERSION_NAME), Corout
                         id = "ksafe-webhook-$slot-geo-nofix",
                         header = label,
                         message = "Blocked — no GPS fix yet",
-                        bgColor = 0xFFE65100.toInt(),
+                        bgColorRes = R.color.alert_orange,
                     )
                     return
                 }
@@ -1052,7 +1227,7 @@ class KSafeExtension : KarooExtension("ksafe", BuildConfig.VERSION_NAME), Corout
                         id = "ksafe-webhook-$slot-geo-nocfg",
                         header = label,
                         message = "Blocked — no target location configured",
-                        bgColor = 0xFFE65100.toInt(),
+                        bgColorRes = R.color.alert_orange,
                     )
                     return
                 }
@@ -1065,7 +1240,7 @@ class KSafeExtension : KarooExtension("ksafe", BuildConfig.VERSION_NAME), Corout
                         id = "ksafe-webhook-$slot-geo-far",
                         header = label,
                         message = "Blocked — ${distance.toInt()}m away (max ${radiusM}m)",
-                        bgColor = 0xFFE65100.toInt(),
+                        bgColorRes = R.color.alert_orange,
                     )
                     Timber.d("Webhook $slot geo-fenced: ${distance.toInt()}m > ${radiusM}m")
                     return
@@ -1085,7 +1260,7 @@ class KSafeExtension : KarooExtension("ksafe", BuildConfig.VERSION_NAME), Corout
                 id = "ksafe-webhook-$slot-${if (result.success) "ok" else "err"}",
                 header = label,
                 message = if (result.success) "$label ✓" else result.message,
-                bgColor = if (result.success) 0xFF1B5E20.toInt() else 0xFFB71C1C.toInt(),
+                bgColorRes = if (result.success) R.color.alert_green else R.color.alert_red,
             )
             if (result.success) {
                 val alertEnabled = if (slot == 1) config.webhook1AlertEnabled else config.webhook2AlertEnabled
@@ -1095,7 +1270,7 @@ class KSafeExtension : KarooExtension("ksafe", BuildConfig.VERSION_NAME), Corout
                         id = "ksafe-webhook-$slot-alert",
                         header = label,
                         message = alertText,
-                        bgColor = 0xFF1565C0.toInt(),
+                        bgColorRes = R.color.alert_blue,
                     )
                 }
             }

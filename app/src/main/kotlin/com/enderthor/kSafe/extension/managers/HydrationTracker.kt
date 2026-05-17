@@ -2,7 +2,9 @@ package com.enderthor.kSafe.extension.managers
 
 import android.content.Context
 import com.enderthor.kSafe.R
+import com.enderthor.kSafe.data.HydFuelingState
 import com.enderthor.kSafe.data.KSafeConfig
+import com.enderthor.kSafe.data.fuelingAlertColorRes
 import com.enderthor.kSafe.extension.util.ALERT_DETAIL_MAX_CHARS
 import com.enderthor.kSafe.extension.util.ALERT_TITLE_MAX_CHARS
 import com.enderthor.kSafe.extension.util.SweatConfidence
@@ -54,8 +56,12 @@ class HydrationTracker(
     private val ALERT_COOLDOWN_MS       = 5L * 60_000L
     private val PERIODIC_LOG_INTERVAL_MS = 120_000L
 
-    private val ALERT_BG_COLOR = 0xFFE65100.toInt()  // amber
-    private val ALERT_TX_COLOR = 0xFFFFFFFF.toInt()  // white
+    // InRideAlert color contract: SDK expects @ColorRes IDs, NOT packed ARGB ints —
+    // passing 0xFFE65100 here used to crash the ride app with
+    // `Resources$NotFoundException: Resource ID #0xffe65100`. Use R.color.* resources
+    // defined in res/values/colors.xml.
+    // BG colour is rider-configurable via config.hydrationAlertBgColor — see fireAlert.
+    private val ALERT_TX_COLOR = R.color.alert_text_white
     private val AUTO_DISMISS_MS = 10_000L
 
     // ─── Session state (reset by start()) ────────────────────────────────────
@@ -112,19 +118,28 @@ class HydrationTracker(
 
     // ─── Public API ──────────────────────────────────────────────────────────
 
-    fun start(config: KSafeConfig) {
+    fun start(config: KSafeConfig, restoreFrom: HydFuelingState? = null) {
         this.config = config
         if (!config.hydrationTrackerEnabled) return
         // Same restart pattern as CarbsTracker — wait for the previous monitor to fully
         // stop inside the new coroutine to avoid late ticks producing spurious log rows.
         val oldJob = monitorJob
         val now = System.currentTimeMillis()
-        cumTargetMl = 0f
-        cumLoggedMl = 0
-        sessionStartMs = now
+        if (restoreFrom != null) {
+            // Extension was killed mid-ride — see [CarbsTracker.start] for full rationale.
+            cumTargetMl = restoreFrom.cumTargetMl
+            cumLoggedMl = restoreFrom.cumLoggedMl
+            sessionStartMs = restoreFrom.sessionStartMs.takeIf { it > 0 } ?: now
+            lastLogMs = restoreFrom.lastLogMs.takeIf { it > 0 } ?: now
+            lastAlertMs = restoreFrom.lastAlertMs
+        } else {
+            cumTargetMl = 0f
+            cumLoggedMl = 0
+            sessionStartMs = now
+            lastLogMs = now
+            lastAlertMs = 0L
+        }
         lastTickMs = 0L
-        lastLogMs = now
-        lastAlertMs = 0L
         lastPeriodicLogMs = 0L
         for (i in lastLoggedMlBySlot.indices) { lastLoggedMlBySlot[i] = 0; lastLogMsBeforeBySlot[i] = 0L }
         monitorJob = scope.launch {
@@ -136,14 +151,25 @@ class HydrationTracker(
                 "dynamic=${config.hydrationDynamicEstimateEnabled}," +
                 "deficit_alert=${config.hydrationDeficitAlertEnabled}," +
                 "deficit_threshold_ml=${config.hydrationDeficitThresholdMl}," +
+                "deficit_initial_delay_min=${config.hydrationDeficitInitialDelayMin}," +
                 "time_alert=${config.hydrationTimeAlertEnabled}," +
                 "time_interval_min=${config.hydrationTimeIntervalMin}," +
                 "time_initial_delay_min=${config.hydrationTimeInitialDelayMin}," +
-                "beep=${config.hydBeepPattern}"
+                "beep=${config.hydBeepPattern}," +
+                "restored=${restoreFrom != null}"
         }
-        Timber.d("HydrationTracker started, target=${config.hydrationTargetMlPerHour} ml/h")
+        Timber.d("HydrationTracker started, target=${config.hydrationTargetMlPerHour} ml/h, restored=${restoreFrom != null}")
         publishStatus()
     }
+
+    /** See [CarbsTracker.getPersistableState] — same contract for the hydration tracker. */
+    fun getPersistableState(): HydFuelingState = HydFuelingState(
+        cumTargetMl = cumTargetMl,
+        cumLoggedMl = cumLoggedMl,
+        sessionStartMs = sessionStartMs,
+        lastLogMs = lastLogMs,
+        lastAlertMs = lastAlertMs,
+    )
 
     fun stop() {
         monitorJob?.cancel()
@@ -341,6 +367,12 @@ class HydrationTracker(
 
     private fun evaluateDeficitAlert(now: Long) {
         if (!config.hydrationDeficitAlertEnabled) return
+        // See CarbsTracker.evaluateDeficitAlert — same initial-delay grace rationale.
+        val isFirstAlert = lastAlertMs == 0L && cumLoggedMl == 0
+        if (isFirstAlert && config.hydrationDeficitInitialDelayMin > 0) {
+            val initialDelayMs = config.hydrationDeficitInitialDelayMin * 60_000L
+            if (now - sessionStartMs < initialDelayMs) return
+        }
         val deficit = (cumTargetMl - cumLoggedMl).toInt()
         if (deficit < config.hydrationDeficitThresholdMl) return
         if (now - lastAlertMs < ALERT_COOLDOWN_MS) return
@@ -357,7 +389,12 @@ class HydrationTracker(
         }
         val intervalMs = config.hydrationTimeIntervalMin * 60_000L
         if (now - lastLogMs < intervalMs) return
-        if (now - lastAlertMs < ALERT_COOLDOWN_MS) return
+        // Cooldown for time alerts uses the smaller of ALERT_COOLDOWN_MS (5 min anti-spam
+        // for deficit alerts) and the rider's configured interval. With a 1-min interval
+        // (typical for testing) the rider gets a 1-min cooldown so the alert truly fires
+        // every minute as configured; with a 20-min interval the 5-min cooldown is
+        // effectively unused because the interval check (gate above) already gates.
+        if (now - lastAlertMs < minOf(ALERT_COOLDOWN_MS, intervalMs)) return
         fireAlert("time", (cumTargetMl - cumLoggedMl).toInt(), (now - lastLogMs) / 60_000)
     }
 
@@ -388,12 +425,13 @@ class HydrationTracker(
         )
         config.hydBeepPattern.toPlayBeepPattern()?.let { karooSystem.dispatch(it) }
         karooSystem.dispatch(InRideAlert(
-            id = "ksafe-hyd-alert-$source",
+            // Unique-per-fire ID — see CarbsTracker.fireAlert for the rationale.
+            id = "ksafe-hyd-alert-$source-${lastAlertMs}",
             icon = R.drawable.ic_ksafe,
             title = title,
             detail = detail,
             autoDismissMs = AUTO_DISMISS_MS,
-            backgroundColor = ALERT_BG_COLOR,
+            backgroundColor = fuelingAlertColorRes(config.hydrationAlertBgColor),
             textColor = ALERT_TX_COLOR,
         ))
         calibLogger?.log(CalibrationLogger.Event.FUELING_HYDRATION_FIRED) {

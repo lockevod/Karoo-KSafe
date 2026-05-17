@@ -297,8 +297,11 @@ class EmergencyManager(
                     title = renderAlertText(titleTemplate, tokens, maxLength = ALERT_TITLE_MAX_CHARS),
                     detail = renderAlertText(detailTemplate, tokens, maxLength = ALERT_DETAIL_MAX_CHARS),
                     autoDismissMs = 10_000L,
-                    backgroundColor = 0xFFE65100.toInt(),
-                    textColor = 0xFFFFFFFF.toInt(),
+                    // SDK contract — see colors.xml: backgroundColor/textColor are @ColorRes,
+                    // not @ColorInt. Passing 0xFFE65100 here crashed the ride app with
+                    // Resources$NotFoundException.
+                    backgroundColor = com.enderthor.kSafe.R.color.alert_orange,
+                    textColor = com.enderthor.kSafe.R.color.alert_text_white,
                 ))
                 calibLogger?.log(CalibrationLogger.Event.INCIDENT_WARNING) {
                     "reason=${reason.label},beep=${config.wellnessBeepPattern}"

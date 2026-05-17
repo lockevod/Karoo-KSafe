@@ -113,27 +113,29 @@ KSafe **does not measure your blood glucose or hydration in real time** — ther
 
 | What | How it's obtained |
 |------|---|
-| **Target so far** | The per-hour rate you configure (e.g. 60 g/h for carbs, 750 ml/h for hydration), **integrated** over elapsed ride time. For carbs the rate is auto-modulated by HR / power zone (0.7×–1.3×). For hydration, optionally by the dynamic sweat-rate estimator (HR + power + weight + ambient temperature + humidity). |
+| **Target so far** | The per-hour rate you configure (e.g. 50 g/h for carbs, 750 ml/h for hydration), **integrated** over elapsed ride time. For carbs the rate is auto-modulated by HR / power zone (0.4×–1.5×, capped at the 90 g/h gut-absorption ceiling). For hydration, optionally by the dynamic sweat-rate estimator (HR + power + weight + ambient temperature + humidity). |
 | **Logged so far** | The sum of every log-slot tap you make during the ride. |
 
-The difference is the **deficit**. When it exceeds the threshold you configure (defaults: 25 g for carbs, 300 ml for hydration) KSafe fires a beep + on-screen alert.
+The difference is the **deficit**. When it exceeds the threshold you configure (defaults: 25 g for carbs, 300 ml for hydration) KSafe fires a beep + on-screen alert. The **first** deficit and time alerts of a session are both suppressed for an initial-delay grace period (default 30 min, configurable per-tracker) so a fresh ride doesn't nag you at minute 25 with "behind 25 g".
 
 Three consequences worth understanding *before* you trust the alerts:
 
-1. **The reference is the target you configure** — not a biometric measurement of you. Without a sensible per-hour target there is nothing to be behind on. The defaults (60 g/h, 750 ml/h) cover a 2–3 h endurance ride in mild weather, but they are not personal. See [Setting your initial targets](#how-to-pick-your-per-hour-targets) for the starting tables, then refine them with the [calibration workflow](#how-to-calibrate-against-a-real-ride) after 2–3 real rides.
+1. **The reference is the target you configure** — not a biometric measurement of you. Without a sensible per-hour target there is nothing to be behind on. The defaults (50 g/h carbs, 750 ml/h hydration) cover a 2–3 h endurance ride in mild weather, but they are not personal. Pick a **ride-type preset** (Casual / Endurance / Race) or refer to [Setting your initial targets](#how-to-pick-your-per-hour-targets) for the starting tables, then refine with the [calibration workflow](#how-to-calibrate-against-a-real-ride) after 2–3 real rides.
 2. **If you eat or drink without tapping a slot, KSafe doesn't know.** The integrated target keeps climbing; the deficit grows until you tap. A missed log is indistinguishable from a missed gel. The slot's [on-screen undo](#logging-in-ride) (a second tap within ~5 s) protects against the opposite mistake — an accidental tap that didn't correspond to a real intake.
 3. **The model assumes you're riding "around" your configured intensity.** The zone multiplier handles surges and recoveries within the typical range, but if you spend two hours coasting downhill the integrated target overstates your actual burn, and a "deficit" alert isn't really telling you to eat. Likewise the hydration estimator is biased toward over-targeting in heat — see [SweatEstimator's accuracy notes](fueling-algorithm.md) for the rationale.
 
 ### How the carb target adapts to your effort
 
-Carb burning depends heavily on intensity. KSafe reads your **HR zones** (5 zones, configured in your Karoo) and **power zones** (7 zones) directly from the Karoo's user profile — no manual entry of weight, FTP, max HR or anything else. From those zones it derives a real-time multiplier between **0.7×** (recovery / Z1) and **1.3×** (top zone) and applies it to your configured base target (e.g. 60 g/h):
+Carb burning depends heavily on intensity. KSafe reads your **HR zones** (5 zones, configured in your Karoo) and **power zones** (7 zones) directly from the Karoo's user profile — no manual entry of weight, FTP, max HR or anything else. From those zones it derives a real-time multiplier between **0.4×** (recovery / Z1) and **1.5×** (top zone) and applies it to your configured base target (e.g. 50 g/h). The integrator additionally **caps the effective rate at 90 g/h** — the established single-transportable gut-absorption ceiling — so a Race-preset base (75 g/h) × top-zone multiplier (1.5) still integrates at 90 g/h, not the un-absorbable 112 g/h.
 
 | Setup | Multiplier | Notes |
 |-------|------------|-------|
-| Power meter + power zones configured | 0.7..1.3 from your power zone | Most accurate — power is the cleanest intensity proxy |
-| HR sensor + HR zones configured (no power) | 0.7..1.3 from your HR zone | Good fallback |
+| Power meter + power zones configured | 0.4..1.5 from your power zone | Most accurate — power is the cleanest intensity proxy |
+| HR sensor + HR zones configured (no power) | 0.4..1.5 from your HR zone | Good fallback |
 | Out-of-range readings (below Z1 or above the last zone) | Clamped to nearest edge | Coasting at low HR → recovery rate; sprinting above last zone → top rate |
 | Neither sensor present | 1.0 (neutral) | Tracker reverts to flat target × time — equivalent to "remind me every X min based on g/h" |
+
+The 0.4-1.5 band is calibrated against actual cycling carb burn rates from Brooks 2018, Romijn 1993 and Coyle 1997. Earlier versions (≤v2.0) used a narrower 0.7-1.3 band which over-fueled recovery periods by 50-80% vs. real burn — the time-alert grace period now acts as the anti-bonk safety net for riders who genuinely forget to eat, while the multiplier tracks reality.
 
 ### How the hydration target adapts to your effort and the weather
 
@@ -146,7 +148,15 @@ The dynamic mode biases **high** in hot conditions by design: the estimator's jo
 
 ### How to pick your per-hour targets
 
-KSafe asks you for a base **carb target (g/h)** and a base **hydration target (ml/h)**, and then modulates the carbs automatically by intensity zone and (optionally) the hydration by HR/power + weather. Default values out of the box are **60 g/h** for carbs and **750 ml/h** for hydration — sensible for a 2–3 h endurance ride in mild weather, but **not optimal for everyone**. Here is how to ballpark your own numbers.
+KSafe asks you for a base **carb target (g/h)** and a base **hydration target (ml/h)**, and then modulates the carbs automatically by intensity zone and (optionally) the hydration by HR/power + weather. Default values out of the box are **50 g/h** for carbs (Endurance preset) and **750 ml/h** for hydration — sensible for a 2–3 h endurance ride in mild weather, but **not optimal for everyone**. Use one of the three carb presets in the Fueling tab as a quick starting point, then refine.
+
+| Carb preset | Base g/h | Effective range with zone multiplier | When to pick it |
+|---|---|---|---|
+| **Casual / Recovery** | 30 | 12–45 g/h | Sub-2h easy rides, recovery, commuting |
+| **Endurance** *(default)* | 50 | 20–75 g/h | Typical 2–3 h training rides |
+| **Race / Long ride** | 75 | 30–90 g/h *(capped)* | Long events, fast group rides, riders with partially-trained gut |
+
+The presets are one-shot apply actions — tapping fills the target field and you can fine-tune manually after. The numbers below give the underlying logic if you want to dial in your own base.
 
 #### Carb target (g/h)
 
@@ -156,13 +166,13 @@ Sports-nutrition guidance scales with ride duration and intensity:
 |---|---|---|
 | < 60 min | 0–30 | Glycogen stores cover it; only fuel if you're going all-out from minute one |
 | 1–2 h | 30–60 | Single-source glucose works (gel, drink, banana) |
-| 2–3 h | 60–90 | Endurance standard. **KSafe default (60) is the bottom of this range** |
-| 3–5 h | 75–100 | Need a glucose+fructose mix (multi-sugar) to break the 60 g/h gut-transporter limit |
-| > 5 h / ultra | 90–120 | Only realistic with gut training; most riders top out at 80–95 |
+| 2–3 h | 50–75 | Endurance standard — **Endurance preset (50) lands here**, raise toward 60-75 for sustained tempo / threshold work |
+| 3–5 h | 65–90 | Need a glucose+fructose mix (multi-sugar) to push past the 60 g/h single-transporter limit — **Race preset (75) lands here** |
+| > 5 h / ultra | 80–120 | Only realistic with gut training; recreational riders top out at 80–95 (the integrator's 90 g/h cap reflects this) |
 
 **Bodyweight ceiling**: research puts the gut-trained max at roughly **1.0–1.2 g/kg/h**. A 75 kg rider can sustainably absorb up to ~90 g/h; a 60 kg rider up to ~70 g/h. Use `bodyweight_kg × 1.0` as a "going-hard" target.
 
-**Intensity scaling is automatic**: once you set the base, KSafe's 0.7×–1.3× zone multiplier (table above) does the per-second adjustment. You don't need to bump the base for hard intervals — KSafe sees the HR or power and integrates more grams while you're in zone 4-5. The per-hour number you configure is **your target at threshold-ish effort**, not your peak.
+**Intensity scaling is automatic**: once you set the base, KSafe's 0.4×–1.5× zone multiplier (capped at 90 g/h absolute, see table above) does the per-second adjustment. You don't need to bump the base for hard intervals — KSafe sees the HR or power and integrates more grams while you're in zone 4-5, and clamps at the gut limit when you stack a high base with a top-zone effort. The per-hour number you configure is **your target at threshold-ish effort**, not your peak.
 
 #### Hydration target (ml/h)
 

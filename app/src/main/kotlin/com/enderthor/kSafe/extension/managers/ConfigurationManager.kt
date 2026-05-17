@@ -5,10 +5,12 @@ import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.stringPreferencesKey
 import com.enderthor.kSafe.activity.dataStore
 import com.enderthor.kSafe.data.EmergencyState
+import com.enderthor.kSafe.data.FuelingState
 import com.enderthor.kSafe.data.KSafeConfig
 import com.enderthor.kSafe.data.SenderConfig
 import com.enderthor.kSafe.data.WellnessHistory
 import com.enderthor.kSafe.data.defaultEmergencyStateJson
+import com.enderthor.kSafe.data.defaultFuelingStateJson
 import com.enderthor.kSafe.data.defaultKSafeConfigJson
 import com.enderthor.kSafe.data.defaultSenderConfigJson
 import com.enderthor.kSafe.data.defaultWellnessHistoryJson
@@ -24,6 +26,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.filterNotNull
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.launch
 import kotlinx.serialization.encodeToString
@@ -35,6 +38,7 @@ class ConfigurationManager(private val context: Context) {
     private val senderConfigKey = stringPreferencesKey("sender")
     private val emergencyStateKey = stringPreferencesKey("emergencystate")
     private val wellnessHistoryKey = stringPreferencesKey("wellnesshistory")
+    private val fuelingStateKey = stringPreferencesKey("fuelingstate")
 
     // ─── KSafeConfig ──────────────────────────────────────────────────────────
 
@@ -132,6 +136,44 @@ class ConfigurationManager(private val context: Context) {
                 EmergencyState()
             }
         }
+    }
+
+    // ─── FuelingState (carbs/hydration accumulator persistence) ───────────────
+
+    /**
+     * Persist a snapshot of both fueling trackers. Called every ~30 s from
+     * KSafeExtension while a ride is recording so an extension crash never
+     * loses more than ~30 s of integrated target / logged intake.
+     */
+    suspend fun saveFuelingState(state: FuelingState) {
+        context.dataStore.edit { prefs ->
+            prefs[fuelingStateKey] = jsonForStorage.encodeToString(state)
+        }
+    }
+
+    /**
+     * One-shot read of the persisted [FuelingState]. Returns a default-initialised
+     * instance when nothing has been saved yet (fresh install, or after [clearFuelingState]).
+     * Decode failures are logged and also coerced to the default — better to lose
+     * an hour of fueling totals than to crash the extension on boot due to a stale
+     * JSON shape.
+     */
+    suspend fun loadFuelingState(): FuelingState {
+        return try {
+            val prefs = context.dataStore.data.first()
+            val raw = prefs[fuelingStateKey] ?: defaultFuelingStateJson
+            jsonWithUnknownKeys.decodeFromString<FuelingState>(raw)
+        } catch (e: Throwable) {
+            Timber.e(e, "Failed to read FuelingState — using defaults")
+            FuelingState()
+        }
+    }
+
+    /** Removes the persisted snapshot. Called on the Recording → Idle transition
+     *  so the next ride starts with a clean accumulator instead of resuming the
+     *  previous ride's totals. */
+    suspend fun clearFuelingState() {
+        context.dataStore.edit { prefs -> prefs.remove(fuelingStateKey) }
     }
 
     // ─── WellnessHistory ──────────────────────────────────────────────────────

@@ -2,7 +2,10 @@ package com.enderthor.kSafe.extension.managers
 
 import android.content.Context
 import com.enderthor.kSafe.R
+import com.enderthor.kSafe.data.CarbFuelingState
 import com.enderthor.kSafe.data.KSafeConfig
+import com.enderthor.kSafe.data.fuelingAlertColorRes
+import com.enderthor.kSafe.extension.util.ABSORPTION_CAP_GPH
 import com.enderthor.kSafe.extension.util.ALERT_DETAIL_MAX_CHARS
 import com.enderthor.kSafe.extension.util.ALERT_TITLE_MAX_CHARS
 import com.enderthor.kSafe.extension.util.IntensityZoneCalculator
@@ -64,8 +67,10 @@ class CarbsTracker(
      */
     private val SPEED_STALE_MS = 10_000L
 
-    private val ALERT_BG_COLOR = 0xFFE65100.toInt()  // amber
-    private val ALERT_TX_COLOR = 0xFFFFFFFF.toInt()  // white
+    // See HydrationTracker — InRideAlert.backgroundColor / .textColor are @ColorRes,
+    // not @ColorInt. Use R.color.* resources or the host's getColor() crashes.
+    // BG colour is rider-configurable via config.carbAlertBgColor — see fireAlert.
+    private val ALERT_TX_COLOR = R.color.alert_text_white
     private val AUTO_DISMISS_MS = 10_000L
 
     // ─── Live data (push from KSafeExtension) ────────────────────────────────
@@ -127,7 +132,7 @@ class CarbsTracker(
 
     // ─── Public API ──────────────────────────────────────────────────────────
 
-    fun start(config: KSafeConfig) {
+    fun start(config: KSafeConfig, restoreFrom: CarbFuelingState? = null) {
         this.config = config
         if (!config.carbsTrackerEnabled) return
         // Snapshot the previous monitor before resetting state so we can join() it inside
@@ -136,12 +141,24 @@ class CarbsTracker(
         // log row with all-zero state right after a restart.
         val oldJob = monitorJob
         val now = System.currentTimeMillis()
-        cumTargetG = 0f
-        cumLoggedG = 0
-        sessionStartMs = now
+        if (restoreFrom != null) {
+            // Extension was killed mid-ride and we're restoring from persisted snapshot.
+            // Keep accumulators + alert/log timestamps so the rider doesn't lose their
+            // session totals; the next tick won't integrate (lastTickMs = 0L sentinel),
+            // so the OFF window between the crash and now isn't double-counted.
+            cumTargetG = restoreFrom.cumTargetG
+            cumLoggedG = restoreFrom.cumLoggedG
+            sessionStartMs = restoreFrom.sessionStartMs.takeIf { it > 0 } ?: now
+            lastLogMs = restoreFrom.lastLogMs.takeIf { it > 0 } ?: now
+            lastAlertMs = restoreFrom.lastAlertMs
+        } else {
+            cumTargetG = 0f
+            cumLoggedG = 0
+            sessionStartMs = now
+            lastLogMs = now                  // first time-based alert counts from session start
+            lastAlertMs = 0L
+        }
         lastTickMs = 0L                  // 0 = "no previous tick"; first tick won't accumulate
-        lastLogMs = now                  // first time-based alert counts from session start
-        lastAlertMs = 0L
         lastPeriodicLogMs = 0L
         lastZoneSnapshot = ZoneSnapshot(ZoneSource.NONE, -1, 0, 1f)
         for (i in lastLoggedGramsBySlot.indices) { lastLoggedGramsBySlot[i] = 0; lastLogMsBeforeBySlot[i] = 0L }
@@ -153,14 +170,31 @@ class CarbsTracker(
             "base_gph=${config.carbTargetGperHour}," +
                 "deficit_alert=${config.carbDeficitAlertEnabled}," +
                 "deficit_threshold_g=${config.carbDeficitThresholdG}," +
+                "deficit_initial_delay_min=${config.carbDeficitInitialDelayMin}," +
                 "time_alert=${config.carbTimeAlertEnabled}," +
                 "time_interval_min=${config.carbTimeIntervalMin}," +
                 "time_initial_delay_min=${config.carbTimeInitialDelayMin}," +
-                "beep=${config.carbBeepPattern}"
+                "beep=${config.carbBeepPattern}," +
+                "restored=${restoreFrom != null}"
         }
-        Timber.d("CarbsTracker started, target=${config.carbTargetGperHour} g/h")
+        Timber.d("CarbsTracker started, target=${config.carbTargetGperHour} g/h, restored=${restoreFrom != null}")
         publishStatus()
     }
+
+    /**
+     * Snapshot of fields that must survive an extension restart. Read on demand by
+     * [KSafeExtension]'s persistence loop; safe to call from any thread (Volatile reads).
+     * Returns the current accumulators + cooldown / session timestamps so a restored
+     * tracker can resume mid-ride without losing fueling totals or re-firing an alert
+     * that already fired before the crash.
+     */
+    fun getPersistableState(): CarbFuelingState = CarbFuelingState(
+        cumTargetG = cumTargetG,
+        cumLoggedG = cumLoggedG,
+        sessionStartMs = sessionStartMs,
+        lastLogMs = lastLogMs,
+        lastAlertMs = lastAlertMs,
+    )
 
     fun stop() {
         monitorJob?.cancel()
@@ -303,7 +337,10 @@ class CarbsTracker(
      * tweaks to the formula stay in lock-step.
      */
     private fun computeBurnRateGph(): Int =
-        (config.carbTargetGperHour * lastZoneSnapshot.multiplier).toInt()
+        // Mirror the same absorption clamp the integrator uses so the burn-rate field
+        // can never show a number higher than what the tick is actually integrating.
+        (config.carbTargetGperHour * lastZoneSnapshot.multiplier)
+            .coerceAtMost(ABSORPTION_CAP_GPH).toInt()
 
     fun getSummary(): CarbSummary = CarbSummary(
         cumTargetG = cumTargetG.toInt(),
@@ -338,8 +375,16 @@ class CarbsTracker(
             // coerceAtLeast(0L): a wall-clock NTP correction can push `now` backwards by
             // seconds — we never want cumTargetG to decrease, so clamp negative dt to 0.
             val dtSec = (now - lastTickMs).coerceAtLeast(0L) / 1000f
-            val ratePerSec = config.carbTargetGperHour / 3600f
-            cumTargetG += dtSec * ratePerSec * zone.multiplier
+            // Effective g/h: base × intensity multiplier, then clamped to the gut
+            // absorption ceiling so the cumulative target never advances faster than
+            // a recreational rider can actually consume (see IntensityZoneCalculator).
+            // Without this clamp, a Race-preset base (75 g/h) × top zone multiplier
+            // (1.5) would integrate at 112 g/h, asking the rider for intake their
+            // gut cannot absorb.
+            val effectiveGph = (config.carbTargetGperHour * zone.multiplier)
+                .coerceAtMost(ABSORPTION_CAP_GPH)
+            val ratePerSec = effectiveGph / 3600f
+            cumTargetG += dtSec * ratePerSec
         }
         // Update lastTickMs on every tick (moving or not) so a stationary→moving
         // transition doesn't claim the entire stationary period in one big dt.
@@ -357,6 +402,17 @@ class CarbsTracker(
 
     private fun evaluateDeficitAlert(now: Long) {
         if (!config.carbDeficitAlertEnabled) return
+        // Initial-delay grace period — mirrors the time-alert gate. The integrator runs
+        // from t=0, so on a fresh ride the deficit crosses the threshold purely from
+        // elapsed time (no rider misconduct). Without this gate the rider sees a "behind
+        // 25 g" nag at minute ~25 of a fresh ride, which reads as the app malfunctioning.
+        // The delay only applies to the FIRST alert in the session — once any alert has
+        // fired or the rider has logged something, normal logic takes over.
+        val isFirstAlert = lastAlertMs == 0L && cumLoggedG == 0
+        if (isFirstAlert && config.carbDeficitInitialDelayMin > 0) {
+            val initialDelayMs = config.carbDeficitInitialDelayMin * 60_000L
+            if (now - sessionStartMs < initialDelayMs) return
+        }
         val deficit = (cumTargetG - cumLoggedG).toInt()
         if (deficit < config.carbDeficitThresholdG) return
         if (now - lastAlertMs < ALERT_COOLDOWN_MS) return
@@ -375,7 +431,9 @@ class CarbsTracker(
         }
         val intervalMs = config.carbTimeIntervalMin * 60_000L
         if (now - lastLogMs < intervalMs) return
-        if (now - lastAlertMs < ALERT_COOLDOWN_MS) return
+        // See HydrationTracker.evaluateTimeAlert — cooldown for time alerts respects the
+        // rider's configured interval so a 1-min interval truly fires every minute.
+        if (now - lastAlertMs < minOf(ALERT_COOLDOWN_MS, intervalMs)) return
         val deficit = (cumTargetG - cumLoggedG).toInt()
         fireAlert(source = "time", deficit = deficit, elapsedMin = (now - lastLogMs) / 60_000)
     }
@@ -399,12 +457,16 @@ class CarbsTracker(
         )
         config.carbBeepPattern.toPlayBeepPattern()?.let { karooSystem.dispatch(it) }
         karooSystem.dispatch(InRideAlert(
-            id = "ksafe-carb-alert-$source",
+            // Unique-per-fire ID: re-dispatching an InRideAlert with the same id while
+            // the host still has the previous overlay tracked has been observed to crash
+            // the Karoo ride app when the alert re-fires after ALERT_COOLDOWN_MS. Appending
+            // the wall-clock timestamp guarantees a fresh id per fire.
+            id = "ksafe-carb-alert-$source-${lastAlertMs}",
             icon = R.drawable.ic_ksafe,
             title = title,
             detail = detail,
             autoDismissMs = AUTO_DISMISS_MS,
-            backgroundColor = ALERT_BG_COLOR,
+            backgroundColor = fuelingAlertColorRes(config.carbAlertBgColor),
             textColor = ALERT_TX_COLOR,
         ))
         val burnRateGph = computeBurnRateGph()

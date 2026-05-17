@@ -58,6 +58,14 @@ class CrashDetectionManager(
      * Single-sample peak thresholds — a parallel detector that fires on a single raw sample
      * exceeding this bar, without requiring the 3-sample sliding average.
      * All presets use pthr = smooth_thr + 5.
+     *
+     * **History note:** a v2.1 candidate widened these by +5..+8 m/s² in response to FP
+     * reports. The reports were re-attributed to a v1.2.0-era bug (gyro entry path, fixed
+     * in commit ab69a40 before v2.0.0) so the widening was reverted — v2.0.0 already
+     * shipped without the gyro entry path that produced those FPs. Future tuning should
+     * wait for a v2.0+ FP log with the (now-working) calibration logger so the change
+     * is targeted at the actual trigger path (peak vs smooth vs gyro-stale-fix corner case)
+     * rather than guesswork.
      */
     private val peakImpactThresholds = mapOf(
         CrashSensitivity.LOW    to 60.0,
@@ -98,7 +106,14 @@ class CrashDetectionManager(
         const val POST_TMO_COOLDOWN_MS = 30_000L
         const val POST_CLUSTER_COOLDOWN_MS = 60_000L
         const val CLUSTER_WINDOW_MS = 120_000L
-        const val CLUSTER_MIN_TMO = 3
+        // Was 3 in v2.0 — lowered to 2 in v2.1 so the cluster boost engages earlier on
+        // genuinely rough terrain (bikepark, MTB descents). Two confirmed-then-timed-out
+        // impacts within 2 min is already a strong "the terrain is launching the
+        // accelerometer over the threshold without a real crash" signal. The boost is
+        // additive (+8 m/s² to peak threshold for the cooldown window) and the smoothed
+        // path is unchanged, so a real crash on rough terrain still triggers through the
+        // sustained-impact path.
+        const val CLUSTER_MIN_TMO = 2
 
         // ── CrashStateMachine "sample timestamp" base ────────────────────────
         // The state machine treats `sample.timestampMs` as the authoritative time

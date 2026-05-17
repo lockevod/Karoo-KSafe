@@ -170,10 +170,20 @@ class CalibrationLogger(
     companion object {
         /** Maximum entries kept in the in-memory buffer between flushes. */
         const val MAX_BUFFER = 500
+        /** A successful flush within this window means the flush coroutine is alive.
+         *  Set to 3 × FLUSH_INTERVAL_MS so a single missed flush (e.g. transient IO
+         *  hiccup) doesn't trip a restart — only a genuinely dead flush job does. */
+        const val HEALTH_STALE_THRESHOLD_MS = 180_000L
         /** Flush in-memory buffer to disk every 60 seconds. */
         const val FLUSH_INTERVAL_MS = 60_000L
         /** Output CSV file name, written to the app's external files dir. */
         const val FILE_NAME = "ksafe_calibration.csv"
+        /** Renamed previous-session file kept around when [enable] is called over an
+         *  existing file with content (e.g. extension restarted after a crash before
+         *  the previous session's auto-send fired). The rider can still send it from
+         *  the Settings UI; it is overwritten each enable() so only the MOST RECENT
+         *  un-sent session is preserved — older ones beyond that are lost. */
+        const val PREVIOUS_FILE_NAME = "ksafe_calibration_previous.csv"
         const val HEADER = "timestamp_ms,elapsed_s,event,data"
         /** Minimum raw accel magnitude (m/s²) to bother logging HIGH_MAG events. ~2.2g above gravity. */
         const val HIGH_MAG_MIN = 22f
@@ -258,6 +268,15 @@ class CalibrationLogger(
      * sensor thread genuinely blocked here.
      */
     private val buffer = ArrayDeque<String>()
+
+    /** Wall-clock ms of the most recent successful disk flush. Used by [isHealthy] so
+     *  KSafeExtension's health-check coroutine can detect a dead flush job and restart
+     *  it. Updated in [flush] on success. */
+    @Volatile private var lastFlushAtMs: Long = 0L
+
+    /** Wall-clock ms when [enable] last ran. Stops [isHealthy] from immediately flagging
+     *  a freshly-enabled logger as unhealthy before the first FLUSH_INTERVAL_MS has elapsed. */
+    @Volatile private var enabledAtMs: Long = 0L
     @Volatile private var startTime = 0L
     private var flushJob: Job? = null
 
@@ -265,6 +284,8 @@ class CalibrationLogger(
 
     fun enable() {
         startTime = System.currentTimeMillis()
+        enabledAtMs = startTime
+        lastFlushAtMs = 0L
         // Generate a new random session ID for this logging session.
         // Uses lower 24 bits of current time (ms) XORed with a pseudo-random salt so two
         // sessions started at nearly the same millisecond still get different IDs.
@@ -282,7 +303,28 @@ class CalibrationLogger(
                 val dir = context.getExternalFilesDir(null)
                 if (dir != null) {
                     dir.mkdirs()
-                    File(dir, FILE_NAME).writeText("$HEADER\n")
+                    val file = File(dir, FILE_NAME)
+                    // Preserve previous session's content. If the rider had logging on
+                    // during a ride and the app crashed (or the rider closed without
+                    // sending), the previous file would otherwise be wiped on the next
+                    // enable() because `writeText(HEADER)` overwrites unconditionally.
+                    // Instead: rename it aside so the rider can still send it via the
+                    // Settings "Send" button (which reads getFileContent() = current file
+                    // + buffer). The renamed file isn't sent automatically — that would
+                    // require background work + retries on every enable, which is more
+                    // surprise than fix. If the rider doesn't notice and triggers another
+                    // enable(), the OLD previous gets overwritten by the NEW previous.
+                    if (file.exists() && file.length() > (HEADER.length + 2)) {
+                        try {
+                            val prev = File(dir, PREVIOUS_FILE_NAME)
+                            if (prev.exists()) prev.delete()
+                            file.renameTo(prev)
+                            Timber.i("CalibrationLogger: preserved previous session to $PREVIOUS_FILE_NAME (${file.length()} bytes)")
+                        } catch (e: Exception) {
+                            Timber.w(e, "CalibrationLogger: failed to preserve previous file — overwriting")
+                        }
+                    }
+                    file.writeText("$HEADER\n")
                 }
             } catch (e: Exception) {
                 Timber.w(e, "CalibrationLogger: failed to reset log file on enable")
@@ -345,7 +387,29 @@ class CalibrationLogger(
 
     // ─── Data access ─────────────────────────────────────────────────────────
 
-    fun getEntryCount(): Int = synchronized(buffer) { buffer.size }
+    /**
+     * Total entries across the session: lines on disk (excluding the CSV header) plus
+     * lines still in the in-memory buffer. The previous implementation returned only
+     * the buffer size, which made the rider see "0 entries" most of the time because
+     * the 60-s flush coroutine empties the buffer on every flush. Reading the file
+     * length on every UI refresh (1 Hz polling from SettingsScreen) is acceptable —
+     * `File.readLines` is fast on a few MB of CSV and runs while logging is enabled
+     * (the rider is on the Settings screen, not actively riding).
+     */
+    fun getEntryCount(): Int {
+        val bufferCount = synchronized(buffer) { buffer.size }
+        val diskCount = try {
+            val dir = context.getExternalFilesDir(null) ?: return bufferCount
+            val file = File(dir, FILE_NAME)
+            if (!file.exists()) 0
+            // Subtract 1 for the CSV header row written by enable().
+            else (file.bufferedReader().use { it.lineSequence().count() } - 1).coerceAtLeast(0)
+        } catch (e: Exception) {
+            Timber.w(e, "CalibrationLogger: failed to count disk entries")
+            0
+        }
+        return diskCount + bufferCount
+    }
 
     /**
      * Returns the full CSV file content from disk (all flushed data + any pending buffer entries).
@@ -382,17 +446,57 @@ class CalibrationLogger(
     fun clear() {
         synchronized(buffer) { buffer.clear() }
         try {
-            context.getExternalFilesDir(null)?.let { File(it, FILE_NAME).delete() }
+            context.getExternalFilesDir(null)?.let { dir ->
+                File(dir, FILE_NAME).delete()
+                // Also wipe the preserved previous-session file — rider's intent on
+                // "Clear" is "I don't want any of this data", not just the current run.
+                File(dir, PREVIOUS_FILE_NAME).delete()
+            }
         } catch (e: Exception) {
             Timber.w(e, "CalibrationLogger: failed to delete log file")
         }
-        Timber.i("CalibrationLogger: buffer and file cleared")
+        Timber.i("CalibrationLogger: buffer and files cleared")
     }
 
     fun getLogFile(): File? =
         context.getExternalFilesDir(null)?.let { dir ->
             File(dir, FILE_NAME).takeIf { it.exists() }
         }
+
+    /** Returns the content of the previous-session file (preserved across [enable] when
+     *  a previous logging session ended without sending), or `null` if no such file
+     *  exists. Used by `KSafeExtension.sendCalibrationLog` to recover data from a ride
+     *  whose extension was killed before the auto-send fired. */
+    fun getPreviousFileContent(): String? = try {
+        val dir = context.getExternalFilesDir(null)
+        if (dir == null) null else {
+            val prev = File(dir, PREVIOUS_FILE_NAME)
+            if (!prev.exists() || prev.length() <= (HEADER.length + 2L)) null
+            else prev.readText()
+        }
+    } catch (e: Exception) {
+        Timber.w(e, "CalibrationLogger: failed to read previous session file")
+        null
+    }
+
+    /** Filename advertised in the Telegram document upload for the recovered file. */
+    fun previousFileNameForSession(): String = "ksafe_${BuildConfig.VERSION_NAME}_previous_${DEVICE_LABEL}.csv"
+
+    /** Deletes the preserved previous-session file. Called by the Settings "Send" path
+     *  after a successful upload so the rider doesn't see "previous: ✓" forever. */
+    fun deletePreviousFile() {
+        try {
+            context.getExternalFilesDir(null)?.let { dir ->
+                val prev = File(dir, PREVIOUS_FILE_NAME)
+                if (prev.exists()) {
+                    prev.delete()
+                    Timber.i("CalibrationLogger: previous session file deleted after successful send")
+                }
+            }
+        } catch (e: Exception) {
+            Timber.w(e, "CalibrationLogger: failed to delete previous session file")
+        }
+    }
 
     // ─── Disk flush ──────────────────────────────────────────────────────────
 
@@ -404,7 +508,13 @@ class CalibrationLogger(
     private fun flush() {
         val lines: List<String>
         synchronized(buffer) {
-            if (buffer.isEmpty()) return
+            if (buffer.isEmpty()) {
+                // Empty-buffer flush still counts as healthy — the loop ran, the IO
+                // dispatcher is alive. Without this, an idle logger looks unhealthy
+                // and triggers a spurious restart.
+                lastFlushAtMs = System.currentTimeMillis()
+                return
+            }
             lines = buffer.toList()
             buffer.clear()
         }
@@ -414,9 +524,76 @@ class CalibrationLogger(
             val file = File(dir, FILE_NAME)
             // Append mode — the header was written on enable(), we just add rows.
             file.appendText(lines.joinToString("\n", postfix = "\n"))
+            lastFlushAtMs = System.currentTimeMillis()
             Timber.d("CalibrationLogger: appended ${lines.size} entries to $FILE_NAME")
         } catch (e: Exception) {
             Timber.w(e, "CalibrationLogger: flush failed (${lines.size} entries lost)")
+        }
+    }
+
+    /**
+     * Is the flush coroutine alive and writing? Returns false when the logger is
+     * enabled but the flush job has not run a successful flush within
+     * [HEALTH_STALE_THRESHOLD_MS]. Used by `KSafeExtension`'s health-check loop
+     * to auto-restart a stuck logger (covers cases where the IO dispatcher dies
+     * or the flush coroutine gets stuck).
+     *
+     * Returns true when:
+     *  - logger is disabled (nothing to be healthy about)
+     *  - logger was just enabled (give it one flush interval before judging)
+     *  - last successful flush was within the threshold
+     */
+    fun isHealthy(): Boolean {
+        if (!isEnabled) return true
+        val now = System.currentTimeMillis()
+        // Grace period: don't judge the logger as unhealthy in the first ~2 flush
+        // intervals after enable() — the very first flush only runs after delay().
+        if (now - enabledAtMs < 2 * FLUSH_INTERVAL_MS) return true
+        if (lastFlushAtMs == 0L) return false
+        return (now - lastFlushAtMs) < HEALTH_STALE_THRESHOLD_MS
+    }
+
+    /**
+     * Cancels and re-launches the flush coroutine WITHOUT touching the on-disk file,
+     * buffer, or session id. Used by the health-check restart path so a stuck flush
+     * job recovers without losing data or causing the rider to see a fresh "0 entries".
+     * No-op when the logger is disabled.
+     */
+    fun restartFlushJob() {
+        if (!isEnabled) return
+        Timber.w("CalibrationLogger: restarting flush job (health-check triggered)")
+        flushJob?.cancel()
+        lastFlushAtMs = System.currentTimeMillis()  // reset clock so we don't immediately re-restart
+        flushJob = scope.launch(Dispatchers.IO) {
+            while (true) {
+                delay(FLUSH_INTERVAL_MS)
+                flush()
+            }
+        }
+    }
+
+    /**
+     * After a successful periodic upload, drop the on-disk file contents (re-writing
+     * the header) so the next 20-minute window starts fresh. The in-memory buffer
+     * is preserved so any entries written between the upload-prepare moment and the
+     * truncate moment are kept and flushed normally on the next tick. Returns the
+     * number of lines that were truncated (so the caller can log progress).
+     */
+    fun truncateAfterSuccessfulSend(): Int {
+        return try {
+            val dir = context.getExternalFilesDir(null) ?: return 0
+            val file = File(dir, FILE_NAME)
+            if (!file.exists()) return 0
+            val before = file.bufferedReader().use { it.lineSequence().count() }
+            file.writeText("$HEADER\n")
+            // Log a marker row so the next chunk's CSV self-identifies as a continuation.
+            addEntryDirect(Event.LOGGER_START,
+                "logging_resumed_after_periodic_send,session=$sessionId,prev_lines=$before")
+            Timber.i("CalibrationLogger: truncated after successful periodic send ($before lines uploaded)")
+            (before - 1).coerceAtLeast(0)
+        } catch (e: Exception) {
+            Timber.w(e, "CalibrationLogger: truncate after send failed")
+            0
         }
     }
 

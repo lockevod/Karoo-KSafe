@@ -86,6 +86,10 @@ The **peak** detector fires on a single raw sample exceeding this bar, without t
 
 > **Why two detectors:** the smoothed path rejects single-sample noise from cobblestones, dirt-to-asphalt transitions or speed bumps. But a real rigid impact (handlebar against asphalt, direct collision with an obstacle) can produce a peak that lasts only 10–20ms — a single sample at 50 Hz. Smoothing alone would dilute a 70 m/s² peak with two surrounding 15 m/s² samples down to ~33 m/s², below the MEDIUM/HIGH smoothed thresholds, causing a silent false negative. The peak path catches these short events.
 
+> **v2.1 deliberation (not applied):** a candidate v2.1 change considered widening the peak thresholds to 68/56/45 (LOW/MED/HIGH) after FP reports. Subsequent commit-history review attributed those reports to the v1.2.0-era gyro entry path (a third entry branch `gyro > 6 rad/s` that triggered on hard cornering / shoulder checks). That branch was removed in commit `ab69a40` before v2.0.0 shipped, so v2.0+ riders are not exposed to the FP pattern those reports described. The peak-threshold widening was reverted; future tuning will be data-driven from v2.0+ FP logs (now that the calibration logger reliably preserves them across crashes).
+
+> **Why two detectors:** the smoothed path rejects single-sample noise from cobblestones, dirt-to-asphalt transitions or speed bumps. But a real rigid impact (handlebar against asphalt, direct collision with an obstacle) can produce a peak that lasts only 10–20ms — a single sample at 50 Hz. Smoothing alone would dilute a 70 m/s² peak with two surrounding 15 m/s² samples down to ~33 m/s², below the MEDIUM/HIGH smoothed thresholds, causing a silent false negative. The peak path catches these short events.
+
 > **Reference (IEEE Accident Detection literature):**
 > Normal bumps / hard braking → up to ~1.5g (14.7 m/s²)
 > MTB jump landing → 3–5g, typically followed by continued movement
@@ -437,6 +441,13 @@ The class does not use locks. The algorithm tolerates slightly stale reads acros
 | **C6** | **Grade-aware proactive peak boost.** The single-frame peak threshold is raised by +2/+5/+8 m/s² for descents of −4/−7/−10% respectively. This pre-empts the first TERRAIN_CLUSTER false alarm on bad descents. The smooth threshold is untouched — a real crash on a descent still fires via the smooth path. | ✅ Implemented |
 | **C7** | **Deceleration tracking in `updateSpeed()`.** `lastDecelerationKmhPerS = Δspeed/Δt` is computed on every speed update and logged at `IMPACT_ENTER`. Not used as a gate (GPS ~1 Hz is too coarse), but large negative values (< −10 km/h/s) at impact are strong calibration evidence. | ✅ Implemented (logging only) |
 | **C8** | **Enriched calibration logs.** All major events (`IMPACT_ENTER`, `IMPACT_TMO`, `CRASH_CONFIRMED`, `PERIODIC`, `HIGH_MAG_NORISING`) now include `grade`, `cadence`, `grade_boost`, and `decel` fields. Gives full contextual picture for each event. | ✅ Implemented |
+
+### Revision 4 — May 2026 (v2.1 — FP field reports)
+
+| ID | Change | Status |
+|----|--------|--------|
+| **C1.1** | **Peak thresholds widening — considered but reverted.** A candidate change widened pthr to `smoothedThr + 8..+13` after FP reports. Commit-history review re-attributed those reports to the v1.2.0-era gyro entry path (removed in `ab69a40` before v2.0.0). Since v2.0+ riders are not exposed to that pattern, the widening was reverted to preserve the FN-protection rationale of the original `pthr = smoothedThr + 5` design. | ↩️ Reverted (kept rev-3 values) |
+| **C9** | **TERRAIN_CLUSTER engages earlier** — `CLUSTER_MIN_TMO` lowered from 3 to 2. Two confirmed-then-timed-out impacts within the 2-min cluster window now activate the +8 m/s² peak boost (`POST_CLUSTER_COOLDOWN_MS = 60 s`). Bikepark / MTB descent riders accumulate IMPACT_TMOs faster than recreational rides, and the third TMO was often where the FP fired. The boost only adds to the peak threshold, not the smoothed one, so a real sustained crash on rough terrain still triggers via the smoothed path. | ✅ Implemented |
 
 ### Revision 3 — April 2026 (post-calibration, real ride logs)
 
