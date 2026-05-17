@@ -86,6 +86,10 @@ The **peak** detector fires on a single raw sample exceeding this bar, without t
 
 > **Why two detectors:** the smoothed path rejects single-sample noise from cobblestones, dirt-to-asphalt transitions or speed bumps. But a real rigid impact (handlebar against asphalt, direct collision with an obstacle) can produce a peak that lasts only 10–20ms — a single sample at 50 Hz. Smoothing alone would dilute a 70 m/s² peak with two surrounding 15 m/s² samples down to ~33 m/s², below the MEDIUM/HIGH smoothed thresholds, causing a silent false negative. The peak path catches these short events.
 
+> **v2.1 deliberation (not applied):** a candidate v2.1 change considered widening the peak thresholds to 68/56/45 (LOW/MED/HIGH) after FP reports. Subsequent commit-history review attributed those reports to the v1.2.0-era gyro entry path (a third entry branch `gyro > 6 rad/s` that triggered on hard cornering / shoulder checks). That branch was removed in commit `ab69a40` before v2.0.0 shipped, so v2.0+ riders are not exposed to the FP pattern those reports described. The peak-threshold widening was reverted; future tuning will be data-driven from v2.0+ FP logs (now that the calibration logger reliably preserves them across crashes).
+
+> **Why two detectors:** the smoothed path rejects single-sample noise from cobblestones, dirt-to-asphalt transitions or speed bumps. But a real rigid impact (handlebar against asphalt, direct collision with an obstacle) can produce a peak that lasts only 10–20ms — a single sample at 50 Hz. Smoothing alone would dilute a 70 m/s² peak with two surrounding 15 m/s² samples down to ~33 m/s², below the MEDIUM/HIGH smoothed thresholds, causing a silent false negative. The peak path catches these short events.
+
 > **Reference (IEEE Accident Detection literature):**
 > Normal bumps / hard braking → up to ~1.5g (14.7 m/s²)
 > MTB jump landing → 3–5g, typically followed by continued movement
@@ -438,6 +442,13 @@ The class does not use locks. The algorithm tolerates slightly stale reads acros
 | **C7** | **Deceleration tracking in `updateSpeed()`.** `lastDecelerationKmhPerS = Δspeed/Δt` is computed on every speed update and logged at `IMPACT_ENTER`. Not used as a gate (GPS ~1 Hz is too coarse), but large negative values (< −10 km/h/s) at impact are strong calibration evidence. | ✅ Implemented (logging only) |
 | **C8** | **Enriched calibration logs.** All major events (`IMPACT_ENTER`, `IMPACT_TMO`, `CRASH_CONFIRMED`, `PERIODIC`, `HIGH_MAG_NORISING`) now include `grade`, `cadence`, `grade_boost`, and `decel` fields. Gives full contextual picture for each event. | ✅ Implemented |
 
+### Revision 4 — May 2026 (v2.1 — FP field reports)
+
+| ID | Change | Status |
+|----|--------|--------|
+| **C1.1** | **Peak thresholds widening — considered but reverted.** A candidate change widened pthr to `smoothedThr + 8..+13` after FP reports. Commit-history review re-attributed those reports to the v1.2.0-era gyro entry path (removed in `ab69a40` before v2.0.0). Since v2.0+ riders are not exposed to that pattern, the widening was reverted to preserve the FN-protection rationale of the original `pthr = smoothedThr + 5` design. | ↩️ Reverted (kept rev-3 values) |
+| **C9** | **TERRAIN_CLUSTER engages earlier** — `CLUSTER_MIN_TMO` lowered from 3 to 2. Two confirmed-then-timed-out impacts within the 2-min cluster window now activate the +8 m/s² peak boost (`POST_CLUSTER_COOLDOWN_MS = 60 s`). Bikepark / MTB descent riders accumulate IMPACT_TMOs faster than recreational rides, and the third TMO was often where the FP fired. The boost only adds to the peak threshold, not the smoothed one, so a real sustained crash on rough terrain still triggers via the smoothed path. | ✅ Implemented |
+
 ### Revision 3 — April 2026 (post-calibration, real ride logs)
 
 | ID | Change | Status |
@@ -511,6 +522,54 @@ This is a fundamental limitation of accelerometer-based detection for low-energy
 2. **Cold-start may exceed 8s** in cold-start GPS scenarios (urban canyon, overcast). If the guard expires without speed data, MONITORING is effectively blocked because `currentSpeedKmh = 0.0` won't pass `minSpeed`. This is fail-safe (no false positives) but means there is no detection during the first ~30s of a cold start. Documented limitation.
 
 3. **`SensorManager` event batching** — `SENSOR_DELAY_GAME` does not guarantee 50 Hz. Android may batch events under load, in which case the 3-sample smoothing window may cover more than 60ms. Has not been observed in practice but worth measuring. Workaround if needed: use sample timestamps instead of fixed-count windows.
+
+---
+
+## Post-kill resume (countdown persistence)
+
+Once a crash is confirmed, the rider enters a cancel **countdown** of `countdownSeconds`. If Android kills the KSafe process during that window — usually because of low-memory pressure from a parallel app — the in-memory `countdownJob` dies with it. Without persistence, the alert is silently abandoned.
+
+Phase 3 of the reliability work persists enough state to re-attach the countdown on next boot:
+
+- `EmergencyState.reasonEnum: EmergencyReason?` — written by `startCountdown`, cleared on cancel / alert / idle. `null` for legacy installs before the schema bump.
+- `EmergencyState.countdownDeadlineMs()` — derived from the existing `countdownStartTime + countdownDurationSeconds * 1000`. No new stored field.
+
+### Decision (`EmergencyResumeDecision.decideResume`)
+
+`KSafeExtension.initializeSystem` reads the persisted state right after the first config load and branches on `decideResume(state, now)`:
+
+| Condition | Result | Action |
+|-----------|--------|--------|
+| `status != COUNTDOWN` OR `reasonEnum == null` | `Nothing` | No-op |
+| `now < deadline` | `Active(remainingMs)` | Call `resumeCountdown` — re-launches the countdown job with the same beep / overlay / cancel UX as `startCountdown`, with the remaining duration |
+| `now >= deadline` AND `age <= 24h` | `AfterDeadline` | Show a **10 s mini-confirm** (`SystemAlertWindow`) with cancel button. Default on timeout: send. The persisted state is cleared BEFORE the mini-confirm starts so a second process kill during the 10 s window cannot create an infinite re-trigger loop on next boot |
+| `now >= deadline` AND `age > 24h` | `DiscardStale(age)` | Clear the persisted state silently. The countdown is too old to act on |
+
+### Why a mini-confirm rather than direct send
+
+Process kill is overwhelmingly an Android low-memory event, not a "rider in peril" event. Firing alerts against contacts dozens of minutes after a crash the rider may have already cancelled mentally would be a worse failure mode than the original bug (silent abandonment). The 10 s mini-confirm strikes the balance: a real emergency still goes out by default, but the rider gets a cancel opportunity if they pick up the Karoo and see the overlay.
+
+### Single-shot semantics
+
+A second process kill during the 10 s mini-confirm loses the emergency entirely. This is intentional: the persisted state is cleared before the mini-confirm runs, so the second-kill scenario looks like "no emergency in progress" to the next boot. If we kept the state alive across the mini-confirm, we'd risk re-triggering on every reboot until the rider explicitly cancels.
+
+### Cooldown interaction
+
+`lastCrashTime` lives **in memory** on `CrashDetectionManager`, not in DataStore. After the process dies and restarts, it resets to 0 along with the rest of the manager state. Consequence: during the resumed countdown the cooldown window from the original crash is gone, so a NEW crash detected mid-resume would NOT be suppressed.
+
+This is an accepted gap. The scenarios that cause process kill mid-countdown — Android low-memory pressure, force-stop, or an unrelated crash in the app — are infrequent, and the probability of a real second physical crash arriving within the few seconds of a resumed countdown is extraordinarily small. Persisting `lastCrashTime` would harden this corner but the implementation cost is not justified by the risk it eliminates.
+
+`resumeCountdown` and `resumeAfterDeadline` therefore dispatch the alert through `sendAlerts(config, reason)` directly without going through the `confirmCrash` gate. The gate exists to deduplicate fresh detections; the resumed countdown is a continuation of a detection that already passed it.
+
+### Calibration / observability
+
+The resume paths log to `Timber` at `INFO`/`WARN`:
+
+- `Resuming countdown after process restart, remaining=<ms>ms` (Active path)
+- `Resuming countdown after deadline — mini-confirm` (AfterDeadline path)
+- `Discarding stale countdown, age=<ms>ms` (DiscardStale path)
+
+No new `CalibrationLogger.Event` was added — the resume is an emergency-management behaviour, not a detection-pipeline event.
 
 ---
 

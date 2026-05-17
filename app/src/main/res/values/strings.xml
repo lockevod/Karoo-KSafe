@@ -52,7 +52,7 @@
     <string name="settings_master_hint">When OFF the extension stops monitoring everything — crash, speed-drop, check-in, Health (HR), Fueling. Notifications already configured (ride start/end, custom messages, webhooks) are also suppressed. Leave ON unless you want a hard stop.</string>
     <string name="actions_section_karoo_live">Karoo Live notifications</string>
     <string name="actions_section_karoo_live_tests">Test ride notifications</string>
-    <string name="fueling_fit_export_hint">Writes cumulative carbs (g) and hydration (ml) into the recorded FIT so Strava / Intervals.icu / TrainingPeaks can plot them alongside HR and power.</string>
+    <string name="fueling_fit_export_hint">Writes KSafe data into the recorded FIT so Strava / Intervals.icu / TrainingPeaks can plot it alongside HR and power. Includes cumulative carbs logged (g), cumulative carbs burned (g), current carb burn rate (g/h) and hydration (ml); plus, when wellness is enabled, current HR drift (%), max drift this ride, and wellness alert count.</string>
     <string name="simulate_crash_label">Simulate Crash (send alert now)</string>
     <string name="simulate_crash_confirm_title">Send a real alert?</string>
     <string name="simulate_crash_confirm_body">This sends the configured emergency message through your active provider — no countdown, no cancel. Use this only to verify the channel works end-to-end.</string>
@@ -65,23 +65,52 @@
     <string name="fueling_carb_section">Carbs</string>
     <string name="fueling_hyd_section">Hydration</string>
     <string name="fueling_target_carb_label">Target (g/h)</string>
+    <string name="fueling_target_carb_hint">Typical: 60–90 g/h easy rides, 90–120 g/h hard or long rides. Beginners: 40–60 g/h.</string>
     <string name="fueling_target_hyd_label">Target (ml/h)</string>
+    <string name="fueling_target_hyd_hint">Typical: 500–750 ml/h. Hot, humid or long rides: 1000+ ml/h.</string>
     <string name="fueling_alert_deficit_label">Alert by deficit</string>
     <string name="fueling_alert_time_label">Alert by time</string>
     <string name="fueling_deficit_threshold_g_label">Threshold (g)</string>
     <string name="fueling_deficit_threshold_ml_label">Threshold (ml)</string>
     <string name="fueling_time_interval_label">Interval (min)</string>
     <string name="fueling_initial_delay_label">Initial delay (min, 0 = off)</string>
+    <string name="fueling_deficit_initial_delay_label">Deficit initial delay (min, 0 = off)</string>
+    <string name="fueling_alert_bg_color_label">Alert background colour</string>
     <string name="fueling_custom_title_label">Custom alert title (optional)</string>
     <string name="fueling_custom_title_carb_placeholder">Default: Eat something</string>
     <string name="fueling_custom_title_hyd_placeholder">Default: Drink something</string>
     <string name="fueling_enabled_label">Enabled</string>
     <string name="fueling_items_section">Items</string>
+    <string name="fueling_beep_pattern_label">Sound</string>
+    <string name="beep_pattern_off">Off (visual only)</string>
+    <string name="beep_pattern_single_long">Single long beep</string>
+    <string name="beep_pattern_double_short">Double short pip</string>
+    <string name="beep_pattern_rising_triple">Rising triple chime</string>
+    <string name="beep_pattern_urgent_pulse">Urgent pulse</string>
+    <string name="beep_pattern_done">Done</string>
+    <string name="health_warning_sound_label">Warning sound</string>
+    <string name="health_emergency_sound_hint">Emergency-level uses the urgent crash countdown beep — not configurable by design.</string>
+    <string name="health_medical_sound_hint_warning">In Warning mode this alert plays the picker below (shared with wellness — one sound for every Warning-level alert).</string>
     <string name="fueling_slot_label_label">Label</string>
     <string name="fueling_slot_grams_label">g</string>
     <string name="fueling_slot_ml_label">ml</string>
-    <string name="fueling_post_ride_summary_label">Post-ride summary</string>
-    <string name="fueling_fit_export_label">Write to FIT (Strava / Intervals.icu)</string>
+    <string name="fueling_fit_export_label">Write KSafe data to FIT (Strava / Intervals.icu)</string>
+
+    <!-- Readiness at ride start -->
+    <string name="readiness_at_ride_start_label">Readiness advice at ride start</string>
+    <string name="readiness_at_ride_start_hint">Reads the last 10 rides\' wellness summaries and shows a brief InRideAlert at the start of the next ride if the rider should take it easy. Silent when fully recovered — no per-ride spam. Default ON.</string>
+    <string name="readiness_alert_caution_title">Caution today</string>
+    <string name="readiness_alert_take_easy_title">Take it easy today</string>
+
+    <!-- Footer link to the full docs on GitHub — Karoo can't open URLs, so this is a
+         plain-text reference the rider remembers and looks up on their phone later. -->
+    <string name="fueling_full_guide_hint">More tips and full guide: github.com/lockevod/Karoo-KSafe → docs/health-fueling.md</string>
+    <string name="settings_docs_footer">Help and full docs: github.com/lockevod/Karoo-KSafe → docs/</string>
+
+    <!-- Hydration dynamic estimate -->
+    <string name="fueling_hyd_dynamic_label">Estimate hydration target dynamically</string>
+    <string name="fueling_hyd_dynamic_hint_on">Target now varies with HR / power, body weight, ambient temperature and humidity. Uses karoo-headwind weather data when the extension is installed; otherwise the Karoo onboard temperature sensor (biased +3-8 °C) and 50 %% assumed humidity. Expect ±25-35 %% accuracy in the common HR + onboard configuration; closer to ±20 %% with power meter + Headwind.</string>
+    <string name="fueling_hyd_dynamic_hint_off">Currently using the fixed per-hour target below.</string>
     <string name="fueling_carb_alert_title">Eat something</string>
     <string name="fueling_carb_alert_detail_deficit">Behind by {deficit}g — eat something now (target {target} g/h).</string>
     <string name="fueling_carb_alert_detail_time">{elapsed} min since last log — time to eat (target {target} g/h).</string>
@@ -90,6 +119,13 @@
     <string name="fueling_hyd_alert_detail_time">{elapsed} min since last log — drink (target {target} ml/h).</string>
 
     <!-- Fueling BonusActions -->
+    <string name="action_log_carb_1">KSafe: Log Carb 1</string>
+    <string name="action_log_carb_2">KSafe: Log Carb 2</string>
+    <string name="action_log_carb_3">KSafe: Log Carb 3</string>
+    <string name="action_log_drink_1">KSafe: Log Drink 1</string>
+    <string name="action_log_drink_2">KSafe: Log Drink 2</string>
+    <!-- Legacy string IDs preserved for any external translation that still references them.
+         The new per-slot string IDs above are what extension_info.xml uses now. -->
     <string name="action_log_carb">KSafe: Log Carb</string>
     <string name="action_log_drink">KSafe: Log Drink</string>
 
@@ -100,6 +136,10 @@
     <string name="carb_log_datatype_desc">Tap to log a configured carb item (e.g. gel, bar). Counts toward your hourly target.</string>
     <string name="carb_status_datatype_name">KSafe Carb Status</string>
     <string name="carb_status_datatype_desc">Shows current carb deficit relative to target. Color-coded by urgency.</string>
+    <string name="carb_burn_rate_datatype_name">KSafe Carb Burn Rate</string>
+    <string name="carb_burn_rate_datatype_desc">Current carb burn rate in g/h, modulated by your HR/power intensity zone. Falls back to the configured base target when no sensor data is available.</string>
+    <string name="carbs_burned_datatype_name">KSafe Carbs Burned</string>
+    <string name="carbs_burned_datatype_desc">Cumulative carbs burned this session in grams (zone-aware integrated target). Companion field to Carb Status (deficit).</string>
     <string name="hyd_log_1_datatype_name">KSafe Drink 1</string>
     <string name="hyd_log_2_datatype_name">KSafe Drink 2</string>
     <string name="hyd_log_datatype_desc">Tap to log a configured drink item (e.g. sip, bottle). Counts toward your hourly target.</string>
@@ -108,7 +148,7 @@
 
     <!-- Health screen -->
     <string name="health_title">Health monitoring</string>
-    <string name="health_no_hr_warning_title">No heart-rate sensor</string>
+    <string name="health_no_hr_warning_title">Heart-rate sensor required</string>
     <string name="health_no_hr_warning_body">Pair a HR sensor to enable medical and wellness detection. Without HR data these detectors stay idle.</string>
     <string name="health_medical_section">Medical episode detection</string>
     <string name="health_medical_hint">Detects sudden heart-rate flatline or collapse during a ride. Requires a paired HR sensor.</string>
@@ -138,8 +178,13 @@
     <string name="provider_title">Message Provider</string>
     <string name="provider_active_hint">Credentials are saved per provider. Only the selected provider will be used to send alerts.</string>
     <string name="api_key_hint">API Key</string>
-    <string name="callmebot_phone_hint">Recipient phone (with country code, e.g. +34612345678)</string>
-    <string name="callmebot_description">WhatsApp via CallMeBot. Free — the recipient must activate their API key first.</string>
+    <string name="callmebot_phone_hint">Recipient 1 phone (with country code, e.g. +34612345678)</string>
+    <string name="callmebot_apikey_hint">Recipient 1 API Key</string>
+    <string name="callmebot_phone2_hint">Recipient 2 phone — optional</string>
+    <string name="callmebot_apikey2_hint">Recipient 2 API Key — optional</string>
+    <string name="callmebot_phone3_hint">Recipient 3 phone — optional</string>
+    <string name="callmebot_apikey3_hint">Recipient 3 API Key — optional</string>
+    <string name="callmebot_description">WhatsApp via CallMeBot. Free — up to 3 recipients; each one must activate their own API key from their own phone. Recipients 2 and 3 are optional.</string>
     <string name="pushover_app_token_hint">App Token</string>
     <string name="pushover_user_key_hint">User Key (recipient 1)</string>
     <string name="pushover_user_key2_hint">User Key — recipient 2 (optional)</string>
@@ -167,6 +212,8 @@
     <string name="emergency_message_hint">Use {location} for GPS link and {reason} for cause</string>
     <string name="default_emergency_message">EMERGENCY: Possible incident detected. Location: {location} (Reason: {reason})</string>
     <string name="crash_detection_label">Automatic crash detection</string>
+    <string name="safety_buzzer_mute_title">If your Karoo is muted, alerts make no sound</string>
+    <string name="safety_buzzer_mute_hint">KSafe can\'t override the device mute. Everything else still works — alerts fire and messages are sent normally.</string>
     <string name="crash_sensitivity_label">Crash detection sensitivity</string>
     <string name="sensitivity_low">Low</string>
     <string name="sensitivity_medium">Medium</string>

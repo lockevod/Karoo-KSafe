@@ -18,9 +18,9 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.awaitCancellation
 import kotlinx.coroutines.cancel
-import kotlinx.coroutines.delay
-import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.collectLatest
+import kotlinx.coroutines.flow.filterNotNull
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import timber.log.Timber
 
@@ -35,11 +35,14 @@ class HydrationStatusDataType(
     private val karooSystem: KarooSystemService,
 ) : DataTypeImpl("ksafe", datatype) {
 
+    // Bands tuned to match CarbStatusDataType — green band now covers the full
+    // "below alert threshold" range so the field sits at green for most of a normal
+    // ride. See CarbStatusDataType for the full rationale.
     private fun colorFor(deficit: Int, threshold: Int): Int = when {
-        deficit < 0             -> COLOR_AHEAD
-        deficit < threshold / 2 -> COLOR_OK
-        deficit < threshold     -> COLOR_AMBER
-        else                    -> COLOR_RED
+        deficit < 0                     -> COLOR_AHEAD
+        deficit < threshold             -> COLOR_OK
+        deficit < threshold * 3 / 2     -> COLOR_AMBER
+        else                            -> COLOR_RED
     }
 
     private fun displayMain(deficit: Int): String = when {
@@ -49,15 +52,25 @@ class HydrationStatusDataType(
     }
 
     private fun buildView(viewConfig: ViewConfig, bgColor: Int, main: String, hint: String): RemoteViews {
+        // Centered — see CarbStatusDataType for the rationale.
         return RemoteViews(context.packageName, R.layout.field_view).apply {
             setInt(R.id.field_container, "setBackgroundColor", bgColor)
             setTextViewText(R.id.field_text_main, main.take(9))
             setTextViewText(R.id.field_text_hint, hint.take(9))
             setViewVisibility(R.id.field_text_hint, if (hint.isEmpty()) View.GONE else View.VISIBLE)
+            setInt(R.id.field_text_main, "setGravity", android.view.Gravity.CENTER)
+            setInt(R.id.field_text_hint, "setGravity", android.view.Gravity.CENTER)
         }
     }
 
     override fun startView(context: Context, config: ViewConfig, emitter: ViewEmitter) {
+        // Synchronous seed frame BEFORE launching any coroutine. Without this, Karoo
+        // paints the host theme background (white in day mode) while waiting for the
+        // first Dispatchers.Default emission, and field_view.xml's hard-coded white
+        // text renders invisible on white. Night mode masked the bug because the host
+        // theme is dark there.
+        emitter.updateView(buildView(config, COLOR_OK, "---", "hyd"))
+
         val scopeJob = Job()
         val scope = CoroutineScope(Dispatchers.Default + scopeJob)
 
@@ -69,24 +82,20 @@ class HydrationStatusDataType(
 
         val viewJob = scope.launch {
             try {
-                val poll = MutableStateFlow<HydrationStatus?>(null)
-                val poller = scope.launch {
-                    while (true) {
-                        val tracker = KSafeExtension.getInstance()?.hydrationTrackerOrNull()
-                        poll.value = tracker?.getStatus()
-                        delay(1_000)
-                    }
-                }
-                poll.collectLatest { status ->
+                // Push-based — see CarbStatusDataType for the rationale.
+                val tracker = KSafeExtension.hydrationTrackerFlow.filterNotNull().first()
+                tracker.statusFlow.collectLatest { status ->
                     val view = if (status == null) {
-                        buildView(config, COLOR_OK, "Hyd", "off")
+                        // See CarbStatusDataType — '---' beats 'off' so the rider doesn't
+                        // read 'off' as 'I disabled this'. Colour stays COLOR_OK because
+                        // the field is waiting for data, not disabled.
+                        buildView(config, COLOR_OK, "---", "hyd")
                     } else {
                         val color = colorFor(status.deficitMl, status.deficitThresholdMl)
                         buildView(config, color, displayMain(status.deficitMl), "hyd")
                     }
                     emitter.updateView(view)
                 }
-                poller.cancel()
             } catch (_: CancellationException) {
                 // normal
             } catch (e: Exception) {

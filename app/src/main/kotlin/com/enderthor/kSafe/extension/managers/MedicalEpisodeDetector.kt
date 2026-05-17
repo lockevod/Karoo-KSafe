@@ -2,6 +2,9 @@ package com.enderthor.kSafe.extension.managers
 
 import com.enderthor.kSafe.data.EmergencyReason
 import com.enderthor.kSafe.data.KSafeConfig
+import com.enderthor.kSafe.extension.util.Clock
+import com.enderthor.kSafe.extension.util.SystemClock
+import com.enderthor.kSafe.extension.util.formatUs
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
@@ -36,6 +39,12 @@ class MedicalEpisodeDetector(
     private val scope: CoroutineScope,
     private val onIncident: (EmergencyReason, Map<String, String>) -> Unit,
     private val calibLogger: CalibrationLogger? = null,
+    /**
+     * Injectable clock. Production passes [SystemClock]; tests pass a fake to drive
+     * sub-detector windows (flatline duration, collapse 4-min history) without waiting
+     * real-time seconds inside a coroutine `delay`.
+     */
+    private val clock: Clock = SystemClock,
 ) {
 
     // ─── Constants (calibrated conservatively; expose to config only if real data justifies it) ──
@@ -66,8 +75,27 @@ class MedicalEpisodeDetector(
     @Volatile private var lastHrStaleState    = false
     @Volatile private var lastPeriodicLogMs   = 0L
 
-    /** Rolling HR history. Push from [updateHr] (~1 Hz). Trim from the monitor coroutine. */
-    private val hrSamples = ArrayDeque<Pair<Long, Int>>()
+    /**
+     * Rolling HR history used by [computeAverageHrInWindow] for the COLLAPSE baseline
+     * vs. recent-window comparison.
+     *
+     * Backed by two parallel primitive arrays (`LongArray` for timestamps + `IntArray`
+     * for bpm) as a fixed-capacity ring — replaces the previous `ArrayDeque<Pair<Long,Int>>`.
+     * The Pair-based deque allocated a fresh `Pair<Long, Int>` (and boxed the Int) on every
+     * [updateHr] (~1 Hz) — for a 6 h ride that's ~22 k short-lived objects + ~22 k boxed
+     * Integers per ride, all GC'd as samples age out of the 5-min window. The ring buffer
+     * has zero allocations on the hot path.
+     *
+     * Capacity: HR rate is typically 1 Hz (ANT+ / BLE), occasionally 2 Hz on some straps.
+     * 5 min × 2 Hz = 600 samples; 1024 leaves margin and a power-of-two for the head pointer.
+     *
+     * Threading: same `synchronized(this)`-style monitor pattern as before — all access goes
+     * through the [hrHistoryLock] companion (the array refs themselves are stable, but
+     * `head` / `size` / array contents must be coherent across the HR-callback thread and
+     * the monitor coroutine on [scope]).
+     */
+    private val hrSamples = HrHistory(capacity = 1024)
+    private val hrHistoryLock = Any()
     private val HR_HISTORY_RETAIN_MS = 5L * 60_000L
 
     private var monitorJob: Job? = null
@@ -101,18 +129,22 @@ class MedicalEpisodeDetector(
         // Otherwise a stop()→start() cycle can preserve stale HR samples that taint
         // the 5-min rolling baseline and trigger a false MEDICAL_COLLAPSE EMERGENCY
         // when the new ride starts at a much lower HR than the previous one ended.
-        hrSamples.clear()
+        synchronized(hrHistoryLock) { hrSamples.clear() }
         hrDataReceived = false
         currentHrBpm = 0
         lastHrUpdateMs = 0L
         Timber.d("MedicalEpisodeDetector stopped")
     }
 
+    /**
+     * See [HydrationTracker.updateConfig] for the rationale of the [isRecording] gate
+     * on the auto-start branch. Same shape, same reason.
+     */
     @Suppress("unused") // called from KSafeExtension.initializeSystem() config-change flow
-    fun updateConfig(config: KSafeConfig) {
+    fun updateConfig(config: KSafeConfig, isRecording: Boolean) {
         val wasEnabled = this.config.medicalEpisodeEnabled
         this.config = config
-        if (!wasEnabled && config.medicalEpisodeEnabled) start(config)
+        if (!wasEnabled && config.medicalEpisodeEnabled && isRecording) start(config)
         else if (wasEnabled && !config.medicalEpisodeEnabled) stop()
     }
 
@@ -121,29 +153,33 @@ class MedicalEpisodeDetector(
      * allowed; the monitor coroutine derives state from timestamps.
      */
     fun updateHr(bpm: Int) {
-        val now = System.currentTimeMillis()
+        val now = clock.nowMs()
         if (!hrDataReceived) {
             hrDataReceived = true
             Timber.d("MedicalEpisodeDetector: first HR reading $bpm bpm")
         }
         currentHrBpm = bpm
         lastHrUpdateMs = now
-        hrSamples.addLast(now to bpm)
-        // Trim is cheap and amortized O(1)
-        while (hrSamples.isNotEmpty() && now - hrSamples.first().first > HR_HISTORY_RETAIN_MS) {
-            hrSamples.removeFirst()
+        synchronized(hrHistoryLock) {
+            hrSamples.add(now, bpm)
+            hrSamples.trimOlderThan(now - HR_HISTORY_RETAIN_MS)
         }
     }
 
     fun updateSpeed(kmh: Double) {
         lastSpeedKmh = kmh
-        if (kmh >= ACTIVE_SPEED_KMH) lastSpeedAboveActiveMs = System.currentTimeMillis()
+        if (kmh >= ACTIVE_SPEED_KMH) lastSpeedAboveActiveMs = clock.nowMs()
     }
 
     // ─── Monitor tick (runs on `scope`, every MONITOR_TICK_MS) ────────────────────────────
 
-    private fun tick() {
-        val now = System.currentTimeMillis()
+    /**
+     * Internal so unit tests in the same package can drive ticks deterministically against
+     * a fake [Clock] without having to wait on the production [delay]-based monitor coroutine.
+     * Production still drives this from [start]'s `monitorJob`.
+     */
+    internal fun tick() {
+        val now = clock.nowMs()
 
         // ── HR stale transition logging (once per change) ─────────────────────
         val isStale = hrDataReceived && (now - lastHrUpdateMs > HR_STALE_MS)
@@ -171,7 +207,7 @@ class MedicalEpisodeDetector(
             val flatlineFor = if (flatlineSinceMs > 0) (now - flatlineSinceMs) / 1000 else 0
             val avg5min = computeAverageHr(now)
             calibLogger.log(CalibrationLogger.Event.HR_PERIODIC) {
-                "bpm=$currentHrBpm,avg5min=$avg5min,speed=%.1f,active_recent=$activeRecent,flatline_for_s=$flatlineFor,collapse_armed=$collapseArmed".format(lastSpeedKmh)
+                "bpm=$currentHrBpm,avg5min=$avg5min,speed=%.1f,active_recent=$activeRecent,flatline_for_s=$flatlineFor,collapse_armed=$collapseArmed".formatUs(lastSpeedKmh)
             }
         }
     }
@@ -191,7 +227,7 @@ class MedicalEpisodeDetector(
             if (durationMs >= HR_FLATLINE_DURATION_SEC * 1000L) {
                 Timber.d(">>> HR_FLATLINE fired: bpm=$currentHrBpm sustained for ${durationMs / 1000}s")
                 calibLogger?.log(CalibrationLogger.Event.HR_FLATLINE) {
-                    "bpm=$currentHrBpm,duration_s=${durationMs / 1000},speed=%.1f,threshold=$HR_FLATLINE_MAX_BPM".format(lastSpeedKmh)
+                    "bpm=$currentHrBpm,duration_s=${durationMs / 1000},speed=%.1f,threshold=$HR_FLATLINE_MAX_BPM".formatUs(lastSpeedKmh)
                 }
                 flatlineSinceMs = 0L  // re-arm: requires HR to rise above threshold then fall again
                 onIncident(EmergencyReason.MEDICAL_FLATLINE, mapOf("bpm" to currentHrBpm.toString()))
@@ -219,9 +255,9 @@ class MedicalEpisodeDetector(
 
         val drop = (baseline - recent).toFloat() / baseline.toFloat()
         if (drop >= HR_COLLAPSE_DROP_FRACTION) {
-            Timber.d(">>> HR_COLLAPSE fired: baseline=$baseline recent=$recent drop=${"%.2f".format(drop)}")
+            Timber.d(">>> HR_COLLAPSE fired: baseline=$baseline recent=$recent drop=${"%.2f".formatUs(drop)}")
             calibLogger?.log(CalibrationLogger.Event.HR_COLLAPSE) {
-                "bpm=$currentHrBpm,avg5min=$baseline,drop_pct=%.1f,window_s=$HR_COLLAPSE_WINDOW_SEC,speed=%.1f".format(drop * 100f, lastSpeedKmh)
+                "bpm=$currentHrBpm,avg5min=$baseline,drop_pct=%.1f,window_s=$HR_COLLAPSE_WINDOW_SEC,speed=%.1f".formatUs(drop * 100f, lastSpeedKmh)
             }
             collapseCooldownUntilMs = now + HR_COLLAPSE_MIN_HISTORY_SEC * 1000L
             onIncident(EmergencyReason.MEDICAL_COLLAPSE, mapOf(
@@ -233,10 +269,10 @@ class MedicalEpisodeDetector(
 
     // ─── Helpers ──────────────────────────────────────────────────────────────────────────
 
-    private fun hasEnoughHistoryFor(now: Long): Boolean {
-        if (hrSamples.size < 60) return false  // ~1 sample/s × 60s minimum
-        val oldest = hrSamples.first().first
-        return now - oldest >= HR_COLLAPSE_MIN_HISTORY_SEC * 1000L
+    private fun hasEnoughHistoryFor(now: Long): Boolean = synchronized(hrHistoryLock) {
+        if (hrSamples.size < 60) return@synchronized false  // ~1 sample/s × 60s minimum
+        val oldest = hrSamples.firstTimeOrZero()
+        oldest > 0 && now - oldest >= HR_COLLAPSE_MIN_HISTORY_SEC * 1000L
     }
 
     private fun computeAverageHr(now: Long): Int =
@@ -250,12 +286,85 @@ class MedicalEpisodeDetector(
     private fun computeAverageHrInWindow(fromMs: Long, toMs: Long): Int {
         var sum = 0L
         var count = 0
-        for ((t, bpm) in hrSamples) {
-            if (t in fromMs until toMs) {
+        synchronized(hrHistoryLock) {
+            hrSamples.forEachInRange(fromMs, toMs) { bpm ->
                 sum += bpm
                 count++
             }
         }
         return if (count == 0) 0 else (sum / count).toInt()
     }
+}
+
+/**
+ * Fixed-capacity ring buffer of (timestamp, bpm) pairs, stored in two parallel primitive
+ * arrays. Zero allocations on add / iterate. NOT thread-safe — callers must serialise
+ * access externally (see [MedicalEpisodeDetector.hrHistoryLock]).
+ *
+ * Capacity is a power of two so the modulo can be a bitwise mask. Designed for the
+ * write-once-read-many access pattern of the COLLAPSE detector — `forEachInRange` walks
+ * the live range using indices, no iterator allocation.
+ */
+internal class HrHistory(private val capacity: Int) {
+    init { require(capacity > 0 && capacity and (capacity - 1) == 0) { "capacity must be a power of two" } }
+    private val mask = capacity - 1
+    private val times = LongArray(capacity)
+    private val bpms = IntArray(capacity)
+    private var head = 0      // index of the oldest sample
+    var size: Int = 0
+        private set
+
+    fun add(timeMs: Long, bpm: Int) {
+        val idx = (head + size) and mask
+        times[idx] = timeMs
+        bpms[idx] = bpm
+        if (size < capacity) {
+            size++
+        } else {
+            // Buffer full — overwrite oldest. In production with capacity 1024 and a 5-min
+            // retention this branch never fires (5 min × 2 Hz max = 600 < 1024), but the
+            // guard keeps the ring safe under any sensor rate.
+            head = (head + 1) and mask
+        }
+    }
+
+    /** Drop entries whose timestamp is ≤ [cutoffMs]. Amortised O(1) per [add]. */
+    fun trimOlderThan(cutoffMs: Long) {
+        while (size > 0 && times[head] <= cutoffMs) {
+            head = (head + 1) and mask
+            size--
+        }
+    }
+
+    /** Timestamp of the oldest live sample, or `0` if the ring is empty. */
+    fun firstTimeOrZero(): Long = if (size == 0) 0L else times[head]
+
+    /** Calls [action] with each bpm whose timestamp lies in `[fromMs, toMs)`. */
+    inline fun forEachInRange(fromMs: Long, toMs: Long, action: (bpm: Int) -> Unit) {
+        // Walk live entries: index from `head`, `size` items, wrapping via bitmask.
+        // We expose `head` / `size` indirectly through the companion accessors so this
+        // remains an inline function; using the public read-only fields is the trade-off.
+        val h = headIndex()
+        val n = size
+        val cap = capacityValue()
+        val m = cap - 1
+        val t = timesArray()
+        val b = bpmsArray()
+        var i = 0
+        while (i < n) {
+            val idx = (h + i) and m
+            val ts = t[idx]
+            if (ts in fromMs until toMs) action(b[idx])
+            i++
+        }
+    }
+
+    fun clear() { head = 0; size = 0 }
+
+    // Exposed for inline access by forEachInRange — see Kotlin's "publishedApi" pattern.
+    // Callers must hold the external lock; these are NOT a public stable API.
+    @PublishedApi internal fun headIndex(): Int = head
+    @PublishedApi internal fun capacityValue(): Int = capacity
+    @PublishedApi internal fun timesArray(): LongArray = times
+    @PublishedApi internal fun bpmsArray(): IntArray = bpms
 }

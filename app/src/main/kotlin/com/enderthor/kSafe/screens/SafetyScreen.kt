@@ -39,7 +39,7 @@ import kotlinx.coroutines.delay
  * Safety tab — crash detection, speed-drop, check-in, emergency message, countdown, SOS color.
  *
  * Tools-style content (Karoo Live, calibration log, FIT export, backup/restore, Simulate Crash)
- * lives in [ToolsScreen] so this screen stays focused on "things that protect the rider".
+ * lives in [SettingsScreen] so this screen stays focused on "things that protect the rider".
  */
 @Composable
 fun SafetyScreen(vm: MainViewModel) {
@@ -66,7 +66,7 @@ fun SafetyScreen(vm: MainViewModel) {
     var timerFieldColor by remember(config.timerFieldColor) { mutableStateOf(config.timerFieldColor) }
 
     // Auto-save: runs whenever any setting changes, with a short debounce for text fields.
-    // Karoo Live + calibration + backup live in ToolsScreen now and own their own save loops.
+    // Karoo Live + calibration + backup live in SettingsScreen now and own their own save loops.
     LaunchedEffect(
         emergencyMessage, countdownSeconds,
         crashEnabled, crashSensitivity, minSpeedForCrash, customThreshold, crashConfirmSpeed,
@@ -116,6 +116,30 @@ fun SafetyScreen(vm: MainViewModel) {
             fontWeight = FontWeight.Bold,
             color = MaterialTheme.colorScheme.onSurfaceVariant
         )
+
+        // ── Buzzer / mute warning banner ────────────────────────────────────
+        // The Karoo has a piezo buzzer (not a speaker) and the SDK does not expose
+        // the system mute state. Surface this at the TOP of the Safety tab so a
+        // rider relying on KSafe for emergencies knows that muting the device
+        // silences every audible alert, with no detection or override path.
+        Card(
+            colors = CardDefaults.cardColors(containerColor = Color(0xFFFFF3CD)),
+            elevation = CardDefaults.cardElevation(defaultElevation = 2.dp),
+        ) {
+            Column(modifier = Modifier.padding(8.dp)) {
+                Text(
+                    text = stringResource(R.string.safety_buzzer_mute_title),
+                    style = MaterialTheme.typography.bodySmall,
+                    fontWeight = FontWeight.Bold,
+                    color = Color(0xFF856404)
+                )
+                Text(
+                    text = stringResource(R.string.safety_buzzer_mute_hint),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = Color(0xFF664D03)
+                )
+            }
+        }
 
         // Emergency message
         OutlinedTextField(

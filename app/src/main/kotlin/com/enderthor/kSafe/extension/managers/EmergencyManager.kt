@@ -8,6 +8,9 @@ import com.enderthor.kSafe.data.EmergencyStatus
 import com.enderthor.kSafe.data.IncidentResponseLevel
 import com.enderthor.kSafe.data.KSafeConfig
 import com.enderthor.kSafe.extension.Sender
+import com.enderthor.kSafe.extension.util.ALERT_DETAIL_MAX_CHARS
+import com.enderthor.kSafe.extension.util.ALERT_TITLE_MAX_CHARS
+import com.enderthor.kSafe.extension.util.renderAlertText
 import io.hammerhead.karooext.KarooSystemService
 import io.hammerhead.karooext.models.PlayBeepPattern
 import io.hammerhead.karooext.models.InRideAlert
@@ -47,11 +50,33 @@ class EmergencyManager(
          *  DataTypes collect from this instead of DataStore to avoid write latency. */
         val uiState: StateFlow<EmergencyState> get() = _uiState
         private val _uiState = MutableStateFlow(EmergencyState())
+
+        /** Duration of the mini-confirm shown when resuming after a missed deadline. */
+        private const val MINI_CONFIRM_SECONDS = 10
     }
 
     private val sosOverlay = SosOverlayManager(context)
 
+    init {
+        // Reset the static state flow on every manager construction. The flow lives in the
+        // companion object because DataTypes read it through `EmergencyManager.uiState`
+        // without a manager reference — but that means a service rebind without process
+        // death would otherwise leave the flow holding the previous instance's state,
+        // disagreeing with `currentStatus` (which is instance-scoped, starts at IDLE here).
+        _uiState.value = EmergencyState()
+    }
+
     private var countdownJob: Job? = null
+    /** Outgoing sender retry job. Kept here so [cancelEmergency] / [stopAll] can
+     *  abort an in-flight emergency alert. Without this, a rider who taps Cancel
+     *  right after the countdown reaches 0 would still have the sender retry for
+     *  up to ~30 minutes (3 cycles × 3 attempts × 60-180 s back-offs + 5/10 min
+     *  inter-cycle delays) — defeating the cancel button.
+     *
+     *  `@Volatile` so cross-thread reads from [cancelEmergency] (which may run on
+     *  any coroutine scope launched from the UI) see writes from [sendAlerts]
+     *  (running on the service `scope`) without an explicit lock. */
+    @Volatile private var alertJob: Job? = null
     private var checkinJob: Job? = null
     private var checkinWarningJob: Job? = null
     var currentStatus = EmergencyStatus.IDLE
@@ -72,13 +97,27 @@ class EmergencyManager(
     }
 
     suspend fun cancelEmergency(config: KSafeConfig? = null) {
-        if (currentStatus != EmergencyStatus.COUNTDOWN) return
+        // Allow cancelling from COUNTDOWN (normal case) OR from ALERTING (rider
+        // realises they're fine right after the countdown hits 0 and the sender
+        // has just kicked off). Without the ALERTING branch a Cancel tap during
+        // the ~5 s post-countdown window or any later retry cycle is ignored,
+        // and the sender keeps retrying for up to half an hour.
+        if (currentStatus != EmergencyStatus.COUNTDOWN &&
+            currentStatus != EmergencyStatus.ALERTING) return
 
         // Capture reason before clearing — needed for CRASH_NO calibration log.
         val cancelledReason = currentReason
         val howLongMs = if (countdownStartedAt > 0L) System.currentTimeMillis() - countdownStartedAt else 0L
 
         countdownJob?.cancel()
+        // Capture-and-null before cancelling so a concurrent assignment from sendAlerts
+        // can't clobber the reference and leak a running job. The sendAlerts finally
+        // block runs on cancellation and resets currentStatus/uiState/DataStore back
+        // to IDLE — we still set them here defensively in case the cancel races with
+        // a brand-new sendAlerts launch.
+        val previousAlertJob = alertJob
+        alertJob = null
+        previousAlertJob?.cancel()
         currentStatus = EmergencyStatus.IDLE
         currentReason = null
         countdownStartedAt = 0L
@@ -183,6 +222,10 @@ class EmergencyManager(
 
     fun stopAll() {
         countdownJob?.cancel()
+        // Capture-and-null before cancel — see cancelEmergency for rationale.
+        val previousAlertJob = alertJob
+        alertJob = null
+        previousAlertJob?.cancel()
         checkinJob?.cancel()
         checkinWarningJob?.cancel()
         currentStatus = EmergencyStatus.IDLE
@@ -244,17 +287,25 @@ class EmergencyManager(
             IncidentResponseLevel.WARNING -> {
                 val titleTemplate = customTitleFor(reason, config).ifBlank { defaultTitleFor(reason) }
                 val detailTemplate = customDetailFor(reason, config).ifBlank { defaultDetailFor(reason) }
-                karooSystem.dispatch(BEEP_LONG)
+                // Rider-configurable beep — applies to all WARNING-level alerts (wellness tiers
+                // and any medical incident downgraded to WARNING). Emergency-level alerts use
+                // the hardcoded urgent BEEP_LONG + BEEP_URGENT sequence further down.
+                config.wellnessBeepPattern.toPlayBeepPattern()?.let { karooSystem.dispatch(it) }
                 karooSystem.dispatch(InRideAlert(
                     id = "ksafe-warning-${reason.name.lowercase()}",
                     icon = com.enderthor.kSafe.R.drawable.ic_ksafe,
                     title = renderAlertText(titleTemplate, tokens, maxLength = ALERT_TITLE_MAX_CHARS),
                     detail = renderAlertText(detailTemplate, tokens, maxLength = ALERT_DETAIL_MAX_CHARS),
                     autoDismissMs = 10_000L,
-                    backgroundColor = 0xFFE65100.toInt(),
-                    textColor = 0xFFFFFFFF.toInt(),
+                    // SDK contract — see colors.xml: backgroundColor/textColor are @ColorRes,
+                    // not @ColorInt. Passing 0xFFE65100 here crashed the ride app with
+                    // Resources$NotFoundException.
+                    backgroundColor = com.enderthor.kSafe.R.color.alert_orange,
+                    textColor = com.enderthor.kSafe.R.color.alert_text_white,
                 ))
-                calibLogger?.log(CalibrationLogger.Event.INCIDENT_WARNING) { "reason=${reason.label}" }
+                calibLogger?.log(CalibrationLogger.Event.INCIDENT_WARNING) {
+                    "reason=${reason.label},beep=${config.wellnessBeepPattern}"
+                }
                 Timber.d("Warning incident dispatched: $reason")
             }
             IncidentResponseLevel.EMERGENCY -> {
@@ -311,6 +362,7 @@ class EmergencyManager(
         val countdownState = EmergencyState(
             status = EmergencyStatus.COUNTDOWN,
             reason = reason.label,
+            reasonEnum = reason,                               // persisted so decideResume() can recover
             countdownStartTime = startTime,
             countdownDurationSeconds = config.countdownSeconds,
             checkinEnabled = config.checkinEnabled,
@@ -339,6 +391,88 @@ class EmergencyManager(
                 delay(1_000L)
             }
 
+            sendAlerts(config, reason)
+        }
+    }
+
+    /**
+     * Re-attach to an in-progress countdown that survived a process kill. Called from
+     * [KSafeExtension.initializeSystem] when a persisted [EmergencyState] indicates the
+     * countdown was running and its deadline has not yet passed.
+     *
+     * The remaining time is computed from the persisted [EmergencyState.countdownDeadlineMs];
+     * a new countdownJob is launched with that remaining duration so the rider sees the same
+     * cancel UI as if the process had never been killed.
+     */
+    fun resumeCountdown(state: EmergencyState, config: KSafeConfig) {
+        val reason = state.reasonEnum ?: return    // legacy state without enum — can't safely resume
+        val deadline = state.countdownDeadlineMs()
+        val now = System.currentTimeMillis()
+        val remainingMs = (deadline - now).coerceAtLeast(0L)
+        if (remainingMs == 0L) {
+            // shouldn't reach here — initializeSystem branches to resumeAfterDeadline instead
+            return
+        }
+
+        currentStatus = EmergencyStatus.COUNTDOWN
+        currentReason = reason
+        countdownStartedAt = now - (state.countdownDurationSeconds * 1_000L - remainingMs)
+        _uiState.value = state.copy()
+
+        countdownJob?.cancel()
+        countdownJob = scope.launch {
+            // No re-save to DataStore on resume — the existing persisted state is the source of truth.
+            karooSystem.dispatch(TurnScreenOn)
+            karooSystem.dispatch(BEEP_LONG)
+
+            val totalRemainingSeconds = (remainingMs / 1_000L).toInt().coerceAtLeast(1)
+            for (remaining in totalRemainingSeconds downTo 1) {
+                sosOverlay.showOrUpdate(reason, remaining) {
+                    scope.launch { cancelEmergency(config) }
+                }
+                if (remaining % 5 == 0 || remaining <= 10) {
+                    if (remaining <= 10) karooSystem.dispatch(TurnScreenOn)
+                    if (remaining <= 5) karooSystem.dispatch(BEEP_URGENT)
+                }
+                delay(1_000L)
+            }
+            sendAlerts(config, reason)
+        }
+    }
+
+    /**
+     * The persisted countdown deadline has already passed (process was dead longer than the
+     * remaining countdown). Rather than firing the alert silently — which is harsh, since
+     * "process killed" is usually Android low-memory, not "rider in peril" — show a 10s
+     * SystemAlertWindow mini-confirm with cancel / send buttons. Default on timeout: send.
+     *
+     * This deliberately differs from resumeCountdown so a normal post-impact rider who has
+     * already moved on with their life is not greeted by an alert dispatched against contacts
+     * 30 minutes later for a crash they cancelled mid-flight.
+     */
+    fun resumeAfterDeadline(reason: EmergencyReason, config: KSafeConfig) {
+        currentStatus = EmergencyStatus.COUNTDOWN
+        currentReason = reason
+        val startTime = System.currentTimeMillis()
+        countdownStartedAt = startTime
+        _uiState.value = EmergencyState(
+            status = EmergencyStatus.COUNTDOWN,
+            reason = reason.label,
+            reasonEnum = reason,
+            countdownStartTime = startTime,
+            countdownDurationSeconds = MINI_CONFIRM_SECONDS,
+        )
+        countdownJob?.cancel()
+        countdownJob = scope.launch {
+            karooSystem.dispatch(TurnScreenOn)
+            karooSystem.dispatch(BEEP_LONG)
+            for (remaining in MINI_CONFIRM_SECONDS downTo 1) {
+                sosOverlay.showOrUpdate(reason, remaining) {
+                    scope.launch { cancelEmergency(config) }
+                }
+                if (remaining <= 5) karooSystem.dispatch(BEEP_URGENT)
+                delay(1_000L)
+            }
             sendAlerts(config, reason)
         }
     }
@@ -383,21 +517,35 @@ class EmergencyManager(
 
         Timber.d("Sending emergency alert via ${config.activeProvider}")
 
-        scope.launch {
+        alertJob = scope.launch {
             try {
                 sender.sendAlert(message, config.activeProvider)
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                // Cancelled via cancelEmergency / stopAll — propagate so the
+                // structured concurrency contract is honoured.
+                throw e
             } catch (e: Exception) {
                 Timber.e(e, "Error sending emergency alert")
+            } finally {
+                // Roll back to IDLE only when WE are still the live ALERTING source.
+                // If cancelEmergency / stopAll cancelled us, those callers already
+                // set currentStatus to IDLE *and* may have started a new check-in
+                // timer via [startCheckinJobs] (which writes the new check-in state
+                // into _uiState + DataStore). Without the guard the cancelled job's
+                // finally runs after the new state has been published and silently
+                // clobbers it back to a blank EmergencyState — wiping the check-in
+                // restart the rider just earned by tapping Cancel.
+                if (currentStatus == EmergencyStatus.ALERTING) {
+                    currentStatus = EmergencyStatus.IDLE
+                    currentReason = null
+                    _uiState.value = EmergencyState()
+                    configManager.saveEmergencyState(EmergencyState())
+                }
+                alertJob = null
             }
         }
 
         karooSystem.dispatch(TurnScreenOn)
         karooSystem.dispatch(BEEP_LONG)
-
-        delay(5_000L)
-        currentStatus = EmergencyStatus.IDLE
-        currentReason = null
-        _uiState.value = EmergencyState()
-        configManager.saveEmergencyState(EmergencyState())
     }
 }

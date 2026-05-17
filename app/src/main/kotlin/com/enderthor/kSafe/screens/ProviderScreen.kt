@@ -42,11 +42,15 @@ fun ProviderScreen(vm: MainViewModel) {
     // It is updated synchronously in onProviderClick so the auto-save LaunchedEffect
     // always writes to the correct provider, even if DataStore hasn't propagated yet.
     var fieldsProvider by remember { mutableStateOf(activeProvider) }
-    var apiKey      by remember { mutableStateOf(activeSender?.apiKey      ?: "") }
-    var userKey     by remember { mutableStateOf(activeSender?.userKey     ?: "") }
-    var userKey2    by remember { mutableStateOf(activeSender?.userKey2    ?: "") }
-    var userKey3    by remember { mutableStateOf(activeSender?.userKey3    ?: "") }
-    var phoneNumber by remember { mutableStateOf(activeSender?.phoneNumber ?: "") }
+    var apiKey       by remember { mutableStateOf(activeSender?.apiKey       ?: "") }
+    var userKey      by remember { mutableStateOf(activeSender?.userKey      ?: "") }
+    var userKey2     by remember { mutableStateOf(activeSender?.userKey2     ?: "") }
+    var userKey3     by remember { mutableStateOf(activeSender?.userKey3     ?: "") }
+    var phoneNumber  by remember { mutableStateOf(activeSender?.phoneNumber  ?: "") }
+    var apiKey2      by remember { mutableStateOf(activeSender?.apiKey2      ?: "") }
+    var phoneNumber2 by remember { mutableStateOf(activeSender?.phoneNumber2 ?: "") }
+    var apiKey3      by remember { mutableStateOf(activeSender?.apiKey3      ?: "") }
+    var phoneNumber3 by remember { mutableStateOf(activeSender?.phoneNumber3 ?: "") }
 
     // Sync fieldsProvider + fields when DataStore loads the real active provider on first
     // composition (e.g. stored provider is PUSHOVER but default is CALLMEBOT) or after
@@ -56,11 +60,15 @@ fun ProviderScreen(vm: MainViewModel) {
         if (activeProvider != fieldsProvider) {
             val s = senderConfigs.find { it.provider == activeProvider }
             fieldsProvider = activeProvider
-            apiKey      = s?.apiKey      ?: ""
-            userKey     = s?.userKey     ?: ""
-            userKey2    = s?.userKey2    ?: ""
-            userKey3    = s?.userKey3    ?: ""
-            phoneNumber = s?.phoneNumber ?: ""
+            apiKey       = s?.apiKey       ?: ""
+            userKey      = s?.userKey      ?: ""
+            userKey2     = s?.userKey2     ?: ""
+            userKey3     = s?.userKey3     ?: ""
+            phoneNumber  = s?.phoneNumber  ?: ""
+            apiKey2      = s?.apiKey2      ?: ""
+            phoneNumber2 = s?.phoneNumber2 ?: ""
+            apiKey3      = s?.apiKey3      ?: ""
+            phoneNumber3 = s?.phoneNumber3 ?: ""
         }
     }
 
@@ -70,19 +78,26 @@ fun ProviderScreen(vm: MainViewModel) {
     LaunchedEffect(activeSender) {
         activeSender?.let { sender ->
             if (sender.provider == fieldsProvider) {
-                if (sender.apiKey      != apiKey)      apiKey      = sender.apiKey
-                if (sender.userKey     != userKey)     userKey     = sender.userKey
-                if (sender.userKey2    != userKey2)    userKey2    = sender.userKey2
-                if (sender.userKey3    != userKey3)    userKey3    = sender.userKey3
-                if (sender.phoneNumber != phoneNumber) phoneNumber = sender.phoneNumber
+                if (sender.apiKey       != apiKey)       apiKey       = sender.apiKey
+                if (sender.userKey      != userKey)      userKey      = sender.userKey
+                if (sender.userKey2     != userKey2)     userKey2     = sender.userKey2
+                if (sender.userKey3     != userKey3)     userKey3     = sender.userKey3
+                if (sender.phoneNumber  != phoneNumber)  phoneNumber  = sender.phoneNumber
+                if (sender.apiKey2      != apiKey2)      apiKey2      = sender.apiKey2
+                if (sender.phoneNumber2 != phoneNumber2) phoneNumber2 = sender.phoneNumber2
+                if (sender.apiKey3      != apiKey3)      apiKey3      = sender.apiKey3
+                if (sender.phoneNumber3 != phoneNumber3) phoneNumber3 = sender.phoneNumber3
             }
         }
     }
 
     // Auto-save with debounce — uses fieldsProvider (always in sync with the fields)
-    LaunchedEffect(apiKey, userKey, userKey2, userKey3, phoneNumber) {
+    LaunchedEffect(apiKey, userKey, userKey2, userKey3, phoneNumber, apiKey2, phoneNumber2, apiKey3, phoneNumber3) {
         delay(700)
-        vm.updateSenderConfig(fieldsProvider, apiKey, userKey, userKey2, userKey3, phoneNumber)
+        vm.updateSenderConfig(
+            fieldsProvider, apiKey, userKey, userKey2, userKey3,
+            phoneNumber, apiKey2, phoneNumber2, apiKey3, phoneNumber3,
+        )
     }
 
     Column(
@@ -102,15 +117,22 @@ fun ProviderScreen(vm: MainViewModel) {
         val onProviderClick = { provider: ProviderType ->
             // Save the CURRENT provider's fields immediately before switching,
             // so no data is lost if the debounce timer hasn't fired yet.
-            vm.updateSenderConfig(fieldsProvider, apiKey, userKey, userKey2, userKey3, phoneNumber)
+            vm.updateSenderConfig(
+                fieldsProvider, apiKey, userKey, userKey2, userKey3,
+                phoneNumber, apiKey2, phoneNumber2, apiKey3, phoneNumber3,
+            )
             // Load the new provider's saved values and update fieldsProvider atomically.
             val s = senderConfigs.find { it.provider == provider }
             fieldsProvider = provider
-            apiKey      = s?.apiKey      ?: ""
-            userKey     = s?.userKey     ?: ""
-            userKey2    = s?.userKey2    ?: ""
-            userKey3    = s?.userKey3    ?: ""
-            phoneNumber = s?.phoneNumber ?: ""
+            apiKey       = s?.apiKey       ?: ""
+            userKey      = s?.userKey      ?: ""
+            userKey2     = s?.userKey2     ?: ""
+            userKey3     = s?.userKey3     ?: ""
+            phoneNumber  = s?.phoneNumber  ?: ""
+            apiKey2      = s?.apiKey2      ?: ""
+            phoneNumber2 = s?.phoneNumber2 ?: ""
+            apiKey3      = s?.apiKey3      ?: ""
+            phoneNumber3 = s?.phoneNumber3 ?: ""
             // Switch active provider last so DataStore propagates after fields are ready.
             vm.setActiveProvider(provider)
         }
@@ -171,7 +193,7 @@ fun ProviderScreen(vm: MainViewModel) {
             color = MaterialTheme.colorScheme.onSurfaceVariant
         )
 
-        // CallMeBot: recipient phone number
+        // CallMeBot: recipient 1 phone number (the API key field below is recipient 1's key)
         if (activeProvider == ProviderType.CALLMEBOT) {
             OutlinedTextField(
                 value = phoneNumber,
@@ -189,16 +211,49 @@ fun ProviderScreen(vm: MainViewModel) {
             label = {
                 Text(
                     when (activeProvider) {
+                        ProviderType.CALLMEBOT  -> stringResource(R.string.callmebot_apikey_hint)
                         ProviderType.PUSHOVER   -> stringResource(R.string.pushover_app_token_hint)
                         ProviderType.NTFY       -> stringResource(R.string.ntfy_topic_hint)
                         ProviderType.TELEGRAM   -> stringResource(R.string.telegram_bot_token_hint)
-                        else                    -> stringResource(R.string.api_key_hint)
                     }
                 )
             },
             modifier = Modifier.fillMaxWidth(),
             singleLine = true
         )
+
+        // CallMeBot: optional second recipient (each recipient needs its own phone + API key
+        // because CallMeBot can't fan-out a single request to multiple WhatsApp numbers).
+        if (activeProvider == ProviderType.CALLMEBOT) {
+            OutlinedTextField(
+                value = phoneNumber2,
+                onValueChange = { phoneNumber2 = it },
+                label = { Text(stringResource(R.string.callmebot_phone2_hint)) },
+                modifier = Modifier.fillMaxWidth(),
+                singleLine = true
+            )
+            OutlinedTextField(
+                value = apiKey2,
+                onValueChange = { apiKey2 = it },
+                label = { Text(stringResource(R.string.callmebot_apikey2_hint)) },
+                modifier = Modifier.fillMaxWidth(),
+                singleLine = true
+            )
+            OutlinedTextField(
+                value = phoneNumber3,
+                onValueChange = { phoneNumber3 = it },
+                label = { Text(stringResource(R.string.callmebot_phone3_hint)) },
+                modifier = Modifier.fillMaxWidth(),
+                singleLine = true
+            )
+            OutlinedTextField(
+                value = apiKey3,
+                onValueChange = { apiKey3 = it },
+                label = { Text(stringResource(R.string.callmebot_apikey3_hint)) },
+                modifier = Modifier.fillMaxWidth(),
+                singleLine = true
+            )
+        }
 
         // Pushover user keys (up to 3 recipients)
         if (activeProvider == ProviderType.PUSHOVER) {
@@ -257,7 +312,10 @@ fun ProviderScreen(vm: MainViewModel) {
                 val ext = KSafeExtension.getInstance()
                     ?: return@TestActionButton "Extension not connected — wait a moment and try again."
                 // Flush any pending auto-save before testing.
-                vm.updateSenderConfig(activeProvider, apiKey, userKey, userKey2, userKey3, phoneNumber)
+                vm.updateSenderConfig(
+                    activeProvider, apiKey, userKey, userKey2, userKey3,
+                    phoneNumber, apiKey2, phoneNumber2, apiKey3, phoneNumber3,
+                )
                 ext.sendTestMessage(activeProvider)
             }
         )

@@ -1,0 +1,54 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Karoo-theme passthrough variant of field_view.xml.
+
+  Used when the rider has selected the FIELD_COLOR_AUTO sentinel (the "day/night auto"
+  swatch in the picker) and on the two always-neutral status fields (CarbBurnRate,
+  CarbsBurned). Differences vs field_view.xml:
+    - No background colour applied via RemoteViews — the host's container theme shows
+      through, flipping black/white with the Karoo's day/night setting.
+    - Text colour is set EXPLICITLY at runtime via setTextColor() based on
+      Context.isKarooNightMode(): white text in night mode, black in day mode.
+      The hard-coded #FFFFFF below is just a placeholder for the IDE preview — it is
+      always overridden before the view is emitted. We do NOT use
+      `?android:attr/textColorPrimary` here because it did not resolve to the
+      contrasting colour on real Karoo hardware in testing (riders reported white
+      text on a white field, invisible). Detecting night mode from the extension's
+      Configuration is system-wide and matches what the Karoo OS actually renders.
+
+  Same gravity contract as field_view.xml: not set in XML, applied at runtime from
+  ViewConfig.alignment via setInt(R.id.field_text_*, "setGravity", …).
+-->
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:id="@+id/field_container"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:orientation="vertical"
+    android:padding="2dp">
+
+    <TextView
+        android:id="@+id/field_text_main"
+        android:layout_width="match_parent"
+        android:layout_height="0dp"
+        android:layout_weight="1.5"
+        android:autoSizeMaxTextSize="22sp"
+        android:autoSizeMinTextSize="6sp"
+        android:autoSizeTextType="uniform"
+        android:maxLines="2"
+        android:textColor="#FFFFFF"
+        android:textStyle="bold" />
+
+    <!-- Same hint-size bump as field_view.xml (5-11sp → 7-13sp) so the
+         legend (carb/h, burned, hyd, etc.) stays readable at a glance. -->
+    <TextView
+        android:id="@+id/field_text_hint"
+        android:layout_width="match_parent"
+        android:layout_height="0dp"
+        android:layout_weight="1"
+        android:autoSizeMaxTextSize="13sp"
+        android:autoSizeMinTextSize="7sp"
+        android:autoSizeTextType="uniform"
+        android:maxLines="1"
+        android:textColor="#CCFFFFFF" />
+
+</LinearLayout>

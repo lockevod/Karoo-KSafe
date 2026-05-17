@@ -1,14 +1,22 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!--
-  Generic field view with auto-sizing text.
-  Background color, texts and hint visibility are set programmatically via RemoteViews.
-  autoSizeTextType="uniform" makes text shrink/grow to fill available space — no cutoff.
+  Generic field view with auto-sizing text — COLOURED MODE.
+  Background colour, text gravity and hint visibility are set programmatically via
+  RemoteViews. Text colour is hard-coded white because this layout is paired with a
+  rider-picked dark background (≥4.5:1 contrast). For Karoo-theme passthrough (no
+  custom background, theme-driven text colour), the DataType inflates field_view_auto.xml
+  instead — selected at runtime per emission via the FIELD_COLOR_AUTO sentinel.
+
+  Gravity is NOT set in this XML: it's applied at runtime from ViewConfig.alignment
+  (LEFT / CENTER / RIGHT — rider's per-field choice in the Karoo profile editor) via
+  setInt(R.id.field_text_*, "setGravity", …). karoo-ext 1.1.2+ ships alignment in
+  ViewConfig; before that the SDK passed only RIGHT, so older devices fall back to
+  the same default Karoo uses for native fields.
 -->
 <LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
     android:id="@+id/field_container"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
-    android:gravity="center"
     android:orientation="vertical"
     android:padding="2dp">
 
@@ -21,23 +29,23 @@
         android:autoSizeMaxTextSize="22sp"
         android:autoSizeMinTextSize="6sp"
         android:autoSizeTextType="uniform"
-        android:gravity="center"
         android:maxLines="2"
         android:textColor="#FFFFFF"
         android:textStyle="bold" />
 
-    <!-- Hint line — smaller, 1 line, auto-scales from 5sp to 11sp -->
+    <!-- Hint line — smaller, 1 line, auto-scales from 7sp to 13sp.
+         Bumped up from 5-11sp so short legends like "25g", "ml", "carb/h"
+         remain readable on a Karoo screen at a glance; still clearly
+         secondary to the main label / value above. -->
     <TextView
         android:id="@+id/field_text_hint"
         android:layout_width="match_parent"
         android:layout_height="0dp"
         android:layout_weight="1"
-        android:autoSizeMaxTextSize="11sp"
-        android:autoSizeMinTextSize="5sp"
+        android:autoSizeMaxTextSize="13sp"
+        android:autoSizeMinTextSize="7sp"
         android:autoSizeTextType="uniform"
-        android:gravity="center"
         android:maxLines="1"
         android:textColor="#CCFFFFFF" />
 
 </LinearLayout>
-

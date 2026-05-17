@@ -10,6 +10,7 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.SegmentedButton
@@ -45,6 +46,7 @@ import com.enderthor.kSafe.data.IncidentResponseLevel
 @Composable
 fun HealthScreen(vm: MainViewModel) {
     val config by vm.config.collectAsState()
+    val userProfile by vm.userProfile.collectAsState()
 
     var medicalEnabled       by remember(config.medicalEpisodeEnabled)        { mutableStateOf(config.medicalEpisodeEnabled) }
     var medicalResponseLevel by remember(config.medicalResponseLevel)         { mutableStateOf(coerceVisible(config.medicalResponseLevel, IncidentResponseLevel.EMERGENCY)) }
@@ -52,6 +54,7 @@ fun HealthScreen(vm: MainViewModel) {
     var medicalCustomDetail  by remember(config.medicalCustomDetail)          { mutableStateOf(config.medicalCustomDetail) }
 
     var wellnessEnabled         by remember(config.wellnessEnabled)              { mutableStateOf(config.wellnessEnabled) }
+    var readinessAtRideStartEnabled by remember(config.readinessAtRideStartEnabled) { mutableStateOf(config.readinessAtRideStartEnabled) }
     var wellnessResponseLevel   by remember(config.wellnessResponseLevel)        { mutableStateOf(coerceVisible(config.wellnessResponseLevel, IncidentResponseLevel.WARNING)) }
     var wellnessUseMaxHrPercent by remember(config.wellnessUseMaxHrPercent)      { mutableStateOf(config.wellnessUseMaxHrPercent) }
     // Sustained tier (existing fields)
@@ -131,6 +134,21 @@ fun HealthScreen(vm: MainViewModel) {
                             vm.saveConfig(config.copy(medicalResponseLevel = it))
                         },
                     )
+                    // Tell the rider where the sound is wired:
+                    //   WARNING  → shares the picker the wellness section exposes (one knob
+                    //              controls every WARNING-level alert across both detectors).
+                    //   EMERGENCY → urgent crash countdown beep, not configurable by design.
+                    Text(
+                        text = stringResource(
+                            if (medicalResponseLevel == IncidentResponseLevel.WARNING)
+                                R.string.health_medical_sound_hint_warning
+                            else
+                                R.string.health_emergency_sound_hint
+                        ),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.padding(horizontal = 4.dp, vertical = 2.dp),
+                    )
                     CustomAlertField(
                         label = "Custom title",
                         value = medicalCustomTitle,
@@ -174,6 +192,25 @@ fun HealthScreen(vm: MainViewModel) {
                         vm.saveConfig(config.copy(wellnessResponseLevel = it))
                     },
                 )
+                // Beep picker is meaningful only for WARNING-level alerts — EMERGENCY-level
+                // fires through the crash countdown which has its own hardcoded urgent beep
+                // (BEEP_LONG + per-second BEEP_URGENT in the last 5 s). Making the picker
+                // mutable in EMERGENCY mode would mislead the rider into thinking they can
+                // mute a safety-critical beep, so we hide it and show a one-liner instead.
+                if (wellnessResponseLevel == IncidentResponseLevel.WARNING) {
+                    BeepPatternPicker(
+                        label = stringResource(R.string.health_warning_sound_label),
+                        selected = config.wellnessBeepPattern,
+                        onSelected = { v -> vm.saveConfig(config.copy(wellnessBeepPattern = v)) },
+                    )
+                } else {
+                    Text(
+                        text = stringResource(R.string.health_emergency_sound_hint),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.padding(horizontal = 4.dp, vertical = 2.dp),
+                    )
+                }
                 EnableRow(
                     label = stringResource(R.string.health_wellness_use_pct_label),
                     checked = wellnessUseMaxHrPercent,
@@ -195,7 +232,7 @@ fun HealthScreen(vm: MainViewModel) {
                 )
                 if (wCriticalOn) {
                 if (wellnessUseMaxHrPercent) {
-                    OutlinedTextField(
+                    PercentFieldWithBpmHint(
                         value = wCriticalThresholdPct,
                         onValueChange = { v ->
                             wCriticalThresholdPct = v.filter { it.isDigit() }.take(3)
@@ -203,9 +240,8 @@ fun HealthScreen(vm: MainViewModel) {
                                 if (p in 60..100) vm.saveConfig(config.copy(wellnessCriticalThresholdPct = p))
                             }
                         },
-                        label = { Text(stringResource(R.string.health_wellness_critical_threshold_pct_label)) },
-                        modifier = Modifier.fillMaxWidth(),
-                        singleLine = true,
+                        label = stringResource(R.string.health_wellness_critical_threshold_pct_label),
+                        maxHr = userProfile?.maxHr,
                     )
                 } else {
                     OutlinedTextField(
@@ -263,7 +299,7 @@ fun HealthScreen(vm: MainViewModel) {
                 )
                 if (wSustainedOn) {
                 if (wellnessUseMaxHrPercent) {
-                    OutlinedTextField(
+                    PercentFieldWithBpmHint(
                         value = wSustainedThresholdPct,
                         onValueChange = { v ->
                             wSustainedThresholdPct = v.filter { it.isDigit() }.take(3)
@@ -271,9 +307,8 @@ fun HealthScreen(vm: MainViewModel) {
                                 if (p in 60..100) vm.saveConfig(config.copy(wellnessHighHrPercent = p))
                             }
                         },
-                        label = { Text(stringResource(R.string.health_wellness_threshold_pct_label)) },
-                        modifier = Modifier.fillMaxWidth(),
-                        singleLine = true,
+                        label = stringResource(R.string.health_wellness_threshold_pct_label),
+                        maxHr = userProfile?.maxHr,
                     )
                 } else {
                     OutlinedTextField(
@@ -376,6 +411,22 @@ fun HealthScreen(vm: MainViewModel) {
                     singleLine = false,
                 )
                 }  // end if (wDecouplingOn)
+
+                // ── Readiness advice at ride start (cross-tier — uses ALL wellness data) ─
+                HorizontalDivider(modifier = Modifier.padding(vertical = 6.dp))
+                EnableRow(
+                    label = stringResource(R.string.readiness_at_ride_start_label),
+                    checked = readinessAtRideStartEnabled,
+                    onCheckedChange = {
+                        readinessAtRideStartEnabled = it
+                        vm.saveConfig(config.copy(readinessAtRideStartEnabled = it))
+                    },
+                )
+                Text(
+                    text = stringResource(R.string.readiness_at_ride_start_hint),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
                 }  // end if (wellnessEnabled)
             }
         }
@@ -453,4 +504,49 @@ private fun coerceVisible(
 ): IncidentResponseLevel = when (stored) {
     IncidentResponseLevel.SILENT -> fallback
     else -> stored
+}
+
+/**
+ * `OutlinedTextField` for the wellness "% of max HR" entry, with a small hint line below
+ * showing the **resolved bpm threshold** computed from `maxHr × pct / 100`. Lets the rider
+ * verify that the % they entered actually maps to the bpm they expect — KSafe uses
+ * whatever the Karoo profile reports as the rider's max HR, so the only sanity check that
+ * matters is the resolved bpm shown here.
+ *
+ * Resolution states:
+ *  - `maxHr` not loaded yet (or 0)  → hint asks the rider to check the Karoo profile.
+ *  - `pct` outside 60..100          → hint says "Enter 60–100" and shows the maxHr.
+ *  - both valid                     → hint shows the exact resolved bpm.
+ */
+@Composable
+private fun PercentFieldWithBpmHint(
+    value: String,
+    onValueChange: (String) -> Unit,
+    label: String,
+    maxHr: Int?,
+) {
+    androidx.compose.foundation.layout.Column(modifier = Modifier.fillMaxWidth()) {
+        OutlinedTextField(
+            value = value,
+            onValueChange = onValueChange,
+            label = { Text(label) },
+            modifier = Modifier.fillMaxWidth(),
+            singleLine = true,
+        )
+        val pct = value.toIntOrNull()
+        val hint = when {
+            maxHr == null || maxHr <= 0 ->
+                "Karoo profile maxHr not loaded yet — set it in Karoo's User Profile."
+            pct == null || pct !in 60..100 ->
+                "Enter 60–100 to see the resolved bpm threshold (your maxHr = $maxHr)."
+            else ->
+                "= ${maxHr * pct / 100} bpm (your maxHr = $maxHr)"
+        }
+        Text(
+            text = hint,
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier.padding(start = 4.dp, top = 2.dp),
+        )
+    }
 }

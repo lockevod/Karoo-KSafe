@@ -1,5 +1,7 @@
 package com.enderthor.kSafe.data
 
+import android.content.Context
+import com.enderthor.kSafe.R
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
@@ -37,8 +39,33 @@ const val KAROO_LIVE_BASE_URL = "https://dashboard.hammerhead.io/live/"
  *  v6 → v7 : three-tier wellness model — critical-HR tier (early warning) + cardiac-decoupling tier
  *            (HR / power ratio drift, requires power meter) added alongside the existing sustained-HR
  *            tier. Each tier has its own enable + parameters. Pure version stamp.
+ *  v7 → v8 : EmergencyState gains reasonEnum (EmergencyReason?) so the state machine can recover
+ *            the typed reason after a process restart. Legacy reads without this field get null
+ *            automatically via coerceInputValues = true. Pure version stamp.
+ *  v8 → v9 : carbBeepPattern / hydBeepPattern (rider-selectable beep patterns for fueling alerts).
+ *            Default SINGLE_LONG preserves v8 audible behaviour. Pure version stamp.
+ *  v9 → v10: wellnessBeepPattern (rider-selectable beep for all WARNING-level alerts — wellness
+ *            tiers + medical when downgraded to Warning). Emergency-level paths keep the
+ *            hardcoded urgent default by design. Pure version stamp.
+ *  v10 → v11: carbDeficitInitialDelayMin / hydrationDeficitInitialDelayMin added. Mirrors the
+ *             existing *TimeInitialDelayMin gate — the first deficit alert is suppressed for
+ *             this many minutes after session start so a rider doesn't get a "behind 25 g"
+ *             nag at minute 25 of a fresh ride. Pure version stamp.
+ *  v11 → v12: carbAlertBgColor / hydrationAlertBgColor added — rider-configurable background
+ *             colour for the fueling InRideAlert overlay. Defaults map to amber (carb) and
+ *             blue (hyd) so water alerts read as water-coloured instead of food-coloured.
+ *             Stored as a stable sentinel int (FUELING_ALERT_COLOR_*) so the rider's choice
+ *             survives across builds even when the R.color.* resource IDs shift. Pure
+ *             version stamp.
+ *  v12 → v13: carbTargetGperHour default dropped from 60 to 50 g/h, IntensityZoneCalculator
+ *             multiplier range widened from 0.7-1.3 to 0.4-1.5 (matches actual cycling carb
+ *             burn rate, replacing the previous narrow anti-bonk band), absorption ceiling
+ *             of 90 g/h added to the integrator. Migration moves the rider from the old
+ *             default (60) to the new default (50) so the new burn-rate-tracking multiplier
+ *             produces sensible per-zone targets out of the box. Riders who had manually
+ *             customised the target keep their value untouched. Pure version stamp otherwise.
  */
-const val CONFIG_VERSION = 7
+const val CONFIG_VERSION = 13
 
 /**
  * Canonical minSpeedForCrashKmh value per preset.
@@ -109,19 +136,72 @@ val FUEL_EMOJI_DRINK: List<String> = listOf(
     "", FUEL_BOTTLE_DRAWABLE, "💧", "🥤", "🍶", "🧃", "🧊", "☕", "🍵", "💦",
 )
 
+/**
+ * Picker palette, sorted as a "normal" colour palette: rainbow walk by hue family
+ * (warm earth → green → cyan/teal → blue → indigo → purple → pink/magenta → wine,
+ * neutrals at the end), with each row going from lightest to darkest within its
+ * family. The picker dialog renders four-per-row so each row is one coherent group.
+ *
+ * Constraints honoured by every entry:
+ *  - WCAG contrast ≥4.5:1 against white field text (`field_view.xml` hard-codes
+ *    `#FFFFFF`), so the field stays legible in sunlight regardless of Karoo's
+ *    day/night theme.
+ *  - Hue distance ≥30° from every state-driven colour (orange E65100, red B71C1C,
+ *    yellow F57F17, green 1B5E20, grey OFF 424242) so a custom field cannot be
+ *    confused with an alert / OFF state.
+ *
+ * Reordering is safe: saved configs store the raw `Int` colour value, not the index
+ * in this list. Adding new entries is also safe; removing one would break any rider
+ * who had it selected.
+ */
+/**
+ * Sentinel value meaning "use Karoo's day/night theme — no custom background, theme-aware text".
+ * Stored where a normal ARGB Int colour would be (e.g. `carb1Color`, `sosFieldColor`); when a
+ * DataType reads it back from config it inflates `field_view_auto.xml` instead of the standard
+ * `field_view.xml`, leaving the host's theme to flip text + background between day and night.
+ *
+ * = `Color.TRANSPARENT` (0). Cannot collide with any real palette colour because every other
+ * entry has alpha = 0xFF set in the high byte.
+ */
+const val FIELD_COLOR_AUTO: Int = 0
+
 val FIELD_COLOR_PALETTE: List<Int> = listOf(
-    0xFF1565C0.toInt(),  // Blue            (default actions / webhooks)
-    0xFF0D47A1.toInt(),  // Deep Blue
-    0xFF00838F.toInt(),  // Teal
-    0xFF004D5B.toInt(),  // Deep Teal
-    0xFF2E7D32.toInt(),  // Forest Green    (default SOS / Timer; deliberately darker than success flash)
-    0xFF33691E.toInt(),  // Olive Green
-    0xFF6A1B9A.toInt(),  // Purple
-    0xFF4A148C.toInt(),  // Deep Purple
-    0xFF880E4F.toInt(),  // Pink
-    0xFFAD1457.toInt(),  // Magenta
-    0xFF455A64.toInt(),  // Slate
-    0xFF263238.toInt(),  // Deep Slate
+    // First entry = the Karoo-theme passthrough sentinel. Rendered specially in
+    // FieldColorPicker (half-white / half-black "day/night" swatch). Selecting it
+    // stores 0 in config; the DataType then renders without a custom background
+    // and with theme-driven text colour, so the field matches native Karoo fields
+    // (black-on-white in day mode, white-on-black at night).
+    FIELD_COLOR_AUTO,
+    // 20 painted entries laid out as 4 columns x 5 rows below the Auto entry in
+    // the picker dialog. Each row is a coherent hue family ordered light->dark,
+    // walking the rainbow row-by-row.
+    //
+    // Row 1 — Warm earth + green. Reserved orange/red/yellow zones rule out any
+    // hotter hue, so the warm slot is browns + olive only.
+    0xFF795548.toInt(),  // Tan Brown       (M500, ~5.5:1 on white — lighter than Brown)
+    0xFF5D4037.toInt(),  // Brown           (M700, deep earth tone)
+    0xFF33691E.toInt(),  // Olive Green     (M800, warm yellow-green)
+    0xFF2E7D32.toInt(),  // Forest Green    (M700, default SOS/Timer; darker than success flash)
+    // Row 2 — Cyan / teal → first blue. Sky Blue bridges the cyan and blue ranges.
+    0xFF0277BD.toInt(),  // Sky Blue        (M700 light-blue, brightest cyan-leaning entry)
+    0xFF00838F.toInt(),  // Teal            (M700)
+    0xFF004D5B.toInt(),  // Deep Teal       (custom darker teal)
+    0xFF1565C0.toInt(),  // Blue            (M700, default actions / webhooks)
+    // Row 3 — Blues → indigos.
+    0xFF0D47A1.toInt(),  // Deep Blue       (M900)
+    0xFF283593.toInt(),  // Indigo          (M800, cool blue-violet)
+    0xFF3F51B5.toInt(),  // Bright Indigo   (M500, ~7.0:1 on white — vivid blue-violet)
+    0xFF7E57C2.toInt(),  // Lavender        (Deep Purple M400, ~5.4:1 — clearly lighter than any other purple)
+    // Row 4 — Purples → first pink.
+    0xFF6A1B9A.toInt(),  // Purple          (M800)
+    0xFF4A148C.toInt(),  // Deep Purple     (M900)
+    0xFF8E24AA.toInt(),  // Bright Purple   (M600 purple-magenta, ~5.3:1 on white)
+    0xFF880E4F.toInt(),  // Pink            (M900)
+    // Row 5 — Pink → wine → neutrals.
+    0xFFE91E63.toInt(),  // Bright Pink     (M500, ~4.7:1 — hot pink)
+    0xFF4E0A18.toInt(),  // Burgundy        (custom deep wine)
+    0xFF455A64.toInt(),  // Slate           (M700 blue-grey)
+    0xFF263238.toInt(),  // Deep Slate      (M900 blue-grey)
 )
 
 // ─── Enums ────────────────────────────────────────────────────────────────────
@@ -139,13 +219,20 @@ enum class CrashSensitivity {
  * How an incident detector's emission should be handled.
  *
  *  - [SILENT]    — log to calibration only; no UI, no notification, no contact alert.
- *  - [WARNING]   — on-screen [SystemNotification] + beep. No countdown, no contact alert.
- *  - [EMERGENCY] — full crash flow: countdown + contact alert.
+ *  - [WARNING]   — full-screen `InRideAlert` overlay + configurable beep
+ *                  ([KSafeConfig.wellnessBeepPattern]). No countdown, no contact alert.
+ *                  The alert lands on top of whatever ride screen the rider is on so it
+ *                  is actually seen mid-ride — `SystemNotification` would route the
+ *                  message to the Karoo OS Control Center instead, which is not visible
+ *                  while riding.
+ *  - [EMERGENCY] — full crash flow: cancellable countdown + contact alert.
  */
 enum class IncidentResponseLevel { SILENT, WARNING, EMERGENCY }
 
+@Serializable
 enum class EmergencyStatus { IDLE, COUNTDOWN, ALERTING }
 
+@Serializable
 enum class EmergencyReason(val label: String) {
     MANUAL_SOS("Manual SOS"),
     CRASH_DETECTED("Crash detected"),
@@ -216,6 +303,11 @@ data class KSafeConfig(
     // ─── Wellness monitor (sustained high HR) ────────────────────────────────
     /** Master toggle for [WellnessMonitor]. Default OFF — opt-in: thresholds depend on user age/fitness. */
     val wellnessEnabled: Boolean = false,
+    /** When true, on the first Recording transition of a session KSafe consults the last
+     *  10 stored ride wellness records and fires an InRideAlert if the rider should take
+     *  it easy (high cardiac drift / many wellness fires / multiple hard rides in a row).
+     *  Silent when the rider is fully recovered — no per-ride spam. Default ON. */
+    val readinessAtRideStartEnabled: Boolean = true,
     /** Response level for wellness alerts. Default WARNING — on-screen only, never to contacts. */
     val wellnessResponseLevel: IncidentResponseLevel = IncidentResponseLevel.WARNING,
     /** HR threshold for the wellness monitor (bpm). User-tunable in the Health tab.
@@ -261,16 +353,24 @@ data class KSafeConfig(
     /** Custom InRideAlert title/detail for the cardiac DECOUPLING tier. Empty → built-in defaults. */
     val wellnessDecouplingCustomTitle: String = "",
     val wellnessDecouplingCustomDetail: String = "",
+    /** Beep pattern played for WARNING-level alerts (wellness sustained / critical / decoupling
+     *  and any medical incident the rider downgraded to WARNING). Emergency-level alerts
+     *  (crash / medical-collapse on EMERGENCY) stay on the urgent BEEP_LONG + BEEP_URGENT
+     *  countdown sequence — those grab attention by design and aren't user-mutable. */
+    val wellnessBeepPattern: BeepPattern = BeepPattern.SINGLE_LONG,
     // Calibration logging — writes detailed sensor events to CSV for threshold tuning
     val calibrationLoggingEnabled: Boolean = false,
     // Field colours — idle/ready background for each ride-screen widget
-    val sosFieldColor: Int = 0xFF2E7D32.toInt(),       // SOS: idle=SAFE (forest green)
-    val timerFieldColor: Int = 0xFF2E7D32.toInt(),     // Safety Timer: OK (forest green)
-    val customMsg1Color: Int = 0xFF1565C0.toInt(),     // Custom Message 1: idle (blue)
-    val customMsg2Color: Int = 0xFF1565C0.toInt(),     // Custom Message 2: idle (blue)
-    val customMsg3Color: Int = 0xFF1565C0.toInt(),     // Custom Message 3: idle (blue)
-    val webhook1Color: Int = 0xFF1565C0.toInt(),       // Webhook 1: idle (blue)
-    val webhook2Color: Int = 0xFF1565C0.toInt(),       // Webhook 2: idle (blue)
+    // Defaults are FIELD_COLOR_AUTO — fresh installs render in native Karoo theme
+    // (auto day/night, theme-driven text). Riders who prefer a coloured tap target
+    // can pick any palette entry; existing saved colour ints stay valid.
+    val sosFieldColor: Int = FIELD_COLOR_AUTO,
+    val timerFieldColor: Int = FIELD_COLOR_AUTO,
+    val customMsg1Color: Int = FIELD_COLOR_AUTO,
+    val customMsg2Color: Int = FIELD_COLOR_AUTO,
+    val customMsg3Color: Int = FIELD_COLOR_AUTO,
+    val webhook1Color: Int = FIELD_COLOR_AUTO,
+    val webhook2Color: Int = FIELD_COLOR_AUTO,
     // Webhook actions — generic HTTP buttons assignable to Karoo hardware buttons.
     // Each action fires a single HTTP request (GET or POST) to any endpoint.
     // Compatible with Home Assistant, ntfy, IFTTT, n8n, Make, and any webhook service.
@@ -305,11 +405,22 @@ data class KSafeConfig(
     // ─── Carbs tracker (HR/power-aware nutrition) ───────────────────────────
     /** Master toggle. Opt-in feature, off by default. */
     val carbsTrackerEnabled: Boolean = false,
-    /** Base carb intake target (g/h). Modulated at runtime by the IntensityZoneCalculator. */
-    val carbTargetGperHour: Int = 60,
+    /** Base carb intake target (g/h). Modulated at runtime by the IntensityZoneCalculator
+     *  (0.4× to 1.5×, clamped to a 90 g/h absorption ceiling). Default 50 corresponds to
+     *  the [CarbRidePreset.ENDURANCE] preset and matches modern recreational-cyclist
+     *  recommendations (ISSN 2017 / IOC 2019 consensus: 30-60 g/h for sub-2h endurance,
+     *  60+ g/h only with trained gut on longer efforts). Race-trained riders raise this
+     *  to 75-90 via the Race preset or manual edit. */
+    val carbTargetGperHour: Int = 50,
     /** When true, alert when (cumulative target − cumulative logged) exceeds threshold. */
     val carbDeficitAlertEnabled: Boolean = true,
     val carbDeficitThresholdG: Int = 25,
+    /** Initial grace period (minutes) before the deficit alert can fire for the first time
+     *  in a session. Mirrors [carbTimeInitialDelayMin] — the integrator accumulates target
+     *  from t=0, so without this gate the first deficit alert lands at ~25 min on a fresh
+     *  ride even though the rider has not "fallen behind" in any meaningful sense. 0 = off
+     *  (alert can fire as soon as deficit crosses threshold, original behaviour). */
+    val carbDeficitInitialDelayMin: Int = 30,
     /** When true, alert when too much time has passed since the last log. Combinable with deficit alert. */
     val carbTimeAlertEnabled: Boolean = false,
     val carbTimeIntervalMin: Int = 25,
@@ -326,17 +437,33 @@ data class KSafeConfig(
      *  (`fueling_carb_alert_detail_deficit` / `_time`). When set, the same template is used
      *  for both alert sources; tokens `{deficit}`, `{elapsed}`, `{target}` substituted at runtime. */
     val carbAlertCustomDetail: String = "",
+    /** Beep pattern played when a carb alert fires. OFF = visual only. See [BeepPattern]
+     *  for the available presets. Default keeps the v8 behaviour (single 880 Hz × 800 ms). */
+    val carbBeepPattern: BeepPattern = BeepPattern.SINGLE_LONG,
+    /** Background colour for the carb InRideAlert overlay. One of [FUELING_ALERT_COLORS].
+     *  Stored as an Android `R.color.*` resource ID — see colors.xml. Default = amber. */
+    val carbAlertBgColor: Int = FUELING_ALERT_COLOR_ORANGE,
     /** Three logging slots, each user-configurable label + grams + idle background colour
      *  + optional emoji prefix. Empty `carbNIcon` = no emoji, label only. */
-    val carb1Label: String = "Gel",      val carb1Grams: Int = 25,    val carb1Color: Int = 0xFF1565C0.toInt(),    val carb1Icon: String = FUEL_GEL_DRAWABLE,
-    val carb2Label: String = "Bar",      val carb2Grams: Int = 30,    val carb2Color: Int = 0xFF1565C0.toInt(),    val carb2Icon: String = "🍫",
-    val carb3Label: String = "Fruit",    val carb3Grams: Int = 20,    val carb3Color: Int = 0xFF1565C0.toInt(),    val carb3Icon: String = "🍌",
+    val carb1Label: String = "Gel",      val carb1Grams: Int = 25,    val carb1Color: Int = FIELD_COLOR_AUTO,    val carb1Icon: String = FUEL_GEL_DRAWABLE,
+    val carb2Label: String = "Bar",      val carb2Grams: Int = 30,    val carb2Color: Int = FIELD_COLOR_AUTO,    val carb2Icon: String = "🍫",
+    val carb3Label: String = "Fruit",    val carb3Grams: Int = 20,    val carb3Color: Int = FIELD_COLOR_AUTO,    val carb3Icon: String = "🍌",
 
     // ─── Hydration tracker (flat target by time, no sensor input) ───────────
     val hydrationTrackerEnabled: Boolean = false,
     val hydrationTargetMlPerHour: Int = 750,
+    /** When true, the hydration tracker ignores [hydrationTargetMlPerHour] and computes a
+     *  dynamic per-hour target from HR, power, weight, ambient temperature and humidity via
+     *  the SweatEstimator (Keytel HR-derived metabolic rate × WBGT heat factor × weight
+     *  scaling). Temperature is sourced from the `karoo-headwind` extension stream when
+     *  installed (real meteo data) or from the Karoo onboard sensor as fallback (sesgo
+     *  device-heat +3-8 °C). Humidity comes from Headwind only; without it the estimator
+     *  assumes 50 % RH. Opt-in: default OFF so existing riders keep the fixed target. */
+    val hydrationDynamicEstimateEnabled: Boolean = false,
     val hydrationDeficitAlertEnabled: Boolean = true,
     val hydrationDeficitThresholdMl: Int = 300,
+    /** Same semantics as [carbDeficitInitialDelayMin]. 0 = disabled. */
+    val hydrationDeficitInitialDelayMin: Int = 30,
     val hydrationTimeAlertEnabled: Boolean = false,
     val hydrationTimeIntervalMin: Int = 20,
     /** Same semantics as `carbTimeInitialDelayMin`. 0 = disabled. */
@@ -347,12 +474,13 @@ data class KSafeConfig(
     /** Optional custom detail template. Empty = use source-specific defaults
      *  (`fueling_hyd_alert_detail_deficit` / `_time`). Tokens `{deficit}`, `{elapsed}`, `{target}`. */
     val hydrationAlertCustomDetail: String = "",
-    val drink1Label: String = "Sip",     val drink1Ml: Int = 100,    val drink1Color: Int = 0xFF1565C0.toInt(),    val drink1Icon: String = "💧",
-    val drink2Label: String = "Bottle",  val drink2Ml: Int = 500,    val drink2Color: Int = 0xFF1565C0.toInt(),    val drink2Icon: String = FUEL_BOTTLE_DRAWABLE,
+    /** Beep pattern played when a hydration alert fires. OFF = visual only. */
+    val hydBeepPattern: BeepPattern = BeepPattern.SINGLE_LONG,
+    /** Background colour for the hydration InRideAlert overlay. Default = blue (water). */
+    val hydrationAlertBgColor: Int = FUELING_ALERT_COLOR_BLUE,
+    val drink1Label: String = "Sip",     val drink1Ml: Int = 100,    val drink1Color: Int = FIELD_COLOR_AUTO,    val drink1Icon: String = "💧",
+    val drink2Label: String = "Bottle",  val drink2Ml: Int = 500,    val drink2Color: Int = FIELD_COLOR_AUTO,    val drink2Icon: String = FUEL_BOTTLE_DRAWABLE,
 
-    // ─── Post-ride summary ──────────────────────────────────────────────────
-    /** Show an InRideAlert with totals at the end of every ride. */
-    val fuelingPostRideSummaryEnabled: Boolean = true,
     /** Write per-second cumulative carbs (g) and hydration (ml) into the FIT file as
      *  developer fields, plus the totals into the session message. Default ON because
      *  the cost is negligible (~0.05% battery over 5 h, no perceptible CPU). Riders
@@ -374,7 +502,141 @@ data class SenderConfig(
     val userKey2: String = "",      // Pushover: second user key (optional)
     val userKey3: String = "",      // Pushover: third user key (optional)
     val phoneNumber: String = "",   // CallMeBot: recipient WhatsApp number (with country code)
+    // CallMeBot only accepts a single (phone, apiKey) pair per request, so each extra recipient
+    // needs its own credential pair. All empty = single-recipient behaviour (back-compat).
+    val apiKey2: String = "",       // CallMeBot: second recipient API key (optional)
+    val phoneNumber2: String = "",  // CallMeBot: second recipient WhatsApp number (optional)
+    val apiKey3: String = "",       // CallMeBot: third recipient API key (optional)
+    val phoneNumber3: String = "",  // CallMeBot: third recipient WhatsApp number (optional)
 )
+
+// ─── Carb ride-type presets ───────────────────────────────────────────────────
+
+/**
+ * Quick presets for [KSafeConfig.carbTargetGperHour] aligned with ISSN 2017 / IOC 2019
+ * consensus carb-intake recommendations for different ride intents. Tapping a preset
+ * in the Fueling UI sets the target g/h to its associated value; subsequent manual
+ * edits leave the target wherever the rider moved it (presets are one-shot apply
+ * actions, not a stored "current preset" state).
+ *
+ * Values chosen so a typical recreational rider (untrained gut) is well-covered:
+ *  - **Casual**: short rides / recovery — fueling matters less, hydration matters more.
+ *  - **Endurance** (default): typical 2-3h training ride.
+ *  - **Race**: long-event pacing, expects partially-trained gut.
+ *
+ * The intensity-zone multiplier (0.4 - 1.5, see IntensityZoneCalculator) scales each
+ * preset across the rider's effort. The integrator clamps to ABSORPTION_CAP_GPH (90)
+ * so Race × top-zone still produces a physiologically-realistic target.
+ */
+enum class CarbRidePreset(val gPerHour: Int, val displayName: String) {
+    CASUAL(30, "Casual / Recovery"),
+    ENDURANCE(50, "Endurance"),
+    RACE(75, "Race / Long ride"),
+}
+
+// ─── Fueling alert background colour palette ─────────────────────────────────
+
+/**
+ * Stable sentinel values stored in [KSafeConfig.carbAlertBgColor] /
+ * [KSafeConfig.hydrationAlertBgColor]. We cannot serialise raw `R.color.*` resource
+ * IDs into the saved JSON because Android resource IDs are NOT stable across builds —
+ * a future release that adds a new color resource shifts the integer ID of every
+ * existing entry, and the rider's saved choice would silently start pointing at the
+ * wrong colour (or none at all). Sentinel ints solve this: we look them up to the
+ * current build's `R.color.*` at the alert-dispatch site.
+ *
+ * Add a new entry only at the END of [FUELING_ALERT_COLORS] so existing saved
+ * configs keep mapping to the same swatch they picked.
+ */
+const val FUELING_ALERT_COLOR_ORANGE: Int = 1
+const val FUELING_ALERT_COLOR_BLUE: Int = 2
+const val FUELING_ALERT_COLOR_GREEN: Int = 3
+const val FUELING_ALERT_COLOR_RED: Int = 4
+const val FUELING_ALERT_COLOR_SLATE: Int = 5
+const val FUELING_ALERT_COLOR_PURPLE: Int = 6
+const val FUELING_ALERT_COLOR_BROWN: Int = 7
+
+/** Picker order: warm → cool → neutrals. Riders see this order in the colour swatch row.
+ *  Brown lives near the warms (food-coloured — riders commonly use brown for their food
+ *  button palette and want the matching alert colour). */
+val FUELING_ALERT_COLORS: List<Int> = listOf(
+    FUELING_ALERT_COLOR_RED,
+    FUELING_ALERT_COLOR_ORANGE,
+    FUELING_ALERT_COLOR_BROWN,
+    FUELING_ALERT_COLOR_GREEN,
+    FUELING_ALERT_COLOR_BLUE,
+    FUELING_ALERT_COLOR_PURPLE,
+    FUELING_ALERT_COLOR_SLATE,
+)
+
+/** Map a [FUELING_ALERT_COLORS] sentinel to its `R.color.*` resource ID. Unknown
+ *  sentinels (forward-compat with a future release that adds entries) fall back to
+ *  the orange default so the rider still sees a sensible alert instead of an error. */
+fun fuelingAlertColorRes(sentinel: Int): Int = when (sentinel) {
+    FUELING_ALERT_COLOR_RED    -> com.enderthor.kSafe.R.color.alert_red
+    FUELING_ALERT_COLOR_ORANGE -> com.enderthor.kSafe.R.color.alert_orange
+    FUELING_ALERT_COLOR_BROWN  -> com.enderthor.kSafe.R.color.alert_brown
+    FUELING_ALERT_COLOR_GREEN  -> com.enderthor.kSafe.R.color.alert_green
+    FUELING_ALERT_COLOR_BLUE   -> com.enderthor.kSafe.R.color.alert_blue
+    FUELING_ALERT_COLOR_PURPLE -> com.enderthor.kSafe.R.color.alert_purple
+    FUELING_ALERT_COLOR_SLATE  -> com.enderthor.kSafe.R.color.alert_slate
+    else                       -> com.enderthor.kSafe.R.color.alert_orange
+}
+
+// ─── Fueling state persistence (survives extension restart / OOM) ─────────────
+
+/**
+ * Persisted snapshot of the carbs / hydration tracker accumulators. Written through
+ * [ConfigurationManager.saveFuelingState] every ~30 s while a ride is recording,
+ * cleared on the Idle transition. On extension boot, if a recent snapshot exists
+ * AND the first ride-state event is Recording, the trackers restore from it instead
+ * of starting fresh — preserves an hour of fueling work across an extension crash.
+ *
+ * Staleness window: see [FUELING_RESTORE_MAX_AGE_MS]. A snapshot older than that is
+ * discarded — either the rider stopped the ride deliberately (and we want a fresh
+ * accumulator next time) or the device sat unused for a long time.
+ *
+ * Per-slot undo state ([CarbsTracker.lastLoggedGramsBySlot] etc.) is deliberately
+ * NOT persisted: it only matters within the on-screen flash window (~3 s), so an
+ * extension crash that close to a tap is rare enough that losing the undo button
+ * is an acceptable trade-off for keeping the persisted payload tiny.
+ */
+@Serializable
+data class FuelingState(
+    val carb: CarbFuelingState = CarbFuelingState(),
+    val hyd: HydFuelingState = HydFuelingState(),
+    /** Wall-clock ms when this snapshot was written. Used to age out stale snapshots
+     *  on extension boot — see [FUELING_RESTORE_MAX_AGE_MS]. */
+    val savedAtMs: Long = 0L,
+)
+
+@Serializable
+data class CarbFuelingState(
+    val cumTargetG: Float = 0f,
+    val cumLoggedG: Int = 0,
+    val sessionStartMs: Long = 0L,
+    val lastLogMs: Long = 0L,
+    val lastAlertMs: Long = 0L,
+)
+
+@Serializable
+data class HydFuelingState(
+    val cumTargetMl: Float = 0f,
+    val cumLoggedMl: Int = 0,
+    val sessionStartMs: Long = 0L,
+    val lastLogMs: Long = 0L,
+    val lastAlertMs: Long = 0L,
+)
+
+/**
+ * Max age of a persisted [FuelingState] that's still eligible for restoration on
+ * extension boot. 30 min covers a typical extension crash + reboot cycle while a
+ * ride is genuinely in progress. A persisted snapshot older than this means the
+ * rider has been idle/away long enough that resuming the old totals is wrong.
+ */
+const val FUELING_RESTORE_MAX_AGE_MS: Long = 30L * 60_000L
+
+val defaultFuelingStateJson: String = Json.encodeToString(FuelingState())
 
 // ─── Emergency state (shared between extension and DataTypes via DataStore) ───
 
@@ -382,6 +644,7 @@ data class SenderConfig(
 data class EmergencyState(
     val status: EmergencyStatus = EmergencyStatus.IDLE,
     val reason: String = "",
+    val reasonEnum: EmergencyReason? = null,         // null on legacy reads; set by startCountdown
     val countdownStartTime: Long = 0L,
     val countdownDurationSeconds: Int = DEFAULT_COUNTDOWN_SECONDS,
     // Check-in timer
@@ -402,6 +665,12 @@ data class EmergencyState(
         val elapsedMinutes = ((System.currentTimeMillis() - checkinStartTime) / 60_000).toInt()
         return (checkinIntervalMinutes - elapsedMinutes).coerceAtLeast(0)
     }
+
+    /** Absolute deadline epoch-ms derived from persisted fields; 0 if not in a countdown. */
+    fun countdownDeadlineMs(): Long =
+        if (status == EmergencyStatus.COUNTDOWN && countdownStartTime > 0)
+            countdownStartTime + countdownDurationSeconds * 1_000L
+        else 0L
 }
 
 // ─── Backup ───────────────────────────────────────────────────────────────────
@@ -410,11 +679,17 @@ data class EmergencyState(
 // Each class only contains the fields that the provider actually uses,
 // with human-readable names so the exported file works as a clear template.
 
-/** CallMeBot (WhatsApp) — needs an API key + the recipient's WhatsApp phone number. */
+/** CallMeBot (WhatsApp) — needs an API key + the recipient's WhatsApp phone number.
+ *  Optional 2nd / 3rd recipients each have their own (apiKey, phoneNumber) pair because
+ *  CallMeBot cannot fan-out to multiple recipients from a single request. */
 @Serializable
 data class CallMeBotConfig(
-    val apiKey: String = "",       // API key obtained from callmebot.com
-    val phoneNumber: String = "",  // Recipient WhatsApp number with country code (e.g. +34612345678)
+    val apiKey: String = "",        // API key obtained from callmebot.com
+    val phoneNumber: String = "",   // Recipient WhatsApp number with country code (e.g. +34612345678)
+    val apiKey2: String = "",       // Optional: second recipient's API key
+    val phoneNumber2: String = "",  // Optional: second recipient's WhatsApp number
+    val apiKey3: String = "",       // Optional: third recipient's API key
+    val phoneNumber3: String = "",  // Optional: third recipient's WhatsApp number
 )
 
 /** Pushover — app token (from pushover.net) + up to 3 recipient user/group keys. */
@@ -466,7 +741,11 @@ data class KSafeBackupExport(
 fun KSafeBackupExport.toSenderConfigs(): List<SenderConfig> = listOf(
     SenderConfig(ProviderType.CALLMEBOT,
         apiKey = callmebot.apiKey,
-        phoneNumber = callmebot.phoneNumber),
+        phoneNumber = callmebot.phoneNumber,
+        apiKey2 = callmebot.apiKey2,
+        phoneNumber2 = callmebot.phoneNumber2,
+        apiKey3 = callmebot.apiKey3,
+        phoneNumber3 = callmebot.phoneNumber3),
     SenderConfig(ProviderType.PUSHOVER,
         apiKey = pushover.appToken,
         userKey = pushover.userKey,
@@ -490,7 +769,14 @@ fun List<SenderConfig>.toBackupExport(config: KSafeConfig): KSafeBackupExport {
     val tg  = find(ProviderType.TELEGRAM)
     return KSafeBackupExport(
         config     = config,
-        callmebot  = CallMeBotConfig(apiKey = cmb.apiKey, phoneNumber = cmb.phoneNumber),
+        callmebot  = CallMeBotConfig(
+            apiKey = cmb.apiKey,
+            phoneNumber = cmb.phoneNumber,
+            apiKey2 = cmb.apiKey2,
+            phoneNumber2 = cmb.phoneNumber2,
+            apiKey3 = cmb.apiKey3,
+            phoneNumber3 = cmb.phoneNumber3,
+        ),
         pushover   = PushoverConfig(appToken = po.apiKey, userKey = po.userKey, userKey2 = po.userKey2, userKey3 = po.userKey3),
         ntfy       = NtfyConfig(topic = sp.apiKey),
         telegram   = TelegramConfig(botToken = tg.apiKey, chatId = tg.userKey, chatId2 = tg.userKey2, chatId3 = tg.userKey3),
@@ -509,6 +795,44 @@ val defaultSenderConfigs = listOf(
 val defaultSenderConfigJson: String = Json.encodeToString(defaultSenderConfigs)
 val defaultKSafeConfigJson: String = Json.encodeToString(listOf(KSafeConfig(configVersion = CONFIG_VERSION)))
 val defaultEmergencyStateJson: String = Json.encodeToString(EmergencyState())
+
+// ─── Wellness ride history (consumed by ReadinessDecision) ────────────────────
+
+/**
+ * Snapshot of one ride's wellness summary, persisted at the Recording → Idle transition.
+ * Field set mirrors `WellnessMonitor.WellnessSummary` plus a wall-clock timestamp so
+ * recency rules can be evaluated independently of the rider's timezone.
+ */
+@Serializable
+data class RideWellnessRecord(
+    val endedAtMs: Long = 0L,
+    val maxHrBpm: Int = 0,
+    val cumMsCriticalAbove: Long = 0L,
+    val cumMsSustainedAbove: Long = 0L,
+    val maxDriftPct: Float = 0f,
+    val criticalFires: Int = 0,
+    val sustainedFires: Int = 0,
+    val decouplingFires: Int = 0,
+) {
+    val totalFires: Int get() = criticalFires + sustainedFires + decouplingFires
+}
+
+/**
+ * Rolling history of the last 10 wellness summaries, newest first. Consumed by
+ * `decideReadiness` to advise the rider at the start of the next ride.
+ */
+@Serializable
+data class WellnessHistory(
+    val records: List<RideWellnessRecord> = emptyList(),
+) {
+    /** Returns a new history with `record` prepended and trimmed to the most recent [MAX_SIZE]. */
+    fun append(record: RideWellnessRecord): WellnessHistory =
+        WellnessHistory(records = (listOf(record) + records).take(MAX_SIZE))
+
+    companion object { const val MAX_SIZE = 10 }
+}
+
+val defaultWellnessHistoryJson: String = Json.encodeToString(WellnessHistory())
 
 // ─── Config migration ─────────────────────────────────────────────────────────
 
@@ -594,6 +918,111 @@ fun KSafeConfig.migrateToLatest(): KSafeConfig {
         Timber.i("KSafeConfig migrated v%d→v7 (wellness three-tier model)", originalVersion)
     }
 
+    if (c.configVersion < 8) {
+        // v7 → v8: EmergencyState.reasonEnum (EmergencyReason?) added. No data transform needed;
+        // kotlinx.serialization + coerceInputValues = true fills missing field with null automatically.
+        c = c.copy(configVersion = 8)
+        Timber.i("KSafeConfig migrated v%d→v8 (EmergencyState reasonEnum added)", originalVersion)
+    }
+
+    if (c.configVersion < 9) {
+        // v8 → v9: carbBeepPattern + hydBeepPattern added. Defaults to SINGLE_LONG so existing
+        // riders hear exactly the same 880 Hz × 800 ms beep they had before. Pure version stamp;
+        // coerceInputValues fills the missing enum field with its declared default.
+        c = c.copy(configVersion = 9)
+        Timber.i("KSafeConfig migrated v%d→v9 (carb/hyd beep pattern picker)", originalVersion)
+    }
+
+    if (c.configVersion < 10) {
+        // v9 → v10: wellnessBeepPattern added for WARNING-level alerts. Same SINGLE_LONG
+        // default → previous behaviour preserved. Emergency-level beeps stay hardcoded.
+        c = c.copy(configVersion = 10)
+        Timber.i("KSafeConfig migrated v%d→v10 (wellness beep pattern picker)", originalVersion)
+    }
+
+    if (c.configVersion < 11) {
+        // v10 → v11: carbDeficitInitialDelayMin / hydrationDeficitInitialDelayMin added.
+        // Existing rides keep the previous "deficit fires as soon as threshold is crossed"
+        // behaviour because the Kotlin defaults of 30 min are noticeably different from
+        // the previous implicit 0 — riders who liked the old behaviour can dial these
+        // back to 0 in Settings. Pure version stamp.
+        c = c.copy(configVersion = 11)
+        Timber.i("KSafeConfig migrated v%d→v11 (deficit initial delay)", originalVersion)
+    }
+
+    if (c.configVersion < 12) {
+        // v11 → v12: carbAlertBgColor / hydrationAlertBgColor sentinels added. Defaults
+        // already encode "amber for carbs, blue for hyd" which matches the hard-coded
+        // pre-v12 amber-for-all behaviour for carbs and changes hyd from amber to blue.
+        // The migration is intentionally a pure version stamp — pre-v12 riders see hyd
+        // alerts flip to blue on first launch after the update, which is the desired UX.
+        c = c.copy(configVersion = 12)
+        Timber.i("KSafeConfig migrated v%d→v12 (fueling alert bg colour picker)", originalVersion)
+    }
+
+    if (c.configVersion < 13) {
+        // v12 → v13: default carbTargetGperHour 60 → 50, multiplier range widened to
+        // 0.4-1.5 (burn-rate tracking), absorption ceiling added.
+        //
+        // For the target: only nudge riders who were still on the OLD default (60). Riders
+        // who manually customised the target keep their value — even if they had picked 60
+        // deliberately, the migration leaves it alone because we can't tell intent apart
+        // from default. New installs naturally start at the new 50 default.
+        val newTarget = if (c.carbTargetGperHour == 60) 50 else c.carbTargetGperHour
+        c = c.copy(carbTargetGperHour = newTarget, configVersion = 13)
+        Timber.i(
+            "KSafeConfig migrated v%d→v13 (carb burn-rate tracking; target %d→%d)",
+            originalVersion, 60, newTarget,
+        )
+    }
+
     return c
 }
+
+/**
+ * Returns a copy of this config with empty alert-customisation fields pre-filled with their
+ * current localised default strings. Used by the JSON export so the user sees the actual
+ * default texts in the file and can edit them in place — easier than guessing what the
+ * default looks like before changing it.
+ *
+ * Only customisation fields with an `ifBlank { context.getString(R.string.*) }` runtime
+ * fall-back are materialised here. Fields with non-empty literal defaults (e.g.
+ * `emergencyMessage`, `karooLiveStartMessage`, `customMessage`) already serialise visibly.
+ *
+ * After import the materialised strings are stored as literal field values. The runtime
+ * fall-back code (`config.xxx.ifBlank { … }`) keeps working — the `ifBlank` branch is just
+ * never taken because the field is no longer blank. Tradeoff: a user who imports an exported
+ * config no longer picks up future changes to the default strings (e.g. translation updates,
+ * typo fixes) for the materialised fields. That's the same situation as anyone who
+ * explicitly customised the alert, which is the intent here.
+ */
+fun KSafeConfig.materializeAlertDefaults(context: Context): KSafeConfig = copy(
+    // ── Fueling alerts ─────────────────────────────────────────────────────
+    carbAlertCustomTitle =
+        carbAlertCustomTitle.ifBlank { context.getString(R.string.fueling_carb_alert_title) },
+    carbAlertCustomDetail =
+        carbAlertCustomDetail.ifBlank { context.getString(R.string.fueling_carb_alert_detail_deficit) },
+    hydrationAlertCustomTitle =
+        hydrationAlertCustomTitle.ifBlank { context.getString(R.string.fueling_hyd_alert_title) },
+    hydrationAlertCustomDetail =
+        hydrationAlertCustomDetail.ifBlank { context.getString(R.string.fueling_hyd_alert_detail_deficit) },
+    // ── Medical incidents ──────────────────────────────────────────────────
+    medicalCustomTitle =
+        medicalCustomTitle.ifBlank { context.getString(R.string.warning_medical_title) },
+    medicalCustomDetail =
+        medicalCustomDetail.ifBlank { context.getString(R.string.warning_medical_detail) },
+    // ── Wellness, three tiers ──────────────────────────────────────────────
+    wellnessSustainedCustomTitle =
+        wellnessSustainedCustomTitle.ifBlank { context.getString(R.string.warning_wellness_high_hr_title) },
+    wellnessSustainedCustomDetail =
+        wellnessSustainedCustomDetail.ifBlank { context.getString(R.string.warning_wellness_high_hr_detail) },
+    wellnessCriticalCustomTitle =
+        wellnessCriticalCustomTitle.ifBlank { context.getString(R.string.warning_wellness_critical_hr_title) },
+    wellnessCriticalCustomDetail =
+        wellnessCriticalCustomDetail.ifBlank { context.getString(R.string.warning_wellness_critical_hr_detail) },
+    wellnessDecouplingCustomTitle =
+        wellnessDecouplingCustomTitle.ifBlank { context.getString(R.string.warning_wellness_decoupling_title) },
+    wellnessDecouplingCustomDetail =
+        wellnessDecouplingCustomDetail.ifBlank { context.getString(R.string.warning_wellness_decoupling_detail) },
+)
 

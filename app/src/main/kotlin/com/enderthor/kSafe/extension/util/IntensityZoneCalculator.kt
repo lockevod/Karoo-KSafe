@@ -1,4 +1,4 @@
-package com.enderthor.kSafe.extension.managers
+package com.enderthor.kSafe.extension.util
 
 import io.hammerhead.karooext.models.UserProfile
 
@@ -13,10 +13,35 @@ import io.hammerhead.karooext.models.UserProfile
  *
  * Stateless and side-effect-free — safe to call on every tick.
  */
+
+/** Gut absorption ceiling (g/h). The integrator clamps `base × multiplier` to this
+ *  value so the cumulative target never advances faster than a typical recreational
+ *  rider can actually consume. 90 g/h is the established ceiling for a glucose+fructose
+ *  mix with an un-trained gut (Jeukendrup 2014, ISSN 2017). Race-trained riders push
+ *  120-150 g/h but only after months of gut adaptation — they can manually raise the
+ *  base target to compensate. Top-level so [CarbsTracker] can reference it directly. */
+const val ABSORPTION_CAP_GPH = 90f
+
 object IntensityZoneCalculator {
 
-    private const val MIN_MULT = 0.7f
-    private const val MAX_MULT = 1.3f
+    // Multiplier range — tracks actual carb burn rate across the rider's intensity
+    // zones. Real cycling carb burn (Brooks 2018, Romijn 1993, Coyle 1997):
+    //
+    //   Z1 (~50% VO2max) ≈ 20-25 g/h  (mostly fat oxidation)  → ratio ≈ 0.4 of Z3
+    //   Z3 (~70%)        ≈ 50-60 g/h                          → 1.00 (reference)
+    //   Z5 (~90%)        ≈ 80-90 g/h (~80% carb, gut-limited) → 1.50
+    //
+    // MIN_MULT 0.4 mirrors actual Z1 burn at a 50 g/h base target (= 20 g/h, real Z1).
+    // MAX_MULT 1.5 mirrors actual Z5 burn at the same base (= 75 g/h, close to real Z5).
+    // The gut-absorption ceiling (≈ 90 g/h single-transportable, see ISSN 2017) is
+    // enforced as a hard absolute cap in `CarbsTracker.tick()` so a Race-preset base
+    // (75 g/h) × top-zone multiplier (1.5) still integrates at 90 g/h, not 112 g/h.
+    //
+    // Earlier 0.7-1.3 band over-fueled recovery periods by ~70 %. This change moves
+    // KSafe from "anti-bonk safety buffer" to "burn-rate tracker", which is what the
+    // user research and recent ISSN/IOC consensus recommends for recreational riders.
+    private const val MIN_MULT = 0.4f
+    private const val MAX_MULT = 1.5f
 
     fun calculate(profile: UserProfile?, currentHr: Int?, currentPowerW: Int?): ZoneSnapshot {
         if (profile != null && currentPowerW != null && profile.powerZones.isNotEmpty()) {

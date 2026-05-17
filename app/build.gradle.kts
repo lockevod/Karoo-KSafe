@@ -21,8 +21,8 @@ android {
         applicationId = "com.enderthor.kSafe"
         minSdk = 23
         targetSdk = 34
-        versionCode = 202605102
-        versionName = "2.1.0"
+        versionCode = 202605161
+        versionName = "2.0.0"
 
         // Calibration log delivery credentials — injected from local.properties at compile time.
         // Falls back to empty string if the key is not set (LogReporter skips sending in that case).
@@ -71,4 +71,8 @@ dependencies {
     implementation(libs.timber)
     implementation(libs.androidx.foundation.android)
     implementation(libs.androidx.foundation.layout.android)
+
+    testImplementation(libs.junit)
+    testImplementation(libs.kotlinx.coroutines.test)
+    testImplementation(libs.mockito.core)
 }

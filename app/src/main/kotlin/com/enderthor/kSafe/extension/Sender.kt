@@ -20,7 +20,23 @@ class Sender(
     private val maxCycles = 3
     private val attemptsPerCycle = 3
     private val delaySeconds = listOf(60, 120, 180)
+    /**
+     * Wait between cycles. Length contract: **must be `maxCycles - 1`** because the loop
+     * skips this list on the last cycle (no point waiting for a cycle that won't run).
+     */
     private val cycleDelayMinutes = listOf(5, 10)
+
+    companion object {
+        /** Per-HTTP-request timeout for a single recipient call (test path + every
+         *  recipient in the multi-recipient retry block). */
+        private const val ATTEMPT_TIMEOUT_MS = 15_000L
+        /** Hard cap on the WHOLE multi-recipient `attemptSend` block. Each recipient
+         *  has its own [ATTEMPT_TIMEOUT_MS] now, so this must be at least
+         *  `MAX_RECIPIENTS * ATTEMPT_TIMEOUT_MS + slack`. 3 recipients × 15 s = 45 s →
+         *  60 s leaves headroom for JSON building, log writes, and the brief gap
+         *  between recipient calls without prematurely killing the third recipient. */
+        private const val ATTEMPT_BLOCK_TIMEOUT_MS = 60_000L
+    }
 
     // ─── Entry points ─────────────────────────────────────────────────────────
 
@@ -46,21 +62,31 @@ class Sender(
                 ProviderType.CALLMEBOT -> {
                     if (config.phoneNumber.isBlank()) return "Missing phone number."
                     if (config.apiKey.isBlank())      return "Missing API key."
-                    val url = "https://api.callmebot.com/whatsapp.php" +
-                        "?phone=${config.phoneNumber.trim()}" +
-                        "&text=${Uri.encode("KSafe test — alerts are configured correctly.")}" +
-                        "&apikey=${config.apiKey}"
-                    val response = withTimeoutOrNull(15_000L) { karooSystem.httpRequest("GET", url) }
-                        ?: return "No response — check your internet connection."
-                    val body = response.body?.toString(Charsets.UTF_8) ?: ""
-                    when {
-                        response.statusCode in 200..299 && !body.contains("ERROR") ->
-                            "Test sent! Check your WhatsApp."
-                        body.contains("not authorized", ignoreCase = true) ||
-                        body.contains("apikey", ignoreCase = true) ->
-                            "Invalid API key — re-check it in CallMeBot."
-                        else -> "Error ${response.statusCode}: ${body.take(120)}"
+                    val recipients = callMeBotRecipients(config)
+                    val results = mutableListOf<String>()
+                    for ((i, pair) in recipients.withIndex()) {
+                        val (phone, key) = pair
+                        val label = "Recipient ${i + 1}"
+                        val url = "https://api.callmebot.com/whatsapp.php" +
+                            "?phone=$phone" +
+                            "&text=${Uri.encode("KSafe test — alerts are configured correctly.")}" +
+                            "&apikey=$key"
+                        val response = withTimeoutOrNull(ATTEMPT_TIMEOUT_MS) { karooSystem.httpRequest("GET", url) }
+                        if (response == null) {
+                            results.add("$label: no response — check connection.")
+                            continue
+                        }
+                        val body = response.body?.toString(Charsets.UTF_8) ?: ""
+                        when {
+                            response.statusCode in 200..299 && !body.contains("ERROR") ->
+                                results.add("$label: sent ✓")
+                            body.contains("not authorized", ignoreCase = true) ||
+                            body.contains("apikey", ignoreCase = true) ->
+                                results.add("$label: invalid API key.")
+                            else -> results.add("$label: HTTP ${response.statusCode} ${body.take(80)}")
+                        }
                     }
+                    results.joinToString("\n")
                 }
 
                 ProviderType.PUSHOVER -> {
@@ -78,7 +104,7 @@ class Sender(
                             put("message", "KSafe test — alerts are configured correctly.")
                             put("priority", 1)
                         }.toString()
-                        val response = withTimeoutOrNull(15_000L) {
+                        val response = withTimeoutOrNull(ATTEMPT_TIMEOUT_MS) {
                             karooSystem.httpRequest(
                                 "POST", "https://api.pushover.net/1/messages.json",
                                 mapOf("Content-Type" to "application/json"),
@@ -112,7 +138,7 @@ class Sender(
 
                 ProviderType.NTFY -> {
                     if (config.apiKey.isBlank()) return "Missing Topic."
-                    val response = withTimeoutOrNull(15_000L) {
+                    val response = withTimeoutOrNull(ATTEMPT_TIMEOUT_MS) {
                         karooSystem.httpRequest(
                             "POST",
                             "https://ntfy.sh/${config.apiKey.trim()}",
@@ -144,7 +170,7 @@ class Sender(
                             put("chat_id", chatId.trim())
                             put("text", "KSafe test — alerts are configured correctly.")
                         }.toString()
-                        val response = withTimeoutOrNull(15_000L) {
+                        val response = withTimeoutOrNull(ATTEMPT_TIMEOUT_MS) {
                             karooSystem.httpRequest(
                                 "POST",
                                 "https://api.telegram.org/bot${config.apiKey.trim()}/sendMessage",
@@ -176,6 +202,11 @@ class Sender(
                     results.joinToString("\n")
                 }
             }
+        } catch (e: kotlinx.coroutines.CancellationException) {
+            // Never swallow cancellation — it must propagate so the calling coroutine
+            // (e.g. the user pressing Back while the test send is in flight) actually
+            // exits instead of being told "Unexpected error: …".
+            throw e
         } catch (e: Exception) {
             "Unexpected error: ${e.message}"
         }
@@ -204,7 +235,7 @@ class Sender(
                         Timber.d("Retry attempt $totalAttempts, waiting ${waitSeconds}s")
                         delay(waitSeconds * 1000L)
                     }
-                    val result = withTimeoutOrNull(30_000L) {
+                    val result = withTimeoutOrNull(ATTEMPT_BLOCK_TIMEOUT_MS) {
                         attemptSend(message, provider, isEmergency, config)
                     } == true
 
@@ -223,6 +254,10 @@ class Sender(
             }
             Timber.e("Message failed after $totalAttempts attempts")
             false
+        } catch (e: kotlinx.coroutines.CancellationException) {
+            // Cancellation must propagate (caller scope tear-down). Swallowing here
+            // would leave the parent coroutine running past the cancellation point.
+            throw e
         } catch (e: Exception) {
             Timber.e(e, "Retry error: ${e.message}")
             false
@@ -248,12 +283,25 @@ class Sender(
             ProviderType.CALLMEBOT -> {
                 if (config.phoneNumber.isBlank() || config.apiKey.isBlank()) return false
                 val encodedMsg = Uri.encode(message)
-                val url = "https://api.callmebot.com/whatsapp.php?phone=${config.phoneNumber.trim()}&text=$encodedMsg&apikey=${config.apiKey}"
-                val response = karooSystem.httpRequest("GET", url)
-                val body = response.body?.toString(Charsets.UTF_8) ?: ""
-                val ok = response.statusCode in 200..299 && !body.contains("ERROR")
-                if (!ok) Timber.e("CallMeBot error ${response.statusCode}: $body")
-                ok
+                val recipients = callMeBotRecipients(config)
+                var anyOk = false
+                for ((phone, key) in recipients) {
+                    val url = "https://api.callmebot.com/whatsapp.php?phone=$phone&text=$encodedMsg&apikey=$key"
+                    // Per-recipient timeout so a hung first recipient doesn't starve
+                    // recipients 2/3 of the outer attempt's 30 s block.
+                    val response = withTimeoutOrNull(ATTEMPT_TIMEOUT_MS) {
+                        karooSystem.httpRequest("GET", url)
+                    }
+                    if (response == null) {
+                        Timber.e("CallMeBot timeout (phone=$phone)")
+                        continue
+                    }
+                    val body = response.body?.toString(Charsets.UTF_8) ?: ""
+                    val ok = response.statusCode in 200..299 && !body.contains("ERROR")
+                    if (ok) anyOk = true
+                    else Timber.e("CallMeBot error (phone=$phone) ${response.statusCode}: $body")
+                }
+                anyOk
             }
 
             ProviderType.PUSHOVER -> {
@@ -271,11 +319,18 @@ class Sender(
                         // Info: priority 0 (normal)
                         put("priority", if (isEmergency) 1 else 0)
                     }.toString()
-                    val response = karooSystem.httpRequest(
-                        "POST", "https://api.pushover.net/1/messages.json",
-                        mapOf("Content-Type" to "application/json"),
-                        jsonBody.toByteArray()
-                    )
+                    // Per-recipient timeout so a hung first recipient doesn't starve 2/3.
+                    val response = withTimeoutOrNull(ATTEMPT_TIMEOUT_MS) {
+                        karooSystem.httpRequest(
+                            "POST", "https://api.pushover.net/1/messages.json",
+                            mapOf("Content-Type" to "application/json"),
+                            jsonBody.toByteArray()
+                        )
+                    }
+                    if (response == null) {
+                        Timber.e("Pushover timeout (userKey=$key)")
+                        continue
+                    }
                     val body = response.body?.toString(Charsets.UTF_8) ?: ""
                     val ok = response.statusCode in 200..299 && body.contains("\"status\":1")
                     if (ok) anyOk = true
@@ -288,16 +343,22 @@ class Sender(
                 if (config.apiKey.isBlank()) return false
                 val title    = if (isEmergency) "KSafe Emergency" else "KSafe"
                 val priority = if (isEmergency) "urgent" else "default"
-                val response = karooSystem.httpRequest(
-                    "POST",
-                    "https://ntfy.sh/${config.apiKey.trim()}",
-                    mapOf(
-                        "Content-Type" to "text/plain",
-                        "Title"        to title,
-                        "Priority"     to priority,
-                    ),
-                    message.toByteArray()
-                )
+                val response = withTimeoutOrNull(ATTEMPT_TIMEOUT_MS) {
+                    karooSystem.httpRequest(
+                        "POST",
+                        "https://ntfy.sh/${config.apiKey.trim()}",
+                        mapOf(
+                            "Content-Type" to "text/plain",
+                            "Title"        to title,
+                            "Priority"     to priority,
+                        ),
+                        message.toByteArray()
+                    )
+                }
+                if (response == null) {
+                    Timber.e("ntfy timeout")
+                    return false
+                }
                 val ok = response.statusCode in 200..299
                 if (!ok) Timber.e("ntfy error ${response.statusCode}: ${response.body?.toString(Charsets.UTF_8)}")
                 ok
@@ -313,12 +374,19 @@ class Sender(
                         put("chat_id", chatId.trim())
                         put("text", message)
                     }.toString()
-                    val response = karooSystem.httpRequest(
-                        "POST",
-                        "https://api.telegram.org/bot${config.apiKey.trim()}/sendMessage",
-                        mapOf("Content-Type" to "application/json"),
-                        jsonBody.toByteArray()
-                    )
+                    // Per-recipient timeout — see CallMeBot branch for the rationale.
+                    val response = withTimeoutOrNull(ATTEMPT_TIMEOUT_MS) {
+                        karooSystem.httpRequest(
+                            "POST",
+                            "https://api.telegram.org/bot${config.apiKey.trim()}/sendMessage",
+                            mapOf("Content-Type" to "application/json"),
+                            jsonBody.toByteArray()
+                        )
+                    }
+                    if (response == null) {
+                        Timber.e("Telegram timeout (chatId=$chatId)")
+                        continue
+                    }
                     val body = response.body?.toString(Charsets.UTF_8) ?: ""
                     val ok = response.statusCode in 200..299 && body.contains("\"ok\":true")
                     if (ok) anyOk = true
@@ -327,5 +395,24 @@ class Sender(
                 anyOk
             }
         }
+    }
+
+    /**
+     * Builds the list of `(phone, apiKey)` pairs to deliver a CallMeBot message to.
+     * CallMeBot cannot fan-out a single request, so every recipient needs its own
+     * credential pair. Slots with either half blank are dropped — three slots total,
+     * mirroring Pushover / Telegram.
+     */
+    private fun callMeBotRecipients(config: SenderConfig): List<Pair<String, String>> {
+        fun pair(phone: String, key: String): Pair<String, String>? {
+            val p = phone.trim()
+            val k = key.trim()
+            return if (p.isNotBlank() && k.isNotBlank()) p to k else null
+        }
+        return listOfNotNull(
+            pair(config.phoneNumber,  config.apiKey),
+            pair(config.phoneNumber2, config.apiKey2),
+            pair(config.phoneNumber3, config.apiKey3),
+        )
     }
 }

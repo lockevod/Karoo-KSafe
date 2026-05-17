@@ -1,4 +1,4 @@
-package com.enderthor.kSafe.extension.managers
+package com.enderthor.kSafe.extension.util
 
 /**
  * Hard cap on the rendered alert title length. The Karoo `InRideAlert` title must fit in a
@@ -53,3 +53,21 @@ fun renderAlertText(template: String, tokens: Map<String, String>, maxLength: In
 /** Convenience overload — vararg variant for inline use at call sites. */
 fun renderAlertText(template: String, vararg tokens: Pair<String, String>, maxLength: Int = -1): String =
     renderAlertText(template, tokens.toMap(), maxLength)
+
+/**
+ * Surrogate-pair-safe truncation. `String.take(N)` operates on UTF-16 code units, so an emoji
+ * (supplementary-plane code point stored as a surrogate pair) can be split mid-pair, producing
+ * a tofu box. This snaps the cut back one position when the would-be cut sits between two
+ * halves of a surrogate pair.
+ *
+ * Use this in **any UI label, slot label, or alert text** that may contain rider-supplied
+ * emoji — instead of plain `String.take(n)`. The popular emojis in `FUEL_EMOJI_CARB` /
+ * `FUEL_EMOJI_DRINK` and any emoji a rider types into a custom message slot are all
+ * supplementary-plane.
+ */
+fun String.safeTake(n: Int): String {
+    if (n <= 0) return ""
+    if (length <= n) return this
+    val cutAt = if (this[n - 1].isHighSurrogate()) n - 1 else n
+    return substring(0, cutAt)
+}

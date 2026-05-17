@@ -47,13 +47,22 @@ class WebhookManager(private val karooSystem: KarooSystemService) {
         if (!enabled) return WebhookResult(false, "Webhook $slot not enabled")
         if (url.isBlank()) return WebhookResult(false, "No URL configured for $label")
 
-        // Parse optional single-header line: "Key: Value"
+        // Parse one or more `Key: Value` header lines, one per line. Newlines `\n` separate
+        // entries. Blank lines and lines without a colon are skipped silently so a stray
+        // empty line in the rider's input doesn't fail the request. Common case from a
+        // copy-pasted curl example:
+        //   Authorization: Bearer xyz
+        //   Content-Type: application/json
         val headers = mutableMapOf<String, String>()
         if (headersRaw.isNotBlank()) {
-            val colonIdx = headersRaw.indexOf(':')
-            if (colonIdx > 0) {
-                headers[headersRaw.substring(0, colonIdx).trim()] =
-                    headersRaw.substring(colonIdx + 1).trim()
+            headersRaw.lineSequence().forEach { line ->
+                val trimmed = line.trim()
+                if (trimmed.isEmpty()) return@forEach
+                val colonIdx = trimmed.indexOf(':')
+                if (colonIdx > 0) {
+                    headers[trimmed.substring(0, colonIdx).trim()] =
+                        trimmed.substring(colonIdx + 1).trim()
+                }
             }
         }
 

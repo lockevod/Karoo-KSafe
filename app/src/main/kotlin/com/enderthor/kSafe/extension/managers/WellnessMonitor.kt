@@ -66,6 +66,24 @@ class WellnessMonitor(
     @Volatile private var decouplingExceededSinceMs = 0L
     @Volatile private var lastDecouplingTriggerMs = 0L
     private val ratioSamples = ArrayDeque<Pair<Long, Float>>()    // (timestamp, hr/w)
+    /** Running sum of [ratioSamples]'s `.second` values. Maintained incrementally on
+     *  add + eviction so we never need a per-tick `sumOf` iteration. Buffer size is
+     *  small (~10 entries over a 5-min window at the 30-s tick) so the absolute saving
+     *  is modest, but the running-sum pattern is consistent with the larger Medical
+     *  detector optimisation and removes a per-tick autoboxing pass over the Pairs. */
+    private var ratioRunningSum = 0.0
+
+    // ─── Session accumulators (consumed by FIT export + Health tab) ─────────
+    // Granularity is MONITOR_TICK_MS (~30 s) for the time-in-zone buckets — exact
+    // enough for post-ride analysis without sub-tick HR sampling.
+    @Volatile private var sessionMaxHr: Int = 0
+    @Volatile private var cumMsCriticalAbove: Long = 0L
+    @Volatile private var cumMsSustainedAbove: Long = 0L
+    @Volatile private var currentDriftPct: Float = 0f
+    @Volatile private var maxDriftPct: Float = 0f
+    @Volatile private var criticalFires: Int = 0
+    @Volatile private var sustainedFires: Int = 0
+    @Volatile private var decouplingFires: Int = 0
 
     @Volatile private var config = KSafeConfig()
     private var monitorJob: Job? = null
@@ -88,6 +106,16 @@ class WellnessMonitor(
         lastSustainedTriggerMs = 0L
         lastDecouplingTriggerMs = 0L
         ratioSamples.clear()
+        ratioRunningSum = 0.0
+        // Reset session accumulators — fresh ride, fresh totals.
+        sessionMaxHr = 0
+        cumMsCriticalAbove = 0L
+        cumMsSustainedAbove = 0L
+        currentDriftPct = 0f
+        maxDriftPct = 0f
+        criticalFires = 0
+        sustainedFires = 0
+        decouplingFires = 0
         monitorJob = scope.launch {
             oldJob?.cancelAndJoin()
             while (true) { delay(MONITOR_TICK_MS); tick() }
@@ -101,32 +129,74 @@ class WellnessMonitor(
         Timber.d("WellnessMonitor stopped")
     }
 
-    fun updateConfig(config: KSafeConfig) {
+    /**
+     * Re-launch the monitor without resetting session totals. Used by the master-switch
+     * mid-ride OFF→ON transition: cumulative HR-zone time, max-HR snapshot, drift
+     * statistics and per-tier fire counters survive a brief toggle. The "continuous
+     * violation" timers (criticalSinceMs, sustainedSinceMs, decouplingExceededSinceMs)
+     * are reset because their semantics require an uninterrupted observation window —
+     * the OFF period broke that continuity.
+     */
+    fun resume(config: KSafeConfig) {
+        this.config = config
+        if (!config.wellnessEnabled) return
+        val oldJob = monitorJob
+        criticalSinceMs = 0L
+        sustainedSinceMs = 0L
+        decouplingExceededSinceMs = 0L
+        decouplingBaselineHrPerW = 0f
+        monitorJob = scope.launch {
+            oldJob?.cancelAndJoin()
+            while (true) { delay(MONITOR_TICK_MS); tick() }
+        }
+        Timber.d("WellnessMonitor resumed (sessionMaxHr=$sessionMaxHr, criticalFires=$criticalFires, sustainedFires=$sustainedFires)")
+    }
+
+    /**
+     * See [HydrationTracker.updateConfig] for the rationale of the [isRecording] gate
+     * on the auto-start branch. Same shape, same reason.
+     */
+    fun updateConfig(config: KSafeConfig, isRecording: Boolean) {
         val wasEnabled = this.config.wellnessEnabled
         this.config = config
-        if (!wasEnabled && config.wellnessEnabled) start(config)
+        if (!wasEnabled && config.wellnessEnabled && isRecording) start(config)
         else if (wasEnabled && !config.wellnessEnabled) stop()
     }
 
     fun updateHr(bpm: Int) {
         lastHrBpm = bpm
         lastHrUpdateMs = System.currentTimeMillis()
+        // Track session peak. Called every HR callback (~1 Hz), more precise than tick().
+        if (bpm > sessionMaxHr) sessionMaxHr = bpm
     }
 
     fun updatePower(w: Int) { lastPowerW = w }
     fun updateUserProfile(p: UserProfile) { lastUserProfile = p }
 
     // ─── Per-tier evaluation (runs on `scope`, every MONITOR_TICK_MS) ────────
-
-    private fun tick() {
+    // Exposed as `internal` so JVM unit tests in the same package can drive it
+    // synchronously without spinning up the coroutine loop — avoids the wall-clock
+    // vs virtual-time interaction quirks of runTest + advanceTimeBy.
+    internal fun tick() {
         val now = System.currentTimeMillis()
         if (now - lastHrUpdateMs > HR_STALE_MS) {
             // Sensor silent — every per-tier evaluation will return early. Reset the streak
             // accumulators so a transient disconnect doesn't carry forward stale state.
+            // Time-in-zone buckets are NOT touched: if the HR strap drops out we just don't
+            // add anything during stale ticks — neither over- nor under-counts.
             criticalSinceMs = 0L
             sustainedSinceMs = 0L
             decouplingExceededSinceMs = 0L
             return
+        }
+        // Feed the time-in-zone buckets at MONITOR_TICK_MS granularity. The bucket attribution
+        // is "HR at this instant" — a fluctuation within the 30 s window between ticks gets
+        // rounded to whichever side of the threshold the sample landed on. Good enough for
+        // post-ride analysis; not a real-time precision tool.
+        val bpm = lastHrBpm
+        if (bpm != null) {
+            if (bpm >= effectiveCriticalThreshold())   cumMsCriticalAbove  += MONITOR_TICK_MS
+            if (bpm >= effectiveSustainedThreshold()) cumMsSustainedAbove += MONITOR_TICK_MS
         }
         evaluateCriticalTier(now)
         evaluateSustainedTier(now)
@@ -196,8 +266,11 @@ class WellnessMonitor(
         val ratio = hr.toFloat() / w.toFloat()
 
         // Maintain a rolling 5-min window of HR/W samples, taken once per tick (every 30 s).
+        // Update the running sum on add + on eviction so the per-tick average is O(1).
         ratioSamples.addLast(now to ratio)
+        ratioRunningSum += ratio.toDouble()
         while (ratioSamples.isNotEmpty() && now - ratioSamples.first().first > DECOUPLING_ROLLING_WINDOW_MS) {
+            ratioRunningSum -= ratioSamples.first().second.toDouble()
             ratioSamples.removeFirst()
         }
 
@@ -205,8 +278,7 @@ class WellnessMonitor(
         // enough samples in the rolling window. Captures the rider's "fresh" ratio.
         if (decouplingBaselineHrPerW == 0f) {
             if (now - sessionStartMs >= DECOUPLING_BASELINE_WAIT_MS && ratioSamples.size >= DECOUPLING_MIN_SAMPLES) {
-                val sum = ratioSamples.sumOf { it.second.toDouble() }
-                decouplingBaselineHrPerW = (sum / ratioSamples.size).toFloat()
+                decouplingBaselineHrPerW = (ratioRunningSum / ratioSamples.size).toFloat()
                 calibLogger?.log(CalibrationLogger.Event.WELLNESS_FIRED) {
                     String.format(Locale.US, "subkind=decoupling_baseline,baseline_hr_per_w=%.4f,samples=%d", decouplingBaselineHrPerW, ratioSamples.size)
                 }
@@ -217,9 +289,12 @@ class WellnessMonitor(
 
         if (ratioSamples.size < DECOUPLING_MIN_SAMPLES) return  // not enough current data
 
-        val currentSum = ratioSamples.sumOf { it.second.toDouble() }
-        val currentAvg = (currentSum / ratioSamples.size).toFloat()
+        val currentAvg = (ratioRunningSum / ratioSamples.size).toFloat()
         val driftPct = ((currentAvg / decouplingBaselineHrPerW) - 1f) * 100f
+
+        // Expose the current drift for FIT export + Health tab. Also track the session peak.
+        currentDriftPct = driftPct
+        if (driftPct > maxDriftPct) maxDriftPct = driftPct
 
         if (driftPct >= config.wellnessDecouplingThresholdPct.toFloat()) {
             if (decouplingExceededSinceMs == 0L) decouplingExceededSinceMs = now
@@ -233,6 +308,7 @@ class WellnessMonitor(
                 }
                 lastDecouplingTriggerMs = now
                 decouplingExceededSinceMs = 0L
+                decouplingFires++
                 onIncident(EmergencyReason.WELLNESS_DECOUPLING, mapOf(
                     "drift" to String.format(Locale.US, "%.1f", driftPct),
                     "minutes" to sustainedMin.toString(),
@@ -288,10 +364,44 @@ class WellnessMonitor(
         calibLogger?.log(CalibrationLogger.Event.WELLNESS_FIRED) {
             "subkind=$tierName,bpm=$bpm,threshold=$threshold,mode=${if (config.wellnessUseMaxHrPercent) "pct" else "abs"},sustained_min=$sustainedMin"
         }
+        when (tierName) {
+            "critical"  -> criticalFires++
+            "sustained" -> sustainedFires++
+        }
         onIncident(reason, mapOf(
             "bpm" to bpm.toString(),
             "threshold" to threshold.toString(),
             "minutes" to sustainedMin.toString(),
         ))
     }
+
+    // ─── Public snapshot for FIT export and the Health tab ──────────────────
+
+    /**
+     * Immutable snapshot of the session-wide wellness state. Cheap to construct
+     * (read-only field reads); call from any thread.
+     */
+    data class WellnessSummary(
+        val maxHrBpm: Int,
+        val cumMsCriticalAbove: Long,
+        val cumMsSustainedAbove: Long,
+        val currentDriftPct: Float,
+        val maxDriftPct: Float,
+        val criticalFires: Int,
+        val sustainedFires: Int,
+        val decouplingFires: Int,
+    ) {
+        val totalFires: Int get() = criticalFires + sustainedFires + decouplingFires
+    }
+
+    fun getSummary(): WellnessSummary = WellnessSummary(
+        maxHrBpm           = sessionMaxHr,
+        cumMsCriticalAbove = cumMsCriticalAbove,
+        cumMsSustainedAbove = cumMsSustainedAbove,
+        currentDriftPct    = currentDriftPct,
+        maxDriftPct        = maxDriftPct,
+        criticalFires      = criticalFires,
+        sustainedFires     = sustainedFires,
+        decouplingFires    = decouplingFires,
+    )
 }

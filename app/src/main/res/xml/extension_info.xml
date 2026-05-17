@@ -3,7 +3,8 @@
     displayName="@string/extension_name"
     icon="@drawable/ic_ksafe"
     id="ksafe"
-    scansDevices="false">
+    scansDevices="false"
+    fitFile="true">
     <BonusAction
         actionId="cancel-emergency"
         displayName="@string/action_cancel_emergency" />
@@ -83,6 +84,18 @@
         icon="@drawable/ic_ksafe"
         typeId="carb-status" />
     <DataType
+        description="@string/carb_burn_rate_datatype_desc"
+        displayName="@string/carb_burn_rate_datatype_name"
+        graphical="true"
+        icon="@drawable/ic_ksafe"
+        typeId="carb-burn-rate" />
+    <DataType
+        description="@string/carbs_burned_datatype_desc"
+        displayName="@string/carbs_burned_datatype_name"
+        graphical="true"
+        icon="@drawable/ic_ksafe"
+        typeId="carbs-burned" />
+    <DataType
         description="@string/hyd_log_datatype_desc"
         displayName="@string/hyd_log_1_datatype_name"
         graphical="true"
@@ -102,8 +115,17 @@
         typeId="hyd-status" />
     <BonusAction
         actionId="log-carb-1"
-        displayName="@string/action_log_carb" />
+        displayName="@string/action_log_carb_1" />
+    <BonusAction
+        actionId="log-carb-2"
+        displayName="@string/action_log_carb_2" />
+    <BonusAction
+        actionId="log-carb-3"
+        displayName="@string/action_log_carb_3" />
     <BonusAction
         actionId="log-drink-1"
-        displayName="@string/action_log_drink" />
+        displayName="@string/action_log_drink_1" />
+    <BonusAction
+        actionId="log-drink-2"
+        displayName="@string/action_log_drink_2" />
 </ExtensionInfo>

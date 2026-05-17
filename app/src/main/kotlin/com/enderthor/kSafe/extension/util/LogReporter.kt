@@ -1,4 +1,4 @@
-package com.enderthor.kSafe.extension.managers
+package com.enderthor.kSafe.extension.util
 
 import com.enderthor.kSafe.BuildConfig
 import com.enderthor.kSafe.extension.httpRequest
@@ -46,25 +46,38 @@ object LogReporter {
      * This function is a no-op (returns `false`) when credentials are empty or still the
      * default placeholders, so a misconfigured build fails silently rather than crashing.
      */
+    /**
+     * Result of a [sendLogFile] attempt. Carrying a human-readable [message] on failure
+     * lets the Settings UI tell the rider what actually went wrong instead of "check
+     * Telegram credentials or connection" — which is misleading when the real cause is
+     * a 50 MB file size limit or a 60 s timeout on a slow phone tether.
+     */
+    sealed class SendResult(val message: String) {
+        class Success(message: String) : SendResult(message)
+        class Failure(message: String) : SendResult(message)
+        val ok: Boolean get() = this is Success
+    }
+
     suspend fun sendLogFile(
         content: String,
         fileName: String = "ksafe_calibration.csv",
         caption: String = "",
         karooSystem: KarooSystemService,
-    ): Boolean {
+    ): SendResult {
         if (BOT_TOKEN.isBlank() || BOT_TOKEN.startsWith("REPLACE") ||
             CHAT_ID.isBlank()   || CHAT_ID.startsWith("REPLACE")) {
             Timber.w("LogReporter: credentials not set in local.properties — skipping automatic log send")
-            return false
+            return SendResult.Failure("Logging credentials not configured in this build.")
         }
         if (content.isBlank()) {
             Timber.d("LogReporter: nothing to send (empty log)")
-            return false
+            return SendResult.Failure("Nothing to send (log is empty).")
         }
 
         return try {
             val boundary = "KSafeBoundary_${System.currentTimeMillis()}"
             val body     = buildMultipart(boundary, fileName, content, caption)
+            val kb       = body.size / 1024
 
             Timber.d("LogReporter: sending ${body.size} bytes to Telegram (session caption: ${caption.take(60)}…)")
 
@@ -78,20 +91,34 @@ object LogReporter {
             }
 
             if (response == null) {
-                Timber.w("LogReporter: request timed out")
-                return false
+                Timber.w("LogReporter: request timed out (${kb} KB payload, ${TIMEOUT_MS / 1000}s timeout)")
+                return SendResult.Failure("Timeout after ${TIMEOUT_MS / 1000}s — file is ${kb} KB. " +
+                    "Karoo Companion may have lost connection or the file is too large.")
             }
 
             val respBody = response.body?.toString(Charsets.UTF_8) ?: ""
             val ok = response.statusCode in 200..299 && respBody.contains("\"ok\":true")
 
-            if (ok) Timber.i("LogReporter: calibration log delivered ✓ (${content.length} chars)")
-            else    Timber.w("LogReporter: delivery failed — HTTP ${response.statusCode}: ${respBody.take(300)}")
-
-            ok
+            if (ok) {
+                Timber.i("LogReporter: calibration log delivered ✓ (${content.length} chars, ${kb} KB)")
+                SendResult.Success("Sent ✓ (${kb} KB)")
+            } else {
+                Timber.w("LogReporter: delivery failed — HTTP ${response.statusCode}: ${respBody.take(300)}")
+                // Try to extract Telegram's error description from the JSON for a useful hint.
+                val tgDesc = Regex("\"description\"\\s*:\\s*\"([^\"]+)\"").find(respBody)?.groupValues?.getOrNull(1)
+                val hint = when (response.statusCode) {
+                    401 -> "Bot token rejected (check CALIB_BOT_TOKEN in local.properties)."
+                    400 -> tgDesc ?: "Bad request (check chat ID)."
+                    413 -> "File too big (Telegram limit is 50 MB). Try clearing the log between sends."
+                    429 -> "Rate-limited by Telegram. Wait a minute and try again."
+                    in 500..599 -> "Telegram server error (try again in a moment)."
+                    else -> tgDesc ?: "HTTP ${response.statusCode}"
+                }
+                SendResult.Failure("Send failed: $hint")
+            }
         } catch (e: Exception) {
             Timber.e(e, "LogReporter: unexpected error during send")
-            false
+            SendResult.Failure("Send error: ${e.javaClass.simpleName} — ${e.message ?: "no message"}")
         }
     }
 

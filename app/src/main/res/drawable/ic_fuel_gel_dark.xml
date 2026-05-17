@@ -1,0 +1,26 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Dark-fill variant of ic_fuel_gel. See ic_fuel_bottle_dark.xml for the rationale —
+  used only when the slot's idle background is FIELD_COLOR_AUTO and the Karoo is
+  in day mode, so the white default drawable would vanish on a white host bg.
+-->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp"
+    android:height="24dp"
+    android:viewportWidth="24"
+    android:viewportHeight="24">
+
+    <path
+        android:fillColor="#FF000000"
+        android:pathData="M7,3 L15,3 L17,5 L17,20 A2,2 0 0 1 15,22 L9,22 A2,2 0 0 1 7,20 Z" />
+
+    <path
+        android:fillColor="#FFFFFF"
+        android:fillAlpha="0.45"
+        android:pathData="M15,3 L17,5 L15,5 Z" />
+
+    <path
+        android:fillColor="#FFFFFF"
+        android:fillAlpha="0.35"
+        android:pathData="M7.5,11 L16.5,11 L16.5,14 L7.5,14 Z" />
+</vector>

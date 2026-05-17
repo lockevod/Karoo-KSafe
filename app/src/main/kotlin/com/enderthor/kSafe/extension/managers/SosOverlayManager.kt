@@ -96,10 +96,15 @@ class SosOverlayManager(private val context: Context) {
             try {
                 windowManager.removeView(view)
                 Timber.d("SosOverlay: removed")
+                overlayView = null  // only clear if the remove call actually succeeded
             } catch (e: Exception) {
-                Timber.w(e, "SosOverlay: error removing overlay")
+                // If removeView throws but we still null the field, a subsequent show
+                // would short-circuit on the `overlayView == null` guard and the rider
+                // would lose all overlay updates silently. Leave overlayView non-null
+                // so the next showOrUpdate retries (it idempotently calls updateView
+                // when the view is attached, or re-adds if WindowManager has dropped it).
+                Timber.w(e, "SosOverlay: removeView threw — keeping reference for next show")
             }
-            overlayView = null
         }
     }
 }

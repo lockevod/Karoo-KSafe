@@ -3,12 +3,16 @@ package com.enderthor.kSafe.datatype
 import android.app.PendingIntent
 import android.content.Context
 import android.content.Intent
+import android.graphics.Color
+import android.view.Gravity
 import android.view.View
 import android.widget.RemoteViews
 import com.enderthor.kSafe.R
 import com.enderthor.kSafe.activity.FieldTapReceiver
+import com.enderthor.kSafe.data.FIELD_COLOR_AUTO
 import com.enderthor.kSafe.data.KSafeConfig
 import com.enderthor.kSafe.extension.managers.ConfigurationManager
+import com.enderthor.kSafe.extension.util.safeTake
 import io.hammerhead.karooext.KarooSystemService
 import io.hammerhead.karooext.extension.DataTypeImpl
 import io.hammerhead.karooext.internal.ViewEmitter
@@ -22,6 +26,7 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.awaitCancellation
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.launch
 import timber.log.Timber
 
@@ -48,12 +53,23 @@ class CustomMessageDataType(
     // requestCode: 103 = slot1, 104 = slot2, 105 = slot3
     private val requestCode = 102 + slot
 
+    // Cached PendingIntent — see CarbLogDataType.
+    @Volatile private var cachedPi: PendingIntent? = null
+    private fun pendingIntentFor(context: Context): PendingIntent {
+        cachedPi?.let { return it }
+        return PendingIntent.getBroadcast(
+            context, requestCode,
+            Intent(tapAction).setPackage(context.packageName),
+            PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
+        ).also { cachedPi = it }
+    }
+
     private val configManager = ConfigurationManager(context)
 
     private fun titleFromConfig(config: KSafeConfig) = when (slot) {
-        2 -> config.customMessage2Title.take(7).ifBlank { "MSG2" }
-        3 -> config.customMessage3Title.take(7).ifBlank { "MSG3" }
-        else -> config.customMessageTitle.take(7).ifBlank { "MSG" }
+        2 -> config.customMessage2Title.safeTake(7).ifBlank { "MSG2" }
+        3 -> config.customMessage3Title.safeTake(7).ifBlank { "MSG3" }
+        else -> config.customMessageTitle.safeTake(7).ifBlank { "MSG" }
     }
 
     private fun idleColorFromConfig(config: KSafeConfig) = when (slot) {
@@ -70,20 +86,26 @@ class CustomMessageDataType(
 
     /** Builds a field view with optional click PendingIntent. */
     private fun buildView(context: Context, viewConfig: ViewConfig, bgColor: Int, main: String, hint: String = "", clickable: Boolean = true): RemoteViews {
-        val content = RemoteViews(context.packageName, R.layout.field_view).apply {
-            setInt(R.id.field_container, "setBackgroundColor", bgColor)
+        // See CarbLogDataType.buildView — same layout-switch + center alignment
+        // (tap-target field) + auto-mode text colour contract.
+        val isAuto = bgColor == FIELD_COLOR_AUTO
+        val layout = if (isAuto) R.layout.field_view_auto else R.layout.field_view
+        val content = RemoteViews(context.packageName, layout).apply {
+            if (!isAuto) setInt(R.id.field_container, "setBackgroundColor", bgColor)
             setTextViewText(R.id.field_text_main, main.take(9))   // hard cap — autoSize needs room
             setTextViewText(R.id.field_text_hint, hint.take(9))
             setViewVisibility(R.id.field_text_hint, if (hint.isEmpty()) View.GONE else View.VISIBLE)
+            setInt(R.id.field_text_main, "setGravity", Gravity.CENTER)
+            setInt(R.id.field_text_hint, "setGravity", Gravity.CENTER)
+            if (isAuto) {
+                val dark = context.isKarooNightMode()
+                setTextColor(R.id.field_text_main, if (dark) Color.WHITE else Color.BLACK)
+                setTextColor(R.id.field_text_hint, if (dark) 0xCCFFFFFF.toInt() else 0xCC000000.toInt())
+            }
         }
         if (!viewConfig.preview && clickable) {
-            val pi = PendingIntent.getBroadcast(
-                context, requestCode,
-                Intent(tapAction).setPackage(context.packageName),
-                PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
-            )
             val wrapper = RemoteViews(context.packageName, R.layout.field_tap_wrapper)
-            wrapper.setOnClickPendingIntent(R.id.field_tap_wrapper, pi)
+            wrapper.setOnClickPendingIntent(R.id.field_tap_wrapper, pendingIntentFor(context))
             wrapper.addView(R.id.field_tap_wrapper, content)
             return wrapper
         }
@@ -102,22 +124,31 @@ class CustomMessageDataType(
 
         val viewJob = scope.launch {
             try {
+                // See CarbLogDataType — Frame + distinctUntilChanged dedups identical frames
+                // so an unrelated config edit doesn't force a wasted buildView + IPC.
                 combine(
                     CustomMessageState.flowForSlot(slot),
                     configManager.loadConfigFlow()
                 ) { state, ksafeConfig ->
                     val title = titleFromConfig(ksafeConfig)
                     val idleColor = idleColorFromConfig(ksafeConfig)
-                    if (!enabledFromConfig(ksafeConfig)) {
-                        buildView(context, config, COLOR_OFF, title, "OFF", clickable = false)
-                    } else when (state) {
-                        CustomMessageState.IDLE    -> buildView(context, config, idleColor, title, "tap=send")
-                        CustomMessageState.SENDING -> buildView(context, config, COLOR_SENDING, title, "Sending…", clickable = false)
-                        CustomMessageState.SENT    -> buildView(context, config, COLOR_SENT, title, "SENT ✓", clickable = false)
-                        CustomMessageState.ERROR   -> buildView(context, config, COLOR_ERROR, title, "ERR retry")
+                    when {
+                        !config.preview && !enabledFromConfig(ksafeConfig) ->
+                            // Slot disabled in Actions tab — show OFF in grey. Skipped in
+                            // preview so the profile-editor gallery shows the slot's
+                            // configured idle colour and title, not the disabled-state grey.
+                            Frame(COLOR_OFF, title, "OFF", clickable = false)
+                        state == CustomMessageState.SENDING ->
+                            Frame(COLOR_SENDING, title, "Sending…", clickable = false)
+                        state == CustomMessageState.SENT ->
+                            Frame(COLOR_SENT, title, "SENT ✓", clickable = false)
+                        state == CustomMessageState.ERROR ->
+                            Frame(COLOR_ERROR, title, "ERR retry", clickable = true)
+                        else -> // IDLE
+                            Frame(idleColor, title, "tap=send", clickable = true)
                     }
-                }.collect { view ->
-                    emitter.updateView(view)
+                }.distinctUntilChanged().collect { f ->
+                    emitter.updateView(buildView(context, config, f.bgColor, f.main, f.hint, f.clickable))
                 }
             } catch (_: CancellationException) {
                 // normal
@@ -133,4 +164,12 @@ class CustomMessageDataType(
             scopeJob.cancel()
         }
     }
+
+    /** See [CarbLogDataType.Frame] — dedup snapshot for the upstream `combine`. */
+    private data class Frame(
+        val bgColor: Int,
+        val main: String,
+        val hint: String,
+        val clickable: Boolean,
+    )
 }
