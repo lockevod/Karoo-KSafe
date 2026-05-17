@@ -3,7 +3,8 @@
     displayName="@string/extension_name"
     icon="@drawable/ic_ksafe"
     id="ksafe"
-    scansDevices="false">
+    scansDevices="false"
+    fitFile="true">
     <BonusAction
         actionId="cancel-emergency"
         displayName="@string/action_cancel_emergency" />
