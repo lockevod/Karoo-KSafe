@@ -148,6 +148,15 @@ fun SafetyScreen(vm: MainViewModel) {
         SettingRow(label = stringResource(R.string.crash_detection_label)) {
             Switch(checked = crashEnabled, onCheckedChange = { crashEnabled = it })
         }
+        // The Karoo buzzer is the only audio output; if the rider mutes the device,
+        // alerts go silent and the SDK does not expose the mute state, so we cannot
+        // detect or override it at runtime. Surface the limitation here so the rider
+        // can make an informed choice when relying on KSafe for emergencies.
+        Text(
+            text = stringResource(R.string.safety_buzzer_mute_hint),
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant
+        )
 
         if (crashEnabled) {
             Text(

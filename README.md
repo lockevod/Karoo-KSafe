@@ -183,7 +183,8 @@ Export and Import buttons (Settings tab) write/read `ksafe_export.json` / `ksafe
 
 ## Known issues
 
-- No phone connection at the moment of the emergency → no alert.
+- **The Karoo has a buzzer, not a speaker.** Alerts beep through that buzzer using the only audio API the Karoo SDK exposes (`PlayBeepPattern`). If you mute the device, every KSafe sound — emergency countdown, fueling reminders, wellness alerts — goes silent. The Karoo SDK does not expose the mute state to extensions, so KSafe cannot detect or override it. **Keep the Karoo unmuted if you want to hear emergency alerts.**
+- No phone connection for the whole retry window → no alert. Emergency alerts retry automatically: 3 cycles of 3 attempts each (60 / 120 / 180 s between attempts inside a cycle, 5 min and 10 min between cycles — up to ~30 min total). If your phone reconnects within that window the alert still goes out; only a sustained disconnect across all 9 attempts fails completely.
 - A large pothole or expansion joint followed by a complete stop for several seconds *can* trigger a false positive. The countdown is your safety net — tap CANCEL.
 - Without GPS fix (tunnel, dense tree cover) the speed gate degrades; gyroscope + accelerometer remain the only guard.
 - Each provider has its own rate limits and free-tier rules.
