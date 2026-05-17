@@ -33,6 +33,18 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 DEFAULT_ROOT = REPO_ROOT / "logs"
 
 # ─────────────────────────────────────────────────────────────────────────────
+# v2.0.0 sensitivity preset → (smoothed_threshold, peak_threshold) in m/s².
+# Mirrors `impactThresholds` and `peakImpactThresholds` in
+# app/src/main/kotlin/com/enderthor/kSafe/extension/crash/CrashDetectionManager.kt
+# (verbatim from lines 50-75). Used for the "retro-projection" pass that asks
+# what v2.0.0 would have done with v1.2.0 logs.
+V2_0_0_THRESHOLDS: dict[str, tuple[float, float]] = {
+    "LOW":    (55.0, 60.0),
+    "MEDIUM": (45.0, 50.0),
+    "HIGH":   (35.0, 40.0),
+}
+
+# ─────────────────────────────────────────────────────────────────────────────
 # Parsing
 
 # kv pair regex: key=value where value is non-comma OR a decimal with a
@@ -120,6 +132,18 @@ class FileSummary:
         self.event_counts: Counter[str] = Counter()
         self.high_mag_raw: list[float] = []
         self.high_mag_smooth: list[float] = []
+        # Per-sample (raw, smooth) pairs for retro-projection. Same length as
+        # high_mag_raw/smooth but kept as tuples so we can evaluate "would this
+        # row have fired IMPACT_IN under v2.0.0 preset X" sample-by-sample.
+        self.high_mag_pairs: list[tuple[float, float]] = []
+        # IMPACT_IN raw/smooth at the firing sample (from CrashDetectionManager
+        # logImpactEnter payload). Captured so we can replay them against v2.0.0
+        # and see whether v2.0.0 would still trigger them.
+        self.impact_in_pairs: list[tuple[float, float]] = []
+        # IMPACT_TMO with reason=SPEED — the min_spd actually observed during
+        # the impact window. Useful to spot "rider rode through it at >5 km/h"
+        # vs "rider almost stopped but not quite".
+        self.impact_tmo_speed_min_spd: list[float] = []
         self.periodic_speed: list[float] = []
         self.periodic_accel_dev: list[float] = []
         self.periodic_noise: list[float] = []
@@ -129,12 +153,36 @@ class FileSummary:
         self.impact_tmo_count = 0
         self.impact_tmo_reasons: Counter[str] = Counter()
         self.crash_confirmed_count = 0
+        # Each entry is the full payload dict of a CRASH_CONFIRMED row, plus
+        # an `elapsed_min` field so post-hoc analysis can see when in the ride
+        # it fired (real crash, drop test, false positive — all useful).
+        self.crash_confirmed_payloads: list[dict[str, str | float]] = []
         self.rows_total = 0
         self.malformed = 0
 
     @property
     def is_tiny(self) -> bool:
         return self.rows_total <= 5
+
+    @property
+    def is_legacy(self) -> bool:
+        """
+        Pre-versioning logs (no `app_version` in LOG_START) or logs where the
+        IMPACT_TMO schema didn't yet include `why_no_silence`. These typically
+        come from the monolith era before the state-machine refactor; their
+        IMPACT_TMO `?` reasons inflate the MEDIUM aggregate without telling us
+        anything actionable about the current v2.0.0 code paths.
+        """
+        if not self.app_version:
+            return True
+        if not self.device:
+            return True
+        # Tolerate the case where the version is present but the reason column
+        # is missing on every TMO — the log was written by an older build that
+        # ran a hybrid schema.
+        if self.impact_tmo_count > 0 and self.impact_tmo_reasons.get("?", 0) == self.impact_tmo_count:
+            return True
+        return False
 
     def absorb(self):
         for ts_ms, el_s, ev, p in _row_iter(self.path):
@@ -159,14 +207,33 @@ class FileSummary:
             elif ev == "HIGH_MAG":
                 self._push(self.high_mag_raw, p.get("raw"))
                 self._push(self.high_mag_smooth, p.get("smooth"))
+                r = _to_float(p.get("raw"))
+                s = _to_float(p.get("smooth"))
+                if r is not None and s is not None:
+                    self.high_mag_pairs.append((r, s))
             elif ev == "IMPACT_IN":
                 self.impact_in_count += 1
+                r = _to_float(p.get("raw"))
+                s = _to_float(p.get("smooth"))
+                if r is not None and s is not None:
+                    self.impact_in_pairs.append((r, s))
             elif ev == "IMPACT_TMO":
                 self.impact_tmo_count += 1
                 reason = p.get("why_no_silence", "?")
                 self.impact_tmo_reasons[reason] += 1
+                if reason == "SPEED":
+                    self._push(self.impact_tmo_speed_min_spd, p.get("min_spd"))
             elif ev == "CRASH_CONFIRMED":
                 self.crash_confirmed_count += 1
+                # Snapshot the full payload so a real crash (or drop-test) is
+                # printed verbatim downstream. This is the canonical "true
+                # positive" evidence — keep every field so post-hoc tuning
+                # never lacks context. List, not set, in case the same session
+                # somehow confirms twice.
+                self.crash_confirmed_payloads.append({
+                    "elapsed_min": el_s / 60.0,
+                    **p,
+                })
 
     @staticmethod
     def _push(target: list[float], v: str | None):
@@ -177,6 +244,19 @@ class FileSummary:
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Stats helpers
+
+def _display_path(p: Path) -> Path | str:
+    """Render a path nicely: relative to the repo when it lives inside it,
+    absolute otherwise. Centralises the try/except so callers stay readable."""
+    try:
+        if p.is_absolute():
+            return p.relative_to(REPO_ROOT)
+    except ValueError:
+        # Path is absolute but lives outside REPO_ROOT (e.g. user passed
+        # --root pointing at ~/Downloads). Show the absolute path verbatim.
+        return p
+    return p
+
 
 def _stats(xs: list[float]) -> dict[str, float]:
     if not xs:
@@ -220,12 +300,46 @@ def _bucket_key(fs: FileSummary) -> tuple[str, str, str, str]:
     )
 
 
+# ─────────────────────────────────────────────────────────────────────────────
+# v2.0.0 retro-projection
+#
+# For each (raw, smooth) sample observed under any version, evaluate the
+# v2.0.0 impact-entry rule per preset:
+#
+#     would_fire = (peak > peak_threshold) OR (smooth > smoothed_threshold)
+#
+# `peak` is not in the v1.2.0 calibration payload (it's a SensorReader-only
+# field, see SensorSample.peakMagnitude). We use `raw` as a LOWER BOUND for
+# `peak` — peak is the max raw over the last peakWindowMs, so peak >= raw
+# always. That means `raw > peak_threshold` is a SUFFICIENT-but-not-necessary
+# condition for the peak branch firing; the count is conservative (it
+# undercounts real fires via peak). The smoothed branch is exact.
+
+def _project_pairs(pairs: list[tuple[float, float]]) -> dict[str, int]:
+    """Count how many (raw, smooth) pairs would have crossed each v2.0.0 preset."""
+    counts: dict[str, int] = {preset: 0 for preset in V2_0_0_THRESHOLDS}
+    for raw, smooth in pairs:
+        for preset, (smoothed_thr, peak_thr) in V2_0_0_THRESHOLDS.items():
+            if smooth > smoothed_thr or raw > peak_thr:
+                counts[preset] += 1
+    return counts
+
+
+def _headroom_line(label: str, p95_value: float, threshold: float) -> str:
+    """One-line headroom report: how far p95 sits below the v2.0.0 threshold."""
+    if p95_value <= 0:
+        return f"  {label} p95={p95_value:6.2f}  → (no headroom calc, no samples)"
+    delta = threshold - p95_value
+    ratio = threshold / p95_value if p95_value > 0 else float("inf")
+    return f"  {label} p95={p95_value:6.2f}  → v2.0.0 headroom: {delta:+5.1f} m/s² (×{ratio:.2f})"
+
+
 def _print_per_file(summaries: list[FileSummary]):
     print("=" * 88)
     print(" Per-file summary")
     print("=" * 88)
     for fs in summaries:
-        rel = fs.path.relative_to(REPO_ROOT) if fs.path.is_absolute() else fs.path
+        rel = _display_path(fs.path)
         tag = " (tiny)" if fs.is_tiny else ""
         dur_min = fs.duration_s / 60.0
         crash_flag = ""
@@ -239,64 +353,151 @@ def _print_per_file(summaries: list[FileSummary]):
             print(f"  IMPACT_TMO reasons: {reasons}")
 
 
-def _print_aggregated(summaries: list[FileSummary]):
+def _print_bucket(key: tuple[str, str, str, str], group: list[FileSummary]):
+    device, profile, preset, version = key
+    total_dur_min = sum(fs.duration_s for fs in group) / 60.0
+    total_rows = sum(fs.rows_total for fs in group)
+    total_periodic = sum(fs.periodic_count for fs in group)
+    total_highmag = sum(fs.event_counts.get("HIGH_MAG", 0) for fs in group)
+    total_impact_in = sum(fs.impact_in_count for fs in group)
+    total_impact_tmo = sum(fs.impact_tmo_count for fs in group)
+    total_crash = sum(fs.crash_confirmed_count for fs in group)
+    grade_boost_pct = (
+        100.0 * sum(fs.grade_boost_active_count for fs in group) / total_periodic
+        if total_periodic
+        else 0.0
+    )
+    hm_per_min = total_highmag / total_dur_min if total_dur_min > 0 else 0.0
+    impact_in_per_hr = (total_impact_in / total_dur_min * 60.0) if total_dur_min > 0 else 0.0
+
+    all_raw = [v for fs in group for v in fs.high_mag_raw]
+    all_smooth = [v for fs in group for v in fs.high_mag_smooth]
+    all_speed = [v for fs in group for v in fs.periodic_speed]
+    all_accel_dev = [v for fs in group for v in fs.periodic_accel_dev]
+    all_noise = [v for fs in group for v in fs.periodic_noise]
+    all_high_mag_pairs = [pair for fs in group for pair in fs.high_mag_pairs]
+    all_impact_in_pairs = [pair for fs in group for pair in fs.impact_in_pairs]
+    all_speed_min_spd = [v for fs in group for v in fs.impact_tmo_speed_min_spd]
+
+    tmo_reason_total: Counter[str] = Counter()
+    for fs in group:
+        tmo_reason_total.update(fs.impact_tmo_reasons)
+
+    print(f"\n── device={device}  profile={profile}  preset={preset}  v{version}  (rides={len(group)}) ──")
+    print(f"  total duration: {total_dur_min:6.1f} min   total rows: {total_rows}")
+    print(f"  HIGH_MAG: total={total_highmag}  rate={hm_per_min:5.2f}/min")
+    print(f"  IMPACT_IN: total={total_impact_in}  rate={impact_in_per_hr:5.2f}/h")
+    if total_impact_in:
+        tmo_pct = 100.0 * total_impact_tmo / total_impact_in
+        print(f"  IMPACT_TMO: total={total_impact_tmo}  ({tmo_pct:.1f}% of IMPACT_IN)")
+        if tmo_reason_total:
+            reasons = ", ".join(f"{k}={v}" for k, v in tmo_reason_total.most_common())
+            print(f"    reasons:        {reasons}")
+    print(f"  CRASH_CONFIRMED: {total_crash}")
+    print(f"  grade_boost active: {grade_boost_pct:5.1f}% of PERIODIC samples")
+    print(f"  HIGH_MAG raw    (m/s²):")
+    print(_fmt_stats(all_raw))
+    print(f"  HIGH_MAG smooth (m/s²):")
+    print(_fmt_stats(all_smooth))
+    print(f"  PERIODIC speed (km/h):")
+    print(_fmt_stats(all_speed))
+    print(f"  PERIODIC accel_dev:")
+    print(_fmt_stats(all_accel_dev))
+    print(f"  PERIODIC noise:")
+    print(_fmt_stats(all_noise))
+
+    # ── v2.0.0 retro-projection on HIGH_MAG samples ─────────────────────────
+    #
+    # Asks: of all the HIGH_MAG samples this bucket observed (samples above
+    # the 22 m/s² logging floor but below the *bucket-version* thresholds),
+    # how many would have crossed each v2.0.0 preset's impact bar?
+    #
+    # Useful in two directions:
+    #   • v1.2.0 buckets → "if these riders had run v2.0.0, how many fresh
+    #     IMPACT_IN events would the new thresholds have produced?"
+    #   • v2.0.0 buckets → "if we shipped MEDIUM instead of LOW, how many
+    #     terrain spikes would have crossed the bar?"
+    if all_high_mag_pairs:
+        proj = _project_pairs(all_high_mag_pairs)
+        total = len(all_high_mag_pairs)
+        print(f"  v2.0.0 retro-projection — HIGH_MAG samples that would cross each preset:")
+        for p in ("LOW", "MEDIUM", "HIGH"):
+            c = proj[p]
+            pct = 100.0 * c / total if total else 0.0
+            smoothed_thr, peak_thr = V2_0_0_THRESHOLDS[p]
+            print(f"    {p:<7s}: {c:4d} / {total:<4d}  ({pct:4.1f}%)   thr smooth>{smoothed_thr:.0f} or peak>{peak_thr:.0f}")
+
+    # ── v2.0.0 retro-projection on IMPACT_IN events ─────────────────────────
+    #
+    # Asks: of the IMPACT_IN events this bucket actually fired (under its
+    # own version's thresholds), how many would v2.0.0 still fire?
+    # Conservative on the peak branch (raw is a lower bound for peak).
+    if all_impact_in_pairs:
+        proj = _project_pairs(all_impact_in_pairs)
+        total = len(all_impact_in_pairs)
+        print(f"  v2.0.0 retro-projection — IMPACT_IN events that v2.0.0 would still fire:")
+        for p in ("LOW", "MEDIUM", "HIGH"):
+            c = proj[p]
+            pct = 100.0 * c / total if total else 0.0
+            print(f"    {p:<7s}: {c:4d} / {total:<4d}  ({pct:4.1f}%)")
+
+    # ── Headroom vs v2.0.0 thresholds ───────────────────────────────────────
+    #
+    # How far the p95 of observed HIGH_MAG values sits below each v2.0.0
+    # threshold. A small or negative headroom signals a rider whose terrain
+    # routinely brushes the impact bar — bandera roja for FP risk if they
+    # switch to that preset.
+    if all_raw or all_smooth:
+        raw_p95 = _stats(all_raw)["p95"] if all_raw else 0.0
+        smooth_p95 = _stats(all_smooth)["p95"] if all_smooth else 0.0
+        print(f"  Headroom (HIGH_MAG p95 vs v2.0.0 thresholds):")
+        for p in ("LOW", "MEDIUM", "HIGH"):
+            smoothed_thr, peak_thr = V2_0_0_THRESHOLDS[p]
+            print(f"    {p:<7s}:")
+            print("      " + _headroom_line("raw   ", raw_p95, peak_thr).lstrip())
+            print("      " + _headroom_line("smooth", smooth_p95, smoothed_thr).lstrip())
+
+    # ── IMPACT_TMO why_no_silence=SPEED distribution ────────────────────────
+    #
+    # Shows the rider's actual minimum speed during the impact window when
+    # the speed gate was the reason for not confirming. min_spd much higher
+    # than crashConfirmSpeedKmh = "rider rode straight through it" → terrain.
+    # min_spd close to crashConfirmSpeedKmh = "almost confirmed, near miss"
+    # → worth investigating those rides individually.
+    if all_speed_min_spd:
+        s = _stats(all_speed_min_spd)
+        print(f"  IMPACT_TMO reason=SPEED  min_spd during window (km/h):")
+        print(f"  n={s['n']:<5d} min={s['min']:6.2f}  p50={s['p50']:6.2f}  mean={s['mean']:6.2f}  p95={s['p95']:6.2f}  max={s['max']:6.2f}")
+
+    # ── CRASH_CONFIRMED detail (true positives — real crashes / drop tests) ─
+    #
+    # Always dump verbatim. These are the ground-truth events any future
+    # tuning has to keep firing. If this section ever shows entries from a
+    # ride the rider didn't actually crash on, that's a v2.0.0 false positive
+    # that needs investigation.
+    if total_crash:
+        print(f"  CRASH_CONFIRMED events (verbatim, n={total_crash}):")
+        for fs in group:
+            for entry in fs.crash_confirmed_payloads:
+                rel = _display_path(fs.path)
+                elapsed = entry.get("elapsed_min", 0.0)
+                kv = ", ".join(f"{k}={v}" for k, v in entry.items() if k != "elapsed_min")
+                print(f"    • {rel} @ t≈{elapsed:.1f}min: {kv}")
+
+
+def _print_aggregated(summaries: list[FileSummary], header: str):
     buckets: dict[tuple[str, str, str, str], list[FileSummary]] = defaultdict(list)
     for fs in summaries:
         buckets[_bucket_key(fs)].append(fs)
 
     print("\n" + "=" * 88)
-    print(" Aggregated by (device, profile, preset, app_version)")
+    print(f" {header}")
     print("=" * 88)
+    if not buckets:
+        print(" (no logs in this cohort)")
+        return
     for key in sorted(buckets):
-        device, profile, preset, version = key
-        group = buckets[key]
-        total_dur_min = sum(fs.duration_s for fs in group) / 60.0
-        total_rows = sum(fs.rows_total for fs in group)
-        total_periodic = sum(fs.periodic_count for fs in group)
-        total_highmag = sum(fs.event_counts.get("HIGH_MAG", 0) for fs in group)
-        total_impact_in = sum(fs.impact_in_count for fs in group)
-        total_impact_tmo = sum(fs.impact_tmo_count for fs in group)
-        total_crash = sum(fs.crash_confirmed_count for fs in group)
-        grade_boost_pct = (
-            100.0 * sum(fs.grade_boost_active_count for fs in group) / total_periodic
-            if total_periodic
-            else 0.0
-        )
-        hm_per_min = total_highmag / total_dur_min if total_dur_min > 0 else 0.0
-        impact_in_per_hr = (total_impact_in / total_dur_min * 60.0) if total_dur_min > 0 else 0.0
-
-        all_raw = [v for fs in group for v in fs.high_mag_raw]
-        all_smooth = [v for fs in group for v in fs.high_mag_smooth]
-        all_speed = [v for fs in group for v in fs.periodic_speed]
-        all_accel_dev = [v for fs in group for v in fs.periodic_accel_dev]
-        all_noise = [v for fs in group for v in fs.periodic_noise]
-
-        tmo_reason_total: Counter[str] = Counter()
-        for fs in group:
-            tmo_reason_total.update(fs.impact_tmo_reasons)
-
-        print(f"\n── device={device}  profile={profile}  preset={preset}  v{version}  (rides={len(group)}) ──")
-        print(f"  total duration: {total_dur_min:6.1f} min   total rows: {total_rows}")
-        print(f"  HIGH_MAG: total={total_highmag}  rate={hm_per_min:5.2f}/min")
-        print(f"  IMPACT_IN: total={total_impact_in}  rate={impact_in_per_hr:5.2f}/h")
-        if total_impact_in:
-            tmo_pct = 100.0 * total_impact_tmo / total_impact_in
-            print(f"  IMPACT_TMO: total={total_impact_tmo}  ({tmo_pct:.1f}% of IMPACT_IN)")
-            if tmo_reason_total:
-                reasons = ", ".join(f"{k}={v}" for k, v in tmo_reason_total.most_common())
-                print(f"    reasons:        {reasons}")
-        print(f"  CRASH_CONFIRMED: {total_crash}")
-        print(f"  grade_boost active: {grade_boost_pct:5.1f}% of PERIODIC samples")
-        print(f"  HIGH_MAG raw    (m/s²):")
-        print(_fmt_stats(all_raw))
-        print(f"  HIGH_MAG smooth (m/s²):")
-        print(_fmt_stats(all_smooth))
-        print(f"  PERIODIC speed (km/h):")
-        print(_fmt_stats(all_speed))
-        print(f"  PERIODIC accel_dev:")
-        print(_fmt_stats(all_accel_dev))
-        print(f"  PERIODIC noise:")
-        print(_fmt_stats(all_noise))
+        _print_bucket(key, buckets[key])
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -340,11 +541,28 @@ def main(argv: list[str]) -> int:
         return 1
 
     _print_per_file(summaries)
-    _print_aggregated(summaries)
+
+    # Partition: legacy = no app_version, no device, or pre-state-machine schema
+    # (every IMPACT_TMO `?`). Legacy logs contaminate aggregated stats because
+    # they predate the state-machine refactor — their IMPACT_TMO entries lack
+    # `why_no_silence` and their PERIODIC rows lack `noise`. Keep them as a
+    # diagnostic-only cohort.
+    primary = [fs for fs in summaries if not fs.is_legacy]
+    legacy = [fs for fs in summaries if fs.is_legacy]
+
+    _print_aggregated(primary, "Aggregated by (device, profile, preset, app_version)")
+    if legacy:
+        _print_aggregated(
+            legacy,
+            "Legacy cohort (no version/device or pre-state-machine schema — diagnostic only)",
+        )
 
     print("\n" + "=" * 88)
     tiny = sum(1 for fs in summaries if fs.is_tiny)
-    print(f" Parsed {len(summaries)} logs  ·  tiny (≤5 rows): {tiny}  ·  total rides: {len(summaries)}")
+    print(
+        f" Parsed {len(summaries)} logs  ·  primary: {len(primary)}  ·  legacy: {len(legacy)}"
+        f"  ·  tiny (≤5 rows): {tiny}"
+    )
     print("=" * 88)
     return 0
 
