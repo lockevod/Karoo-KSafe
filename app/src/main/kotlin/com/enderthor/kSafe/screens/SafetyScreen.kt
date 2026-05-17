@@ -117,6 +117,30 @@ fun SafetyScreen(vm: MainViewModel) {
             color = MaterialTheme.colorScheme.onSurfaceVariant
         )
 
+        // ── Buzzer / mute warning banner ────────────────────────────────────
+        // The Karoo has a piezo buzzer (not a speaker) and the SDK does not expose
+        // the system mute state. Surface this at the TOP of the Safety tab so a
+        // rider relying on KSafe for emergencies knows that muting the device
+        // silences every audible alert, with no detection or override path.
+        Card(
+            colors = CardDefaults.cardColors(containerColor = Color(0xFFFFF3CD)),
+            elevation = CardDefaults.cardElevation(defaultElevation = 2.dp),
+        ) {
+            Column(modifier = Modifier.padding(8.dp)) {
+                Text(
+                    text = stringResource(R.string.safety_buzzer_mute_title),
+                    style = MaterialTheme.typography.bodySmall,
+                    fontWeight = FontWeight.Bold,
+                    color = Color(0xFF856404)
+                )
+                Text(
+                    text = stringResource(R.string.safety_buzzer_mute_hint),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = Color(0xFF664D03)
+                )
+            }
+        }
+
         // Emergency message
         OutlinedTextField(
             value = emergencyMessage,
@@ -148,15 +172,6 @@ fun SafetyScreen(vm: MainViewModel) {
         SettingRow(label = stringResource(R.string.crash_detection_label)) {
             Switch(checked = crashEnabled, onCheckedChange = { crashEnabled = it })
         }
-        // The Karoo buzzer is the only audio output; if the rider mutes the device,
-        // alerts go silent and the SDK does not expose the mute state, so we cannot
-        // detect or override it at runtime. Surface the limitation here so the rider
-        // can make an informed choice when relying on KSafe for emergencies.
-        Text(
-            text = stringResource(R.string.safety_buzzer_mute_hint),
-            style = MaterialTheme.typography.bodySmall,
-            color = MaterialTheme.colorScheme.onSurfaceVariant
-        )
 
         if (crashEnabled) {
             Text(

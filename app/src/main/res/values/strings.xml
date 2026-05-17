@@ -212,7 +212,8 @@
     <string name="emergency_message_hint">Use {location} for GPS link and {reason} for cause</string>
     <string name="default_emergency_message">EMERGENCY: Possible incident detected. Location: {location} (Reason: {reason})</string>
     <string name="crash_detection_label">Automatic crash detection</string>
-    <string name="safety_buzzer_mute_hint">Alerts beep through the Karoo buzzer — silent if you mute the device. There is no way to override the system mute from an extension.</string>
+    <string name="safety_buzzer_mute_title">Heads up: alerts use the Karoo buzzer</string>
+    <string name="safety_buzzer_mute_hint">Every KSafe sound — emergency countdown, fueling reminders, wellness alerts — goes through the Karoo buzzer. If you mute the device, all alerts are silent. The Karoo SDK does not let an extension detect or override the mute state.</string>
     <string name="crash_sensitivity_label">Crash detection sensitivity</string>
     <string name="sensitivity_low">Low</string>
     <string name="sensitivity_medium">Medium</string>
