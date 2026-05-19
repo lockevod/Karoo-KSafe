@@ -22,7 +22,7 @@ android {
         minSdk = 23
         targetSdk = 34
         versionCode = 202605192
-        versionName = "2.1.0"
+        versionName = "2.0.0"
 
         // Calibration log delivery credentials — injected from local.properties at compile time.
         // Falls back to empty string if the key is not set (LogReporter skips sending in that case).
