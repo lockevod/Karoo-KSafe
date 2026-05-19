@@ -348,7 +348,7 @@ class CrashStateMachine(
      * (bike on its side, rear wheel spinning) would otherwise block a valid crash.
      *
      * Outcomes:
-     *   - `isStill` AND elapsed > effectiveSilenceMs → Decision.Confirm
+     *   - `isStill` AND elapsed >= effectiveSilenceMs → Decision.Confirm
      *   - `isStill` AND not yet elapsed → keep counting (None)
      *   - `!isStill` AND within `impactWindowMs * 2` → reset silence clock to `now`
      *   - `!isStill` AND beyond `impactWindowMs * 2` → false alarm, return to MONITORING

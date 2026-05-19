@@ -659,6 +659,57 @@ class CrashStateMachineTest {
         }
     }
 
+    // ── Regression: silence-window accumulator resets on silence-break ───────
+
+    @Test
+    fun `orientation accumulator resets when stillness is broken`() {
+        val t = Thresholds(
+            baselineMinSamples = 10,
+            silenceDurationMs = 4_500L,
+            silenceDurationUprightMs = 20_000L,
+            uprightAngleThresholdDegrees = 45.0,
+            minSpeedForCrashKmh = 3,
+            crashConfirmSpeedKmh = 3,
+        )
+        val sm = smInSilenceCheckWithBaseline(t)  // baseline along Z, currently in SILENCE_CHECK
+
+        // Feed ~1s of on-side samples so the orientation accumulator points along X.
+        var tNow = 2_000L
+        repeat(50) {
+            tNow += 20
+            sm.onSample(sample(
+                time = tNow, peak = 0.0, smoothed = 9.81, raw = 9.81, gyro = 0.05,
+            ).copy(accelX = 9.81, accelY = 0.0, accelZ = 0.0))
+        }
+
+        // Inject a spike (deviation > 4) to break stillness. This must trigger
+        // the silence-break branch and reset the accumulator + silence clock.
+        tNow += 20
+        sm.onSample(sample(
+            time = tNow, peak = 15.0, smoothed = 15.0, raw = 15.0, gyro = 0.5,
+        ).copy(accelX = 9.81, accelY = 0.0, accelZ = 0.0))
+
+        // Now feed UPRIGHT quiet samples (gravity along Z, matching baseline).
+        // If the accumulator was NOT reset, the orientation average would still
+        // be polluted with the on-side X-axis history → angle would stay > 45°
+        // → legacy 4.5s window → confirm too soon.
+        // If the accumulator IS reset (correct behaviour) → orientation immediately
+        // reflects the new upright posture → 20s window → must NOT confirm before that.
+
+        // Run for 4.5s + slack of upright quiet samples. Confirm must NOT fire.
+        val tBreak = tNow
+        while (tNow < tBreak + 5_500L) {  // 5.5s — well past legacy 4.5s threshold
+            tNow += 20
+            val d = sm.onSample(sample(
+                time = tNow, peak = 0.0, smoothed = 9.81, raw = 9.81, gyro = 0.05,
+            ).copy(accelX = 0.0, accelY = 0.0, accelZ = 9.81))
+            assertNotEquals(
+                "Decision.Confirm fired at t=$tNow — accumulator must have leaked on-side history",
+                CrashStateMachine.Decision.Confirm, d
+            )
+        }
+    }
+
     // ── Regression: crash on-side still confirms at 4.5s ─────────────────────
 
     @Test
