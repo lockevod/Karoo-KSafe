@@ -12,7 +12,7 @@ import kotlin.math.sqrt
  * Pure state machine: MONITORING → IMPACT → SILENCE_CHECK → (CRASH_CONFIRMED | back to MONITORING).
  *
  * Faithful re-expression of the algorithm specified in `docs/crash-detection-algorithm.md`
- * (May 2026, revision 4) and the production logic in [CrashDetectionManager].
+ * (May 2026, revision 5) and the production logic in [CrashDetectionManager].
  *
  * The state machine is **pure**: no Android imports, no coroutines, no time.sleep, no I/O.
  * It owns no buffers — those live in `SensorReader`/[CrashDetectionManager]. Each call to
@@ -171,6 +171,19 @@ class CrashStateMachine(
      * margin for the entire window.
      */
     @Volatile private var lockedEffectiveSilenceMs: Long = 0L
+
+    /**
+     * The `effectiveSilenceMs` value that was in force at the moment the last
+     * `Decision.Confirm` fired. Captured BEFORE `resetSilenceWindow()` clears
+     * the latch, so the facade can read it in CRASH_CONFIRMED calibration
+     * rows and field analysts can tell whether the algorithm waited the
+     * legacy 4.5 s, the GPS-stale 8 s, or the upright-aware 20 s.
+     *
+     * `0L` until the first Confirm in this ride. NOT reset between rides
+     * intentionally — a fresh ride's first Confirm overwrites it.
+     */
+    @Volatile var lastConfirmedSilenceMs: Long = 0L
+        private set
 
     // ── Public API ───────────────────────────────────────────────────────────
 
@@ -454,7 +467,10 @@ class CrashStateMachine(
 
         return when {
             isStill && (now - silenceStartedMs) >= effectiveSilenceMs -> {
-                // CONFIRMED.
+                // CONFIRMED. Capture the actual silence window that fired
+                // before resetSilenceWindow() clears the latch — the facade
+                // reads this for CRASH_CONFIRMED diagnostic logging.
+                lastConfirmedSilenceMs = effectiveSilenceMs
                 calibLogger?.log(CalibrationLogger.Event.CRASH_CONFIRMED) {
                     "total_ms=$timeSinceImpact,deviation=%.2f,speed=%.1f,gps_stale=$gpsStale"
                         .formatUs(deviation, lastSpeedKmh)

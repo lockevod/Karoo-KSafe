@@ -946,6 +946,57 @@ class CrashStateMachineTest {
         assertEquals("baseline Z should have adapted toward 6.94", 6.94, bz2, 0.5)
     }
 
+    // ── Diagnostics: lastConfirmedSilenceMs reflects the actual window ───────
+
+    @Test
+    fun `lastConfirmedSilenceMs reflects upright window when fired`() {
+        val t = Thresholds(
+            baselineMinSamples = 10,
+            silenceDurationMs = 4_500L,
+            silenceDurationUprightMs = 20_000L,
+            uprightAngleThresholdDegrees = 45.0,
+        )
+        val sm = smInSilenceCheckWithBaseline(t)
+
+        // Feed upright quiet samples until confirm fires. With the 20s upright
+        // window, we need ~1000 samples × 20ms = 20s of stillness.
+        var tNow = 2_000L
+        var confirmed = false
+        while (!confirmed && tNow < 25_000L) {
+            tNow += 20
+            val d = sm.onSample(sample(
+                time = tNow, peak = 0.0, smoothed = 9.81, raw = 9.81, gyro = 0.05,
+            ).copy(accelX = 0.0, accelY = 0.0, accelZ = 9.81))
+            if (d == CrashStateMachine.Decision.Confirm) confirmed = true
+        }
+        assertEquals("expected upright window to confirm", true, confirmed)
+        assertEquals(20_000L, sm.lastConfirmedSilenceMs)
+    }
+
+    @Test
+    fun `lastConfirmedSilenceMs reflects legacy window when on-side fired`() {
+        val t = Thresholds(
+            baselineMinSamples = 10,
+            silenceDurationMs = 4_500L,
+            silenceDurationUprightMs = 20_000L,
+            uprightAngleThresholdDegrees = 45.0,
+        )
+        val sm = smInSilenceCheckWithBaseline(t)
+
+        // Feed on-side quiet samples until confirm fires (~4.5s).
+        var tNow = 2_000L
+        var confirmed = false
+        while (!confirmed && tNow < 10_000L) {
+            tNow += 20
+            val d = sm.onSample(sample(
+                time = tNow, peak = 0.0, smoothed = 9.81, raw = 9.81, gyro = 0.05,
+            ).copy(accelX = 9.81, accelY = 0.0, accelZ = 0.0))
+            if (d == CrashStateMachine.Decision.Confirm) confirmed = true
+        }
+        assertEquals("expected on-side window to confirm", true, confirmed)
+        assertEquals(4_500L, sm.lastConfirmedSilenceMs)
+    }
+
     // ── Regression: crash on-side still confirms at 4.5s ─────────────────────
 
     @Test

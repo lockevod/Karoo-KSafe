@@ -91,7 +91,7 @@ class CalibrationLogger(
         /** GPS stale condition detected (informational marker). */
         GPS_STALE("GPS_STALE"),
         /**
-         * Rough-terrain cluster detected: ≥ [CLUSTER_COUNT] IMPACT_TMO events within
+         * Rough-terrain cluster detected: ≥ [CLUSTER_MIN_TMO] IMPACT_TMO events within
          * [CLUSTER_WINDOW_MS]. The longer peak-threshold boost is now active.
          * Key for calibration: confirms the rider is on consistently rough terrain
          * (cobblestones, gravel, badly paved descent) rather than isolated bumps.

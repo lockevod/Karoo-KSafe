@@ -577,11 +577,20 @@ class CrashDetectionManager(
         val deviation = abs(sample.rawMagnitude - GRAVITY)
         val gpsStale = lastGpsStaleState
         val effectiveDevMax = if (gpsStale) GPS_STALE_DEVIATION_MAX else SILENCE_DEVIATION_MAX
-        val effectiveSilenceMs = if (gpsStale) GPS_STALE_SILENCE_DURATION_MS else SILENCE_DURATION_MS
-        Timber.d(">>> CRASH CONFIRMED (accel dev=%.2f speed=%.1fkm/h gyro=%.2f gpsStale=%b)",
-            deviation, currentSpeedKmh, sample.gyroMag, gpsStale)
+        // Read the ACTUAL silence window that fired from the state machine
+        // (not derived from constants). This correctly reflects the upright
+        // 20s path vs the legacy 4.5s / GPS-stale 8s paths.
+        val effectiveSilenceMs = stateMachine.lastConfirmedSilenceMs
+        val silencePath = when (effectiveSilenceMs) {
+            stateMachine.thresholds.silenceDurationUprightMs -> "UPRIGHT"
+            stateMachine.thresholds.gpsStaleSilenceDurationMs -> "GPS_STALE"
+            stateMachine.thresholds.silenceDurationMs -> "LEGACY"
+            else -> "UNKNOWN"
+        }
+        Timber.d(">>> CRASH CONFIRMED (accel dev=%.2f speed=%.1fkm/h gyro=%.2f gpsStale=%b silence_ms=%d path=%s)",
+            deviation, currentSpeedKmh, sample.gyroMag, gpsStale, effectiveSilenceMs, silencePath)
         calibLogger?.log(CalibrationLogger.Event.CRASH_CONFIRMED) {
-            "deviation=%.2f,speed=%.1f,confirm_spd_thr=${config.crashConfirmSpeedKmh},grade=%.1f,cadence=%.0f,gps_stale=$gpsStale,preset=${config.crashSensitivity},effective_dev_max=$effectiveDevMax,effective_silence_ms=$effectiveSilenceMs,countdown_s=${config.countdownSeconds}".formatUs(
+            "deviation=%.2f,speed=%.1f,confirm_spd_thr=${config.crashConfirmSpeedKmh},grade=%.1f,cadence=%.0f,gps_stale=$gpsStale,preset=${config.crashSensitivity},effective_dev_max=$effectiveDevMax,effective_silence_ms=$effectiveSilenceMs,silence_path=$silencePath,countdown_s=${config.countdownSeconds}".formatUs(
                 deviation, currentSpeedKmh, currentGrade, currentCadence)
         }
     }
