@@ -232,6 +232,39 @@ class CrashDetectionManager(
         if (config.speedDropDetectionEnabled) speedDropMonitor.start(config.speedDropMinutes)
     }
 
+    /**
+     * Resume crash detection after a ride pause. Identical to [start] EXCEPT
+     * the state machine's learned baseline gravity vector is preserved (a
+     * pause-resume in the middle of a ride is not a fresh ride; the upright
+     * reference established during the pre-pause cruising is still valid).
+     *
+     * Use [start] for fresh-ride / first-Recording-event-of-the-session paths
+     * where the baseline must be re-learned from scratch.
+     */
+    fun resume(config: KSafeConfig) {
+        this.config = config
+        if (!config.crashDetectionEnabled) {
+            Timber.d("CrashDetection disabled in config, skipping resume")
+            return
+        }
+        startTime = clock.nowMs()
+        speedDataReceived = false
+        lastPeriodicLogMs = 0L
+        lastGpsStaleState = false
+        lastLoggedSensitivity = config.crashSensitivity
+        postImpactBoostUntil = 0L
+        recentTmoTimestamps.clear()
+        resetWindowAccumulators()
+        // Intentionally do NOT reset loggedBaselineReady — the ORIENTATION_BASELINE
+        // event has already fired for this ride (if baseline was ready before
+        // pause) and the calibration log honours its "once per ride" contract.
+        rebuildThresholds(boostActive = false)
+        stateMachine.resumeForRide()
+        sensorReader.start(handler = null)
+        Timber.d("CrashDetectionManager RESUMED (baseline preserved, ready=${stateMachine.isBaselineReady()})")
+        if (config.speedDropDetectionEnabled) speedDropMonitor.start(config.speedDropMinutes)
+    }
+
     fun stop() {
         sensorReader.stop()
         speedDropMonitor.stop()

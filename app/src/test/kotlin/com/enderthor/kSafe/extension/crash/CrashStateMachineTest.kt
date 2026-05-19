@@ -782,6 +782,80 @@ class CrashStateMachineTest {
         )
     }
 
+    // ── Lifecycle: resumeForRide preserves baseline ──────────────────────────
+
+    @Test
+    fun `resumeForRide preserves baseline and counter`() {
+        val (sm, _) = newSm(Thresholds(baselineMinSamples = 10))
+        // Build a baseline.
+        repeat(20) { sm.feedBaselineSample(0.0, 0.0, 9.81) }
+        assertEquals(true, sm.isBaselineReady())
+        val (bx, by, bz) = sm.baselineVector()
+
+        // Simulate pause-resume on the state machine.
+        sm.resumeForRide()
+
+        // Baseline must survive.
+        assertEquals(true, sm.isBaselineReady())
+        val (bx2, by2, bz2) = sm.baselineVector()
+        assertEquals(bx, bx2, 1e-9)
+        assertEquals(by, by2, 1e-9)
+        assertEquals(bz, bz2, 1e-9)
+
+        // But timing/state must reset to MONITORING with clean clocks.
+        assertEquals(CrashStateMachine.State.MONITORING, sm.state)
+    }
+
+    @Test
+    fun `resumeForRide clears the silence-window accumulator`() {
+        val t = Thresholds(
+            baselineMinSamples = 10,
+            silenceDurationMs = 4_500L,
+            silenceDurationUprightMs = 20_000L,
+            uprightAngleThresholdDegrees = 45.0,
+        )
+        val sm = smInSilenceCheckWithBaseline(t)
+
+        // Feed some on-side samples so the accumulator is non-empty.
+        var tNow = 2_000L
+        repeat(50) {
+            tNow += 20
+            sm.onSample(sample(
+                time = tNow, peak = 0.0, smoothed = 9.81, raw = 9.81, gyro = 0.05,
+            ).copy(accelX = 9.81, accelY = 0.0, accelZ = 0.0))
+        }
+
+        // Resume mid-SILENCE_CHECK — accumulator must be cleared, state must reset.
+        sm.resumeForRide()
+        assertEquals(CrashStateMachine.State.MONITORING, sm.state)
+
+        // Re-enter IMPACT → SILENCE_CHECK with upright samples. If accumulator
+        // was NOT cleared, on-side history would inflate effectiveSilenceMs to
+        // legacy 4.5s for a "really upright now" rider. With it cleared, the
+        // new upright orientation gives 20s, so 5s of upright stillness must
+        // NOT confirm.
+        sm.onSpeedUpdate(20.0)
+        sm.onSample(sample(time = tNow + 1_000, peak = 60.0, smoothed = 30.0))
+        assertEquals(CrashStateMachine.State.IMPACT, sm.state)
+        sm.onSpeedUpdate(0.0)
+        sm.onSample(sample(time = tNow + 2_000, peak = 0.0, smoothed = 9.81,
+            raw = 9.81, gyro = 0.1).copy(accelX = 0.0, accelY = 0.0, accelZ = 9.81))
+        assertEquals(CrashStateMachine.State.SILENCE_CHECK, sm.state)
+
+        val tEnter = tNow + 2_000
+        var tQuiet = tEnter
+        while (tQuiet < tEnter + 5_000L) {
+            tQuiet += 20
+            val d = sm.onSample(sample(
+                time = tQuiet, peak = 0.0, smoothed = 9.81, raw = 9.81, gyro = 0.05,
+            ).copy(accelX = 0.0, accelY = 0.0, accelZ = 9.81))
+            assertNotEquals(
+                "Decision.Confirm fired at t=$tQuiet — accumulator leaked across resumeForRide",
+                CrashStateMachine.Decision.Confirm, d
+            )
+        }
+    }
+
     // ── Regression: crash on-side still confirms at 4.5s ─────────────────────
 
     @Test

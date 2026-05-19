@@ -254,6 +254,34 @@ class CrashStateMachine(
         silenceWindowCount = 0
     }
 
+    /**
+     * Reset timing and per-event state (impact window, silence window, cadence,
+     * speed) for a ride RESUME after pause — but **preserve the learned baseline**
+     * gravity vector and its sample count. A pause-resume in the middle of a ride
+     * (traffic light, regroup, mechanical) is NOT a fresh ride; the upright
+     * reference established during the pre-pause cruising is still valid.
+     *
+     * Use [reset] for fresh-ride / cold-start / process-restart paths where the
+     * baseline must be re-learned.
+     */
+    fun resumeForRide() {
+        state = State.MONITORING
+        impactStartedMs = 0L
+        silenceStartedMs = 0L
+        lastSpeedKmh = 0.0
+        lastSpeedGpsStale = false
+        speedLastUpdatedAtMs = SPEED_UPDATE_NEVER
+        lastCadenceRpm = 0.0
+        lastCadenceUpdateMs = 0L
+        lastSampleMs = 0L
+        startTimeMs = 0L
+        // Baseline preserved.
+        silenceWindowSumX = 0.0
+        silenceWindowSumY = 0.0
+        silenceWindowSumZ = 0.0
+        silenceWindowCount = 0
+    }
+
     // ── State handlers ───────────────────────────────────────────────────────
 
     /**

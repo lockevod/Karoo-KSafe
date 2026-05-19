@@ -623,7 +623,8 @@ class KSafeExtension : KarooExtension("ksafe", BuildConfig.VERSION_NAME), Corout
                     // wipe an hour of fueling work). Crash + medical have no rider-visible
                     // accumulator, so .start() is safe in either case.
                     val isResumeFromPause = rideStartNotificationSent
-                    crashManager.start(activeConfig)
+                    if (isResumeFromPause) crashManager.resume(activeConfig)
+                    else crashManager.start(activeConfig)
                     medicalDetector.start(activeConfig)
                     if (isResumeFromPause) {
                         wellnessMonitor.resume(activeConfig)
@@ -752,7 +753,10 @@ class KSafeExtension : KarooExtension("ksafe", BuildConfig.VERSION_NAME), Corout
             // Re-arm the Recording-only collectors (idempotent if they were never
             // cancelled, e.g. brief flicker before the OFF branch reached this).
             startRecordingCollectors()
-            crashManager.start(activeConfig)
+            // Master-switch ON inside an already-Recording ride is semantically
+            // a resume — preserve the baseline.
+            if (currentRideState is RideState.Recording) crashManager.resume(activeConfig)
+            else crashManager.start(activeConfig)
             medicalDetector.start(activeConfig)
             wellnessMonitor.resume(activeConfig)
             carbsTracker.resume(activeConfig)
