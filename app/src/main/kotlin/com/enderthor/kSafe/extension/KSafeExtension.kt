@@ -666,6 +666,11 @@ class KSafeExtension : KarooExtension("ksafe", BuildConfig.VERSION_NAME), Corout
                 // is 0, which would otherwise trigger speed-drop detection after N minutes
                 // even though the rider intentionally paused.
                 crashManager.resetSpeedDropOnPause()
+                // Drop any in-flight IMPACT/SILENCE state — a crash that happens during
+                // the pause should start clean from MONITORING, not mid-IMPACT or mid-
+                // SILENCE_CHECK based on whatever the state machine was tracking when
+                // the rider tapped pause. Baseline gravity vector is preserved.
+                crashManager.onPause()
                 // Stop the check-in timer and cancel any active check-in countdown.
                 emergencyManager.stopCheckinTimer()
                 emergencyManager.cancelCheckinEmergencyOnPause()

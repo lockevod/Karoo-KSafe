@@ -355,6 +355,22 @@ class CrashDetectionManager(
         Timber.d("Speed-drop timer reset on ride pause")
     }
 
+    /**
+     * Reset the state machine's per-event state (impact window, silence-window
+     * accumulator, latched silence duration) when the ride is paused. Crash
+     * detection stays active during the pause — we just want to drop any
+     * in-flight IMPACT/SILENCE state so that a crash that happens DURING the
+     * pause starts from a clean MONITORING state, not from whatever the state
+     * machine was midway through when the rider tapped pause.
+     *
+     * The learned baseline gravity vector is preserved (pause doesn't
+     * invalidate the upright reference — see CrashStateMachine.onPause).
+     */
+    fun onPause() {
+        stateMachine.onPause()
+        Timber.d("CrashDetectionManager: state machine paused (baseline preserved)")
+    }
+
     // ─── Internal: per-sample callback from SensorReader ─────────────────────
 
     private fun onSensorSample(rawSample: SensorSample) {
