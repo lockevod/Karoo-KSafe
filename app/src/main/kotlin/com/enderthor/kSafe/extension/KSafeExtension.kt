@@ -233,6 +233,17 @@ class KSafeExtension : KarooExtension("ksafe", BuildConfig.VERSION_NAME), Corout
         carbsTrackerFlow.value = carbsTracker
         hydrationTrackerFlow.value = hydrationTracker
 
+        // Warm the install ID cache off-Main so the Settings UI and
+        // CalibrationLogger.enable() can read it without blocking on cold
+        // DataStore I/O. The lazy in CalibrationLogger.installId runs
+        // runBlocking(Dispatchers.IO) on first access — triggering it here
+        // from a background coroutine means subsequent Main-thread reads
+        // hit the cached value (microsecond field read).
+        launch(Dispatchers.IO) {
+            // Touch the lazy to force evaluation on the IO dispatcher.
+            calibLogger.installId
+        }
+
         karooSystem.connect { connected ->
             if (connected) {
                 Timber.d("Connected to Karoo system")
