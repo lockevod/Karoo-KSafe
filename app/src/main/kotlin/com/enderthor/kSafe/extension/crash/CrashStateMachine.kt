@@ -117,6 +117,20 @@ class CrashStateMachine(
      */
     @Volatile private var startTimeMs: Long = 0L
 
+    // ── Orientation: baseline gravity vector ─────────────────────────────────
+    /**
+     * Running average of the gravity vector captured while the rider was
+     * cruising. The facade calls [feedBaselineSample] for each qualifying
+     * sample (speed > [Thresholds.baselineCruisingMinSpeedKmh] and accel std-dev
+     * low). Until [baselineSampleCount] reaches [Thresholds.baselineMinSamples]
+     * the baseline is "not ready" and the orientation gate falls back to the
+     * legacy silence duration.
+     */
+    @Volatile private var baselineX: Double = 0.0
+    @Volatile private var baselineY: Double = 0.0
+    @Volatile private var baselineZ: Double = 0.0
+    @Volatile private var baselineSampleCount: Int = 0
+
     // ── Public API ───────────────────────────────────────────────────────────
 
     fun onSample(sample: SensorSample): Decision {
@@ -153,6 +167,31 @@ class CrashStateMachine(
         lastCadenceUpdateMs = lastSampleMs
     }
 
+    /**
+     * Feed a qualifying cruising sample into the baseline learner. The facade
+     * is responsible for deciding what "cruising" means (speed gate + low
+     * accel std-dev). Samples received while the state machine is NOT in
+     * MONITORING are silently dropped — we never update the baseline mid-event.
+     */
+    fun feedBaselineSample(x: Double, y: Double, z: Double) {
+        if (state != State.MONITORING) return
+        val n = baselineSampleCount
+        // Incremental running average: m_{n+1} = m_n + (x - m_n) / (n + 1).
+        // Cheaper and more numerically stable than recomputing (m*n + x)/(n+1).
+        baselineX += (x - baselineX) / (n + 1)
+        baselineY += (y - baselineY) / (n + 1)
+        baselineZ += (z - baselineZ) / (n + 1)
+        baselineSampleCount = n + 1
+    }
+
+    /** True iff enough cruising samples have been fed to trust the baseline. */
+    fun isBaselineReady(): Boolean =
+        baselineSampleCount >= thresholds.baselineMinSamples
+
+    /** Test-only accessor for the current baseline vector. */
+    internal fun baselineVectorForTesting(): Triple<Double, Double, Double> =
+        Triple(baselineX, baselineY, baselineZ)
+
     fun onPause() {
         state = State.MONITORING
         impactStartedMs = 0L
@@ -171,6 +210,10 @@ class CrashStateMachine(
         lastCadenceUpdateMs = 0L
         lastSampleMs = 0L
         startTimeMs = 0L
+        baselineX = 0.0
+        baselineY = 0.0
+        baselineZ = 0.0
+        baselineSampleCount = 0
     }
 
     // ── State handlers ───────────────────────────────────────────────────────

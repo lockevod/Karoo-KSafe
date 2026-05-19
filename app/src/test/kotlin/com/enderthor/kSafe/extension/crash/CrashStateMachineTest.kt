@@ -425,4 +425,44 @@ class CrashStateMachineTest {
         sm.onSample(sample(time = 600, peak = QUIET, smoothed = QUIET, gyro = 3.0))
         assertEquals(CrashStateMachine.State.IMPACT, sm.state)
     }
+
+    // ── Orientation: baseline learner ────────────────────────────────────────
+
+    @Test
+    fun `baseline is not ready before minSamples cruising samples have been fed`() {
+        val (sm, _) = newSm(Thresholds(baselineMinSamples = 100))
+        repeat(99) { sm.feedBaselineSample(0.0, 0.0, 9.81) }
+        assertEquals(false, sm.isBaselineReady())
+    }
+
+    @Test
+    fun `baseline becomes ready after minSamples cruising samples`() {
+        val (sm, _) = newSm(Thresholds(baselineMinSamples = 100))
+        repeat(100) { sm.feedBaselineSample(0.0, 0.0, 9.81) }
+        assertEquals(true, sm.isBaselineReady())
+    }
+
+    @Test
+    fun `baseline learner ignores samples while in IMPACT state`() {
+        val (sm, _) = newSm(Thresholds(baselineMinSamples = 10))
+        sm.onSpeedUpdate(20.0)
+        // Enter IMPACT
+        sm.onSample(sample(time = 1000, peak = 60.0, smoothed = 30.0))
+        assertEquals(CrashStateMachine.State.IMPACT, sm.state)
+        // Try to feed baseline samples — must be ignored.
+        repeat(100) { sm.feedBaselineSample(0.0, 0.0, 9.81) }
+        assertEquals(false, sm.isBaselineReady())
+    }
+
+    @Test
+    fun `baseline averages multiple samples`() {
+        val (sm, _) = newSm(Thresholds(baselineMinSamples = 2))
+        sm.feedBaselineSample(0.0, 0.0, 10.0)
+        sm.feedBaselineSample(2.0, 0.0, 8.0)
+        // Average vector: (1, 0, 9). Magnitude ≈ sqrt(82) ≈ 9.055.
+        val (x, y, z) = sm.baselineVectorForTesting()
+        assertEquals(1.0, x, 1e-9)
+        assertEquals(0.0, y, 1e-9)
+        assertEquals(9.0, z, 1e-9)
+    }
 }
