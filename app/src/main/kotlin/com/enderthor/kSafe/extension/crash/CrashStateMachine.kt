@@ -188,8 +188,13 @@ class CrashStateMachine(
     fun isBaselineReady(): Boolean =
         baselineSampleCount >= thresholds.baselineMinSamples
 
-    /** Test-only accessor for the current baseline vector. */
-    internal fun baselineVectorForTesting(): Triple<Double, Double, Double> =
+    /**
+     * Snapshot of the current baseline gravity vector. Consumed by unit tests
+     * and by [CrashDetectionManager] (Task 7) to emit the one-shot
+     * `ORIENTATION_BASELINE` calibration event when the baseline first becomes
+     * ready. Not part of the production state-machine decision path.
+     */
+    internal fun baselineVector(): Triple<Double, Double, Double> =
         Triple(baselineX, baselineY, baselineZ)
 
     fun onPause() {

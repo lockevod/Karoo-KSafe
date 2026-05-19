@@ -460,9 +460,22 @@ class CrashStateMachineTest {
         sm.feedBaselineSample(0.0, 0.0, 10.0)
         sm.feedBaselineSample(2.0, 0.0, 8.0)
         // Average vector: (1, 0, 9). Magnitude ≈ sqrt(82) ≈ 9.055.
-        val (x, y, z) = sm.baselineVectorForTesting()
+        val (x, y, z) = sm.baselineVector()
         assertEquals(1.0, x, 1e-9)
         assertEquals(0.0, y, 1e-9)
         assertEquals(9.0, z, 1e-9)
+    }
+
+    @Test
+    fun `reset clears the baseline state`() {
+        val (sm, _) = newSm(Thresholds(baselineMinSamples = 10))
+        repeat(15) { sm.feedBaselineSample(0.0, 0.0, 9.81) }
+        assertEquals(true, sm.isBaselineReady())
+        sm.reset()
+        assertEquals(false, sm.isBaselineReady())
+        val (x, y, z) = sm.baselineVector()
+        assertEquals(0.0, x, 1e-9)
+        assertEquals(0.0, y, 1e-9)
+        assertEquals(0.0, z, 1e-9)
     }
 }
