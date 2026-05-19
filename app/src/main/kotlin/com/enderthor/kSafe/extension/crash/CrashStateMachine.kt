@@ -153,6 +153,25 @@ class CrashStateMachine(
     @Volatile private var silenceWindowSumZ: Double = 0.0
     @Volatile private var silenceWindowCount: Int = 0
 
+    /**
+     * Latched silence-duration choice for the current SILENCE_CHECK window.
+     * `0L` means "not yet decided" (cold start or just-reset window). Once
+     * `silenceWindowCount` crosses [MIN_ORIENTATION_SAMPLES] AND the baseline
+     * is ready, [computeEffectiveSilenceMs] freezes the chosen duration here
+     * for the rest of the window. Reset to `0L` by [resetSilenceWindow] on
+     * every entry/exit/break of SILENCE_CHECK so each event decides fresh.
+     *
+     * Why latch: without this, a rider standing upright for 18s with the
+     * 20s window engaged could see the running average gravity vector drift
+     * past the 45° threshold (slow lean, foot-down posture shift) on
+     * sample 901. computeEffectiveSilenceMs would return 4500 instead of
+     * 20000, the elapsed-time check would instantly satisfy, and Confirm
+     * would fire — collapsing the 20s safety into "any tilt past 45° at
+     * any point in the window confirms." Latching protects the safety
+     * margin for the entire window.
+     */
+    @Volatile private var lockedEffectiveSilenceMs: Long = 0L
+
     // ── Public API ───────────────────────────────────────────────────────────
 
     fun onSample(sample: SensorSample): Decision {
@@ -252,6 +271,7 @@ class CrashStateMachine(
         silenceWindowSumY = 0.0
         silenceWindowSumZ = 0.0
         silenceWindowCount = 0
+        lockedEffectiveSilenceMs = 0L
     }
 
     /**
@@ -280,6 +300,7 @@ class CrashStateMachine(
         silenceWindowSumY = 0.0
         silenceWindowSumZ = 0.0
         silenceWindowCount = 0
+        lockedEffectiveSilenceMs = 0L
     }
 
     // ── State handlers ───────────────────────────────────────────────────────
@@ -465,9 +486,17 @@ class CrashStateMachine(
      * who hit a bump, braked hard and stopped upright at the roadside.
      */
     private fun computeEffectiveSilenceMs(gpsStale: Boolean): Long {
+        // If a duration was already latched for this window, return it unchanged.
+        // The latch is cleared on every entry/exit/break of SILENCE_CHECK so each
+        // event decides fresh.
+        if (lockedEffectiveSilenceMs > 0L) return lockedEffectiveSilenceMs
+
         val legacyMs = if (gpsStale) thresholds.gpsStaleSilenceDurationMs
                        else thresholds.silenceDurationMs
 
+        // Until we have enough samples for a stable direction, fall through with
+        // the legacy duration but do NOT latch — we want to upgrade to upright
+        // once enough samples land.
         if (!isBaselineReady()) return legacyMs
         if (silenceWindowCount < MIN_ORIENTATION_SAMPLES) return legacyMs
 
@@ -485,11 +514,14 @@ class CrashStateMachine(
                        / (curMag * baseMag)).coerceIn(-1.0, 1.0)
         val angleDeg = Math.toDegrees(acos(cosAngle))
 
-        return if (angleDeg < thresholds.uprightAngleThresholdDegrees) {
+        val chosen = if (angleDeg < thresholds.uprightAngleThresholdDegrees) {
             thresholds.silenceDurationUprightMs
         } else {
             legacyMs
         }
+        // Latch the choice — subsequent samples in this window must honour it.
+        lockedEffectiveSilenceMs = chosen
+        return chosen
     }
 
     private fun resetSilenceWindow() {
@@ -497,6 +529,7 @@ class CrashStateMachine(
         silenceWindowSumY = 0.0
         silenceWindowSumZ = 0.0
         silenceWindowCount = 0
+        lockedEffectiveSilenceMs = 0L
     }
 
     // ── Helpers ──────────────────────────────────────────────────────────────

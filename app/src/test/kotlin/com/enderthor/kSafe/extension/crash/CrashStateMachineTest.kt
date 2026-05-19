@@ -856,6 +856,62 @@ class CrashStateMachineTest {
         }
     }
 
+    // ── Orientation: silence duration latches across mid-window drift ────────
+
+    @Test
+    fun `silence_check upright duration does not collapse if orientation drifts past 45deg mid-window`() {
+        // Revised test design: short upright phase (1s = ~50 samples at 50Hz) so the
+        // running average can be flipped past 45° within ~1.5s of strong tilt.
+        // With 50 upright (Z=9.81) samples and N tilt (X=9.5,Z=2.5, |mag|≈9.82) samples:
+        //   avg_z crosses avg_x at N≈71 (≈1.4s). So 5s of tilt reliably flips the average.
+        // Bug behaviour: once running average crosses 45°, computeEffectiveSilenceMs drops
+        //   to 4500ms. With silenceStartedMs=2000, elapsed=4500 is satisfied at t=6500,
+        //   i.e. during the 5s drift phase (which ends at t=8000). Confirm fires too early.
+        // Fix behaviour: duration is latched at 20000ms after MIN_ORIENTATION_SAMPLES in
+        //   Phase 1, so Confirm must NOT fire before t = silenceStartedMs + 20000 = 22000.
+        val t = Thresholds(
+            baselineMinSamples = 10,
+            silenceDurationMs = 4_500L,
+            silenceDurationUprightMs = 20_000L,
+            uprightAngleThresholdDegrees = 45.0,
+        )
+        val sm = smInSilenceCheckWithBaseline(t)  // baseline along Z, in SILENCE_CHECK
+        // silenceStartedMs = 2000 (set by smInSilenceCheckWithBaseline at t=2000)
+
+        // Phase 1: 1s of fully upright stillness — enough for latch to engage (MIN_ORIENTATION_SAMPLES=5).
+        var tNow = 2_000L
+        val tDriftStart = tNow + 1_000L
+        while (tNow < tDriftStart) {
+            tNow += 20
+            val d = sm.onSample(sample(
+                time = tNow, peak = 0.0, smoothed = 9.81, raw = 9.81, gyro = 0.05,
+            ).copy(accelX = 0.0, accelY = 0.0, accelZ = 9.81))
+            assertNotEquals(
+                "Decision.Confirm fired prematurely at t=$tNow (still inside upright window)",
+                CrashStateMachine.Decision.Confirm, d
+            )
+        }
+
+        // Phase 2: 5s of strong tilt (accelX=9.5, accelZ=2.5, |mag|≈9.82 — well within
+        // deviation gate). After ~1.4s the cumulative average gravity vector crosses 45°
+        // from the baseline. Without the latch, computeEffectiveSilenceMs would drop from
+        // 20000ms to 4500ms, and the elapsed-time check (tNow - 2000 >= 4500) would satisfy
+        // at tNow=6500 — still inside this drift phase (ends at 8000).
+        // With the latch, the 20s duration is frozen and Confirm must NOT fire here.
+        val tEnd = tDriftStart + 5_000L  // ends at t=8000, well before the 20s mark (t=22000)
+        while (tNow < tEnd) {
+            tNow += 20
+            // Strong tilt: gravity mainly along X. |v| = sqrt(9.5²+2.5²) ≈ 9.82 ≈ 9.81.
+            val d = sm.onSample(sample(
+                time = tNow, peak = 0.0, smoothed = 9.82, raw = 9.82, gyro = 0.05,
+            ).copy(accelX = 9.5, accelY = 0.0, accelZ = 2.5))
+            assertNotEquals(
+                "Decision.Confirm fired at t=$tNow — latched upright window collapsed when orientation drifted past 45°",
+                CrashStateMachine.Decision.Confirm, d
+            )
+        }
+    }
+
     // ── Regression: crash on-side still confirms at 4.5s ─────────────────────
 
     @Test
