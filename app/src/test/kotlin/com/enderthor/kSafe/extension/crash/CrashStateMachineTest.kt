@@ -517,7 +517,7 @@ class CrashStateMachineTest {
         // Feed quiet samples WITH upright orientation (matches baseline (0,0,9.81)).
         // Total elapsed since silenceStartedMs = 4_500ms is NOT enough for upright (20s).
         var t0 = 2000L
-        repeat(220) {  // 220 samples × ~20ms each = ~4.4s
+        repeat(219) {  // 219 samples × ~20ms each = ~4.38s
             t0 += 20
             val d = sm.onSample(sample(
                 time = t0, peak = 0.0, smoothed = 9.81, raw = 9.81, gyro = 0.1,
@@ -546,7 +546,7 @@ class CrashStateMachineTest {
         // Feed quiet samples with the bike laid 90° on its side: gravity along X axis,
         // baseline along Z. Angle ≈ 90° > 45° → use legacy 4.5s window.
         var t0 = 2000L
-        repeat(225) {  // ~4.5s — should be enough at the legacy threshold
+        repeat(224) {  // ~4.48s, just under the legacy threshold
             t0 += 20
             sm.onSample(sample(
                 time = t0, peak = 0.0, smoothed = 9.81, raw = 9.81, gyro = 0.1,
@@ -577,7 +577,7 @@ class CrashStateMachineTest {
         assertEquals(CrashStateMachine.State.SILENCE_CHECK, sm.state)
         // 4.5s of quiet — should confirm at legacy threshold since no baseline.
         var t0 = 2000L
-        repeat(225) {
+        repeat(224) {
             t0 += 20
             sm.onSample(sample(
                 time = t0, peak = 0.0, smoothed = 9.81, raw = 9.81, gyro = 0.1,

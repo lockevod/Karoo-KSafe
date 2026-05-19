@@ -386,7 +386,7 @@ class CrashStateMachine(
         val effectiveSilenceMs = computeEffectiveSilenceMs(gpsStale)
 
         return when {
-            isStill && (now - silenceStartedMs) > effectiveSilenceMs -> {
+            isStill && (now - silenceStartedMs) >= effectiveSilenceMs -> {
                 // CONFIRMED.
                 calibLogger?.log(CalibrationLogger.Event.CRASH_CONFIRMED) {
                     "total_ms=$timeSinceImpact,deviation=%.2f,speed=%.1f,gps_stale=$gpsStale"
