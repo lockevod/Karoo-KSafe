@@ -577,24 +577,101 @@ No new `CalibrationLogger.Event` was added — the resume is an emergency-manage
 
 **Problem solved:** False positive when a rider hits a bump (impact >55 m/s² smoothed or >60 m/s² peak on LOW), brakes hard in reaction, comes to a complete stop and stays still verifying themselves. Previous revisions could not distinguish this from a real crash because the silence-check gate only requires accel quiet + speed ≤ confirm threshold for `silenceDurationMs` (4.5 s default), and a stopped rider checking themselves satisfies all of those.
 
-**Mechanism added:**
+### Mechanism
 
-1. **3-axis baseline learner.** `SensorSample` now carries the raw `accelX/Y/Z` components alongside the magnitude. While the rider is cruising (`speed ≥ baselineCruisingMinSpeedKmh = 15 km/h` AND `accelStdDev < 1.5 m/s²`), the state machine accumulates an incremental running average of the gravity vector. After `baselineMinSamples = 1500` qualifying samples (~30 s of clean cruising) the baseline is marked **ready**.
+#### 1. Baseline gravity-vector learner (per-ride)
 
-2. **Orientation-aware silence duration.** Inside `SILENCE_CHECK`, the state machine accumulates the X/Y/Z of every sample seen during the current stillness window. When deciding whether the silence window has elapsed:
+`SensorSample` now carries the raw `accelX/Y/Z` components alongside the magnitude. While the rider is cruising the facade feeds samples to a state-machine baseline learner:
 
-   - Baseline not ready → use legacy `silenceDurationMs` (4.5 s) — no regression on freshly started rides.
-   - Silence window has fewer than 5 samples → use legacy duration (numerically degenerate average).
-   - Compute angle between average silence-window gravity vector and baseline:
-     - `angle < uprightAngleThresholdDegrees` (45°) → require `silenceDurationUprightMs` (**20 s** by default). Typical of a rider stopped upright at a roadside after a scare.
-     - `angle ≥ 45°` → legacy duration (4.5 s) — typical of a real crash that lays the bike on its side.
+```
+priorState == MONITORING
+  AND speedDataReceived           (cold-start guard)
+  AND !gpsCurrentlyStale          (tunnel guard — SDK returns last known speed bit-exact)
+  AND currentSpeedKmh >= baselineCruisingMinSpeedKmh (default 15)
+  AND accelStdDev() < BASELINE_CRUISING_MAX_STDDEV (default 1.5)
+```
 
-3. **Silence window resets** on every silence-break (`!isStill`) and on every entry/exit of `SILENCE_CHECK`, so each event computes orientation from its own samples.
+The learner maintains an incremental running average using the formula
+`m += (x - m) / (effectiveN + 1)` where **`effectiveN = baselineSampleCount.coerceAtMost(baselineMinSamples)`**.
 
-**False-negative analysis (zero new FN):** The on-side branch uses the same 4.5 s threshold as Revision 4. Real crashes that lay the bike on its side (the majority — ~70-85 % per cycling-incident literature) confirm with the same latency as before. The rare crash where the bike stays upright (pinned against a wall/car, OTB with bike continuing forward then standing) confirms at ~20 s instead of ~4.5 s — a 15.5 s delay, well within the irrelevant range for emergency response (15 s ≪ minutes-to-rescue). The `silenceDurationUprightMs` requirement is itself reset by ANY accel deviation > `silenceDeviationMax` (4 m/s²): a rider in upright crash who shifts position even slightly is detected; a rider standing motionless at a stoplight typically does shift within 20 s (foot down, head turn, glance at the Karoo).
+After `baselineMinSamples` qualifying samples (default 1500, ≈30 s at 50 Hz) the baseline is marked **ready** AND the cap engages: the formula then behaves as an EMA with α = 1/baselineMinSamples (≈0.00067) — half-life ≈ 1000 samples (≈20 s of cruising). This lets the baseline adapt to mid-ride mount remounts within a minute or two of new cruising. The cap is essential — without it, after 10000 samples a new sample's weight is 0.01% and the baseline is effectively frozen.
 
-**Calibration data:** Two new CSV diagnostics enable retroactive validation:
-- `ORIENTATION_BASELINE` (`ORIENT_BASE`) — fired once per ride when the baseline becomes ready, with the captured `(baseline_x, baseline_y, baseline_z)`.
-- Every `IMPACT_ENTER` row now includes `ax/ay/az` (sample axes at impact), `base_ready`, and `base_x/y/z` (current baseline).
+The counter `baselineSampleCount` itself keeps incrementing unbounded so `isBaselineReady()` continues to return true once crossed.
 
-This lets the calibration analyser replay any historical IMPACT_IN through the orientation gate offline without re-running the algorithm on device.
+`feedBaselineSample` silently drops any sample received while NOT in MONITORING — the baseline never updates mid-IMPACT or mid-SILENCE_CHECK.
+
+#### 2. Silence-window orientation accumulator
+
+Inside SILENCE_CHECK, the state machine accumulates the X/Y/Z of every sample seen during the current stillness window. The accumulator is reset on every:
+- Entry into SILENCE_CHECK (handled by `resetSilenceWindow` being called by all exit paths plus `reset` / `resumeForRide` / `onPause`)
+- Silence-break (`!isStill` within the doubled window — silence clock restarts, accumulator cleared)
+- Exit from SILENCE_CHECK (Confirm, false-alarm, cadence-gate)
+- Pause (via `onPause`)
+
+This guarantees each SILENCE_CHECK event computes orientation from its own samples only.
+
+#### 3. Orientation-aware silence duration
+
+`computeEffectiveSilenceMs(gpsStale)` chooses the silence threshold:
+
+| Condition | Returned duration |
+|-----------|--------------------|
+| `lockedEffectiveSilenceMs > 0` (already decided for this window) | Latched value |
+| `!isBaselineReady` | Legacy: `silenceDurationMs` (4.5 s) or `gpsStaleSilenceDurationMs` (8 s) |
+| `silenceWindowCount < MIN_ORIENTATION_SAMPLES` (5) | Legacy (numerically unstable to classify) |
+| Gravity-vector magnitude near zero | Legacy (defensive) |
+| `angle < uprightAngleThresholdDegrees` (45°) | `silenceDurationUprightMs` (20 s by default) — bike still upright |
+| else | Legacy — bike on its side or tilted significantly |
+
+**Latch (`lockedEffectiveSilenceMs`):** the first non-fallback computation in a window — when `silenceWindowCount` crosses 5 with baseline ready — freezes the chosen duration for the remainder of the window. Without the latch, a rider standing upright with the 20 s window engaged could see the running-average gravity vector drift past 45° (slow lean, foot down, glancing at the Karoo) at second 19, the next sample would recompute `effectiveSilenceMs = 4500`, the elapsed-time check (`19000 >= 4500`) trivially satisfies, and Confirm fires instantly — collapsing the 20 s safety into "any tilt past 45° at any point in the window confirms." The latch protects the safety margin for the entire window.
+
+### Lifecycle integration
+
+| Event | Effect on baseline | Effect on silence window |
+|-------|---------------------|---------------------------|
+| First `Recording` of session (`crashManager.start`) | RESET to (0,0,0,0) — fresh ride | RESET |
+| `Paused → Recording` resume (`crashManager.resume`, B1 fix) | **PRESERVED** — pre-pause cruising taught the upright reference, still valid | RESET (a pause invalidates any in-flight stillness window) |
+| `Recording → Paused` (`crashManager.onPause`, D3 wired) | PRESERVED | RESET |
+| Master-switch ON inside an already-Recording ride | PRESERVED (treated as a resume) | RESET |
+| Master-switch ON from Idle / Paused | RESET (fresh-start path) | RESET |
+| `crashDetectionEnabled` toggle OFF→ON | RESET (stop + start) | RESET |
+| Process restart / Karoo reboot | RESET (no cross-process persistence) | RESET |
+
+City riders with frequent traffic-light pauses correctly preserve their baseline across the ride — without the B1 fix, the orientation gate was effectively dormant most of the time.
+
+### False-negative analysis (zero new FN)
+
+The on-side branch uses the same 4.5 s threshold as Revision 4. Real crashes that lay the bike on its side (the majority — ~70–85 % per cycling-incident literature) confirm with the same latency as before. The rare crash where the bike stays upright (pinned against a wall/car, OTB with bike continuing forward then standing) confirms at ~20 s instead of ~4.5 s — a 15.5 s delay, well within the irrelevant range for emergency response (15 s ≪ minutes-to-rescue).
+
+The `silenceDurationUprightMs` requirement is itself reset by ANY accel deviation > `silenceDeviationMax` (4 m/s²): a rider in upright crash who shifts position even slightly is detected; a rider standing motionless at a stoplight typically does shift within 20 s.
+
+Edge cases that yield delayed-but-not-blocked confirm:
+- Karoo booted with bike on side / upside down — baseline learns "wrong upright" → subsequent on-side crash classified as "upright relative to baseline" → 20 s instead of 4.5 s
+- Rider on long climb at < 15 km/h — speed gate excludes baseline learning → legacy 4.5 s applies (same FP/FN as Revision 4)
+- Process restart mid-ride — baseline lost, must rebuild over next 30 s of cruising
+
+### Performance
+
+- `feedBaselineSample`: ~6 FP ops per cruising sample. Negligible.
+- `computeEffectiveSilenceMs`: latch short-circuit after first ~5 samples per window. Before-latch: 1 sqrt + 1 acos + dot product per sample (~10 FP ops); after: 1 Long comparison. Net SAVING on the SILENCE_CHECK hot path vs the pre-feature pipeline.
+- `accelStdDev()`: was O(N=250) per call; with the orientation gate calling it every cruising sample (50 Hz) instead of once per 2 minutes (PERIODIC log only), it would have been ~144 MFLOPs/hour. **Optimized to O(1)** via incremental sum and sum-of-squares accumulators maintained in `DoubleRingBuffer.add()` / `clear()`. New cost: ~5 FP ops per call. Total feature CPU overhead < 0.01 %.
+- `SensorSample` grew by 3 Double fields. At 50 Hz × 5 h = 21.6 MB extra young-gen garbage per ride. Within GC tolerance.
+
+### Calibration data
+
+Three new CSV diagnostics enable retroactive validation and field-data analysis:
+
+- **`ORIENTATION_BASELINE`** (`ORIENT_BASE`) — fired exactly once per ride when the baseline becomes ready, carrying `(baseline_x, baseline_y, baseline_z, samples)`. After a pause-resume the event does NOT re-fire (baseline preserved, contract is once-per-ride).
+- **`IMPACT_ENTER`** row extended with `ax, ay, az` (sample axes at impact moment), `base_ready` (boolean), and `base_x/y/z` (current baseline). Lets the calibration analyser replay any historical IMPACT_IN through the orientation gate offline without re-running the algorithm on-device.
+- **`CRASH_CONFIRMED`** row extended with `effective_silence_ms` (actual window the algorithm waited — 4500 / 8000 / 20000) and `silence_path` (`UPRIGHT` / `LEGACY` / `GPS_STALE`). Without these, field analysts looking at "why did this fire?" could not tell whether the algorithm waited the legacy 4.5 s, the GPS-stale 8 s, or the upright-aware 20 s.
+
+### Tuning knobs (Thresholds.kt)
+
+| Field | Default | Purpose |
+|-------|---------|---------|
+| `silenceDurationUprightMs` | 20 000 ms | Silence required when bike upright vs baseline |
+| `uprightAngleThresholdDegrees` | 45.0 | Angle below which "still upright" applies |
+| `baselineMinSamples` | 1 500 | Cruising samples before baseline is ready AND EMA cap engages |
+| `baselineCruisingMinSpeedKmh` | 15 | Speed gate for baseline learning |
+
+`BASELINE_CRUISING_MAX_STDDEV = 1.5 m/s²` (constant in CrashDetectionManager) — rough-terrain gate.
