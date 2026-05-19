@@ -573,3 +573,28 @@ No new `CalibrationLogger.Event` was added — the resume is an emergency-manage
 
 ---
 
+## Revision 5 — Orientation-aware silence check (2026-05-19)
+
+**Problem solved:** False positive when a rider hits a bump (impact >55 m/s² smoothed or >60 m/s² peak on LOW), brakes hard in reaction, comes to a complete stop and stays still verifying themselves. Previous revisions could not distinguish this from a real crash because the silence-check gate only requires accel quiet + speed ≤ confirm threshold for `silenceDurationMs` (4.5 s default), and a stopped rider checking themselves satisfies all of those.
+
+**Mechanism added:**
+
+1. **3-axis baseline learner.** `SensorSample` now carries the raw `accelX/Y/Z` components alongside the magnitude. While the rider is cruising (`speed ≥ baselineCruisingMinSpeedKmh = 15 km/h` AND `accelStdDev < 1.5 m/s²`), the state machine accumulates an incremental running average of the gravity vector. After `baselineMinSamples = 1500` qualifying samples (~30 s of clean cruising) the baseline is marked **ready**.
+
+2. **Orientation-aware silence duration.** Inside `SILENCE_CHECK`, the state machine accumulates the X/Y/Z of every sample seen during the current stillness window. When deciding whether the silence window has elapsed:
+
+   - Baseline not ready → use legacy `silenceDurationMs` (4.5 s) — no regression on freshly started rides.
+   - Silence window has fewer than 5 samples → use legacy duration (numerically degenerate average).
+   - Compute angle between average silence-window gravity vector and baseline:
+     - `angle < uprightAngleThresholdDegrees` (45°) → require `silenceDurationUprightMs` (**20 s** by default). Typical of a rider stopped upright at a roadside after a scare.
+     - `angle ≥ 45°` → legacy duration (4.5 s) — typical of a real crash that lays the bike on its side.
+
+3. **Silence window resets** on every silence-break (`!isStill`) and on every entry/exit of `SILENCE_CHECK`, so each event computes orientation from its own samples.
+
+**False-negative analysis (zero new FN):** The on-side branch uses the same 4.5 s threshold as Revision 4. Real crashes that lay the bike on its side (the majority — ~70-85 % per cycling-incident literature) confirm with the same latency as before. The rare crash where the bike stays upright (pinned against a wall/car, OTB with bike continuing forward then standing) confirms at ~20 s instead of ~4.5 s — a 15.5 s delay, well within the irrelevant range for emergency response (15 s ≪ minutes-to-rescue). The `silenceDurationUprightMs` requirement is itself reset by ANY accel deviation > `silenceDeviationMax` (4 m/s²): a rider in upright crash who shifts position even slightly is detected; a rider standing motionless at a stoplight typically does shift within 20 s (foot down, head turn, glance at the Karoo).
+
+**Calibration data:** Two new CSV diagnostics enable retroactive validation:
+- `ORIENTATION_BASELINE` (`ORIENT_BASE`) — fired once per ride when the baseline becomes ready, with the captured `(baseline_x, baseline_y, baseline_z)`.
+- Every `IMPACT_ENTER` row now includes `ax/ay/az` (sample axes at impact), `base_ready`, and `base_x/y/z` (current baseline).
+
+This lets the calibration analyser replay any historical IMPACT_IN through the orientation gate offline without re-running the algorithm on device.
