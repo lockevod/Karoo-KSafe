@@ -61,6 +61,14 @@ class CalibrationLogger(
         SILENCE_ENTER("SIL_IN"),
         /** Stillness condition broken inside SILENCE_CHECK — timer reset. */
         SILENCE_BROKEN("SIL_BRK"),
+        /** Fired once at the moment an emergency countdown is triggered, for ANY
+         *  reason (crash detection, manual SOS tap, check-in expiry, medical or
+         *  wellness escalation). Use this to distinguish in the CSV whether an
+         *  alarm came from crash detection vs another source — without it, the
+         *  calibration log only records CRASH_CANCELLED / MEDICAL_CANCELLED and
+         *  the developer cannot tell what triggered the alarm in the first
+         *  place when a user reports "my alarm fired N times". */
+        EMERGENCY_TRIGGERED("EMERG_TRIG"),
         /** Crash confirmed — full pipeline completed. */
         CRASH_CONFIRMED("CRASH_OK"),
         /**

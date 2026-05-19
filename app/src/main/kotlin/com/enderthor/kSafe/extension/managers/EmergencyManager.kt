@@ -93,6 +93,9 @@ class EmergencyManager(
             return
         }
         Timber.d("Emergency triggered: $reason")
+        calibLogger?.log(CalibrationLogger.Event.EMERGENCY_TRIGGERED) {
+            "reason=${reason.name},countdown_s=${config.countdownSeconds}"
+        }
         startCountdown(reason, config)
     }
 
