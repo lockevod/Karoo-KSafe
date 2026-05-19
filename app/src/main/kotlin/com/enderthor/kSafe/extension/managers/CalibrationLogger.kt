@@ -7,6 +7,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.runBlocking
 import timber.log.Timber
 import java.io.File
 
@@ -34,7 +35,8 @@ import java.io.File
  */
 class CalibrationLogger(
     private val context: Context,
-    private val scope: CoroutineScope
+    private val scope: CoroutineScope,
+    private val configurationManager: ConfigurationManager
 ) {
 
     // ─── Event catalogue ─────────────────────────────────────────────────────
@@ -232,12 +234,34 @@ class CalibrationLogger(
         private set
 
     /**
+     * Persistent 6-character hex install ID — see ConfigurationManager.getOrCreateInstallId().
+     * Loaded once on first access via the configurationManager dependency.
+     * Stable across rides, app restarts, and config resets.
+     *
+     * Privacy: opaque random identifier with no personal data.
+     *
+     * runBlocking on Dispatchers.IO is safe here because:
+     *  - the lazy is accessed once at startup (or first enable())
+     *  - it runs on a background dispatcher so it cannot block Main or the sensor thread
+     *  - it completes in microseconds after the first call (DataStore already cached in memory)
+     */
+    val installId: String by lazy {
+        runBlocking(Dispatchers.IO) {
+            configurationManager.getOrCreateInstallId()
+        }
+    }
+
+    /**
      * Telegram-safe filename for the current session's CSV.
-     * Format: `ksafe_v{version}_{sessionId}_{deviceLabel}.csv`
-     * E.g. `ksafe_v1.5.3_a3f9c2_Karoo-3.csv`
+     * Format: `ksafe_v{version}_{installId}_{sessionId}_{deviceLabel}.csv`
+     * E.g. `ksafe_v2.0.0_a3f9c2_b4e8d1_Karoo-3.csv`
+     *
+     * installId is stable per install (groups logs from the same user across
+     * rides). sessionId is fresh per enable() call (distinguishes individual
+     * rides). deviceLabel is the sanitised hardware model.
      */
     val fileNameForSession: String
-        get() = "ksafe_v${BuildConfig.VERSION_NAME}_${sessionId}_${DEVICE_LABEL}.csv"
+        get() = "ksafe_v${BuildConfig.VERSION_NAME}_${installId}_${sessionId}_${DEVICE_LABEL}.csv"
 
     /**
      * Returns a short plain-text caption for the Telegram `sendDocument` call.
@@ -252,6 +276,7 @@ class CalibrationLogger(
     fun captionForSession(lineCount: Int = 0): String {
         val sizeInfo = if (lineCount > 0) " | $lineCount rows" else ""
         return "📊 kSafe Calibration Log\n" +
+               "Install ID: $installId\n" +
                "Session: $sessionId | ${android.os.Build.MODEL} | v${BuildConfig.VERSION_NAME}$sizeInfo"
     }
 
@@ -341,8 +366,8 @@ class CalibrationLogger(
         // Write a marker so the CSV has an anchor timestamp for all elapsed_s values.
         // Includes session ID, device model, and app version so each file is self-identifying.
         addEntryDirect(Event.LOGGER_START,
-            "logging_enabled,version=2,session=$sessionId,device=${DEVICE_LABEL},app_version=${BuildConfig.VERSION_NAME}")
-        Timber.i("CalibrationLogger enabled — session=$sessionId device=${DEVICE_LABEL} v${BuildConfig.VERSION_NAME}")
+            "logging_enabled,version=2,install_id=$installId,session=$sessionId,device=${DEVICE_LABEL},app_version=${BuildConfig.VERSION_NAME}")
+        Timber.i("CalibrationLogger enabled — install=$installId session=$sessionId device=${DEVICE_LABEL} v${BuildConfig.VERSION_NAME}")
     }
 
     fun disable() {
@@ -592,7 +617,7 @@ class CalibrationLogger(
             file.writeText("$HEADER\n")
             // Log a marker row so the next chunk's CSV self-identifies as a continuation.
             addEntryDirect(Event.LOGGER_START,
-                "logging_resumed_after_periodic_send,session=$sessionId,prev_lines=$before")
+                "logging_resumed_after_periodic_send,install_id=$installId,session=$sessionId,prev_lines=$before")
             Timber.i("CalibrationLogger: truncated after successful periodic send ($before lines uploaded)")
             (before - 1).coerceAtLeast(0)
         } catch (e: Exception) {

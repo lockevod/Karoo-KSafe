@@ -185,7 +185,7 @@ class KSafeExtension : KarooExtension("ksafe", BuildConfig.VERSION_NAME), Corout
         configManager = ConfigurationManager(applicationContext)
         locationManager = LocationManager(karooSystem, this)
         sender = Sender(karooSystem, configManager)
-        calibLogger = CalibrationLogger(applicationContext, this)
+        calibLogger = CalibrationLogger(applicationContext, this, configManager)
         webhookManager = WebhookManager(karooSystem)
         emergencyManager = EmergencyManager(
             applicationContext, karooSystem, configManager, locationManager, sender, this,
@@ -1040,6 +1040,15 @@ class KSafeExtension : KarooExtension("ksafe", BuildConfig.VERSION_NAME), Corout
             else -> if (result.ok) "Calibration log sent ✓" else result.message
         }
     }
+
+    /**
+     * Expose the persistent install ID for the Settings UI.
+     * The lazy [CalibrationLogger.installId] is initialised on first access via
+     * a [kotlinx.coroutines.runBlocking] call on Dispatchers.IO — effectively
+     * instant after the first ride-start. Non-suspend because the underlying
+     * value is already a plain [String] once the lazy is resolved.
+     */
+    fun getInstallIdForUi(): String = calibLogger.installId
 
     /** Returns a string with file location info for display in the Settings UI. */
     fun getCalibrationLogInfo(): String {

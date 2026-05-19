@@ -20,12 +20,14 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import com.enderthor.kSafe.R
@@ -174,6 +176,20 @@ fun SettingsScreen(vm: MainViewModel) {
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant
         )
+
+        // Show the persistent install ID so users can reference it when
+        // reporting issues via Telegram. Visible regardless of logging state.
+        val installId by produceState(initialValue = "") {
+            value = KSafeExtension.getInstance()?.getInstallIdForUi() ?: ""
+        }
+        if (installId.isNotEmpty()) {
+            Text(
+                text = stringResource(R.string.calibration_install_id_label, installId),
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                fontFamily = FontFamily.Monospace,
+            )
+        }
 
         SettingRow(label = stringResource(R.string.calibration_logging_label)) {
             Switch(

@@ -39,6 +39,36 @@ class ConfigurationManager(private val context: Context) {
     private val emergencyStateKey = stringPreferencesKey("emergencystate")
     private val wellnessHistoryKey = stringPreferencesKey("wellnesshistory")
     private val fuelingStateKey = stringPreferencesKey("fuelingstate")
+    private val installIdKey = stringPreferencesKey("install_id")
+
+    // ─── Install ID ───────────────────────────────────────────────────────────
+
+    /**
+     * Returns the persistent 6-character hex installation ID. Generated and
+     * stored on first call, identical on every subsequent call for the life
+     * of this install. Used by [CalibrationLogger] to tag log filenames and
+     * the LOGGER_START row so the developer can correlate multiple log
+     * uploads from the same user.
+     *
+     * Privacy: random 6-hex from a UUID at first generation. Does NOT encode
+     * any device identifier, account, or personal data — it's purely an
+     * opaque installation discriminator.
+     *
+     * Persisted in the same DataStore as [KSafeConfig] but under a separate
+     * Preferences key (not inside the JSON blob) so config migrations and
+     * resets cannot accidentally invalidate it.
+     */
+    suspend fun getOrCreateInstallId(): String {
+        val prefs = context.dataStore.data.first()
+        val existing = prefs[installIdKey]
+        if (existing != null && existing.length == 6) return existing
+        // Generate 6 hex chars from a random UUID.
+        val fresh = java.util.UUID.randomUUID().toString()
+            .replace("-", "")
+            .take(6)
+        context.dataStore.edit { it[installIdKey] = fresh }
+        return fresh
+    }
 
     // ─── KSafeConfig ──────────────────────────────────────────────────────────
 
