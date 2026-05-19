@@ -119,6 +119,12 @@ class CrashDetectionManager(
         // The state machine treats `sample.timestampMs` as the authoritative time
         // for IMPACT/SILENCE windows. We pass wall-clock so production semantics
         // (e.g. timeSinceImpact) match the monolith verbatim.
+
+        /** Maximum accel std-dev (m/s²) for a sample to count as "cruising" for
+         *  orientation baseline learning. Below this the bike is rolling on
+         *  smooth pavement; above this the rider may be on rough terrain and
+         *  the gravity vector is too noisy to be a clean upright reference. */
+        const val BASELINE_CRUISING_MAX_STDDEV: Double = 1.5
     }
 
     // ─── State ────────────────────────────────────────────────────────────────
@@ -378,6 +384,17 @@ class CrashDetectionManager(
             )
         } else {
             sample
+        }
+
+        // ─── Orientation: feed baseline learner ──────────────────────────────
+        // Only qualify "cruising" samples — fast enough that the rider can't be
+        // leaning to put a foot down, and quiet enough that the bike isn't
+        // bouncing on rough terrain. The state machine drops samples received
+        // outside MONITORING internally; we gate here too for efficiency.
+        if (priorState == CrashStateMachine.State.MONITORING &&
+            currentSpeedKmh >= stateMachine.thresholds.baselineCruisingMinSpeedKmh.toDouble() &&
+            sensorReader.accelStdDev() < BASELINE_CRUISING_MAX_STDDEV) {
+            stateMachine.feedBaselineSample(sample.accelX, sample.accelY, sample.accelZ)
         }
 
         val decision = stateMachine.onSample(sampleForSm)
