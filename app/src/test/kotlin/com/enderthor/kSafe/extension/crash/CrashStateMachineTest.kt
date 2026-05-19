@@ -710,6 +710,78 @@ class CrashStateMachineTest {
         }
     }
 
+    // ── Regression: onPause clears the silence-window accumulator ────────────
+
+    @Test
+    fun `onPause clears silence-window accumulator`() {
+        val t = Thresholds(
+            baselineMinSamples = 10,
+            silenceDurationMs = 4_500L,
+            silenceDurationUprightMs = 20_000L,
+            uprightAngleThresholdDegrees = 45.0,
+        )
+        val sm = smInSilenceCheckWithBaseline(t)  // already in SILENCE_CHECK with baseline along Z
+
+        // Feed 500 upright (Z-axis) samples while staying in SILENCE_CHECK.
+        // These are quiet and upright, so isStill=true; elapsed (10 s) < uprightSilenceDurationMs
+        // (20 s) → the SM keeps returning None without confirming. The silence-window
+        // accumulator now holds 500 upright Z-axis samples.
+        var tNow = 2_000L
+        repeat(500) {
+            tNow += 20
+            sm.onSample(sample(
+                time = tNow, peak = 0.0, smoothed = 9.81, raw = 9.81, gyro = 0.05,
+            ).copy(accelX = 0.0, accelY = 0.0, accelZ = 9.81))
+        }
+        assertEquals(CrashStateMachine.State.SILENCE_CHECK, sm.state)
+
+        // Pause — must clear the accumulator AND return state to MONITORING.
+        sm.onPause()
+        assertEquals(CrashStateMachine.State.MONITORING, sm.state)
+
+        // Re-enter IMPACT (rider is now on-side after a real crash), then SILENCE_CHECK.
+        // On-side samples: gravity along X, baseline along Z → angle ≈ 90° > 45°
+        // → legacy 4.5 s silence threshold should apply.
+        //
+        // WITHOUT the fix: the 500 stale upright Z samples inflate the accumulator's
+        // Z component, keeping the apparent angle < 45° for hundreds of new samples
+        // → computeEffectiveSilenceMs returns 20 s instead of 4.5 s → crash never
+        // confirmed in a 5 s window (false negative).
+        //
+        // WITH the fix: the accumulator is reset on onPause(), so the new SILENCE_CHECK
+        // sees only on-side X-axis samples → angle ≈ 90° → 4.5 s threshold → confirm
+        // fires around 4.5 s after entering the new SILENCE_CHECK.
+        sm.onSpeedUpdate(20.0)
+        sm.onSample(sample(time = tNow + 1_000, peak = 60.0, smoothed = 30.0))
+        assertEquals(CrashStateMachine.State.IMPACT, sm.state)
+        sm.onSpeedUpdate(0.0)
+        sm.onSample(sample(time = tNow + 2_000, peak = 0.0, smoothed = 9.81,
+            raw = 9.81, gyro = 0.1).copy(accelX = 9.81, accelY = 0.0, accelZ = 0.0))
+        assertEquals(CrashStateMachine.State.SILENCE_CHECK, sm.state)
+
+        // Feed 5 s of on-side quiet samples. With the accumulator correctly cleared,
+        // the orientation reads as on-side (angle ≈ 90°) → legacy 4.5 s threshold →
+        // Decision.Confirm must fire before the loop ends.
+        val tEnter = tNow + 2_000
+        var tQuiet = tEnter
+        var confirmed = false
+        while (tQuiet < tEnter + 5_000L) {
+            tQuiet += 20
+            val d = sm.onSample(sample(
+                time = tQuiet, peak = 0.0, smoothed = 9.81, raw = 9.81, gyro = 0.05,
+            ).copy(accelX = 9.81, accelY = 0.0, accelZ = 0.0))
+            if (d == CrashStateMachine.Decision.Confirm) {
+                confirmed = true
+                break
+            }
+        }
+        assertEquals(
+            "Decision.Confirm did not fire within 5 s — accumulator likely leaked upright " +
+                "Z samples across onPause, inflating effectiveSilenceMs from 4.5 s to 20 s",
+            true, confirmed
+        )
+    }
+
     // ── Regression: crash on-side still confirms at 4.5s ─────────────────────
 
     @Test

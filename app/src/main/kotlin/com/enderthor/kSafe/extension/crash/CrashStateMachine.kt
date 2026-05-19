@@ -223,6 +223,13 @@ class CrashStateMachine(
         state = State.MONITORING
         impactStartedMs = 0L
         silenceStartedMs = 0L
+        // Drop accumulated orientation data — a pause invalidates the current
+        // silence window. Without this, a SILENCE_CHECK that was in progress
+        // when the rider paused would pollute the next SILENCE_CHECK event
+        // with stale gravity-vector samples. Baseline learning state is
+        // intentionally preserved (a pause doesn't invalidate what was learned
+        // during cruising before the pause).
+        resetSilenceWindow()
     }
 
     fun reset() {
