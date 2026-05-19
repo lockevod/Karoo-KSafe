@@ -478,4 +478,115 @@ class CrashStateMachineTest {
         assertEquals(0.0, y, 1e-9)
         assertEquals(0.0, z, 1e-9)
     }
+
+    // ── Orientation: silence-duration selection ──────────────────────────────
+
+    /**
+     * Helper: get a state machine into SILENCE_CHECK with a baseline already learned.
+     * Returns the SM (clock and time cursor are managed by the caller).
+     */
+    private fun smInSilenceCheckWithBaseline(
+        thresholds: Thresholds = Thresholds(baselineMinSamples = 10),
+        baselineVector: Triple<Double, Double, Double> = Triple(0.0, 0.0, 9.81),
+    ): CrashStateMachine {
+        val (sm, _) = newSm(thresholds)
+        sm.onSpeedUpdate(20.0)
+        // Feed enough samples to make baseline ready.
+        repeat(thresholds.baselineMinSamples) {
+            sm.feedBaselineSample(baselineVector.first, baselineVector.second, baselineVector.third)
+        }
+        // Enter IMPACT.
+        sm.onSample(sample(time = 1000, peak = 60.0, smoothed = 30.0))
+        // Drive into SILENCE_CHECK: rider stops + accel calms.
+        sm.onSpeedUpdate(0.0)
+        sm.onSample(sample(time = 2000, peak = 0.0, smoothed = 9.81, raw = 9.81,
+            gyro = 0.1))
+        assertEquals(CrashStateMachine.State.SILENCE_CHECK, sm.state)
+        return sm
+    }
+
+    @Test
+    fun `silence_check uses upright duration when bike orientation matches baseline`() {
+        val t = Thresholds(
+            baselineMinSamples = 10,
+            silenceDurationMs = 4_500L,
+            silenceDurationUprightMs = 20_000L,
+            uprightAngleThresholdDegrees = 45.0,
+        )
+        val sm = smInSilenceCheckWithBaseline(t)
+        // Feed quiet samples WITH upright orientation (matches baseline (0,0,9.81)).
+        // Total elapsed since silenceStartedMs = 4_500ms is NOT enough for upright (20s).
+        var t0 = 2000L
+        repeat(220) {  // 220 samples × ~20ms each = ~4.4s
+            t0 += 20
+            val d = sm.onSample(sample(
+                time = t0, peak = 0.0, smoothed = 9.81, raw = 9.81, gyro = 0.1,
+            ).copy(accelX = 0.0, accelY = 0.0, accelZ = 9.81))
+            // Must NOT confirm yet — upright threshold is 20s, not 4.5s.
+            assertNotEquals("Decision.Confirm should not fire before upright window",
+                CrashStateMachine.Decision.Confirm, d)
+        }
+        // Now jump past 20s. Confirm must fire.
+        t0 = 22_500L
+        val d = sm.onSample(sample(
+            time = t0, peak = 0.0, smoothed = 9.81, raw = 9.81, gyro = 0.1,
+        ).copy(accelX = 0.0, accelY = 0.0, accelZ = 9.81))
+        assertEquals(CrashStateMachine.Decision.Confirm, d)
+    }
+
+    @Test
+    fun `silence_check uses legacy duration when bike is on its side`() {
+        val t = Thresholds(
+            baselineMinSamples = 10,
+            silenceDurationMs = 4_500L,
+            silenceDurationUprightMs = 20_000L,
+            uprightAngleThresholdDegrees = 45.0,
+        )
+        val sm = smInSilenceCheckWithBaseline(t)
+        // Feed quiet samples with the bike laid 90° on its side: gravity along X axis,
+        // baseline along Z. Angle ≈ 90° > 45° → use legacy 4.5s window.
+        var t0 = 2000L
+        repeat(225) {  // ~4.5s — should be enough at the legacy threshold
+            t0 += 20
+            sm.onSample(sample(
+                time = t0, peak = 0.0, smoothed = 9.81, raw = 9.81, gyro = 0.1,
+            ).copy(accelX = 9.81, accelY = 0.0, accelZ = 0.0))
+        }
+        // At t≈6500 we should have crossed 4.5s of silence → next quiet sample confirms.
+        t0 = 7_500L
+        val d = sm.onSample(sample(
+            time = t0, peak = 0.0, smoothed = 9.81, raw = 9.81, gyro = 0.1,
+        ).copy(accelX = 9.81, accelY = 0.0, accelZ = 0.0))
+        assertEquals(CrashStateMachine.Decision.Confirm, d)
+    }
+
+    @Test
+    fun `silence_check falls back to legacy duration when baseline not ready`() {
+        val t = Thresholds(
+            // High threshold + no baseline samples → baseline never ready.
+            baselineMinSamples = 1_500,
+            silenceDurationMs = 4_500L,
+            silenceDurationUprightMs = 20_000L,
+        )
+        val (sm, _) = newSm(t)
+        sm.onSpeedUpdate(20.0)
+        // Enter IMPACT and SILENCE_CHECK WITHOUT feeding baseline.
+        sm.onSample(sample(time = 1000, peak = 60.0, smoothed = 30.0))
+        sm.onSpeedUpdate(0.0)
+        sm.onSample(sample(time = 2000, peak = 0.0, smoothed = 9.81, raw = 9.81, gyro = 0.1))
+        assertEquals(CrashStateMachine.State.SILENCE_CHECK, sm.state)
+        // 4.5s of quiet — should confirm at legacy threshold since no baseline.
+        var t0 = 2000L
+        repeat(225) {
+            t0 += 20
+            sm.onSample(sample(
+                time = t0, peak = 0.0, smoothed = 9.81, raw = 9.81, gyro = 0.1,
+            ).copy(accelX = 0.0, accelY = 0.0, accelZ = 9.81))
+        }
+        t0 = 7_500L
+        val d = sm.onSample(sample(
+            time = t0, peak = 0.0, smoothed = 9.81, raw = 9.81, gyro = 0.1,
+        ).copy(accelX = 0.0, accelY = 0.0, accelZ = 9.81))
+        assertEquals(CrashStateMachine.Decision.Confirm, d)
+    }
 }

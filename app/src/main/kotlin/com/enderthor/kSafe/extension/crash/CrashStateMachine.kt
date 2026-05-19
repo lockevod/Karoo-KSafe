@@ -5,6 +5,8 @@ import com.enderthor.kSafe.extension.util.Clock
 import com.enderthor.kSafe.extension.util.SystemClock
 import com.enderthor.kSafe.extension.util.formatUs
 import kotlin.math.abs
+import kotlin.math.acos
+import kotlin.math.sqrt
 
 /**
  * Pure state machine: MONITORING → IMPACT → SILENCE_CHECK → (CRASH_CONFIRMED | back to MONITORING).
@@ -58,6 +60,13 @@ class CrashStateMachine(
 
         /** Sentinel for "no speed update received yet" — distinguishes from a legit `0.0`. */
         const val SPEED_UPDATE_NEVER = 0L
+
+        /** Minimum samples in the silence window before orientation classification kicks in.
+         *  At 50 Hz this is ~100 ms — enough to filter the very first sample of jitter. */
+        const val MIN_ORIENTATION_SAMPLES: Int = 5
+
+        /** Magnitude floor below which a gravity vector is treated as numerically degenerate. */
+        const val EPSILON: Double = 1e-6
     }
 
     enum class State { MONITORING, IMPACT, SILENCE_CHECK }
@@ -130,6 +139,19 @@ class CrashStateMachine(
     @Volatile private var baselineY: Double = 0.0
     @Volatile private var baselineZ: Double = 0.0
     @Volatile private var baselineSampleCount: Int = 0
+
+    // ── Orientation: silence-window accumulator ──────────────────────────────
+    /**
+     * Sum of accel X/Y/Z over samples received while inside SILENCE_CHECK,
+     * used to compute the average gravity-vector direction of the current
+     * stillness phase. Reset every time the state machine enters or leaves
+     * SILENCE_CHECK so the orientation reading reflects the current event,
+     * not a stale one.
+     */
+    @Volatile private var silenceWindowSumX: Double = 0.0
+    @Volatile private var silenceWindowSumY: Double = 0.0
+    @Volatile private var silenceWindowSumZ: Double = 0.0
+    @Volatile private var silenceWindowCount: Int = 0
 
     // ── Public API ───────────────────────────────────────────────────────────
 
@@ -219,6 +241,10 @@ class CrashStateMachine(
         baselineY = 0.0
         baselineZ = 0.0
         baselineSampleCount = 0
+        silenceWindowSumX = 0.0
+        silenceWindowSumY = 0.0
+        silenceWindowSumZ = 0.0
+        silenceWindowCount = 0
     }
 
     // ── State handlers ───────────────────────────────────────────────────────
@@ -322,7 +348,7 @@ class CrashStateMachine(
      * (bike on its side, rear wheel spinning) would otherwise block a valid crash.
      *
      * Outcomes:
-     *   - `isStill` AND elapsed >= effectiveSilenceMs → Decision.Confirm
+     *   - `isStill` AND elapsed > effectiveSilenceMs → Decision.Confirm
      *   - `isStill` AND not yet elapsed → keep counting (None)
      *   - `!isStill` AND within `impactWindowMs * 2` → reset silence clock to `now`
      *   - `!isStill` AND beyond `impactWindowMs * 2` → false alarm, return to MONITORING
@@ -334,6 +360,7 @@ class CrashStateMachine(
         // Cadence gate (instant false-alarm exit): only when cadence sensor present + active.
         if (isCadenceActive(now)) {
             resetTimers()
+            resetSilenceWindow()
             state = State.MONITORING
             return Decision.ReturnToMonitoring
         }
@@ -341,8 +368,12 @@ class CrashStateMachine(
         val gpsStale = lastSpeedGpsStale
         val deviationMax = if (gpsStale) thresholds.gpsStaleSilenceDeviationMax
                            else thresholds.silenceDeviationMax
-        val effectiveSilenceMs = if (gpsStale) thresholds.gpsStaleSilenceDurationMs
-                                 else thresholds.silenceDurationMs
+
+        // Accumulate X/Y/Z for orientation classification (Revision 5).
+        silenceWindowSumX += sample.accelX
+        silenceWindowSumY += sample.accelY
+        silenceWindowSumZ += sample.accelZ
+        silenceWindowCount++
 
         // Use rawMagnitude — production CrashDetectionManager.processAccelerometer() uses
         // `abs(magnitude - GRAVITY)` (raw, not smoothed). Behavioural-equivalence requirement.
@@ -352,15 +383,17 @@ class CrashStateMachine(
         val isStill = accelOk && speedDropOk
 
         val timeSinceImpact = now - impactStartedMs
+        val effectiveSilenceMs = computeEffectiveSilenceMs(gpsStale)
 
         return when {
-            isStill && (now - silenceStartedMs) >= effectiveSilenceMs -> {
+            isStill && (now - silenceStartedMs) > effectiveSilenceMs -> {
                 // CONFIRMED.
                 calibLogger?.log(CalibrationLogger.Event.CRASH_CONFIRMED) {
                     "total_ms=$timeSinceImpact,deviation=%.2f,speed=%.1f,gps_stale=$gpsStale"
                         .formatUs(deviation, lastSpeedKmh)
                 }
                 resetTimers()
+                resetSilenceWindow()
                 state = State.MONITORING
                 Decision.Confirm
             }
@@ -368,15 +401,67 @@ class CrashStateMachine(
             !isStill && timeSinceImpact <= thresholds.impactWindowMs * 2 -> {
                 // Stillness must be continuous: restart silence clock on every break.
                 silenceStartedMs = now
+                // Drop accumulated orientation data — the new silence window starts now.
+                resetSilenceWindow()
                 Decision.None
             }
             else -> {
                 // Beyond doubled window — false alarm.
                 resetTimers()
+                resetSilenceWindow()
                 state = State.MONITORING
                 Decision.ReturnToMonitoring
             }
         }
+    }
+
+    /**
+     * Decide the silence duration to require, based on the bike's orientation
+     * during the current stillness window vs the learned baseline.
+     *
+     * Returns the legacy duration (GPS-stale or GPS-fresh) when:
+     *   - baseline not yet learned (cold start, very short ride before impact)
+     *   - silence window has too few samples to compute a stable direction (<5)
+     *   - the orientation angle exceeds [Thresholds.uprightAngleThresholdDegrees]
+     *     (bike is on its side or laid down — likely a real crash)
+     *
+     * Returns [Thresholds.silenceDurationUprightMs] when the bike is still
+     * within the upright angle threshold of the baseline — typical of a rider
+     * who hit a bump, braked hard and stopped upright at the roadside.
+     */
+    private fun computeEffectiveSilenceMs(gpsStale: Boolean): Long {
+        val legacyMs = if (gpsStale) thresholds.gpsStaleSilenceDurationMs
+                       else thresholds.silenceDurationMs
+
+        if (!isBaselineReady()) return legacyMs
+        if (silenceWindowCount < MIN_ORIENTATION_SAMPLES) return legacyMs
+
+        val n = silenceWindowCount.toDouble()
+        val curX = silenceWindowSumX / n
+        val curY = silenceWindowSumY / n
+        val curZ = silenceWindowSumZ / n
+        val curMag = sqrt(curX * curX + curY * curY + curZ * curZ)
+        val baseMag = sqrt(baselineX * baselineX + baselineY * baselineY + baselineZ * baselineZ)
+        if (curMag < EPSILON || baseMag < EPSILON) return legacyMs
+
+        // Dot product / (magA * magB) = cos(angle). Clamp to [-1, 1] to guard against
+        // tiny FP overshoots from the divide.
+        val cosAngle = ((curX * baselineX + curY * baselineY + curZ * baselineZ)
+                       / (curMag * baseMag)).coerceIn(-1.0, 1.0)
+        val angleDeg = Math.toDegrees(acos(cosAngle))
+
+        return if (angleDeg < thresholds.uprightAngleThresholdDegrees) {
+            thresholds.silenceDurationUprightMs
+        } else {
+            legacyMs
+        }
+    }
+
+    private fun resetSilenceWindow() {
+        silenceWindowSumX = 0.0
+        silenceWindowSumY = 0.0
+        silenceWindowSumZ = 0.0
+        silenceWindowCount = 0
     }
 
     // ── Helpers ──────────────────────────────────────────────────────────────
