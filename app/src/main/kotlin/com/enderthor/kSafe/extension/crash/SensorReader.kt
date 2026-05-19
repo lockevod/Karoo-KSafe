@@ -176,19 +176,15 @@ class SensorReader(
      * Standard deviation of the magnitudes in [varianceBuffer] (~5 s window).
      *
      * Mirrors `CrashDetectionManager.accelStdDev()` exactly: returns 0 if fewer than 10
-     * samples have been collected, else the population std-dev (`sumSq / N`, not
-     * `sumSq / (N-1)` — same as production).
+     * samples have been collected, else the population std-dev. O(1) via the running
+     * sum/sum-sq accumulators in [DoubleRingBuffer.stdDev]; previous implementation
+     * was O(N=250) per call, which mattered after Task 6 wired this call into the
+     * 50 Hz cruising-gate path.
      */
     fun accelStdDev(): Double {
         val buf = varianceBuffer
         if (buf.size < 10) return 0.0
-        val mean = buf.average()
-        var sumSq = 0.0
-        buf.forEach { v ->
-            val d = v - mean
-            sumSq += d * d
-        }
-        return sqrt(sumSq / buf.size)
+        return buf.stdDev()
     }
 
     /**
@@ -298,25 +294,68 @@ internal class DoubleRingBuffer(@PublishedApi internal val capacity: Int) {
     var size: Int = 0
         internal set
 
+    /**
+     * Incrementally maintained sum and sum-of-squares of the live elements.
+     * Lets [stdDev] run in O(1) instead of O(N) — important because the
+     * orientation-baseline cruising gate calls it on every sample (~50 Hz),
+     * not just on the rate-limited PERIODIC log.
+     *
+     * Numerical note: `variance = sumSq/N - mean*mean` is the textbook
+     * "two-pass" formula and suffers catastrophic cancellation when the
+     * variance is tiny relative to mean*mean. For accelerometer magnitudes
+     * (mean ≈ 9.81 m/s², variance ≈ 0.01-2 m²/s⁴) we lose ~2-3 decimal
+     * digits of precision — orders of magnitude more than needed for the
+     * 1.5 m/s² cruising threshold. Welford's incremental algorithm would
+     * be more accurate but is much harder to apply with a fixed-window
+     * ring (every eviction requires a full revisit), so we keep the simple
+     * form and `coerceAtLeast(0.0)` the variance to guard against tiny
+     * negative results when std-dev is essentially zero.
+     */
+    internal var runningSum: Double = 0.0
+        private set
+    internal var runningSumSq: Double = 0.0
+        private set
+
     /** Append [value]; evicts the oldest when the buffer is full. O(1). */
     fun add(value: Double) {
+        val valueSq = value * value
         if (size < capacity) {
             data[(head + size) % capacity] = value
             size++
+            runningSum += value
+            runningSumSq += valueSq
         } else {
+            val evicted = data[head]
             data[head] = value
             head = (head + 1) % capacity
+            runningSum += value - evicted
+            runningSumSq += valueSq - evicted * evicted
         }
     }
 
-    fun clear() { head = 0; size = 0 }
+    fun clear() {
+        head = 0
+        size = 0
+        runningSum = 0.0
+        runningSumSq = 0.0
+    }
 
     /** Mean of live elements, or `0.0` when empty. Matches `Iterable<Double>.average()` semantics. */
     fun average(): Double {
         if (size == 0) return 0.0
-        var sum = 0.0
-        forEach { sum += it }
-        return sum / size
+        return runningSum / size
+    }
+
+    /**
+     * Population std-dev of live elements in O(1) using the running
+     * sum/sum-sq accumulators. Returns `0.0` for an empty buffer.
+     * See the numerical-stability note on [runningSum] for caveats.
+     */
+    fun stdDev(): Double {
+        if (size == 0) return 0.0
+        val mean = runningSum / size
+        val variance = (runningSumSq / size - mean * mean).coerceAtLeast(0.0)
+        return sqrt(variance)
     }
 
     /** Snapshot of live elements in insertion order. Allocates — call only off the hot path. */

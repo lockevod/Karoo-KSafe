@@ -175,3 +175,130 @@ class SensorReaderTest {
     // ---- inline any() helper to keep the call sites readable in Kotlin --------------
     private inline fun <reified T> any(): T = org.mockito.ArgumentMatchers.any(T::class.java)
 }
+
+/**
+ * Tests for the O(1) running-sum optimization of [DoubleRingBuffer].
+ *
+ * Each test compares the optimized `stdDev()` / `runningSum` against a
+ * fresh O(N) recomputation. If the incremental state ever drifts from the
+ * truth, these tests will catch it.
+ */
+class DoubleRingBufferIncrementalSumTest {
+
+    private fun expectedSum(values: DoubleArray): Double = values.sum()
+    private fun expectedMean(values: DoubleArray): Double =
+        if (values.isEmpty()) 0.0 else expectedSum(values) / values.size
+    private fun expectedStdDev(values: DoubleArray): Double {
+        if (values.size < 2) return 0.0
+        val m = expectedMean(values)
+        var sumSq = 0.0
+        values.forEach { v -> val d = v - m; sumSq += d * d }
+        return kotlin.math.sqrt(sumSq / values.size)
+    }
+
+    @org.junit.Test
+    fun `empty buffer returns zero stdDev and zero sums`() {
+        val b = DoubleRingBuffer(8)
+        org.junit.Assert.assertEquals(0.0, b.runningSum, 0.0)
+        org.junit.Assert.assertEquals(0.0, b.runningSumSq, 0.0)
+        org.junit.Assert.assertEquals(0.0, b.stdDev(), 0.0)
+    }
+
+    @org.junit.Test
+    fun `single element has zero stdDev`() {
+        val b = DoubleRingBuffer(8)
+        b.add(9.81)
+        org.junit.Assert.assertEquals(9.81, b.runningSum, 1e-9)
+        org.junit.Assert.assertEquals(9.81 * 9.81, b.runningSumSq, 1e-9)
+        org.junit.Assert.assertEquals(0.0, b.stdDev(), 1e-9)
+    }
+
+    @org.junit.Test
+    fun `runningSum matches sum recomputation while filling`() {
+        val b = DoubleRingBuffer(5)
+        val xs = doubleArrayOf(1.0, 2.0, 3.0, 4.0)
+        xs.forEach { b.add(it) }
+        org.junit.Assert.assertEquals(expectedSum(xs), b.runningSum, 1e-9)
+    }
+
+    @org.junit.Test
+    fun `runningSum stays correct across wrap-around`() {
+        val b = DoubleRingBuffer(3)
+        // Fill: [1,2,3]
+        listOf(1.0, 2.0, 3.0).forEach { b.add(it) }
+        org.junit.Assert.assertEquals(6.0, b.runningSum, 1e-9)
+        // Evict 1, push 4 → [2,3,4]
+        b.add(4.0)
+        org.junit.Assert.assertEquals(9.0, b.runningSum, 1e-9)
+        // Evict 2, push 5 → [3,4,5]
+        b.add(5.0)
+        org.junit.Assert.assertEquals(12.0, b.runningSum, 1e-9)
+        // Evict 3, push 6 → [4,5,6]
+        b.add(6.0)
+        org.junit.Assert.assertEquals(15.0, b.runningSum, 1e-9)
+    }
+
+    @org.junit.Test
+    fun `runningSumSq stays correct across wrap-around`() {
+        val b = DoubleRingBuffer(3)
+        listOf(1.0, 2.0, 3.0).forEach { b.add(it) }
+        org.junit.Assert.assertEquals(1.0 + 4.0 + 9.0, b.runningSumSq, 1e-9)
+        b.add(4.0)  // evict 1: 4+9+16
+        org.junit.Assert.assertEquals(4.0 + 9.0 + 16.0, b.runningSumSq, 1e-9)
+        b.add(5.0)  // evict 2: 9+16+25
+        org.junit.Assert.assertEquals(9.0 + 16.0 + 25.0, b.runningSumSq, 1e-9)
+    }
+
+    @org.junit.Test
+    fun `stdDev matches O(N) recomputation after sequence of adds`() {
+        val b = DoubleRingBuffer(10)
+        // Mix of values to give non-trivial variance.
+        val xs = doubleArrayOf(9.80, 9.85, 9.75, 9.95, 9.70, 10.20, 9.40, 10.05, 9.90, 9.83)
+        xs.forEach { b.add(it) }
+        org.junit.Assert.assertEquals(expectedStdDev(xs), b.stdDev(), 1e-9)
+    }
+
+    @org.junit.Test
+    fun `stdDev matches O(N) recomputation across many wrap-arounds`() {
+        val b = DoubleRingBuffer(50)
+        val rng = java.util.Random(42)
+        val values = DoubleArray(50)
+        // Push 1000 random samples; after each, the live buffer is the last 50.
+        // After step k (k>=50), the buffer contains samples k-49..k. Compare.
+        var idx = 0
+        repeat(1000) { step ->
+            val v = 9.81 + (rng.nextGaussian() * 0.5)
+            b.add(v)
+            // Maintain a parallel window of the last min(step+1, 50) samples for comparison.
+            if (step < 50) {
+                values[step] = v
+            } else {
+                // Shift left, append.
+                System.arraycopy(values, 1, values, 0, 49)
+                values[49] = v
+            }
+            // Compare every 50 steps (don't slow tests by comparing every step).
+            if ((step + 1) % 50 == 0) {
+                val truth = expectedStdDev(values.copyOfRange(0, minOf(step + 1, 50)))
+                org.junit.Assert.assertEquals(
+                    "stdDev drift at step=$step", truth, b.stdDev(), 1e-6
+                )
+            }
+            idx = step
+        }
+    }
+
+    @org.junit.Test
+    fun `clear resets running sums`() {
+        val b = DoubleRingBuffer(5)
+        listOf(1.0, 2.0, 3.0).forEach { b.add(it) }
+        b.clear()
+        org.junit.Assert.assertEquals(0.0, b.runningSum, 0.0)
+        org.junit.Assert.assertEquals(0.0, b.runningSumSq, 0.0)
+        org.junit.Assert.assertEquals(0.0, b.stdDev(), 0.0)
+        // And start fresh.
+        b.add(7.0)
+        org.junit.Assert.assertEquals(7.0, b.runningSum, 1e-9)
+        org.junit.Assert.assertEquals(49.0, b.runningSumSq, 1e-9)
+    }
+}
