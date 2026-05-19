@@ -912,6 +912,40 @@ class CrashStateMachineTest {
         }
     }
 
+    // ── Baseline: capped running average adapts to mount remount ─────────────
+
+    @Test
+    fun `baseline adapts to new orientation when bike is remounted mid-ride`() {
+        val t = Thresholds(baselineMinSamples = 100)
+        val (sm, _) = newSm(t)
+        // Phase 1: 5000 samples (50x baselineMinSamples) of pure upright Z=9.81.
+        // Without the EMA cap, the baseline would be so locked that 200 strong
+        // post-remount samples could only nudge it by ~4% — baseline stays
+        // essentially "old orientation".
+        repeat(5000) { sm.feedBaselineSample(0.0, 0.0, 9.81) }
+        val (bx1, by1, bz1) = sm.baselineVector()
+        // Baseline should be very close to (0, 0, 9.81) at this point.
+        assertEquals(0.0, bx1, 0.01)
+        assertEquals(9.81, bz1, 0.01)
+
+        // Phase 2: rider remounts Karoo rotated 45° around Y axis. New gravity
+        // direction is (6.94, 0, 6.94) (mag ≈ 9.81). Feed 500 samples
+        // (5x baselineMinSamples) of the new orientation.
+        repeat(500) { sm.feedBaselineSample(6.94, 0.0, 6.94) }
+        val (bx2, _, bz2) = sm.baselineVector()
+
+        // With the EMA cap at 100, alpha = 1/100 = 0.01, half-life ≈ 69 samples.
+        // After 500 samples = ~7 half-lives → baseline should be within ~1%
+        // of the new orientation (6.94, 0, 6.94).
+        //
+        // Without the cap, after 5500 total samples the per-sample weight is
+        // 1/5500 ≈ 0.0182%, and 500 new samples nudge the average by only
+        // ~500*(6.94-0)/5500 ≈ 0.63 on the X axis — baseline X stays around
+        // 0.63 instead of approaching 6.94. The test fails on buggy code.
+        assertEquals("baseline X should have adapted toward 6.94", 6.94, bx2, 0.5)
+        assertEquals("baseline Z should have adapted toward 6.94", 6.94, bz2, 0.5)
+    }
+
     // ── Regression: crash on-side still confirms at 4.5s ─────────────────────
 
     @Test

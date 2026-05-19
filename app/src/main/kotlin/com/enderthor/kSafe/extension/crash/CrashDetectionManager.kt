@@ -426,7 +426,17 @@ class CrashDetectionManager(
         // leaning to put a foot down, and quiet enough that the bike isn't
         // bouncing on rough terrain. The state machine drops samples received
         // outside MONITORING internally; we gate here too for efficiency.
+        // Don't feed baseline learner when:
+        //   - we're not in MONITORING (an in-flight event would corrupt the baseline)
+        //   - speed is below the cruising threshold (rider may be foot-down at a light)
+        //   - terrain is rough (accel std-dev too high — gravity vector noisy)
+        //   - GPS speed reading is stale (SDK returns last known speed bit-exact; rider
+        //     could be stopped and leaning in a tunnel while the SDK still reports
+        //     cruising speed → samples would corrupt the upright reference)
+        //   - no real speed update has been received yet (cold start)
         if (priorState == CrashStateMachine.State.MONITORING &&
+            speedDataReceived &&
+            !gpsCurrentlyStale &&
             currentSpeedKmh >= stateMachine.thresholds.baselineCruisingMinSpeedKmh.toDouble() &&
             sensorReader.accelStdDev() < BASELINE_CRUISING_MAX_STDDEV) {
             stateMachine.feedBaselineSample(sample.accelX, sample.accelY, sample.accelZ)

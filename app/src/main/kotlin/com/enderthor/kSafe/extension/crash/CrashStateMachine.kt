@@ -216,13 +216,24 @@ class CrashStateMachine(
      */
     fun feedBaselineSample(x: Double, y: Double, z: Double) {
         if (state != State.MONITORING) return
-        val n = baselineSampleCount
-        // Incremental running average: m_{n+1} = m_n + (x - m_n) / (n + 1).
-        // Cheaper and more numerically stable than recomputing (m*n + x)/(n+1).
-        baselineX += (x - baselineX) / (n + 1)
-        baselineY += (y - baselineY) / (n + 1)
-        baselineZ += (z - baselineZ) / (n + 1)
-        baselineSampleCount = n + 1
+        // Cap the effective sample count at baselineMinSamples so the formula
+        // behaves as an EMA with α = 1/baselineMinSamples after the initial
+        // learning phase. Without the cap, the divisor grows without bound and
+        // the baseline freezes after ~30 s of cruising — a rider who remounts
+        // the Karoo mid-ride or whose mount gradually loosens cannot recover
+        // their upright reference. With the cap, the effective half-life is
+        // ~ln(2) * baselineMinSamples samples (~20 s at 50 Hz for the default
+        // 1500), so real orientation changes adapt within a minute or two of
+        // cruising.
+        //
+        // The counter itself keeps growing so [isBaselineReady] continues to
+        // reflect "we've seen at least baselineMinSamples cruising samples
+        // since the last reset."
+        val effectiveN = baselineSampleCount.coerceAtMost(thresholds.baselineMinSamples)
+        baselineX += (x - baselineX) / (effectiveN + 1)
+        baselineY += (y - baselineY) / (effectiveN + 1)
+        baselineZ += (z - baselineZ) / (effectiveN + 1)
+        baselineSampleCount += 1
     }
 
     /** True iff enough cruising samples have been fed to trust the baseline. */
