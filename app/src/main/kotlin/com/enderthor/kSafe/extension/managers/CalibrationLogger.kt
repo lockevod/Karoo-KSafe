@@ -516,8 +516,17 @@ class CalibrationLogger(
         null
     }
 
-    /** Filename advertised in the Telegram document upload for the recovered file. */
-    fun previousFileNameForSession(): String = "ksafe_${BuildConfig.VERSION_NAME}_previous_${DEVICE_LABEL}.csv"
+    /**
+     * Telegram-safe filename for a recovered previous-session CSV.
+     * Format: `ksafe_v{version}_{installId}_previous_{deviceLabel}.csv`
+     *
+     * Matches the structure of [fileNameForSession] (carrying the install ID
+     * so the developer can grep the inbox to attribute the recovery log) but
+     * uses the literal `previous` token instead of a random sessionId — the
+     * recovered file is tied to whichever session was interrupted, not the
+     * one currently being recorded.
+     */
+    fun previousFileNameForSession(): String = "ksafe_v${BuildConfig.VERSION_NAME}_${installId}_previous_${DEVICE_LABEL}.csv"
 
     /** Deletes the preserved previous-session file. Called by the Settings "Send" path
      *  after a successful upload so the rider doesn't see "previous: ✓" forever. */
