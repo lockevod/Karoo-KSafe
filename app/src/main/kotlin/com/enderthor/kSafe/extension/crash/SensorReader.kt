@@ -250,6 +250,9 @@ class SensorReader(
                 peakMagnitude = rawMagnitude,
                 gyroMag = lastGyroMag,
                 timestampMs = clock.nowMs(),
+                accelX = x.toDouble(),
+                accelY = y.toDouble(),
+                accelZ = z.toDouble(),
             )
         )
     }
