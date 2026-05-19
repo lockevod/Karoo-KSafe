@@ -589,4 +589,117 @@ class CrashStateMachineTest {
         ).copy(accelX = 0.0, accelY = 0.0, accelZ = 9.81))
         assertEquals(CrashStateMachine.Decision.Confirm, d)
     }
+
+    // ── Scenario: bump + brake + stop upright must not confirm under 20s ─────
+
+    @Test
+    fun `scenario bump plus brake plus stop upright does not confirm before 20s`() {
+        val t = Thresholds(
+            baselineMinSamples = 10,
+            silenceDurationMs = 4_500L,
+            silenceDurationUprightMs = 20_000L,
+            uprightAngleThresholdDegrees = 45.0,
+            // Use LOW-preset-equivalent thresholds for this scenario.
+            smoothedImpactThreshold = 55.0,
+            peakImpactThreshold = 60.0,
+            minSpeedForCrashKmh = 3,
+            crashConfirmSpeedKmh = 3,
+        )
+        val (sm, _) = newSm(t)
+
+        // ── Phase 1: cruise at 30 km/h upright for baseline learning ─────────
+        sm.onSpeedUpdate(30.0)
+        repeat(t.baselineMinSamples + 5) {
+            sm.feedBaselineSample(0.0, 0.0, 9.81)
+        }
+        assertEquals("baseline must be ready", true, sm.isBaselineReady())
+
+        // ── Phase 2: bump → IMPACT entry ─────────────────────────────────────
+        val tBump = 1_000L
+        val bump = sample(
+            time = tBump, peak = 70.0, smoothed = 60.0, raw = 70.0, gyro = 4.0,
+        ).copy(accelX = 0.0, accelY = 0.0, accelZ = 70.0)
+        val d1 = sm.onSample(bump)
+        assertTrue("bump must enter IMPACT, got $d1",
+            d1 is CrashStateMachine.Decision.EnterImpact)
+        assertEquals(CrashStateMachine.State.IMPACT, sm.state)
+
+        // ── Phase 3: braking — speed drops 30 → 0, accel noisy ───────────────
+        // 2s of braking, samples ~50Hz; speed update each 200ms.
+        var tNow = tBump
+        val brakeMs = 2_000L
+        val brakeStep = 20L  // 50Hz
+        var stepsDone = 0
+        while (tNow < tBump + brakeMs) {
+            tNow += brakeStep
+            stepsDone++
+            // Speed decreases linearly: 30 → 0 over 2 s.
+            val speed = 30.0 * (1.0 - (tNow - tBump).toDouble() / brakeMs)
+            if (stepsDone % 10 == 0) sm.onSpeedUpdate(speed.coerceAtLeast(0.0))
+            // Accel noise from brake force ~ 5-10 m/s² deviation, bike upright.
+            sm.onSample(sample(
+                time = tNow, peak = 11.0, smoothed = 11.0, raw = 11.0, gyro = 0.5,
+            ).copy(accelX = 0.0, accelY = -7.0, accelZ = 9.0))
+        }
+        sm.onSpeedUpdate(0.0)
+        // Rider may have not yet entered SILENCE_CHECK due to ongoing noise.
+
+        // ── Phase 4: rider fully stopped — quiet upright samples for 19.5s ──
+        val tStopStart = tNow
+        val quietStep = 20L
+        while (tNow < tStopStart + 19_500L) {
+            tNow += quietStep
+            val d = sm.onSample(sample(
+                time = tNow, peak = 0.0, smoothed = 9.81, raw = 9.81, gyro = 0.05,
+            ).copy(accelX = 0.0, accelY = 0.0, accelZ = 9.81))
+            assertNotEquals(
+                "Decision.Confirm should not fire before upright window (t=$tNow)",
+                CrashStateMachine.Decision.Confirm, d
+            )
+        }
+    }
+
+    // ── Regression: crash on-side still confirms at 4.5s ─────────────────────
+
+    @Test
+    fun `scenario crash with bike on side confirms at 4_5s as before`() {
+        val t = Thresholds(
+            baselineMinSamples = 10,
+            silenceDurationMs = 4_500L,
+            silenceDurationUprightMs = 20_000L,
+            uprightAngleThresholdDegrees = 45.0,
+            minSpeedForCrashKmh = 3,
+            crashConfirmSpeedKmh = 3,
+        )
+        val (sm, _) = newSm(t)
+
+        sm.onSpeedUpdate(30.0)
+        repeat(t.baselineMinSamples + 5) {
+            sm.feedBaselineSample(0.0, 0.0, 9.81)
+        }
+
+        // Crash IMPACT
+        sm.onSample(sample(
+            time = 1_000L, peak = 80.0, smoothed = 65.0, raw = 80.0, gyro = 6.0,
+        ).copy(accelX = 0.0, accelY = 0.0, accelZ = 80.0))
+        assertEquals(CrashStateMachine.State.IMPACT, sm.state)
+        sm.onSpeedUpdate(0.0)
+
+        // Bike on side: gravity along X, baseline was along Z → angle ≈ 90°.
+        // 4.5s of quiet should be enough.
+        var tNow = 1_000L
+        val step = 20L
+        while (tNow < 1_000L + 4_500L + 1_000L) {  // +1s margin to allow IMPACT→SILENCE transition
+            tNow += step
+            val d = sm.onSample(sample(
+                time = tNow, peak = 0.0, smoothed = 9.81, raw = 9.81, gyro = 0.05,
+            ).copy(accelX = 9.81, accelY = 0.0, accelZ = 0.0))
+            if (d == CrashStateMachine.Decision.Confirm) {
+                // Confirmed — assert it happened within the legacy 4.5s + IMPACT slack window.
+                assertTrue("confirm too late: tNow=$tNow", tNow <= 1_000L + 4_500L + 1_000L)
+                return
+            }
+        }
+        org.junit.Assert.fail("Expected Decision.Confirm within 4.5s + slack of impact, never fired")
+    }
 }
