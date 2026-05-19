@@ -104,6 +104,10 @@ class CalibrationLogger(
          * Key for calibration: if this fires it was definitely not a crash.
          */
         CADENCE_GATE("CAD_GATE"),
+        /** Emitted once per ride when the orientation baseline first becomes ready,
+         *  carrying the learned gravity vector. Used by the calibration analyser
+         *  to verify that the upright reference is sensible. */
+        ORIENTATION_BASELINE("ORIENT_BASE"),
         /** Periodic ride-context snapshot — speed, accel deviation, gyro, state (every 2 min). */
         PERIODIC("PERIODIC"),
         /** Marker written when logging is enabled — anchor for elapsed_s calculations. */

@@ -170,6 +170,7 @@ class CrashDetectionManager(
     @Volatile private var lastLogTime = 0L
     @Volatile private var lastGpsStaleState = false
     @Volatile private var lastLoggedSensitivity = config.crashSensitivity
+    @Volatile private var loggedBaselineReady = false
 
     // Cached effective thresholds applied to the SM (recomputed when boost / grade change)
     @Volatile private var cachedSmoothedThr = 45.0
@@ -218,6 +219,7 @@ class CrashDetectionManager(
         lastPeriodicLogMs = 0L
         lastGpsStaleState = false
         lastLoggedSensitivity = config.crashSensitivity
+        loggedBaselineReady = false
         postImpactBoostUntil = 0L
         recentTmoTimestamps.clear()
         resetWindowAccumulators()
@@ -397,6 +399,16 @@ class CrashDetectionManager(
             stateMachine.feedBaselineSample(sample.accelX, sample.accelY, sample.accelZ)
         }
 
+        // Emit the baseline-ready event exactly once per ride.
+        if (!loggedBaselineReady && stateMachine.isBaselineReady()) {
+            loggedBaselineReady = true
+            val (bx, by, bz) = stateMachine.baselineVector()
+            calibLogger?.log(CalibrationLogger.Event.ORIENTATION_BASELINE) {
+                "baseline_x=%.3f,baseline_y=%.3f,baseline_z=%.3f,samples=${stateMachine.thresholds.baselineMinSamples}"
+                    .formatUs(bx, by, bz)
+            }
+        }
+
         val decision = stateMachine.onSample(sampleForSm)
 
         // ─── Window-progress accumulators ───────────────────────────────────
@@ -481,10 +493,13 @@ class CrashDetectionManager(
         calibLogger?.log(CalibrationLogger.Event.IMPACT_ENTER) {
             val bufStr = sensorReader.magnitudeBufferSnapshot().joinToString("|") { "%.1f".formatUs(it) }
             val gBoost = gradeBoost(currentGrade)
-            "source=$reason,raw=%.1f,smooth=%.1f,thr=%.1f,pthr=%.1f,eff_pthr=%.1f,speed=%.1f,decel=%.1f,grade=%.1f,grade_boost=%.0f,cadence=%.0f,gyro=%.2f,buf=$bufStr,noise=%.2f,profile=$currentRoutingPreference,preset=${config.crashSensitivity},boost_active=$boostActive".formatUs(
+            val (bx, by, bz) = stateMachine.baselineVector()
+            val baselineReady = stateMachine.isBaselineReady()
+            "source=$reason,raw=%.1f,smooth=%.1f,thr=%.1f,pthr=%.1f,eff_pthr=%.1f,speed=%.1f,decel=%.1f,grade=%.1f,grade_boost=%.0f,cadence=%.0f,gyro=%.2f,buf=$bufStr,noise=%.2f,profile=$currentRoutingPreference,preset=${config.crashSensitivity},boost_active=$boostActive,ax=%.2f,ay=%.2f,az=%.2f,base_ready=$baselineReady,base_x=%.2f,base_y=%.2f,base_z=%.2f".formatUs(
                 sample.rawMagnitude, sample.smoothedMagnitude, cachedSmoothedThr,
                 cachedPeakThr, cachedEffectivePeakThr, currentSpeedKmh, lastDecelerationKmhPerS,
-                currentGrade, gBoost, currentCadence, sample.gyroMag, sensorReader.accelStdDev()
+                currentGrade, gBoost, currentCadence, sample.gyroMag, sensorReader.accelStdDev(),
+                sample.accelX, sample.accelY, sample.accelZ, bx, by, bz
             )
         }
     }
