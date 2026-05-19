@@ -194,7 +194,6 @@ class CrashDetectionManager(
     private val stateMachine = CrashStateMachine(
         thresholds = buildThresholds(config, effectivePeakThr = cachedEffectivePeakThr),
         clock = clock,
-        calibLogger = null,  // facade emits the rich events with full context
     )
 
     private val speedDropMonitor = SpeedDropMonitor(

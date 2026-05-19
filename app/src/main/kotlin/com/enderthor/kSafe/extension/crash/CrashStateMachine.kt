@@ -1,9 +1,7 @@
 package com.enderthor.kSafe.extension.crash
 
-import com.enderthor.kSafe.extension.managers.CalibrationLogger
 import com.enderthor.kSafe.extension.util.Clock
 import com.enderthor.kSafe.extension.util.SystemClock
-import com.enderthor.kSafe.extension.util.formatUs
 import kotlin.math.abs
 import kotlin.math.acos
 import kotlin.math.sqrt
@@ -38,7 +36,6 @@ import kotlin.math.sqrt
 class CrashStateMachine(
     thresholds: Thresholds,
     private val clock: Clock = SystemClock,
-    private val calibLogger: CalibrationLogger? = null,
 ) {
     /**
      * Mutable thresholds reference so the facade can apply mid-ride adjustments
@@ -367,10 +364,6 @@ class CrashStateMachine(
             sample.peakMagnitude > thresholds.peakImpactThreshold -> "PEAK"
             else -> "SMOOTH"
         }
-        calibLogger?.log(CalibrationLogger.Event.IMPACT_ENTER) {
-            "peak=%.2f,smoothed=%.2f,gyro=%.2f,speed=%.1f,gps_stale=$lastSpeedGpsStale,reason=$reason"
-                .formatUs(sample.peakMagnitude, sample.smoothedMagnitude, sample.gyroMag, lastSpeedKmh)
-        }
         return Decision.EnterImpact(reason)
     }
 
@@ -471,10 +464,6 @@ class CrashStateMachine(
                 // before resetSilenceWindow() clears the latch — the facade
                 // reads this for CRASH_CONFIRMED diagnostic logging.
                 lastConfirmedSilenceMs = effectiveSilenceMs
-                calibLogger?.log(CalibrationLogger.Event.CRASH_CONFIRMED) {
-                    "total_ms=$timeSinceImpact,deviation=%.2f,speed=%.1f,gps_stale=$gpsStale"
-                        .formatUs(deviation, lastSpeedKmh)
-                }
                 resetTimers()
                 resetSilenceWindow()
                 state = State.MONITORING
