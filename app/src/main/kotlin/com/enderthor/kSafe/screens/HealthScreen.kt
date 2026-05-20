@@ -33,6 +33,7 @@ import androidx.compose.ui.unit.dp
 import com.enderthor.kSafe.R
 import com.enderthor.kSafe.activity.MainViewModel
 import com.enderthor.kSafe.data.IncidentResponseLevel
+import com.enderthor.kSafe.extension.util.ALERT_DETAIL_MAX_CHARS
 
 /**
  * Health monitoring tab — exposes the user-configurable knobs for MedicalEpisodeDetector
@@ -162,7 +163,7 @@ fun HealthScreen(vm: MainViewModel) {
                         onCommit = { v -> medicalCustomDetail = v; vm.saveConfig(config.copy(medicalCustomDetail = v)) },
                         defaultText = stringResource(R.string.warning_medical_detail),
                         tokensHint = "Tokens: {bpm}",
-                        maxLength = 80,
+                        maxLength = ALERT_DETAIL_MAX_CHARS,
                         singleLine = false,
                     )
                 }
@@ -282,7 +283,7 @@ fun HealthScreen(vm: MainViewModel) {
                     onCommit = { v -> wCriticalCustomDetail = v; vm.saveConfig(config.copy(wellnessCriticalCustomDetail = v)) },
                     defaultText = stringResource(R.string.warning_wellness_critical_hr_detail),
                     tokensHint = "Tokens: {bpm}, {threshold}, {minutes}",
-                    maxLength = 80,
+                    maxLength = ALERT_DETAIL_MAX_CHARS,
                     singleLine = false,
                 )
                 }  // end if (wCriticalOn)
@@ -349,7 +350,7 @@ fun HealthScreen(vm: MainViewModel) {
                     onCommit = { v -> wSustainedCustomDetail = v; vm.saveConfig(config.copy(wellnessSustainedCustomDetail = v)) },
                     defaultText = stringResource(R.string.warning_wellness_high_hr_detail),
                     tokensHint = "Tokens: {bpm}, {threshold}, {minutes}",
-                    maxLength = 80,
+                    maxLength = ALERT_DETAIL_MAX_CHARS,
                     singleLine = false,
                 )
                 }  // end if (wSustainedOn)
@@ -407,7 +408,7 @@ fun HealthScreen(vm: MainViewModel) {
                     onCommit = { v -> wDecouplingCustomDetail = v; vm.saveConfig(config.copy(wellnessDecouplingCustomDetail = v)) },
                     defaultText = stringResource(R.string.warning_wellness_decoupling_detail),
                     tokensHint = "Tokens: {drift}, {minutes}",
-                    maxLength = 80,
+                    maxLength = ALERT_DETAIL_MAX_CHARS,
                     singleLine = false,
                 )
                 }  // end if (wDecouplingOn)

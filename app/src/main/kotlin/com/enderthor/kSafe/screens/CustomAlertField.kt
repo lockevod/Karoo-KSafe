@@ -36,7 +36,9 @@ import com.enderthor.kSafe.extension.util.safeTake
  * @param defaultText       Built-in default text shown when nothing is saved.
  * @param tokensHint        Supporting line listing the available tokens
  *                          (e.g. "Tokens: {deficit}, {elapsed}"). May be empty.
- * @param maxLength         Hard cap on the input length (default 80).
+ * @param maxLength         Hard cap on the input length (default 80). A live `N / max`
+ *                          counter is shown so the rider can see how much room is left —
+ *                          the Karoo `InRideAlert` popup clips anything longer mid-word.
  * @param singleLine        True for single-line title fields; false for multi-line detail.
  */
 @Composable
@@ -76,6 +78,12 @@ fun CustomAlertField(
                 if (tokensHint.isNotBlank()) {
                     Text(text = tokensHint, style = MaterialTheme.typography.bodySmall)
                 }
+                // Live length counter. The Karoo InRideAlert popup clips a long detail
+                // mid-word, so this is the rider's cue to keep the text within budget.
+                Text(
+                    text = "${displayValue.length} / $maxLength — keep it short to fit the alert popup",
+                    style = MaterialTheme.typography.bodySmall,
+                )
             }
         },
         singleLine = singleLine,

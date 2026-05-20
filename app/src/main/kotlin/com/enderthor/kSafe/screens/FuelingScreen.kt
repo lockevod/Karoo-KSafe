@@ -44,6 +44,7 @@ import com.enderthor.kSafe.activity.MainViewModel
 import com.enderthor.kSafe.data.CarbRidePreset
 import com.enderthor.kSafe.data.FUELING_ALERT_COLORS
 import com.enderthor.kSafe.data.fuelingAlertColorRes
+import com.enderthor.kSafe.extension.util.ALERT_DETAIL_MAX_CHARS
 import com.enderthor.kSafe.extension.util.safeTake
 
 @Composable
@@ -225,7 +226,7 @@ fun FuelingScreen(vm: MainViewModel) {
                     onCommit = { v -> carbCustomDetail = v; vm.saveConfig(config.copy(carbAlertCustomDetail = v)) },
                     defaultText = stringResource(R.string.fueling_carb_alert_detail_deficit),
                     tokensHint = "Tokens: {deficit}, {elapsed}, {target}",
-                    maxLength = 80,
+                    maxLength = ALERT_DETAIL_MAX_CHARS,
                     singleLine = false,
                 )
                 BeepPatternPicker(
@@ -391,7 +392,7 @@ fun FuelingScreen(vm: MainViewModel) {
                     onCommit = { v -> hydCustomDetail = v; vm.saveConfig(config.copy(hydrationAlertCustomDetail = v)) },
                     defaultText = stringResource(R.string.fueling_hyd_alert_detail_deficit),
                     tokensHint = "Tokens: {deficit}, {elapsed}, {target}",
-                    maxLength = 80,
+                    maxLength = ALERT_DETAIL_MAX_CHARS,
                     singleLine = false,
                 )
                 BeepPatternPicker(

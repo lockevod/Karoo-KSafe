@@ -9,12 +9,14 @@ package com.enderthor.kSafe.extension.util
 const val ALERT_TITLE_MAX_CHARS = 40
 
 /**
- * Hard cap on the rendered alert detail. The Karoo popup wraps the detail to ~2 lines, which
- * fits roughly 80–90 chars depending on autoSize. We cap at 90 with an ellipsis so even the
- * worst-case rider template (80 chars input + token expansion) cannot exceed what the popup
- * can render.
+ * Hard cap on the rendered alert detail. The Karoo `InRideAlert` popup clips the detail to a
+ * single proportional-font line and appends its own `…` — measured on real hardware it shows
+ * only ~34 chars of typical text before cutting mid-word (the SDK note's "~90" is far too
+ * optimistic). We cap at 34 so [renderAlertText] truncates cleanly on a code-point boundary
+ * *before* the host does its ugly mid-word clip — this protects custom rider templates too.
+ * Default templates in `strings.xml` are kept comfortably under this so they never truncate.
  */
-const val ALERT_DETAIL_MAX_CHARS = 90
+const val ALERT_DETAIL_MAX_CHARS = 34
 
 /**
  * Substitutes `{token}` placeholders in alert title/detail templates with current data.
