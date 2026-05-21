@@ -43,7 +43,16 @@ class SosOverlayManager(private val context: Context) {
                     return@post
                 }
 
-                if (overlayView == null) {
+                // Add a fresh overlay when there is none, OR when the held
+                // reference is stale — a detached view left behind by a
+                // removeView() that threw. Updating text on a detached view
+                // would silently leave the rider with no visible overlay.
+                val existing = overlayView
+                if (existing == null || !existing.isAttachedToWindow) {
+                    if (existing != null) {
+                        runCatching { windowManager.removeView(existing) }
+                        overlayView = null
+                    }
                     val inflater = LayoutInflater.from(context)
                     val view = inflater.inflate(R.layout.overlay_sos_cancel, null, false)
 
@@ -98,11 +107,10 @@ class SosOverlayManager(private val context: Context) {
                 Timber.d("SosOverlay: removed")
                 overlayView = null  // only clear if the remove call actually succeeded
             } catch (e: Exception) {
-                // If removeView throws but we still null the field, a subsequent show
-                // would short-circuit on the `overlayView == null` guard and the rider
-                // would lose all overlay updates silently. Leave overlayView non-null
-                // so the next showOrUpdate retries (it idempotently calls updateView
-                // when the view is attached, or re-adds if WindowManager has dropped it).
+                // Keep the reference: if the view is still attached, the next
+                // showOrUpdate updates it in place; if removeView left it
+                // detached, showOrUpdate detects that (isAttachedToWindow) and
+                // re-adds a fresh overlay. Either way the rider is not stranded.
                 Timber.w(e, "SosOverlay: removeView threw — keeping reference for next show")
             }
         }
