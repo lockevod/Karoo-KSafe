@@ -1242,8 +1242,9 @@ class KSafeExtension : KarooExtension("ksafe", BuildConfig.VERSION_NAME), Corout
                 val targetLat = if (slot == 1) config.webhook1GeoLat else config.webhook2GeoLat
                 val targetLon = if (slot == 1) config.webhook1GeoLon else config.webhook2GeoLon
                 val radiusM   = if (slot == 1) config.webhook1GeoRadiusM else config.webhook2GeoRadiusM
-                val curLat = locationManager.lastLat
-                val curLon = locationManager.lastLng
+                val curFix = locationManager.currentFix()
+                val curLat = curFix?.lat ?: 0.0
+                val curLon = curFix?.lng ?: 0.0
                 if (curLat == 0.0 && curLon == 0.0) {
                     WebhookState.update(slot, WebhookState.ERROR, "no GPS")
                     launch { kotlinx.coroutines.delay(4_000L); WebhookState.update(slot, WebhookState.IDLE) }
@@ -1468,7 +1469,7 @@ class KSafeExtension : KarooExtension("ksafe", BuildConfig.VERSION_NAME), Corout
      * Used by the Settings UI to pre-fill the geo-fence target coordinates.
      */
     fun getCurrentLocation(): Pair<Double, Double> =
-        Pair(locationManager.lastLat, locationManager.lastLng)
+        locationManager.currentFix()?.let { Pair(it.lat, it.lng) } ?: Pair(0.0, 0.0)
 
     // ─── Helpers ──────────────────────────────────────────────────────────────
 

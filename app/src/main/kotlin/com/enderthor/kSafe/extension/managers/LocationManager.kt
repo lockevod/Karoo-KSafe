@@ -12,6 +12,9 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withTimeout
 import timber.log.Timber
 
+/** An immutable GPS fix — latitude, longitude and the wall-clock time it was sampled. */
+data class GpsFix(val lat: Double, val lng: Double, val sampleTimeMs: Long)
+
 /**
  * Tracks the device's GPS position.
  *
@@ -35,18 +38,17 @@ class LocationManager(
 ) {
     // (Constants in the companion object at the bottom of the file.)
 
-    // @Volatile: written from the location-stream coroutine on Default and read from any
-    // dispatcher when an emergency builds the {location} link. `Double` writes are not
-    // atomic on every JVM, and even where they are, visibility across threads requires
-    // either volatile or synchronization. Volatile is cheaper than a lock here because
-    // the two fields are independent doubles — a torn write would produce coordinates
-    // mixed between the previous and current sample, plotting to the wrong place.
-    @Volatile var lastLat: Double = 0.0
-        private set
-    @Volatile var lastLng: Double = 0.0
-        private set
-    @Volatile private var lastSampleTime: Long = 0L
+    // @Volatile: the fix is written from the location-stream coroutine on Default and
+    // read from any dispatcher when an emergency builds the {location} link. Storing
+    // lat+lng+timestamp as a single immutable [GpsFix] behind ONE volatile reference
+    // means a reader always gets a self-consistent triple — it can never pair a
+    // latitude from one sample with a longitude from the next. Reference writes are
+    // atomic; volatile supplies the cross-thread visibility.
+    @Volatile private var lastFix: GpsFix? = null
     private var locationJob: Job? = null
+
+    /** The most recent stored GPS fix as a single atomic snapshot, or null if none yet. */
+    fun currentFix(): GpsFix? = lastFix
 
     @OptIn(kotlinx.coroutines.FlowPreview::class)
     fun start() {
@@ -71,10 +73,8 @@ class LocationManager(
             karooSystem.streamLocation()
                 .sample(LOCATION_SAMPLE_MS)
                 .collect { event ->
-                    lastSampleTime = System.currentTimeMillis()
-                    lastLat = event.lat
-                    lastLng = event.lng
-                    if (BuildConfig.DEBUG) Timber.d("Location sampled: $lastLat, $lastLng")
+                    lastFix = GpsFix(event.lat, event.lng, System.currentTimeMillis())
+                    if (BuildConfig.DEBUG) Timber.d("Location sampled: ${event.lat}, ${event.lng}")
                 }
         }
     }
@@ -85,8 +85,9 @@ class LocationManager(
 
     /** Returns the cached Google Maps link, or null if no fix has been stored yet. */
     fun getLocationLink(): String? {
-        if (lastLat == 0.0 && lastLng == 0.0) return null
-        return "https://maps.google.com/?q=$lastLat,$lastLng"
+        val fix = lastFix ?: return null
+        if (fix.lat == 0.0 && fix.lng == 0.0) return null
+        return "https://maps.google.com/?q=${fix.lat},${fix.lng}"
     }
 
     /**
@@ -103,8 +104,9 @@ class LocationManager(
      */
     suspend fun getFreshLocationLink(timeoutMs: Long = 5_000L): String? {
         val now = System.currentTimeMillis()
-        if (lastSampleTime > 0L && now - lastSampleTime < REUSE_CACHED_FRESH_MS) {
-            if (BuildConfig.DEBUG) Timber.d("Reusing cached location (${(now - lastSampleTime) / 1000}s old)")
+        val cached = lastFix
+        if (cached != null && cached.sampleTimeMs > 0L && now - cached.sampleTimeMs < REUSE_CACHED_FRESH_MS) {
+            if (BuildConfig.DEBUG) Timber.d("Reusing cached location (${(now - cached.sampleTimeMs) / 1000}s old)")
             return getLocationLink()
         }
         return try {
@@ -112,10 +114,8 @@ class LocationManager(
                 karooSystem.streamLocation().first()
             }
             // Update cache with the fresh fix
-            lastLat = event.lat
-            lastLng = event.lng
-            lastSampleTime = System.currentTimeMillis()
-            if (BuildConfig.DEBUG) Timber.d("Fresh location obtained: $lastLat, $lastLng")
+            lastFix = GpsFix(event.lat, event.lng, System.currentTimeMillis())
+            if (BuildConfig.DEBUG) Timber.d("Fresh location obtained: ${event.lat}, ${event.lng}")
             "https://maps.google.com/?q=${event.lat},${event.lng}"
         } catch (_: TimeoutCancellationException) {
             Timber.w("Fresh location timed out after ${timeoutMs}ms, falling back to cached location")
