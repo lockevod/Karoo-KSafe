@@ -142,7 +142,7 @@ fun ProviderScreen(vm: MainViewModel) {
         ) {
             listOf(ProviderType.CALLMEBOT, ProviderType.PUSHOVER).forEach { provider ->
                 FilterChip(
-                    selected = activeProvider == provider,
+                    selected = fieldsProvider == provider,
                     onClick = { onProviderClick(provider) },
                     modifier = Modifier.weight(1f),
                     label = {
@@ -160,7 +160,7 @@ fun ProviderScreen(vm: MainViewModel) {
         ) {
             listOf(ProviderType.NTFY, ProviderType.TELEGRAM).forEach { provider ->
                 FilterChip(
-                    selected = activeProvider == provider,
+                    selected = fieldsProvider == provider,
                     onClick = { onProviderClick(provider) },
                     modifier = Modifier.weight(1f),
                     label = {
@@ -183,7 +183,7 @@ fun ProviderScreen(vm: MainViewModel) {
 
         // Provider description
         Text(
-            text = when (activeProvider) {
+            text = when (fieldsProvider) {
                 ProviderType.CALLMEBOT  -> stringResource(R.string.callmebot_description)
                 ProviderType.PUSHOVER   -> stringResource(R.string.pushover_description)
                 ProviderType.NTFY       -> stringResource(R.string.ntfy_description)
@@ -194,7 +194,7 @@ fun ProviderScreen(vm: MainViewModel) {
         )
 
         // CallMeBot: recipient 1 phone number (the API key field below is recipient 1's key)
-        if (activeProvider == ProviderType.CALLMEBOT) {
+        if (fieldsProvider == ProviderType.CALLMEBOT) {
             OutlinedTextField(
                 value = phoneNumber,
                 onValueChange = { phoneNumber = it },
@@ -210,7 +210,7 @@ fun ProviderScreen(vm: MainViewModel) {
             onValueChange = { apiKey = it },
             label = {
                 Text(
-                    when (activeProvider) {
+                    when (fieldsProvider) {
                         ProviderType.CALLMEBOT  -> stringResource(R.string.callmebot_apikey_hint)
                         ProviderType.PUSHOVER   -> stringResource(R.string.pushover_app_token_hint)
                         ProviderType.NTFY       -> stringResource(R.string.ntfy_topic_hint)
@@ -224,7 +224,7 @@ fun ProviderScreen(vm: MainViewModel) {
 
         // CallMeBot: optional second recipient (each recipient needs its own phone + API key
         // because CallMeBot can't fan-out a single request to multiple WhatsApp numbers).
-        if (activeProvider == ProviderType.CALLMEBOT) {
+        if (fieldsProvider == ProviderType.CALLMEBOT) {
             OutlinedTextField(
                 value = phoneNumber2,
                 onValueChange = { phoneNumber2 = it },
@@ -256,7 +256,7 @@ fun ProviderScreen(vm: MainViewModel) {
         }
 
         // Pushover user keys (up to 3 recipients)
-        if (activeProvider == ProviderType.PUSHOVER) {
+        if (fieldsProvider == ProviderType.PUSHOVER) {
             OutlinedTextField(
                 value = userKey,
                 onValueChange = { userKey = it },
@@ -281,7 +281,7 @@ fun ProviderScreen(vm: MainViewModel) {
         }
 
         // Telegram chat IDs (up to 3 recipients)
-        if (activeProvider == ProviderType.TELEGRAM) {
+        if (fieldsProvider == ProviderType.TELEGRAM) {
             OutlinedTextField(
                 value = userKey,
                 onValueChange = { userKey = it },
@@ -313,10 +313,10 @@ fun ProviderScreen(vm: MainViewModel) {
                     ?: return@TestActionButton "Extension not connected — wait a moment and try again."
                 // Flush any pending auto-save before testing.
                 vm.updateSenderConfig(
-                    activeProvider, apiKey, userKey, userKey2, userKey3,
+                    fieldsProvider, apiKey, userKey, userKey2, userKey3,
                     phoneNumber, apiKey2, phoneNumber2, apiKey3, phoneNumber3,
                 )
-                ext.sendTestMessage(activeProvider)
+                ext.sendTestMessage(fieldsProvider)
             }
         )
     }
