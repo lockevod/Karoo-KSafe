@@ -151,14 +151,14 @@ fun HealthScreen(vm: MainViewModel) {
                         modifier = Modifier.padding(horizontal = 4.dp, vertical = 2.dp),
                     )
                     CustomAlertField(
-                        label = "Custom title",
+                        label = stringResource(R.string.health_custom_title_label),
                         value = medicalCustomTitle,
                         onCommit = { v -> medicalCustomTitle = v; vm.saveConfig(config.copy(medicalCustomTitle = v)) },
                         defaultText = stringResource(R.string.warning_medical_title),
                         maxLength = 30,
                     )
                     CustomAlertField(
-                        label = "Custom detail",
+                        label = stringResource(R.string.health_custom_detail_label),
                         value = medicalCustomDetail,
                         onCommit = { v -> medicalCustomDetail = v; vm.saveConfig(config.copy(medicalCustomDetail = v)) },
                         defaultText = stringResource(R.string.warning_medical_detail),
@@ -271,14 +271,14 @@ fun HealthScreen(vm: MainViewModel) {
                     singleLine = true,
                 )
                 CustomAlertField(
-                    label = "Critical alert title",
+                    label = stringResource(R.string.health_critical_title_label),
                     value = wCriticalCustomTitle,
                     onCommit = { v -> wCriticalCustomTitle = v; vm.saveConfig(config.copy(wellnessCriticalCustomTitle = v)) },
                     defaultText = stringResource(R.string.warning_wellness_critical_hr_title),
                     maxLength = 30,
                 )
                 CustomAlertField(
-                    label = "Critical alert detail",
+                    label = stringResource(R.string.health_critical_detail_label),
                     value = wCriticalCustomDetail,
                     onCommit = { v -> wCriticalCustomDetail = v; vm.saveConfig(config.copy(wellnessCriticalCustomDetail = v)) },
                     defaultText = stringResource(R.string.warning_wellness_critical_hr_detail),
@@ -338,14 +338,14 @@ fun HealthScreen(vm: MainViewModel) {
                     singleLine = true,
                 )
                 CustomAlertField(
-                    label = "Sustained alert title",
+                    label = stringResource(R.string.health_sustained_title_label),
                     value = wSustainedCustomTitle,
                     onCommit = { v -> wSustainedCustomTitle = v; vm.saveConfig(config.copy(wellnessSustainedCustomTitle = v)) },
                     defaultText = stringResource(R.string.warning_wellness_high_hr_title),
                     maxLength = 30,
                 )
                 CustomAlertField(
-                    label = "Sustained alert detail",
+                    label = stringResource(R.string.health_sustained_detail_label),
                     value = wSustainedCustomDetail,
                     onCommit = { v -> wSustainedCustomDetail = v; vm.saveConfig(config.copy(wellnessSustainedCustomDetail = v)) },
                     defaultText = stringResource(R.string.warning_wellness_high_hr_detail),
@@ -396,14 +396,14 @@ fun HealthScreen(vm: MainViewModel) {
                     singleLine = true,
                 )
                 CustomAlertField(
-                    label = "Decoupling alert title",
+                    label = stringResource(R.string.health_decoupling_title_label),
                     value = wDecouplingCustomTitle,
                     onCommit = { v -> wDecouplingCustomTitle = v; vm.saveConfig(config.copy(wellnessDecouplingCustomTitle = v)) },
                     defaultText = stringResource(R.string.warning_wellness_decoupling_title),
                     maxLength = 30,
                 )
                 CustomAlertField(
-                    label = "Decoupling alert detail",
+                    label = stringResource(R.string.health_decoupling_detail_label),
                     value = wDecouplingCustomDetail,
                     onCommit = { v -> wDecouplingCustomDetail = v; vm.saveConfig(config.copy(wellnessDecouplingCustomDetail = v)) },
                     defaultText = stringResource(R.string.warning_wellness_decoupling_detail),
