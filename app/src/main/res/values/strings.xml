@@ -214,6 +214,11 @@
     <string name="crash_detection_label">Automatic crash detection</string>
     <string name="safety_buzzer_mute_title">If your Karoo is muted, alerts make no sound</string>
     <string name="safety_buzzer_mute_hint">KSafe can\'t override the device mute. Everything else still works — alerts fire and messages are sent normally.</string>
+    <string name="health_maxhr_not_loaded">Karoo profile maxHr not loaded yet — set it in Karoo\'s User Profile.</string>
+    <string name="health_pct_enter_range">Enter 60–100 to see the resolved bpm threshold (your maxHr = %1$d).</string>
+    <string name="health_pct_resolved_bpm">= %1$d bpm (your maxHr = %2$d)</string>
+    <string name="custom_alert_using_default">Using default — edit to override</string>
+    <string name="custom_alert_length_counter">%1$d / %2$d — keep it short to fit the alert popup</string>
     <string name="crash_sensitivity_label">Crash detection sensitivity</string>
     <string name="sensitivity_low">Low</string>
     <string name="sensitivity_medium">Medium</string>

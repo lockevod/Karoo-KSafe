@@ -137,7 +137,7 @@ class MedicalEpisodeDetectorTest {
         // Re-mark rider as recently active so the activity gate doesn't trip.
         f.speed(20.0)
         f.detector.tick()
-        assertTrue("collapse should fire: $${f.captured}", f.captured != null)
+        assertTrue("collapse should fire: ${f.captured}", f.captured != null)
         assertEquals(EmergencyReason.MEDICAL_COLLAPSE, f.captured!!.first)
     }
 

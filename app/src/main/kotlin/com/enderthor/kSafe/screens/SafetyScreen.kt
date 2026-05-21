@@ -123,7 +123,9 @@ fun SafetyScreen(vm: MainViewModel) {
         // rider relying on KSafe for emergencies knows that muting the device
         // silences every audible alert, with no detection or override path.
         Card(
-            colors = CardDefaults.cardColors(containerColor = Color(0xFFFFF3CD)),
+            colors = CardDefaults.cardColors(
+                containerColor = MaterialTheme.colorScheme.tertiaryContainer
+            ),
             elevation = CardDefaults.cardElevation(defaultElevation = 2.dp),
         ) {
             Column(modifier = Modifier.padding(8.dp)) {
@@ -131,12 +133,12 @@ fun SafetyScreen(vm: MainViewModel) {
                     text = stringResource(R.string.safety_buzzer_mute_title),
                     style = MaterialTheme.typography.bodySmall,
                     fontWeight = FontWeight.Bold,
-                    color = Color(0xFF856404)
+                    color = MaterialTheme.colorScheme.onTertiaryContainer
                 )
                 Text(
                     text = stringResource(R.string.safety_buzzer_mute_hint),
                     style = MaterialTheme.typography.bodySmall,
-                    color = Color(0xFF664D03)
+                    color = MaterialTheme.colorScheme.onTertiaryContainer
                 )
             }
         }

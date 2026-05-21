@@ -537,11 +537,11 @@ private fun PercentFieldWithBpmHint(
         val pct = value.toIntOrNull()
         val hint = when {
             maxHr == null || maxHr <= 0 ->
-                "Karoo profile maxHr not loaded yet — set it in Karoo's User Profile."
+                stringResource(R.string.health_maxhr_not_loaded)
             pct == null || pct !in 60..100 ->
-                "Enter 60–100 to see the resolved bpm threshold (your maxHr = $maxHr)."
+                stringResource(R.string.health_pct_enter_range, maxHr)
             else ->
-                "= ${maxHr * pct / 100} bpm (your maxHr = $maxHr)"
+                stringResource(R.string.health_pct_resolved_bpm, maxHr * pct / 100, maxHr)
         }
         Text(
             text = hint,

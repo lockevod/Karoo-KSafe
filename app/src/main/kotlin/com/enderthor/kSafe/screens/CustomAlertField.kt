@@ -7,7 +7,9 @@ import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontStyle
+import com.enderthor.kSafe.R
 import com.enderthor.kSafe.extension.util.safeTake
 
 /**
@@ -70,7 +72,7 @@ fun CustomAlertField(
             Column {
                 if (isFollowingDefault) {
                     Text(
-                        text = "Using default — edit to override",
+                        text = stringResource(R.string.custom_alert_using_default),
                         style = MaterialTheme.typography.bodySmall,
                         fontStyle = FontStyle.Italic,
                     )
@@ -81,7 +83,11 @@ fun CustomAlertField(
                 // Live length counter. The Karoo InRideAlert popup clips a long detail
                 // mid-word, so this is the rider's cue to keep the text within budget.
                 Text(
-                    text = "${displayValue.length} / $maxLength — keep it short to fit the alert popup",
+                    text = stringResource(
+                        R.string.custom_alert_length_counter,
+                        displayValue.length,
+                        maxLength,
+                    ),
                     style = MaterialTheme.typography.bodySmall,
                 )
             }

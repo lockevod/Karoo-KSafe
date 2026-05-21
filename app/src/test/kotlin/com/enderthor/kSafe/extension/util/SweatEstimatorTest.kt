@@ -32,7 +32,7 @@ class SweatEstimatorTest {
     }
 
     @Test
-    fun `high intensity hot humid conditions reaches 1300-1900 ml per hour`() {
+    fun `high intensity hot humid conditions reaches 1200-2000 ml per hour`() {
         // 70 kg, 170 bpm, 30 °C, 70 % RH — threshold work in summer.
         // Baker 2017 / Cheuvront 2014: ~1.5–2.0 L/hr in hot conditions at high intensity.
         val out = estimateSweatRate(SweatEstimateInputs(

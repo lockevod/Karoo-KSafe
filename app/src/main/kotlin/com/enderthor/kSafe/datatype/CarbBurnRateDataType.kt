@@ -7,7 +7,6 @@ import android.widget.RemoteViews
 import com.enderthor.kSafe.R
 import com.enderthor.kSafe.extension.KSafeExtension
 import com.enderthor.kSafe.extension.managers.CarbStatus
-import io.hammerhead.karooext.KarooSystemService
 import io.hammerhead.karooext.extension.DataTypeImpl
 import io.hammerhead.karooext.internal.ViewEmitter
 import io.hammerhead.karooext.models.ShowCustomStreamState
@@ -33,7 +32,8 @@ import timber.log.Timber
  * sensors are paired (neutral multiplier = 1.0), and scaled by the intensity zone when
  * sensors are available. Coherent with the burned / deficit fields, which freeze under
  * the exact same gate.
- * Polled once per second from [com.enderthor.kSafe.extension.managers.CarbsTracker].
+ * Push-based — driven by `statusFlow` emissions from
+ * [com.enderthor.kSafe.extension.managers.CarbsTracker].
  *
  * No rider-pickable colour: this is a passive info field, so it always inflates
  * `field_view_auto.xml` (Karoo-theme passthrough — black/white auto day/night, matches
@@ -42,7 +42,6 @@ import timber.log.Timber
 class CarbBurnRateDataType(
     datatype: String,
     private val context: Context,
-    private val karooSystem: KarooSystemService,
 ) : DataTypeImpl("ksafe", datatype) {
 
     private fun buildView(viewConfig: ViewConfig, main: String, hint: String): RemoteViews {

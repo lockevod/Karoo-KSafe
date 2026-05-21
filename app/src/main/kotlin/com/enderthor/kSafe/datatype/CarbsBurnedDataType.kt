@@ -7,7 +7,6 @@ import android.widget.RemoteViews
 import com.enderthor.kSafe.R
 import com.enderthor.kSafe.extension.KSafeExtension
 import com.enderthor.kSafe.extension.managers.CarbStatus
-import io.hammerhead.karooext.KarooSystemService
 import io.hammerhead.karooext.extension.DataTypeImpl
 import io.hammerhead.karooext.internal.ViewEmitter
 import io.hammerhead.karooext.models.ShowCustomStreamState
@@ -29,15 +28,14 @@ import timber.log.Timber
 /**
  * Cumulative carbs burned this session in grams — i.e. the integrated zone-aware target.
  * Companion to [CarbBurnRateDataType] (instantaneous rate) and [CarbStatusDataType]
- * (deficit between burned and logged). Polled once per second from
- * [com.enderthor.kSafe.extension.managers.CarbsTracker].
+ * (deficit between burned and logged). Push-based — driven by `statusFlow` emissions
+ * from [com.enderthor.kSafe.extension.managers.CarbsTracker].
  *
  * No rider-pickable colour: always inflates `field_view_auto.xml` (Karoo-theme passthrough).
  */
 class CarbsBurnedDataType(
     datatype: String,
     private val context: Context,
-    private val karooSystem: KarooSystemService,
 ) : DataTypeImpl("ksafe", datatype) {
 
     private fun buildView(viewConfig: ViewConfig, main: String, hint: String): RemoteViews {
