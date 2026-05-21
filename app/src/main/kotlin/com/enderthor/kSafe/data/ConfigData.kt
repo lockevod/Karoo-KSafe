@@ -64,8 +64,13 @@ const val KAROO_LIVE_BASE_URL = "https://dashboard.hammerhead.io/live/"
  *             default (60) to the new default (50) so the new burn-rate-tracking multiplier
  *             produces sensible per-zone targets out of the box. Riders who had manually
  *             customised the target keep their value untouched. Pure version stamp otherwise.
+ *  v13 → v14: carbAlertCustomDetail / hydrationAlertCustomDetail are each split into a
+ *             per-source pair (…DetailTime + …DetailDeficit). The legacy single field is
+ *             carried forward into BOTH new fields so a rider who had customised the message
+ *             keeps the previous "same text for time and deficit" behaviour. A blank legacy
+ *             field leaves the new fields blank → the source-specific default strings apply.
  */
-const val CONFIG_VERSION = 13
+const val CONFIG_VERSION = 14
 
 /**
  * Canonical minSpeedForCrashKmh value per preset.
@@ -994,6 +999,26 @@ fun KSafeConfig.migrateToLatest(): KSafeConfig {
             "KSafeConfig migrated v%d→v13 (carb burn-rate tracking; target %d→%d)",
             originalVersion, 60, newTarget,
         )
+    }
+
+    if (c.configVersion < 14) {
+        // v13 → v14: the single carbAlertCustomDetail / hydrationAlertCustomDetail field is
+        // split into per-source …DetailTime + …DetailDeficit fields. Carry a previously-saved
+        // custom message forward into BOTH new fields so a rider who customised the message
+        // keeps the previous "same text for time and deficit" behaviour. A blank legacy field
+        // leaves the new fields blank → the source-specific default strings apply, as before.
+        @Suppress("DEPRECATION")
+        val carbLegacy = c.carbAlertCustomDetail
+        @Suppress("DEPRECATION")
+        val hydLegacy = c.hydrationAlertCustomDetail
+        c = c.copy(
+            carbAlertCustomDetailTime = c.carbAlertCustomDetailTime.ifBlank { carbLegacy },
+            carbAlertCustomDetailDeficit = c.carbAlertCustomDetailDeficit.ifBlank { carbLegacy },
+            hydrationAlertCustomDetailTime = c.hydrationAlertCustomDetailTime.ifBlank { hydLegacy },
+            hydrationAlertCustomDetailDeficit = c.hydrationAlertCustomDetailDeficit.ifBlank { hydLegacy },
+            configVersion = 14,
+        )
+        Timber.i("KSafeConfig migrated v%d→v14 (split fueling alert detail messages)", originalVersion)
     }
 
     return c
