@@ -113,13 +113,18 @@ class WebhookDataType(
                 setTextColor(R.id.field_text_hint, if (dark) 0xCCFFFFFF.toInt() else 0xCC000000.toInt())
             }
         }
-        if (!viewConfig.preview && clickable) {
-            val wrapper = RemoteViews(context.packageName, R.layout.field_tap_wrapper)
+        // Always wrap in field_tap_wrapper in non-preview mode so the structural
+        // RemoteViews layout stays identical across IDLE / FIRING / OFF. Karoo's
+        // OS re-attaches the click handler whenever the top-level RemoteViews
+        // structure changes; returning raw content on the non-clickable branches
+        // would lose rapid taps during the structural swap. See CarbLogDataType.
+        if (viewConfig.preview) return content
+        val wrapper = RemoteViews(context.packageName, R.layout.field_tap_wrapper)
+        if (clickable) {
             wrapper.setOnClickPendingIntent(R.id.field_tap_wrapper, pendingIntentFor(context))
-            wrapper.addView(R.id.field_tap_wrapper, content)
-            return wrapper
         }
-        return content
+        wrapper.addView(R.id.field_tap_wrapper, content)
+        return wrapper
     }
 
     override fun startView(context: Context, config: ViewConfig, emitter: ViewEmitter) {
