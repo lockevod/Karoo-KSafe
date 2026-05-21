@@ -1045,12 +1045,16 @@ fun KSafeConfig.materializeAlertDefaults(context: Context): KSafeConfig = copy(
     // ── Fueling alerts ─────────────────────────────────────────────────────
     carbAlertCustomTitle =
         carbAlertCustomTitle.ifBlank { context.getString(R.string.fueling_carb_alert_title) },
-    carbAlertCustomDetail =
-        carbAlertCustomDetail.ifBlank { context.getString(R.string.fueling_carb_alert_detail_deficit) },
+    carbAlertCustomDetailTime =
+        carbAlertCustomDetailTime.ifBlank { context.getString(R.string.fueling_carb_alert_detail_time) },
+    carbAlertCustomDetailDeficit =
+        carbAlertCustomDetailDeficit.ifBlank { context.getString(R.string.fueling_carb_alert_detail_deficit) },
     hydrationAlertCustomTitle =
         hydrationAlertCustomTitle.ifBlank { context.getString(R.string.fueling_hyd_alert_title) },
-    hydrationAlertCustomDetail =
-        hydrationAlertCustomDetail.ifBlank { context.getString(R.string.fueling_hyd_alert_detail_deficit) },
+    hydrationAlertCustomDetailTime =
+        hydrationAlertCustomDetailTime.ifBlank { context.getString(R.string.fueling_hyd_alert_detail_time) },
+    hydrationAlertCustomDetailDeficit =
+        hydrationAlertCustomDetailDeficit.ifBlank { context.getString(R.string.fueling_hyd_alert_detail_deficit) },
     // ── Medical incidents ──────────────────────────────────────────────────
     medicalCustomTitle =
         medicalCustomTitle.ifBlank { context.getString(R.string.warning_medical_title) },
