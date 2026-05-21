@@ -1143,8 +1143,7 @@ class KSafeExtension : KarooExtension("ksafe", BuildConfig.VERSION_NAME), Corout
      * Background: per the in-house design guide system notifications should not fire
      * mid-ride. The webhook tap is rider-initiated so suppression isn't the right call
      * (the rider IS expecting feedback) — switching channel is.
-     */
-    /**
+     *
      * @param bgColorRes Android @ColorRes ID (e.g. `R.color.alert_red`). NOT a packed
      *   ARGB int — the Karoo SDK's InRideAlert.backgroundColor passes its argument to
      *   `Context.getColor()`, which interprets a packed int as a resource ID and crashes

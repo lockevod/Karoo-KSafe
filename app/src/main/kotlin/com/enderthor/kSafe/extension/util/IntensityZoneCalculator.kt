@@ -76,7 +76,7 @@ object IntensityZoneCalculator {
  *  - [source]: which sensor stream the snapshot was derived from, or NONE when no zones could be matched.
  *  - [index]: 0-based zone index; -1 when source = NONE.
  *  - [total]: number of configured zones for the source (typically 5 for HR, 7 for power); 0 when NONE.
- *  - [multiplier]: 0.7..1.3 within configured zones, 1.0 when NONE (neutral fallback).
+ *  - [multiplier]: [MIN_MULT]..[MAX_MULT] within configured zones, 1.0 when NONE (neutral fallback).
  */
 data class ZoneSnapshot(
     val source: ZoneSource,
