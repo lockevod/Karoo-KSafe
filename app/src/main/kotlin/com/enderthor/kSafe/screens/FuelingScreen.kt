@@ -62,7 +62,8 @@ fun FuelingScreen(vm: MainViewModel) {
     var carbTimeInterval     by remember(config.carbTimeIntervalMin)        { mutableStateOf(config.carbTimeIntervalMin.toString()) }
     var carbTimeInitialDelay by remember(config.carbTimeInitialDelayMin)    { mutableStateOf(config.carbTimeInitialDelayMin.toString()) }
     var carbCustomTitle      by remember(config.carbAlertCustomTitle)        { mutableStateOf(config.carbAlertCustomTitle) }
-    var carbCustomDetail     by remember(config.carbAlertCustomDetail)       { mutableStateOf(config.carbAlertCustomDetail) }
+    var carbCustomDetailTime    by remember(config.carbAlertCustomDetailTime)    { mutableStateOf(config.carbAlertCustomDetailTime) }
+    var carbCustomDetailDeficit by remember(config.carbAlertCustomDetailDeficit) { mutableStateOf(config.carbAlertCustomDetailDeficit) }
     var carb1Label           by remember(config.carb1Label)                  { mutableStateOf(config.carb1Label) }
     var carb1Grams           by remember(config.carb1Grams)                  { mutableStateOf(config.carb1Grams.toString()) }
     var carb1Color           by remember(config.carb1Color)                  { mutableStateOf(config.carb1Color) }
@@ -88,7 +89,8 @@ fun FuelingScreen(vm: MainViewModel) {
     var hydTimeInterval      by remember(config.hydrationTimeIntervalMin)       { mutableStateOf(config.hydrationTimeIntervalMin.toString()) }
     var hydTimeInitialDelay  by remember(config.hydrationTimeInitialDelayMin)   { mutableStateOf(config.hydrationTimeInitialDelayMin.toString()) }
     var hydCustomTitle       by remember(config.hydrationAlertCustomTitle)      { mutableStateOf(config.hydrationAlertCustomTitle) }
-    var hydCustomDetail      by remember(config.hydrationAlertCustomDetail)     { mutableStateOf(config.hydrationAlertCustomDetail) }
+    var hydCustomDetailTime    by remember(config.hydrationAlertCustomDetailTime)    { mutableStateOf(config.hydrationAlertCustomDetailTime) }
+    var hydCustomDetailDeficit by remember(config.hydrationAlertCustomDetailDeficit) { mutableStateOf(config.hydrationAlertCustomDetailDeficit) }
     var drink1Label          by remember(config.drink1Label)                     { mutableStateOf(config.drink1Label) }
     var drink1Ml             by remember(config.drink1Ml)                        { mutableStateOf(config.drink1Ml.toString()) }
     var drink1Color          by remember(config.drink1Color)                     { mutableStateOf(config.drink1Color) }
@@ -221,9 +223,18 @@ fun FuelingScreen(vm: MainViewModel) {
                     maxLength = 30,
                 )
                 CustomAlertField(
-                    label = "Carb alert detail",
-                    value = carbCustomDetail,
-                    onCommit = { v -> carbCustomDetail = v; vm.saveConfig(config.copy(carbAlertCustomDetail = v)) },
+                    label = "Carb alert detail (time)",
+                    value = carbCustomDetailTime,
+                    onCommit = { v -> carbCustomDetailTime = v; vm.saveConfig(config.copy(carbAlertCustomDetailTime = v)) },
+                    defaultText = stringResource(R.string.fueling_carb_alert_detail_time),
+                    tokensHint = "Tokens: {deficit}, {elapsed}, {target}",
+                    maxLength = ALERT_DETAIL_MAX_CHARS,
+                    singleLine = false,
+                )
+                CustomAlertField(
+                    label = "Carb alert detail (deficit)",
+                    value = carbCustomDetailDeficit,
+                    onCommit = { v -> carbCustomDetailDeficit = v; vm.saveConfig(config.copy(carbAlertCustomDetailDeficit = v)) },
                     defaultText = stringResource(R.string.fueling_carb_alert_detail_deficit),
                     tokensHint = "Tokens: {deficit}, {elapsed}, {target}",
                     maxLength = ALERT_DETAIL_MAX_CHARS,
@@ -387,9 +398,18 @@ fun FuelingScreen(vm: MainViewModel) {
                     maxLength = 30,
                 )
                 CustomAlertField(
-                    label = "Hydration alert detail",
-                    value = hydCustomDetail,
-                    onCommit = { v -> hydCustomDetail = v; vm.saveConfig(config.copy(hydrationAlertCustomDetail = v)) },
+                    label = "Hydration alert detail (time)",
+                    value = hydCustomDetailTime,
+                    onCommit = { v -> hydCustomDetailTime = v; vm.saveConfig(config.copy(hydrationAlertCustomDetailTime = v)) },
+                    defaultText = stringResource(R.string.fueling_hyd_alert_detail_time),
+                    tokensHint = "Tokens: {deficit}, {elapsed}, {target}",
+                    maxLength = ALERT_DETAIL_MAX_CHARS,
+                    singleLine = false,
+                )
+                CustomAlertField(
+                    label = "Hydration alert detail (deficit)",
+                    value = hydCustomDetailDeficit,
+                    onCommit = { v -> hydCustomDetailDeficit = v; vm.saveConfig(config.copy(hydrationAlertCustomDetailDeficit = v)) },
                     defaultText = stringResource(R.string.fueling_hyd_alert_detail_deficit),
                     tokensHint = "Tokens: {deficit}, {elapsed}, {target}",
                     maxLength = ALERT_DETAIL_MAX_CHARS,
