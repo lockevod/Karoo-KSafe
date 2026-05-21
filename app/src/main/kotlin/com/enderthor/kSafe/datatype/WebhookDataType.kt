@@ -12,6 +12,7 @@ import com.enderthor.kSafe.activity.FieldTapReceiver
 import com.enderthor.kSafe.data.FIELD_COLOR_AUTO
 import com.enderthor.kSafe.data.KSafeConfig
 import com.enderthor.kSafe.extension.managers.ConfigurationManager
+import com.enderthor.kSafe.extension.util.safeTake
 import io.hammerhead.karooext.KarooSystemService
 import io.hammerhead.karooext.extension.DataTypeImpl
 import io.hammerhead.karooext.internal.ViewEmitter
@@ -73,9 +74,9 @@ class WebhookDataType(
     private val configManager = ConfigurationManager(context)
 
     private fun labelFromConfig(config: KSafeConfig) = if (slot == 1)
-        config.webhook1Label.ifBlank { "WH1" }.take(7)
+        config.webhook1Label.ifBlank { "WH1" }.safeTake(7)
     else
-        config.webhook2Label.ifBlank { "WH2" }.take(7)
+        config.webhook2Label.ifBlank { "WH2" }.safeTake(7)
 
     private fun isEnabled(config: KSafeConfig) = if (slot == 1)
         config.webhook1Enabled
@@ -101,8 +102,8 @@ class WebhookDataType(
         val layout = if (isAuto) R.layout.field_view_auto else R.layout.field_view
         val content = RemoteViews(context.packageName, layout).apply {
             if (!isAuto) setInt(R.id.field_container, "setBackgroundColor", bgColor)
-            setTextViewText(R.id.field_text_main, main.take(9))
-            setTextViewText(R.id.field_text_hint, hint.take(9))
+            setTextViewText(R.id.field_text_main, main.safeTake(9))
+            setTextViewText(R.id.field_text_hint, hint.safeTake(9))
             setViewVisibility(R.id.field_text_hint, if (hint.isEmpty()) View.GONE else View.VISIBLE)
             setInt(R.id.field_text_main, "setGravity", Gravity.CENTER)
             setInt(R.id.field_text_hint, "setGravity", Gravity.CENTER)

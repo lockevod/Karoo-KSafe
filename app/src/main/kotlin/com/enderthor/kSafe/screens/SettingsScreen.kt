@@ -180,7 +180,17 @@ fun SettingsScreen(vm: MainViewModel) {
         // Show the persistent install ID so users can reference it when
         // reporting issues via Telegram. Visible regardless of logging state.
         val installId by produceState(initialValue = "") {
-            value = KSafeExtension.getInstance()?.getInstallIdForUi() ?: ""
+            // getInstance() can still be null when this screen first composes if
+            // the extension service has not bound yet — produceState runs its
+            // block only once, so retry briefly until the install ID is available.
+            repeat(20) {
+                val id = KSafeExtension.getInstance()?.getInstallIdForUi() ?: ""
+                if (id.isNotEmpty()) {
+                    value = id
+                    return@produceState
+                }
+                delay(500)
+            }
         }
         if (installId.isNotEmpty()) {
             Text(
