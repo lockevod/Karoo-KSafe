@@ -413,7 +413,9 @@ class HydrationTracker(
             "elapsed" to elapsedMin.toString(),
             "target"  to effectiveTarget.toString(),
         )
-        val detailTemplate = config.hydrationAlertCustomDetail.ifBlank {
+        val customDetail = if (source == "deficit") config.hydrationAlertCustomDetailDeficit
+                           else                     config.hydrationAlertCustomDetailTime
+        val detailTemplate = customDetail.ifBlank {
             if (source == "deficit") context.getString(R.string.fueling_hyd_alert_detail_deficit)
             else                     context.getString(R.string.fueling_hyd_alert_detail_time)
         }

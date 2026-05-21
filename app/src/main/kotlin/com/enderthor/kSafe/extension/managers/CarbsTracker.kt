@@ -445,7 +445,9 @@ class CarbsTracker(
             "elapsed" to elapsedMin.toString(),
             "target"  to config.carbTargetGperHour.toString(),
         )
-        val detailTemplate = config.carbAlertCustomDetail.ifBlank {
+        val customDetail = if (source == "deficit") config.carbAlertCustomDetailDeficit
+                           else                     config.carbAlertCustomDetailTime
+        val detailTemplate = customDetail.ifBlank {
             if (source == "deficit") context.getString(R.string.fueling_carb_alert_detail_deficit)
             else                     context.getString(R.string.fueling_carb_alert_detail_time)
         }
