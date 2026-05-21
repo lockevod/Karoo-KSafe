@@ -436,7 +436,17 @@ data class KSafeConfig(
     /** Optional custom detail template. Empty = use source-specific defaults
      *  (`fueling_carb_alert_detail_deficit` / `_time`). When set, the same template is used
      *  for both alert sources; tokens `{deficit}`, `{elapsed}`, `{target}` substituted at runtime. */
+    @Deprecated(
+        "Split into carbAlertCustomDetailTime / carbAlertCustomDetailDeficit in CONFIG_VERSION 14. " +
+        "Retained only so migrateToLatest() can carry a previously-saved custom message forward.",
+    )
     val carbAlertCustomDetail: String = "",
+    /** Optional custom detail template for the TIME-based carb alert. Empty = use the
+     *  `fueling_carb_alert_detail_time` default. Tokens `{deficit}`, `{elapsed}`, `{target}`. */
+    val carbAlertCustomDetailTime: String = "",
+    /** Optional custom detail template for the DEFICIT-based carb alert. Empty = use the
+     *  `fueling_carb_alert_detail_deficit` default. Tokens `{deficit}`, `{elapsed}`, `{target}`. */
+    val carbAlertCustomDetailDeficit: String = "",
     /** Beep pattern played when a carb alert fires. OFF = visual only. See [BeepPattern]
      *  for the available presets. Default keeps the v8 behaviour (single 880 Hz × 800 ms). */
     val carbBeepPattern: BeepPattern = BeepPattern.SINGLE_LONG,
@@ -473,7 +483,17 @@ data class KSafeConfig(
     val hydrationAlertCustomTitle: String = "",
     /** Optional custom detail template. Empty = use source-specific defaults
      *  (`fueling_hyd_alert_detail_deficit` / `_time`). Tokens `{deficit}`, `{elapsed}`, `{target}`. */
+    @Deprecated(
+        "Split into hydrationAlertCustomDetailTime / hydrationAlertCustomDetailDeficit in " +
+        "CONFIG_VERSION 14. Retained only so migrateToLatest() can carry a previously-saved message forward.",
+    )
     val hydrationAlertCustomDetail: String = "",
+    /** Optional custom detail template for the TIME-based hydration alert. Empty = use the
+     *  `fueling_hyd_alert_detail_time` default. Tokens `{deficit}`, `{elapsed}`, `{target}`. */
+    val hydrationAlertCustomDetailTime: String = "",
+    /** Optional custom detail template for the DEFICIT-based hydration alert. Empty = use the
+     *  `fueling_hyd_alert_detail_deficit` default. Tokens `{deficit}`, `{elapsed}`, `{target}`. */
+    val hydrationAlertCustomDetailDeficit: String = "",
     /** Beep pattern played when a hydration alert fires. OFF = visual only. */
     val hydBeepPattern: BeepPattern = BeepPattern.SINGLE_LONG,
     /** Background colour for the hydration InRideAlert overlay. Default = blue (water). */
