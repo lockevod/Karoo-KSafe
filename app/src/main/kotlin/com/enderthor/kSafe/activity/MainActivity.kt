@@ -2,7 +2,6 @@ package com.enderthor.kSafe.activity
 
 import android.annotation.SuppressLint
 import android.content.Context
-import android.content.Intent
 import android.os.Bundle
 import android.provider.Settings
 import androidx.activity.ComponentActivity
@@ -17,7 +16,6 @@ import androidx.datastore.preferences.core.Preferences
 import androidx.datastore.preferences.preferencesDataStore
 import com.enderthor.kSafe.screens.TabLayout
 import timber.log.Timber
-import androidx.core.net.toUri
 
 val Context.dataStore: DataStore<Preferences> by preferencesDataStore(name = "settings")
 

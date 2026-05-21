@@ -83,7 +83,7 @@ ntfy lets you send notifications to your own phone without any external service.
 | **Header** | `Title: KSafe Action` |
 | **Body** | `Garage door toggled from the bike!` |
 
-Replace `your-topic-name` with the topic you subscribed to in the ntfy app. The `Header` field can only hold one header — for ntfy the `Title` header sets the notification title. The body is the notification text.
+Replace `your-topic-name` with the topic you subscribed to in the ntfy app. The `Header` field accepts one or more headers, one `Key: Value` pair per line — for ntfy the `Title` header sets the notification title. The body is the notification text.
 
 ---
 

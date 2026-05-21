@@ -1,6 +1,6 @@
 # Field Colours and Alignment
 
-Nine of KSafe's 16 ride fields have a **rider-pickable idle background colour** (SOS, Safety Timer, Custom Message 1–3, Webhook 1–2, Carb Log 1–3, Hydration Log 1–2). The remaining four — Carb Burn Rate, Carbs Burned, Carb Status, Hydration Status — have no picker; their background is determined automatically (always Karoo theme for the two info readouts, deficit-driven semaphore for the two status fields). Two of those four (Carb Burn Rate and Carbs Burned) also follow the **per-field alignment** (left / center / right) the rider sets in the Karoo profile editor; everything else is always centered.
+Twelve of KSafe's 16 ride fields have a **rider-pickable idle background colour** (SOS, Safety Timer, Custom Message 1–3, Webhook 1–2, Carb Log 1–3, Hydration Log 1–2). The remaining four — Carb Burn Rate, Carbs Burned, Carb Status, Hydration Status — have no picker; their background is determined automatically (always Karoo theme for the two info readouts, deficit-driven semaphore for the two status fields). Two of those four (Carb Burn Rate and Carbs Burned) also follow the **per-field alignment** (left / center / right) the rider sets in the Karoo profile editor; everything else is always centered.
 
 ## Idle background colour
 
