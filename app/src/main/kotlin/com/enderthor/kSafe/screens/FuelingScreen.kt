@@ -242,7 +242,7 @@ fun FuelingScreen(vm: MainViewModel) {
                 HorizontalDivider()
                 Text(text = stringResource(R.string.fueling_items_section), style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.Bold)
                 val gLabel = stringResource(R.string.fueling_slot_grams_label)
-                SlotRow(label = "Slot 1", labelText = carb1Label, amountText = carb1Grams, unitLabel = gLabel, range = 0..100,
+                SlotRow(label = "Slot 1", labelText = carb1Label, amountText = carb1Grams, unitLabel = gLabel, range = 0..999,
                     onLabel = { v -> carb1Label = v.safeTake(8); vm.saveConfig(config.copy(carb1Label = v.safeTake(8))) },
                     onAmountCommit = { v -> carb1Grams = v; vm.saveConfig(config.copy(carb1Grams = v.toInt())) },
                     onAmountText = { carb1Grams = it },
@@ -253,7 +253,7 @@ fun FuelingScreen(vm: MainViewModel) {
                     FieldEmojiPicker(label = "Icon", selected = carb1Icon, emojis = com.enderthor.kSafe.data.FUEL_EMOJI_CARB, modifier = Modifier.weight(1f),
                         onSelected = { v -> carb1Icon = v; vm.saveConfig(config.copy(carb1Icon = v)) })
                 }
-                SlotRow(label = "Slot 2", labelText = carb2Label, amountText = carb2Grams, unitLabel = gLabel, range = 0..100,
+                SlotRow(label = "Slot 2", labelText = carb2Label, amountText = carb2Grams, unitLabel = gLabel, range = 0..999,
                     onLabel = { v -> carb2Label = v.safeTake(8); vm.saveConfig(config.copy(carb2Label = v.safeTake(8))) },
                     onAmountCommit = { v -> carb2Grams = v; vm.saveConfig(config.copy(carb2Grams = v.toInt())) },
                     onAmountText = { carb2Grams = it },
@@ -264,7 +264,7 @@ fun FuelingScreen(vm: MainViewModel) {
                     FieldEmojiPicker(label = "Icon", selected = carb2Icon, emojis = com.enderthor.kSafe.data.FUEL_EMOJI_CARB, modifier = Modifier.weight(1f),
                         onSelected = { v -> carb2Icon = v; vm.saveConfig(config.copy(carb2Icon = v)) })
                 }
-                SlotRow(label = "Slot 3", labelText = carb3Label, amountText = carb3Grams, unitLabel = gLabel, range = 0..100,
+                SlotRow(label = "Slot 3", labelText = carb3Label, amountText = carb3Grams, unitLabel = gLabel, range = 0..999,
                     onLabel = { v -> carb3Label = v.safeTake(8); vm.saveConfig(config.copy(carb3Label = v.safeTake(8))) },
                     onAmountCommit = { v -> carb3Grams = v; vm.saveConfig(config.copy(carb3Grams = v.toInt())) },
                     onAmountText = { carb3Grams = it },
