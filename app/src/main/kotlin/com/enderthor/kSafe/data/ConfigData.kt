@@ -436,11 +436,9 @@ data class KSafeConfig(
     val carbTimeInitialDelayMin: Int = 30,
     /** Optional custom title shown in the InRideAlert overlay. Empty = use the default
      *  `R.string.fueling_carb_alert_title` ("Eat something"). Same for both deficit and time
-     *  alert sources — pair with [carbAlertCustomDetail] for the full message. */
+     *  alert sources — pair with [carbAlertCustomDetailTime] / [carbAlertCustomDetailDeficit] for the full message. */
     val carbAlertCustomTitle: String = "",
-    /** Optional custom detail template. Empty = use source-specific defaults
-     *  (`fueling_carb_alert_detail_deficit` / `_time`). When set, the same template is used
-     *  for both alert sources; tokens `{deficit}`, `{elapsed}`, `{target}` substituted at runtime. */
+    /** @deprecated Superseded by [carbAlertCustomDetailTime] / [carbAlertCustomDetailDeficit]. Retained only for migration. */
     @Deprecated(
         "Split into carbAlertCustomDetailTime / carbAlertCustomDetailDeficit in CONFIG_VERSION 14. " +
         "Retained only so migrateToLatest() can carry a previously-saved custom message forward.",
@@ -484,10 +482,9 @@ data class KSafeConfig(
     /** Same semantics as `carbTimeInitialDelayMin`. 0 = disabled. */
     val hydrationTimeInitialDelayMin: Int = 30,
     /** Optional custom title shown in the InRideAlert overlay. Empty = use the default
-     *  `R.string.fueling_hyd_alert_title` ("Drink something"). Pair with [hydrationAlertCustomDetail]. */
+     *  `R.string.fueling_hyd_alert_title` ("Drink something"). Pair with [hydrationAlertCustomDetailTime] / [hydrationAlertCustomDetailDeficit]. */
     val hydrationAlertCustomTitle: String = "",
-    /** Optional custom detail template. Empty = use source-specific defaults
-     *  (`fueling_hyd_alert_detail_deficit` / `_time`). Tokens `{deficit}`, `{elapsed}`, `{target}`. */
+    /** @deprecated Superseded by [hydrationAlertCustomDetailTime] / [hydrationAlertCustomDetailDeficit]. Retained only for migration. */
     @Deprecated(
         "Split into hydrationAlertCustomDetailTime / hydrationAlertCustomDetailDeficit in " +
         "CONFIG_VERSION 14. Retained only so migrateToLatest() can carry a previously-saved message forward.",

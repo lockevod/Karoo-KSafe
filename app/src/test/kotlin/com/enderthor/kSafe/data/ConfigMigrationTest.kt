@@ -41,4 +41,18 @@ class ConfigMigrationTest {
         assertEquals("", migrated.hydrationAlertCustomDetailTime)
         assertEquals("", migrated.hydrationAlertCustomDetailDeficit)
     }
+
+    @Test
+    fun `v13 with new detail fields already set keeps them and ignores legacy`() {
+        @Suppress("DEPRECATION")
+        val old = KSafeConfig(
+            configVersion = 13,
+            carbAlertCustomDetail = "legacy",
+            carbAlertCustomDetailTime = "already-time",
+            carbAlertCustomDetailDeficit = "already-deficit",
+        )
+        val migrated = old.migrateToLatest()
+        assertEquals("already-time", migrated.carbAlertCustomDetailTime)
+        assertEquals("already-deficit", migrated.carbAlertCustomDetailDeficit)
+    }
 }
