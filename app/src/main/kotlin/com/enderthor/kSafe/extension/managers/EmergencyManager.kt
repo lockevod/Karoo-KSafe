@@ -43,6 +43,12 @@ class EmergencyManager(
     private val sender: Sender,
     private val scope: CoroutineScope,
     private val calibLogger: CalibrationLogger? = null,
+    /**
+     * Invoked when a CRASH-triggered emergency is cancelled by the rider. Wired by
+     * KSafeExtension to clear the crash cooldown — a cancelled countdown sent no
+     * alert, so crash detection must be fully re-armed.
+     */
+    private val onCrashEmergencyCancelled: (() -> Unit)? = null,
 ) {
     companion object {
 
@@ -129,8 +135,11 @@ class EmergencyManager(
         // If the user cancelled a detector-triggered countdown → confirmed false positive.
         // how_long_ms near 0 = immediate cancel (obvious FP); longer = hesitation.
         when (cancelledReason) {
-            EmergencyReason.CRASH_DETECTED -> calibLogger?.log(CalibrationLogger.Event.CRASH_CANCELLED) {
-                "how_long_ms=$howLongMs,reason=${cancelledReason.label}"
+            EmergencyReason.CRASH_DETECTED -> {
+                calibLogger?.log(CalibrationLogger.Event.CRASH_CANCELLED) {
+                    "how_long_ms=$howLongMs,reason=${cancelledReason.label}"
+                }
+                onCrashEmergencyCancelled?.invoke()
             }
             EmergencyReason.MEDICAL_FLATLINE,
             EmergencyReason.MEDICAL_COLLAPSE -> calibLogger?.log(CalibrationLogger.Event.MEDICAL_CANCELLED) {

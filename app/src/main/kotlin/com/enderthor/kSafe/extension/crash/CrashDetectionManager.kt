@@ -358,6 +358,21 @@ class CrashDetectionManager(
     }
 
     /**
+     * Clear the crash cooldown so the next genuine crash is not suppressed.
+     *
+     * `lastCrashTime` is stamped by [confirmCrash] at confirmation and gates a
+     * ~60 s cooldown that de-duplicates the accelerometer pipeline against the
+     * speed-drop watchdog. When the rider CANCELS a crash-triggered countdown no
+     * alert is sent — there is nothing to de-duplicate — so the cooldown must be
+     * dropped, otherwise a real crash within the window is silently suppressed.
+     * A false positive and a real crash can be correlated (same rough descent),
+     * so this is a reachable false-negative path.
+     */
+    fun clearCrashCooldown() {
+        lastCrashTime = 0L
+    }
+
+    /**
      * Handle a ride pause. [auto] is `RideState.Paused.auto` — the Karoo SDK's flag
      * for an automatic pause (speed reached 0) vs a manual pause (rider tapped pause).
      *

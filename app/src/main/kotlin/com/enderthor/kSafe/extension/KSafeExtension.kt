@@ -190,7 +190,8 @@ class KSafeExtension : KarooExtension("ksafe", BuildConfig.VERSION_NAME), Corout
         webhookManager = WebhookManager(karooSystem)
         emergencyManager = EmergencyManager(
             applicationContext, karooSystem, configManager, locationManager, sender, this,
-            calibLogger
+            calibLogger,
+            onCrashEmergencyCancelled = { crashManager.clearCrashCooldown() },
         )
         crashManager = CrashDetectionManager(applicationContext, this, {
             Timber.d("Crash detected by sensor!")
