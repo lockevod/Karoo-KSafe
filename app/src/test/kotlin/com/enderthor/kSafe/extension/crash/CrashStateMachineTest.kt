@@ -891,17 +891,22 @@ class CrashStateMachineTest {
             time = 1_000L, peak = 80.0, smoothed = 65.0, raw = 80.0, gyro = 6.0,
         ).copy(accelX = 0.0, accelY = 0.0, accelZ = 80.0))
         assertEquals(CrashStateMachine.State.IMPACT, sm.state)
+        // Inject a valid upright pre-impact reference (gravity along Z).
+        // The silence window will have gravity along X (bike on side) → angle ≈ 90° ≥ 45°
+        // → orientation regime selects the on-side (legacy 4.5 s) window.
+        sm.setPreImpactReference(PreImpactRef(0.0, 0.0, 9.81, valid = true))
         sm.onSpeedUpdate(0.0)
 
-        // Bike on side: gravity along X, baseline was along Z → angle ≈ 90°.
-        // 4.5s of quiet should be enough.
+        // Bike on side: gravity along X (ax = 9.81, az = 0.0), baseline was along Z
+        // → angle ≈ 90° ≥ uprightAngleThresholdDegrees (45°) → on-side → 4.5 s window.
         var tNow = 1_000L
         val step = 20L
         while (tNow < 1_000L + 4_500L + 1_000L) {  // +1s margin to allow IMPACT→SILENCE transition
             tNow += step
             val d = sm.onSample(sample(
                 time = tNow, peak = 0.0, smoothed = 9.81, raw = 9.81, gyro = 0.05,
-            ).copy(accelX = 9.81, accelY = 0.0, accelZ = 0.0))
+                ax = 9.81, az = 0.0,
+            ))
             if (d == CrashStateMachine.Decision.Confirm) {
                 // Confirmed — assert it happened within the legacy 4.5s + IMPACT slack window.
                 assertTrue("confirm too late: tNow=$tNow", tNow <= 1_000L + 4_500L + 1_000L)
@@ -909,5 +914,53 @@ class CrashStateMachineTest {
             }
         }
         org.junit.Assert.fail("Expected Decision.Confirm within 4.5s + slack of impact, never fired")
+    }
+
+    // ── Latch: upright 20s window must not collapse if orientation drifts ─────
+
+    @Test
+    fun `latched 20s upright window does not collapse if orientation drifts past 45deg`() {
+        // Scenario: prompt stop (gap = 2 s, well under delayedStopGapMs = 8 s) so the
+        // orientation regime — not the gap regime — decides the silence window.
+        // Pre-impact reference is upright (gravity along Z). The silence window starts
+        // upright (az = 9.81, ax = 0.0) → angle < 45° → orientation regime latches 20 s.
+        // Then the gravity vector drifts past 45° (ax ≈ 8.96, az ≈ 4.0, angle ≈ 66°).
+        // Without the latch, computeEffectiveSilenceMs would re-evaluate to 4.5 s and
+        // the already-elapsed ~6 s of silence would fire a spurious Confirm.
+        // With the latch, the 20 s window is frozen and no Confirm fires within 6 s.
+        val (sm, _) = smEnteringSilence(
+            gapMs = 2_000L,
+            preRef = PreImpactRef(0.0, 0.0, 9.81, valid = true),
+            silenceAz = 9.81, silenceAx = 0.0,  // upright — first sample sets direction
+        )
+        assertEquals(CrashStateMachine.State.SILENCE_CHECK, sm.state)
+
+        // Base timestamp right after entering SILENCE_CHECK (impact at base=1_000_000,
+        // gap = 2_000 → SILENCE_CHECK entered at 1_002_000).
+        var t = 1_002_000L
+
+        // Feed at least MIN_ORIENTATION_SAMPLES (= 5, private const) upright still samples
+        // so the orientation regime triggers and latches the 20 s window.
+        repeat(5 + 2) {
+            t += 200L
+            val d = sm.onSample(sample(time = t, raw = 9.81, smoothed = 9.81,
+                az = 9.81, ax = 0.0))
+            assertEquals("should not confirm during upright latch phase", CrashStateMachine.Decision.None, d)
+        }
+
+        // Now feed several still samples whose gravity vector has drifted past 45°:
+        // ax ≈ 8.96, az ≈ 4.0  →  angle from upright reference ≈ 66° ≥ 45°.
+        // The bike is still "still" (magnitude ≈ sqrt(8.96² + 4.0²) ≈ 9.81) so no
+        // silence break occurs and the latch must hold the 20 s window.
+        repeat(20) {
+            t += 200L
+            val d = sm.onSample(sample(time = t, raw = 9.81, smoothed = 9.81,
+                az = 4.0, ax = 8.96))
+            assertEquals(
+                "Confirm must NOT fire at t=$t — latched 20s window must hold even after orientation drifts past 45°",
+                CrashStateMachine.Decision.None, d
+            )
+        }
+        // Sanity: total elapsed so far is (5+2+20)*200 = 5400ms < 20000ms → no confirm expected.
     }
 }

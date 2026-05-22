@@ -198,7 +198,7 @@ class CrashStateMachine(
     @Volatile private var preImpactRef: PreImpactRef = PreImpactRef.INVALID
 
     /**
-     * Gap between the impact and the FIRST time the state machine reached
+     * Gap between the impact and the first (and only) time the state machine reached
      * SILENCE_CHECK for this event, in the sample-time domain. `0L` until that
      * first transition. Used by [computeEffectiveSilenceMs]'s gap regime.
      */
