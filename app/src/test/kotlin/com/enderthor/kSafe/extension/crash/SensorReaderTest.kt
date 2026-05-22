@@ -208,6 +208,62 @@ class SensorReaderTest {
 }
 
 /**
+ * Direct wrap-around coverage for [Vec3RingBuffer].
+ *
+ * The lifecycle tests above exercise [Vec3RingBuffer] only indirectly (via
+ * [SensorReader.preImpactReference]). These tests construct the ring directly and
+ * verify the boundary conditions that matter for correctness:
+ *  - not-yet-full: snapshot returns exactly what was added, in order.
+ *  - over-full: snapshot returns exactly [capacity] entries (the most-recent ones),
+ *    in insertion order — oldest-surviving entry first.
+ *  - clear: empties the ring so subsequent adds start fresh.
+ */
+class Vec3RingBufferWrapAroundTest {
+
+    @Test
+    fun `Vec3RingBuffer wraps and keeps the most recent entries in insertion order`() {
+        val capacity = 4
+        val buf = Vec3RingBuffer(capacity)
+
+        // --- not-yet-full case: add 2 entries into a capacity-4 buffer ---
+        buf.add(0.0, 0.0, 0.0, tsMs = 0L)
+        buf.add(1.0, 1.0, 1.0, tsMs = 1L)
+
+        val partial = buf.snapshot()
+        assertEquals("not-yet-full: expected 2 entries", 2, partial.size)
+        assertEquals(TimedVec3(0.0, 0.0, 0.0, 0L), partial[0])
+        assertEquals(TimedVec3(1.0, 1.0, 1.0, 1L), partial[1])
+
+        // --- wrap-around case: add 4 more (6 total) into the same capacity-4 buffer ---
+        // Entries 0 and 1 were already in the buffer; entries 2..5 push 0 and 1 out.
+        buf.add(2.0, 2.0, 2.0, tsMs = 2L)
+        buf.add(3.0, 3.0, 3.0, tsMs = 3L)
+        buf.add(4.0, 4.0, 4.0, tsMs = 4L)
+        buf.add(5.0, 5.0, 5.0, tsMs = 5L)
+
+        // Now 6 adds into capacity-4 → only the last 4 survive: entries 2, 3, 4, 5.
+        val full = buf.snapshot()
+        assertEquals("wrap-around: expected capacity entries", capacity, full.size)
+
+        // Oldest surviving entry first — insertion order is preserved.
+        assertEquals(TimedVec3(2.0, 2.0, 2.0, 2L), full[0])
+        assertEquals(TimedVec3(3.0, 3.0, 3.0, 3L), full[1])
+        assertEquals(TimedVec3(4.0, 4.0, 4.0, 4L), full[2])
+        assertEquals(TimedVec3(5.0, 5.0, 5.0, 5L), full[3])
+
+        // --- clear() empties the buffer ---
+        buf.clear()
+        assertEquals("after clear: expected empty snapshot", emptyList<TimedVec3>(), buf.snapshot())
+
+        // A subsequent add works as if the buffer is brand-new.
+        buf.add(9.0, 9.0, 9.0, tsMs = 99L)
+        val afterClear = buf.snapshot()
+        assertEquals(1, afterClear.size)
+        assertEquals(TimedVec3(9.0, 9.0, 9.0, 99L), afterClear[0])
+    }
+}
+
+/**
  * Tests for the O(1) running-sum optimization of [DoubleRingBuffer].
  *
  * Each test compares the optimized `stdDev()` / `runningSum` against a
