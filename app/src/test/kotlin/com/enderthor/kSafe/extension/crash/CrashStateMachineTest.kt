@@ -826,6 +826,61 @@ class CrashStateMachineTest {
         org.junit.Assert.fail("Expected Decision.Confirm within 4.5s + slack of impact, never fired")
     }
 
+    // ── Integration: the 60a27a false positive ──────────────────────────────
+
+    @Test
+    fun `scenario - bump then 17s ride then upright stop does not confirm at 4_5s`() {
+        // Reproduces ksafe_v1.2.0_60a27a_k24.csv event 1: hard spike, 17 s of
+        // continued riding, then a still upright stop. Gap regime → 20 s window.
+        val (sm, _) = newSm()
+        sm.onSpeedUpdate(20.0)
+        val base = 1_000_000L
+        sm.onSample(sample(time = base, peak = 60.0, smoothed = 30.0, gyro = 0.8))
+        assertEquals(CrashStateMachine.State.IMPACT, sm.state)
+        // Pre-impact reference: upright (the rider was cruising before the bump).
+        sm.setPreImpactReference(PreImpactRef(0.0, 0.0, 9.81, valid = true))
+        // 17 s of riding — speed stays high so IMPACT does not advance.
+        var t = base + 1000L
+        while (t < base + 17_000L) {
+            sm.onSample(sample(time = t, raw = 9.81, smoothed = 9.81, gyro = 0.2))
+            t += 1000L
+        }
+        // Rider stops, bike upright.
+        sm.onSpeedUpdate(0.0)
+        sm.onSample(sample(time = base + 17_000L, raw = 9.81, smoothed = 9.81, az = 9.81))
+        assertEquals(CrashStateMachine.State.SILENCE_CHECK, sm.state)
+        // 6 s of perfect stillness must NOT confirm — the 20 s gap window applies.
+        t = base + 17_000L
+        repeat(6) {
+            t += 1000L
+            val d = sm.onSample(sample(time = t, raw = 9.81, smoothed = 9.81, az = 9.81))
+            assertEquals(CrashStateMachine.Decision.None, d)
+        }
+        assertEquals(CrashStateMachine.State.SILENCE_CHECK, sm.state)
+    }
+
+    @Test
+    fun `scenario - real crash prompt stop on-side confirms at 4_5s`() {
+        val (sm, _) = newSm()
+        sm.onSpeedUpdate(25.0)
+        val base = 1_000_000L
+        sm.onSample(sample(time = base, peak = 70.0, smoothed = 40.0, gyro = 3.0))
+        sm.setPreImpactReference(PreImpactRef(0.0, 0.0, 9.81, valid = true))  // was upright
+        // Prompt stop ~2 s later, bike on its side (az≈0, ax≈9.81).
+        sm.onSpeedUpdate(0.0)
+        var t = base + 2_000L
+        sm.onSample(sample(time = t, raw = 9.81, smoothed = 9.81, az = 0.0, ax = 9.81))
+        assertEquals(CrashStateMachine.State.SILENCE_CHECK, sm.state)
+        var confirmed = false
+        repeat(7) {
+            t += 1000L
+            if (sm.onSample(sample(time = t, raw = 9.81, smoothed = 9.81, az = 0.0, ax = 9.81))
+                    is CrashStateMachine.Decision.Confirm) confirmed = true
+        }
+        assertTrue("on-side prompt stop should confirm at 4.5s", confirmed)
+        assertEquals(4_500L, sm.lastConfirmedSilenceMs)
+    }
+
     // ── Latch: upright 20s window must not collapse if orientation drifts ─────
 
     @Test
