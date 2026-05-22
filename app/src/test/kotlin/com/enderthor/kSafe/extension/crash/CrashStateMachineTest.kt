@@ -50,6 +50,9 @@ class CrashStateMachineTest {
         raw: Double = peak,
         gyro: Double = 0.0,
         gpsStale: Boolean = false,
+        ax: Double = 0.0,
+        ay: Double = 0.0,
+        az: Double = 0.0,
     ) = SensorSample(
         rawMagnitude = raw,
         smoothedMagnitude = smoothed,
@@ -57,6 +60,9 @@ class CrashStateMachineTest {
         gyroMag = gyro,
         timestampMs = time,
         gpsStale = gpsStale,
+        accelX = ax,
+        accelY = ay,
+        accelZ = az,
     )
 
     // ── 1. Sample below thresholds stays in MONITORING ───────────────────────
@@ -482,21 +488,20 @@ class CrashStateMachineTest {
     // ── Orientation: silence-duration selection ──────────────────────────────
 
     /**
-     * Helper: get a state machine into SILENCE_CHECK with a baseline already learned.
-     * Returns the SM (clock and time cursor are managed by the caller).
+     * Helper: get a state machine into SILENCE_CHECK with a pre-impact reference
+     * already injected. Impact at t=1000, SILENCE_CHECK entered at t=2000 (a
+     * 1000 ms gap — well within [Thresholds.delayedStopGapMs], so the orientation
+     * regime applies). Returns the SM; the caller manages the time cursor.
      */
-    private fun smInSilenceCheckWithBaseline(
-        thresholds: Thresholds = Thresholds(baselineMinSamples = 10),
-        baselineVector: Triple<Double, Double, Double> = Triple(0.0, 0.0, 9.81),
+    private fun smInSilenceCheck(
+        thresholds: Thresholds = Thresholds(),
+        preRef: PreImpactRef = PreImpactRef(0.0, 0.0, 9.81, valid = true),
     ): CrashStateMachine {
         val (sm, _) = newSm(thresholds)
         sm.onSpeedUpdate(20.0)
-        // Feed enough samples to make baseline ready.
-        repeat(thresholds.baselineMinSamples) {
-            sm.feedBaselineSample(baselineVector.first, baselineVector.second, baselineVector.third)
-        }
         // Enter IMPACT.
         sm.onSample(sample(time = 1000, peak = 60.0, smoothed = 30.0))
+        sm.setPreImpactReference(preRef)
         // Drive into SILENCE_CHECK: rider stops + accel calms.
         sm.onSpeedUpdate(0.0)
         sm.onSample(sample(time = 2000, peak = 0.0, smoothed = 9.81, raw = 9.81,
@@ -505,158 +510,105 @@ class CrashStateMachineTest {
         return sm
     }
 
-    @Test
-    fun `silence_check uses upright duration when bike orientation matches baseline`() {
-        val t = Thresholds(
-            baselineMinSamples = 10,
-            silenceDurationMs = 4_500L,
-            silenceDurationUprightMs = 20_000L,
-            uprightAngleThresholdDegrees = 45.0,
-        )
-        val sm = smInSilenceCheckWithBaseline(t)
-        // Feed quiet samples WITH upright orientation (matches baseline (0,0,9.81)).
-        // Total elapsed since silenceStartedMs = 4_500ms is NOT enough for upright (20s).
-        var t0 = 2000L
-        repeat(219) {  // 219 samples × ~20ms each = ~4.38s
-            t0 += 20
-            val d = sm.onSample(sample(
-                time = t0, peak = 0.0, smoothed = 9.81, raw = 9.81, gyro = 0.1,
-            ).copy(accelX = 0.0, accelY = 0.0, accelZ = 9.81))
-            // Must NOT confirm yet — upright threshold is 20s, not 4.5s.
-            assertNotEquals("Decision.Confirm should not fire before upright window",
-                CrashStateMachine.Decision.Confirm, d)
-        }
-        // Now jump past 20s. Confirm must fire.
-        t0 = 22_500L
-        val d = sm.onSample(sample(
-            time = t0, peak = 0.0, smoothed = 9.81, raw = 9.81, gyro = 0.1,
-        ).copy(accelX = 0.0, accelY = 0.0, accelZ = 9.81))
-        assertEquals(CrashStateMachine.Decision.Confirm, d)
-    }
+    // ── Regime tests: gap + pre-impact orientation silence-window decision ───
 
-    @Test
-    fun `silence_check uses legacy duration when bike is on its side`() {
-        val t = Thresholds(
-            baselineMinSamples = 10,
-            silenceDurationMs = 4_500L,
-            silenceDurationUprightMs = 20_000L,
-            uprightAngleThresholdDegrees = 45.0,
-        )
-        val sm = smInSilenceCheckWithBaseline(t)
-        // Feed quiet samples with the bike laid 90° on its side: gravity along X axis,
-        // baseline along Z. Angle ≈ 90° > 45° → use legacy 4.5s window.
-        var t0 = 2000L
-        repeat(224) {  // ~4.48s, just under the legacy threshold
-            t0 += 20
-            sm.onSample(sample(
-                time = t0, peak = 0.0, smoothed = 9.81, raw = 9.81, gyro = 0.1,
-            ).copy(accelX = 9.81, accelY = 0.0, accelZ = 0.0))
-        }
-        // At t≈6500 we should have crossed 4.5s of silence → next quiet sample confirms.
-        t0 = 7_500L
-        val d = sm.onSample(sample(
-            time = t0, peak = 0.0, smoothed = 9.81, raw = 9.81, gyro = 0.1,
-        ).copy(accelX = 9.81, accelY = 0.0, accelZ = 0.0))
-        assertEquals(CrashStateMachine.Decision.Confirm, d)
-    }
-
-    @Test
-    fun `silence_check falls back to legacy duration when baseline not ready`() {
-        val t = Thresholds(
-            // High threshold + no baseline samples → baseline never ready.
-            baselineMinSamples = 1_500,
-            silenceDurationMs = 4_500L,
-            silenceDurationUprightMs = 20_000L,
-        )
-        val (sm, _) = newSm(t)
+    // Drive an SM from MONITORING into SILENCE_CHECK with a chosen impact→silence gap.
+    // Returns the SM already inside SILENCE_CHECK. Quiet still samples have magnitude
+    // ~GRAVITY so the IMPACT→SILENCE gates pass; az defaults to gravity (upright).
+    private fun smEnteringSilence(
+        gapMs: Long,
+        preRef: PreImpactRef,
+        silenceAz: Double = 9.81,
+        silenceAx: Double = 0.0,
+    ): Pair<CrashStateMachine, ClockHandle> {
+        val (sm, h) = newSm()
         sm.onSpeedUpdate(20.0)
-        // Enter IMPACT and SILENCE_CHECK WITHOUT feeding baseline.
-        sm.onSample(sample(time = 1000, peak = 60.0, smoothed = 30.0))
-        sm.onSpeedUpdate(0.0)
-        sm.onSample(sample(time = 2000, peak = 0.0, smoothed = 9.81, raw = 9.81, gyro = 0.1))
-        assertEquals(CrashStateMachine.State.SILENCE_CHECK, sm.state)
-        // 4.5s of quiet — should confirm at legacy threshold since no baseline.
-        var t0 = 2000L
-        repeat(224) {
-            t0 += 20
-            sm.onSample(sample(
-                time = t0, peak = 0.0, smoothed = 9.81, raw = 9.81, gyro = 0.1,
-            ).copy(accelX = 0.0, accelY = 0.0, accelZ = 9.81))
+        // Impact at t=0 (relative); use a high base time to clear the cold-start guard.
+        val base = 1_000_000L
+        sm.onSample(sample(time = base, peak = 60.0, smoothed = 30.0, gyro = 0.5))
+        sm.setPreImpactReference(preRef)
+        // Stay in IMPACT until `gapMs` has elapsed: speed still high → speed gate blocks.
+        var t = base + 1000L
+        while (t < base + gapMs) {
+            sm.onSample(sample(time = t, raw = 9.81, smoothed = 9.81, gyro = 0.1))
+            t += 1000L
         }
-        t0 = 7_500L
-        val d = sm.onSample(sample(
-            time = t0, peak = 0.0, smoothed = 9.81, raw = 9.81, gyro = 0.1,
-        ).copy(accelX = 0.0, accelY = 0.0, accelZ = 9.81))
-        assertEquals(CrashStateMachine.Decision.Confirm, d)
+        // Drop speed so the IMPACT→SILENCE_CHECK gate opens, then one settling sample.
+        sm.onSpeedUpdate(0.0)
+        sm.onSample(sample(time = base + gapMs, raw = 9.81, smoothed = 9.81, gyro = 0.1,
+            ax = silenceAx, az = silenceAz))
+        return sm to h
     }
 
-    // ── Scenario: bump + brake + stop upright must not confirm under 20s ─────
+    @Test
+    fun `gap regime - long gap forces the 20s window even when bike is on-side`() {
+        // On-side silence vector (az≈0, ax≈9.81) would normally give 4.5s, but a
+        // 12s gap must override that and require 20s.
+        val (sm, _) = smEnteringSilence(
+            gapMs = 12_000L,
+            preRef = PreImpactRef(0.0, 0.0, 9.81, valid = true),
+            silenceAz = 0.0, silenceAx = 9.81,
+        )
+        assertEquals(CrashStateMachine.State.SILENCE_CHECK, sm.state)
+        // Feed 6 s of continuous stillness — must NOT confirm (20s required).
+        var t = 1_012_000L
+        repeat(6) {
+            t += 1000L
+            val d = sm.onSample(sample(time = t, raw = 9.81, smoothed = 9.81, az = 0.0, ax = 9.81))
+            assertEquals(CrashStateMachine.Decision.None, d)
+        }
+    }
 
     @Test
-    fun `scenario bump plus brake plus stop upright does not confirm before 20s`() {
-        val t = Thresholds(
-            baselineMinSamples = 10,
-            silenceDurationMs = 4_500L,
-            silenceDurationUprightMs = 20_000L,
-            uprightAngleThresholdDegrees = 45.0,
-            // Use LOW-preset-equivalent thresholds for this scenario.
-            smoothedImpactThreshold = 55.0,
-            peakImpactThreshold = 60.0,
-            minSpeedForCrashKmh = 3,
-            crashConfirmSpeedKmh = 3,
+    fun `orientation regime - prompt stop on-side confirms at 4_5s`() {
+        val (sm, _) = smEnteringSilence(
+            gapMs = 2_000L,
+            preRef = PreImpactRef(0.0, 0.0, 9.81, valid = true),
+            silenceAz = 0.0, silenceAx = 9.81,   // ~90° from the upright reference
         )
-        val (sm, _) = newSm(t)
-
-        // ── Phase 1: cruise at 30 km/h upright for baseline learning ─────────
-        sm.onSpeedUpdate(30.0)
-        repeat(t.baselineMinSamples + 5) {
-            sm.feedBaselineSample(0.0, 0.0, 9.81)
+        // Feed stillness; Confirm must arrive once ~4.5 s of silence elapsed.
+        var t = 1_002_000L
+        var confirmed = false
+        repeat(7) {
+            t += 1000L
+            if (sm.onSample(sample(time = t, raw = 9.81, smoothed = 9.81, az = 0.0, ax = 9.81))
+                    is CrashStateMachine.Decision.Confirm) confirmed = true
         }
-        assertEquals("baseline must be ready", true, sm.isBaselineReady())
+        assertTrue("expected Confirm within ~5s of silence", confirmed)
+        assertEquals(4_500L, sm.lastConfirmedSilenceMs)
+    }
 
-        // ── Phase 2: bump → IMPACT entry ─────────────────────────────────────
-        val tBump = 1_000L
-        val bump = sample(
-            time = tBump, peak = 70.0, smoothed = 60.0, raw = 70.0, gyro = 4.0,
-        ).copy(accelX = 0.0, accelY = 0.0, accelZ = 70.0)
-        val d1 = sm.onSample(bump)
-        assertTrue("bump must enter IMPACT, got $d1",
-            d1 is CrashStateMachine.Decision.EnterImpact)
-        assertEquals(CrashStateMachine.State.IMPACT, sm.state)
-
-        // ── Phase 3: braking — speed drops 30 → 0, accel noisy ───────────────
-        // 2s of braking, samples ~50Hz; speed update each 200ms.
-        var tNow = tBump
-        val brakeMs = 2_000L
-        val brakeStep = 20L  // 50Hz
-        var stepsDone = 0
-        while (tNow < tBump + brakeMs) {
-            tNow += brakeStep
-            stepsDone++
-            // Speed decreases linearly: 30 → 0 over 2 s.
-            val speed = 30.0 * (1.0 - (tNow - tBump).toDouble() / brakeMs)
-            if (stepsDone % 10 == 0) sm.onSpeedUpdate(speed.coerceAtLeast(0.0))
-            // Accel noise from brake force ~ 5-10 m/s² deviation, bike upright.
-            sm.onSample(sample(
-                time = tNow, peak = 11.0, smoothed = 11.0, raw = 11.0, gyro = 0.5,
-            ).copy(accelX = 0.0, accelY = -7.0, accelZ = 9.0))
+    @Test
+    fun `orientation regime - prompt stop upright requires the 20s window`() {
+        val (sm, _) = smEnteringSilence(
+            gapMs = 2_000L,
+            preRef = PreImpactRef(0.0, 0.0, 9.81, valid = true),
+            silenceAz = 9.81, silenceAx = 0.0,   // same as the reference → upright
+        )
+        var t = 1_002_000L
+        repeat(6) {
+            t += 1000L
+            val d = sm.onSample(sample(time = t, raw = 9.81, smoothed = 9.81, az = 9.81, ax = 0.0))
+            assertEquals(CrashStateMachine.Decision.None, d)  // 6s < 20s
         }
-        sm.onSpeedUpdate(0.0)
-        // Rider may have not yet entered SILENCE_CHECK due to ongoing noise.
+    }
 
-        // ── Phase 4: rider fully stopped — quiet upright samples for 19.5s ──
-        val tStopStart = tNow
-        val quietStep = 20L
-        while (tNow < tStopStart + 19_500L) {
-            tNow += quietStep
-            val d = sm.onSample(sample(
-                time = tNow, peak = 0.0, smoothed = 9.81, raw = 9.81, gyro = 0.05,
-            ).copy(accelX = 0.0, accelY = 0.0, accelZ = 9.81))
-            assertNotEquals(
-                "Decision.Confirm should not fire before upright window (t=$tNow)",
-                CrashStateMachine.Decision.Confirm, d
-            )
+    @Test
+    fun `orientation regime - invalid reference on a prompt stop falls back to 4_5s`() {
+        val (sm, _) = smEnteringSilence(
+            gapMs = 2_000L,
+            preRef = PreImpactRef.INVALID,
+            silenceAz = 9.81,
+        )
+        var t = 1_002_000L
+        var confirmed = false
+        repeat(7) {
+            t += 1000L
+            if (sm.onSample(sample(time = t, raw = 9.81, smoothed = 9.81, az = 9.81))
+                    is CrashStateMachine.Decision.Confirm) confirmed = true
         }
+        assertTrue(confirmed)
+        assertEquals(4_500L, sm.lastConfirmedSilenceMs)
     }
 
     // ── Regression: silence-window accumulator resets on silence-break ───────
@@ -664,14 +616,13 @@ class CrashStateMachineTest {
     @Test
     fun `orientation accumulator resets when stillness is broken`() {
         val t = Thresholds(
-            baselineMinSamples = 10,
             silenceDurationMs = 4_500L,
             silenceDurationUprightMs = 20_000L,
             uprightAngleThresholdDegrees = 45.0,
             minSpeedForCrashKmh = 3,
             crashConfirmSpeedKmh = 3,
         )
-        val sm = smInSilenceCheckWithBaseline(t)  // baseline along Z, currently in SILENCE_CHECK
+        val sm = smInSilenceCheck(t)  // pre-impact ref along Z, currently in SILENCE_CHECK
 
         // Feed ~1s of on-side samples so the orientation accumulator points along X.
         var tNow = 2_000L
@@ -715,12 +666,11 @@ class CrashStateMachineTest {
     @Test
     fun `onPause clears silence-window accumulator`() {
         val t = Thresholds(
-            baselineMinSamples = 10,
             silenceDurationMs = 4_500L,
             silenceDurationUprightMs = 20_000L,
             uprightAngleThresholdDegrees = 45.0,
         )
-        val sm = smInSilenceCheckWithBaseline(t)  // already in SILENCE_CHECK with baseline along Z
+        val sm = smInSilenceCheck(t)  // already in SILENCE_CHECK with pre-impact ref along Z
 
         // Feed 500 upright (Z-axis) samples while staying in SILENCE_CHECK.
         // These are quiet and upright, so isStill=true; elapsed (10 s) < uprightSilenceDurationMs
@@ -740,7 +690,7 @@ class CrashStateMachineTest {
         assertEquals(CrashStateMachine.State.MONITORING, sm.state)
 
         // Re-enter IMPACT (rider is now on-side after a real crash), then SILENCE_CHECK.
-        // On-side samples: gravity along X, baseline along Z → angle ≈ 90° > 45°
+        // On-side samples: gravity along X, pre-impact ref along Z → angle ≈ 90° > 45°
         // → legacy 4.5 s silence threshold should apply.
         //
         // WITHOUT the fix: the 500 stale upright Z samples inflate the accumulator's
@@ -754,6 +704,7 @@ class CrashStateMachineTest {
         sm.onSpeedUpdate(20.0)
         sm.onSample(sample(time = tNow + 1_000, peak = 60.0, smoothed = 30.0))
         assertEquals(CrashStateMachine.State.IMPACT, sm.state)
+        sm.setPreImpactReference(PreImpactRef(0.0, 0.0, 9.81, valid = true))
         sm.onSpeedUpdate(0.0)
         sm.onSample(sample(time = tNow + 2_000, peak = 0.0, smoothed = 9.81,
             raw = 9.81, gyro = 0.1).copy(accelX = 9.81, accelY = 0.0, accelZ = 0.0))
@@ -809,12 +760,11 @@ class CrashStateMachineTest {
     @Test
     fun `resumeForRide clears the silence-window accumulator`() {
         val t = Thresholds(
-            baselineMinSamples = 10,
             silenceDurationMs = 4_500L,
             silenceDurationUprightMs = 20_000L,
             uprightAngleThresholdDegrees = 45.0,
         )
-        val sm = smInSilenceCheckWithBaseline(t)
+        val sm = smInSilenceCheck(t)
 
         // Feed some on-side samples so the accumulator is non-empty.
         var tNow = 2_000L
@@ -837,6 +787,7 @@ class CrashStateMachineTest {
         sm.onSpeedUpdate(20.0)
         sm.onSample(sample(time = tNow + 1_000, peak = 60.0, smoothed = 30.0))
         assertEquals(CrashStateMachine.State.IMPACT, sm.state)
+        sm.setPreImpactReference(PreImpactRef(0.0, 0.0, 9.81, valid = true))
         sm.onSpeedUpdate(0.0)
         sm.onSample(sample(time = tNow + 2_000, peak = 0.0, smoothed = 9.81,
             raw = 9.81, gyro = 0.1).copy(accelX = 0.0, accelY = 0.0, accelZ = 9.81))
@@ -851,62 +802,6 @@ class CrashStateMachineTest {
             ).copy(accelX = 0.0, accelY = 0.0, accelZ = 9.81))
             assertNotEquals(
                 "Decision.Confirm fired at t=$tQuiet — accumulator leaked across resumeForRide",
-                CrashStateMachine.Decision.Confirm, d
-            )
-        }
-    }
-
-    // ── Orientation: silence duration latches across mid-window drift ────────
-
-    @Test
-    fun `silence_check upright duration does not collapse if orientation drifts past 45deg mid-window`() {
-        // Revised test design: short upright phase (1s = ~50 samples at 50Hz) so the
-        // running average can be flipped past 45° within ~1.5s of strong tilt.
-        // With 50 upright (Z=9.81) samples and N tilt (X=9.5,Z=2.5, |mag|≈9.82) samples:
-        //   avg_z crosses avg_x at N≈71 (≈1.4s). So 5s of tilt reliably flips the average.
-        // Bug behaviour: once running average crosses 45°, computeEffectiveSilenceMs drops
-        //   to 4500ms. With silenceStartedMs=2000, elapsed=4500 is satisfied at t=6500,
-        //   i.e. during the 5s drift phase (which ends at t=8000). Confirm fires too early.
-        // Fix behaviour: duration is latched at 20000ms after MIN_ORIENTATION_SAMPLES in
-        //   Phase 1, so Confirm must NOT fire before t = silenceStartedMs + 20000 = 22000.
-        val t = Thresholds(
-            baselineMinSamples = 10,
-            silenceDurationMs = 4_500L,
-            silenceDurationUprightMs = 20_000L,
-            uprightAngleThresholdDegrees = 45.0,
-        )
-        val sm = smInSilenceCheckWithBaseline(t)  // baseline along Z, in SILENCE_CHECK
-        // silenceStartedMs = 2000 (set by smInSilenceCheckWithBaseline at t=2000)
-
-        // Phase 1: 1s of fully upright stillness — enough for latch to engage (MIN_ORIENTATION_SAMPLES=5).
-        var tNow = 2_000L
-        val tDriftStart = tNow + 1_000L
-        while (tNow < tDriftStart) {
-            tNow += 20
-            val d = sm.onSample(sample(
-                time = tNow, peak = 0.0, smoothed = 9.81, raw = 9.81, gyro = 0.05,
-            ).copy(accelX = 0.0, accelY = 0.0, accelZ = 9.81))
-            assertNotEquals(
-                "Decision.Confirm fired prematurely at t=$tNow (still inside upright window)",
-                CrashStateMachine.Decision.Confirm, d
-            )
-        }
-
-        // Phase 2: 5s of strong tilt (accelX=9.5, accelZ=2.5, |mag|≈9.82 — well within
-        // deviation gate). After ~1.4s the cumulative average gravity vector crosses 45°
-        // from the baseline. Without the latch, computeEffectiveSilenceMs would drop from
-        // 20000ms to 4500ms, and the elapsed-time check (tNow - 2000 >= 4500) would satisfy
-        // at tNow=6500 — still inside this drift phase (ends at 8000).
-        // With the latch, the 20s duration is frozen and Confirm must NOT fire here.
-        val tEnd = tDriftStart + 5_000L  // ends at t=8000, well before the 20s mark (t=22000)
-        while (tNow < tEnd) {
-            tNow += 20
-            // Strong tilt: gravity mainly along X. |v| = sqrt(9.5²+2.5²) ≈ 9.82 ≈ 9.81.
-            val d = sm.onSample(sample(
-                time = tNow, peak = 0.0, smoothed = 9.82, raw = 9.82, gyro = 0.05,
-            ).copy(accelX = 9.5, accelY = 0.0, accelZ = 2.5))
-            assertNotEquals(
-                "Decision.Confirm fired at t=$tNow — latched upright window collapsed when orientation drifted past 45°",
                 CrashStateMachine.Decision.Confirm, d
             )
         }
@@ -949,39 +844,14 @@ class CrashStateMachineTest {
     // ── Diagnostics: lastConfirmedSilenceMs reflects the actual window ───────
 
     @Test
-    fun `lastConfirmedSilenceMs reflects upright window when fired`() {
-        val t = Thresholds(
-            baselineMinSamples = 10,
-            silenceDurationMs = 4_500L,
-            silenceDurationUprightMs = 20_000L,
-            uprightAngleThresholdDegrees = 45.0,
-        )
-        val sm = smInSilenceCheckWithBaseline(t)
-
-        // Feed upright quiet samples until confirm fires. With the 20s upright
-        // window, we need ~1000 samples × 20ms = 20s of stillness.
-        var tNow = 2_000L
-        var confirmed = false
-        while (!confirmed && tNow < 25_000L) {
-            tNow += 20
-            val d = sm.onSample(sample(
-                time = tNow, peak = 0.0, smoothed = 9.81, raw = 9.81, gyro = 0.05,
-            ).copy(accelX = 0.0, accelY = 0.0, accelZ = 9.81))
-            if (d == CrashStateMachine.Decision.Confirm) confirmed = true
-        }
-        assertEquals("expected upright window to confirm", true, confirmed)
-        assertEquals(20_000L, sm.lastConfirmedSilenceMs)
-    }
-
-    @Test
     fun `lastConfirmedSilenceMs reflects legacy window when on-side fired`() {
         val t = Thresholds(
-            baselineMinSamples = 10,
             silenceDurationMs = 4_500L,
             silenceDurationUprightMs = 20_000L,
             uprightAngleThresholdDegrees = 45.0,
         )
-        val sm = smInSilenceCheckWithBaseline(t)
+        // Pre-impact ref along Z, on-side silence samples along X → angle ≈ 90°.
+        val sm = smInSilenceCheck(t)
 
         // Feed on-side quiet samples until confirm fires (~4.5s).
         var tNow = 2_000L

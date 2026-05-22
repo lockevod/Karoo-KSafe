@@ -51,6 +51,11 @@ class CrashStateMachine(
     fun setThresholds(t: Thresholds) {
         thresholds = t
     }
+
+    /** Inject the pre-impact orientation reference. Called by the facade on impact entry. */
+    fun setPreImpactReference(ref: PreImpactRef) {
+        preImpactRef = ref
+    }
     private companion object {
         /** Gravity reference, m/s². The whole stillness logic compares against this. */
         const val GRAVITY = 9.81
@@ -182,6 +187,36 @@ class CrashStateMachine(
     @Volatile var lastConfirmedSilenceMs: Long = 0L
         private set
 
+    // ── Pre-impact orientation reference (pre-impact-revision) ───────────────
+    /**
+     * The bike's gravity-vector direction averaged over ~2 s before the impact.
+     * Set by the facade via [setPreImpactReference] when an impact is detected.
+     * [PreImpactRef.INVALID] means no usable pre-impact data (cold start / just
+     * after a resume) — the orientation regime then falls back to the legacy
+     * short window.
+     */
+    @Volatile private var preImpactRef: PreImpactRef = PreImpactRef.INVALID
+
+    /**
+     * Gap between the impact and the FIRST time the state machine reached
+     * SILENCE_CHECK for this event, in the sample-time domain. `0L` until that
+     * first transition. Used by [computeEffectiveSilenceMs]'s gap regime.
+     */
+    @Volatile var firstSilenceGapMs: Long = 0L
+        private set
+
+    /**
+     * Angle (degrees) between the pre-impact reference and the silence-window
+     * gravity vector, as computed on the last [computeEffectiveSilenceMs] call
+     * that reached the orientation branch. `-1.0` when not computed (gap regime,
+     * invalid reference, or too few silence samples). For calibration logging only.
+     */
+    @Volatile var lastOrientationAngleDeg: Double = -1.0
+        private set
+
+    /** Snapshot of the current pre-impact reference. For calibration logging. */
+    val preImpactReference: PreImpactRef get() = preImpactRef
+
     // ── Public API ───────────────────────────────────────────────────────────
 
     fun onSample(sample: SensorSample): Decision {
@@ -270,6 +305,9 @@ class CrashStateMachine(
         // intentionally preserved (a pause doesn't invalidate what was learned
         // during cruising before the pause).
         resetSilenceWindow()
+        preImpactRef = PreImpactRef.INVALID
+        firstSilenceGapMs = 0L
+        lastOrientationAngleDeg = -1.0
     }
 
     fun reset() {
@@ -293,6 +331,9 @@ class CrashStateMachine(
         silenceWindowSumZ = 0.0
         silenceWindowCount = 0
         lockedEffectiveSilenceMs = 0L
+        preImpactRef = PreImpactRef.INVALID
+        firstSilenceGapMs = 0L
+        lastOrientationAngleDeg = -1.0
     }
 
     /**
@@ -322,6 +363,9 @@ class CrashStateMachine(
         silenceWindowSumZ = 0.0
         silenceWindowCount = 0
         lockedEffectiveSilenceMs = 0L
+        preImpactRef = PreImpactRef.INVALID
+        firstSilenceGapMs = 0L
+        lastOrientationAngleDeg = -1.0
     }
 
     // ── State handlers ───────────────────────────────────────────────────────
@@ -399,6 +443,9 @@ class CrashStateMachine(
         if (accelOk && gyroOk && timeOk && speedDropOk) {
             state = State.SILENCE_CHECK
             silenceStartedMs = now
+            // First (and only) IMPACT → SILENCE_CHECK transition of this event:
+            // freeze how long the rider kept moving after the impact.
+            firstSilenceGapMs = now - impactStartedMs
             return Decision.None
         }
 
@@ -488,54 +535,54 @@ class CrashStateMachine(
     }
 
     /**
-     * Decide the silence duration to require, based on the bike's orientation
-     * during the current stillness window vs the learned baseline.
-     *
-     * Returns the legacy duration (GPS-stale or GPS-fresh) when:
-     *   - baseline not yet learned (cold start, very short ride before impact)
-     *   - silence window has too few samples to compute a stable direction (<5)
-     *   - the orientation angle exceeds [Thresholds.uprightAngleThresholdDegrees]
-     *     (bike is on its side or laid down — likely a real crash)
-     *
-     * Returns [Thresholds.silenceDurationUprightMs] when the bike is still
-     * within the upright angle threshold of the baseline — typical of a rider
-     * who hit a bump, braked hard and stopped upright at the roadside.
+     * Decide the silence-window duration from two regimes (see the design spec):
+     *   - Gap regime: a long impact→stillness gap means the rider kept riding
+     *     after the impact → false-positive-prone → require the 20 s window.
+     *   - Orientation regime (prompt stops only): the angle between the
+     *     pre-impact reference and the silence-window gravity vector decides
+     *     on-side (legacy short window) vs upright (20 s window).
+     * The chosen value is latched for the rest of the window.
      */
     private fun computeEffectiveSilenceMs(gpsStale: Boolean): Long {
-        // If a duration was already latched for this window, return it unchanged.
-        // The latch is cleared on every entry/exit/break of SILENCE_CHECK so each
-        // event decides fresh.
         if (lockedEffectiveSilenceMs > 0L) return lockedEffectiveSilenceMs
 
-        val legacyMs = if (gpsStale) thresholds.gpsStaleSilenceDurationMs
-                       else thresholds.silenceDurationMs
+        val legacyShort = if (gpsStale) thresholds.gpsStaleSilenceDurationMs
+                          else thresholds.silenceDurationMs
 
-        // Until we have enough samples for a stable direction, fall through with
-        // the legacy duration but do NOT latch — we want to upgrade to upright
-        // once enough samples land.
-        if (!isBaselineReady()) return legacyMs
-        if (silenceWindowCount < MIN_ORIENTATION_SAMPLES) return legacyMs
+        // Gap regime — delayed stop. Needs no orientation data.
+        if (firstSilenceGapMs > thresholds.delayedStopGapMs) {
+            lockedEffectiveSilenceMs = thresholds.silenceDurationUprightMs
+            return lockedEffectiveSilenceMs
+        }
+
+        // Orientation regime — prompt stop.
+        if (!preImpactRef.valid) {
+            lockedEffectiveSilenceMs = legacyShort   // never becomes valid → latch now
+            return legacyShort
+        }
+        if (silenceWindowCount < MIN_ORIENTATION_SAMPLES) return legacyShort  // may still grow
 
         val n = silenceWindowCount.toDouble()
         val curX = silenceWindowSumX / n
         val curY = silenceWindowSumY / n
         val curZ = silenceWindowSumZ / n
         val curMag = sqrt(curX * curX + curY * curY + curZ * curZ)
-        val baseMag = sqrt(baselineX * baselineX + baselineY * baselineY + baselineZ * baselineZ)
-        if (curMag < EPSILON || baseMag < EPSILON) return legacyMs
+        val refMag = sqrt(
+            preImpactRef.x * preImpactRef.x +
+            preImpactRef.y * preImpactRef.y +
+            preImpactRef.z * preImpactRef.z
+        )
+        // Degenerate vector — cannot classify; use the short window without latching
+        // (a later sample may yield a usable average).
+        if (curMag < EPSILON || refMag < EPSILON) return legacyShort
 
-        // Dot product / (magA * magB) = cos(angle). Clamp to [-1, 1] to guard against
-        // tiny FP overshoots from the divide.
-        val cosAngle = ((curX * baselineX + curY * baselineY + curZ * baselineZ)
-                       / (curMag * baseMag)).coerceIn(-1.0, 1.0)
+        val cosAngle = ((curX * preImpactRef.x + curY * preImpactRef.y + curZ * preImpactRef.z)
+                       / (curMag * refMag)).coerceIn(-1.0, 1.0)
         val angleDeg = Math.toDegrees(acos(cosAngle))
+        lastOrientationAngleDeg = angleDeg
 
-        val chosen = if (angleDeg < thresholds.uprightAngleThresholdDegrees) {
-            thresholds.silenceDurationUprightMs
-        } else {
-            legacyMs
-        }
-        // Latch the choice — subsequent samples in this window must honour it.
+        val chosen = if (angleDeg >= thresholds.uprightAngleThresholdDegrees) legacyShort
+                     else thresholds.silenceDurationUprightMs
         lockedEffectiveSilenceMs = chosen
         return chosen
     }
@@ -546,6 +593,7 @@ class CrashStateMachine(
         silenceWindowSumZ = 0.0
         silenceWindowCount = 0
         lockedEffectiveSilenceMs = 0L
+        lastOrientationAngleDeg = -1.0
     }
 
     // ── Helpers ──────────────────────────────────────────────────────────────
@@ -601,5 +649,6 @@ class CrashStateMachine(
     private fun resetTimers() {
         impactStartedMs = 0L
         silenceStartedMs = 0L
+        firstSilenceGapMs = 0L
     }
 }
