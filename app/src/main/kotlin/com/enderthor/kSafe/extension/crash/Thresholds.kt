@@ -54,6 +54,16 @@ data class Thresholds(
     val cadenceQuietThresholdRpm: Double = 20.0,
     val cadenceStaleThresholdMs: Long = 10_000L,
 
+    // ── Delayed-stop gap (pre-impact orientation revision) ───────────────────
+    /**
+     * Gap (ms) between the impact and first stillness above which the stop is
+     * treated as "delayed" — the rider kept riding after the impact, so the
+     * event is false-positive-prone and the long [silenceDurationUprightMs]
+     * window is required regardless of orientation. A real crash stops within
+     * 1–4 s of the impact, comfortably below this. See the design spec.
+     */
+    val delayedStopGapMs: Long = 8_000L,
+
     // ── Orientation-aware silence (revision 5) ───────────────────────────────
     /**
      * Silence duration to require when the bike is detected as still upright
