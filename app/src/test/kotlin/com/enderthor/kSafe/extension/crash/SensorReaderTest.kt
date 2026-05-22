@@ -177,16 +177,11 @@ class SensorReaderTest {
     // ---- inline any() helper to keep the call sites readable in Kotlin --------------
     private inline fun <reified T> any(): T = org.mockito.ArgumentMatchers.any(T::class.java)
 
-    private fun newReaderForVectorTest(): SensorReader {
-        val sm = org.mockito.Mockito.mock(android.hardware.SensorManager::class.java)
-        return SensorReader(sensorManager = sm, onSample = {})
-    }
-
     @Test
     fun `preImpactReference averages the recent vector window`() {
         // Drive 200 synthetic accelerometer samples of a constant upright vector
         // through the reader, 20 ms apart, then ask for the pre-impact reference.
-        val reader = newReaderForVectorTest()
+        val reader = newReader(mock(SensorManager::class.java))
         var t = 1_000_000L
         repeat(200) {
             reader.pushAccelForTest(x = 0f, y = 0f, z = 9.81f, tsMs = t)
@@ -201,7 +196,7 @@ class SensorReaderTest {
 
     @Test
     fun `preImpactReference is invalid before enough samples arrive`() {
-        val reader = newReaderForVectorTest()
+        val reader = newReader(mock(SensorManager::class.java))
         var t = 1_000_000L
         repeat(10) {
             reader.pushAccelForTest(x = 0f, y = 0f, z = 9.81f, tsMs = t)

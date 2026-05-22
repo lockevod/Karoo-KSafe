@@ -433,6 +433,8 @@ internal class Vec3RingBuffer(private val capacity: Int) {
     private var size = 0
 
     fun add(x: Double, y: Double, z: Double, tsMs: Long) {
+        // When full, (head + size) % capacity == head — the write lands on the
+        // oldest slot, which head then vacates. When not full, it is the next free slot.
         val idx = (head + size) % capacity
         if (size < capacity) {
             size++
