@@ -28,7 +28,15 @@ class PreImpactReferenceTest {
 
     @Test
     fun `returns invalid when too few samples in the window`() {
-        // Only 10 samples — below the 50-sample minimum.
+        // 10 samples genuinely inside the window (ts 99_570..99_750) — below MIN_SAMPLES=50.
+        val buf = constantBuffer(0.0, 0.0, 9.81, count = 10, endTs = 99_750L)
+        val ref = PreImpactReference.compute(buf, impactTsMs = 100_000L)
+        assertFalse(ref.valid)
+    }
+
+    @Test
+    fun `returns invalid when the buffer holds no samples inside the window`() {
+        // All samples sit inside the 250 ms guard — none qualify.
         val buf = constantBuffer(0.0, 0.0, 9.81, count = 10, endTs = 100_000L)
         val ref = PreImpactReference.compute(buf, impactTsMs = 100_000L)
         assertFalse(ref.valid)
