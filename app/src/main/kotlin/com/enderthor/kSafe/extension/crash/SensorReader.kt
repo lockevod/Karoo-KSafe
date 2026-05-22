@@ -91,6 +91,14 @@ class SensorReader(
     private val magnitudeBuffer = DoubleRingBuffer(IMPACT_FILTER_WINDOW)
     private val varianceBuffer = DoubleRingBuffer(VARIANCE_WINDOW)
 
+    /**
+     * Ring buffer of the most recent timestamped accelerometer vectors, used to
+     * compute the pre-impact orientation reference. ~150 entries ≈ 3 s at 50 Hz —
+     * covers the 2 s averaging window plus the 250 ms guard with margin.
+     * Sensor-thread-only, like the other buffers.
+     */
+    private val vectorBuffer = Vec3RingBuffer(PRE_IMPACT_RING_CAPACITY)
+
     @Volatile private var registered = false
 
     /**
@@ -168,6 +176,7 @@ class SensorReader(
         // on full stop (ride end / extension teardown) the buffer should be cleared
         // so a future restart begins with a clean window.
         varianceBuffer.clear()
+        vectorBuffer.clear()
         accelStillSinceMs = 0L
         lastGyroMag = 0.0
     }
@@ -193,6 +202,29 @@ class SensorReader(
      * so callers cannot mutate the internal deque.
      */
     fun magnitudeBufferSnapshot(): List<Double> = magnitudeBuffer.snapshot()
+
+    /**
+     * The pre-impact orientation reference for an impact detected at [impactTsMs].
+     * Snapshots the vector ring and delegates to the pure [PreImpactReference.compute].
+     * Called once per impact event (rare) — the O(capacity) snapshot is negligible.
+     */
+    fun preImpactReference(impactTsMs: Long): PreImpactRef =
+        PreImpactReference.compute(vectorBuffer.snapshot(), impactTsMs)
+
+    /**
+     * Drop the pre-impact vector ring. Called by the facade when the ride pauses
+     * so an impact within ~2 s of resume yields an invalid (rather than stale)
+     * reference. The reader stays registered across a pause, so the ring is NOT
+     * cleared by [stop] in that case.
+     */
+    fun clearVectorBuffer() {
+        vectorBuffer.clear()
+    }
+
+    /** Test-only: exercise the buffering path without a real SensorEvent. */
+    internal fun pushAccelForTest(x: Float, y: Float, z: Float, tsMs: Long) {
+        vectorBuffer.add(x.toDouble(), y.toDouble(), z.toDouble(), tsMs)
+    }
 
     override fun onSensorChanged(event: SensorEvent?) {
         if (event == null) return
@@ -236,6 +268,9 @@ class SensorReader(
         // computed only on demand via [accelStdDev], never on the hot path.
         varianceBuffer.add(rawMagnitude)
 
+        // Pre-impact orientation ring — raw X/Y/Z plus timestamp.
+        vectorBuffer.add(x.toDouble(), y.toDouble(), z.toDouble(), clock.nowMs())
+
         // Production has no rolling peak window — its peak detector compares the raw
         // single sample against the peak threshold. Emit peakMagnitude == rawMagnitude
         // so CrashStateMachine reproduces the existing behaviour exactly.
@@ -276,6 +311,9 @@ class SensorReader(
          * SENSOR_DELAY_GAME (~50 Hz). See [start] for the reasoning.
          */
         const val BATCH_MAX_LATENCY_US = 100_000
+
+        /** Capacity of the pre-impact vector ring (~3 s at 50 Hz). */
+        const val PRE_IMPACT_RING_CAPACITY = 150
     }
 }
 
@@ -377,5 +415,44 @@ internal class DoubleRingBuffer(@PublishedApi internal val capacity: Int) {
             action(arr[(h + i) % cap])
             i++
         }
+    }
+}
+
+/**
+ * Fixed-capacity ring of timestamped 3-axis vectors. Backed by primitive arrays —
+ * zero allocation per [add] on the 50 Hz sensor thread. NOT thread-safe; touched
+ * only from the sensor callback thread, like [DoubleRingBuffer].
+ */
+internal class Vec3RingBuffer(private val capacity: Int) {
+    init { require(capacity > 0) { "capacity must be positive" } }
+    private val xs = DoubleArray(capacity)
+    private val ys = DoubleArray(capacity)
+    private val zs = DoubleArray(capacity)
+    private val ts = LongArray(capacity)
+    private var head = 0
+    private var size = 0
+
+    fun add(x: Double, y: Double, z: Double, tsMs: Long) {
+        val idx = (head + size) % capacity
+        if (size < capacity) {
+            size++
+        } else {
+            head = (head + 1) % capacity
+        }
+        xs[idx] = x; ys[idx] = y; zs[idx] = z; ts[idx] = tsMs
+    }
+
+    fun clear() { head = 0; size = 0 }
+
+    /** Snapshot of live entries in insertion order. Allocates — call off the hot path. */
+    fun snapshot(): List<TimedVec3> {
+        val out = ArrayList<TimedVec3>(size)
+        var i = 0
+        while (i < size) {
+            val idx = (head + i) % capacity
+            out.add(TimedVec3(xs[idx], ys[idx], zs[idx], ts[idx]))
+            i++
+        }
+        return out
     }
 }

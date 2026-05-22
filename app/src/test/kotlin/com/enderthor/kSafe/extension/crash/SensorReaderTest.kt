@@ -4,6 +4,8 @@ import android.hardware.Sensor
 import android.hardware.SensorManager
 import android.os.Handler
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
+import org.junit.Assert.assertTrue
 import org.junit.Test
 import org.mockito.ArgumentMatchers.eq
 import org.mockito.ArgumentMatchers.isNull
@@ -174,6 +176,40 @@ class SensorReaderTest {
 
     // ---- inline any() helper to keep the call sites readable in Kotlin --------------
     private inline fun <reified T> any(): T = org.mockito.ArgumentMatchers.any(T::class.java)
+
+    private fun newReaderForVectorTest(): SensorReader {
+        val sm = org.mockito.Mockito.mock(android.hardware.SensorManager::class.java)
+        return SensorReader(sensorManager = sm, onSample = {})
+    }
+
+    @Test
+    fun `preImpactReference averages the recent vector window`() {
+        // Drive 200 synthetic accelerometer samples of a constant upright vector
+        // through the reader, 20 ms apart, then ask for the pre-impact reference.
+        val reader = newReaderForVectorTest()
+        var t = 1_000_000L
+        repeat(200) {
+            reader.pushAccelForTest(x = 0f, y = 0f, z = 9.81f, tsMs = t)
+            t += 20L
+        }
+        val impactTs = t  // just after the last sample
+        val ref = reader.preImpactReference(impactTs)
+        assertTrue(ref.valid)
+        assertEquals(9.81, ref.z, 1e-3)
+        assertEquals(0.0, ref.x, 1e-3)
+    }
+
+    @Test
+    fun `preImpactReference is invalid before enough samples arrive`() {
+        val reader = newReaderForVectorTest()
+        var t = 1_000_000L
+        repeat(10) {
+            reader.pushAccelForTest(x = 0f, y = 0f, z = 9.81f, tsMs = t)
+            t += 20L
+        }
+        val ref = reader.preImpactReference(t)
+        assertFalse(ref.valid)
+    }
 }
 
 /**
