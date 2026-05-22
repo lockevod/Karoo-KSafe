@@ -9,6 +9,7 @@ import com.enderthor.kSafe.extension.util.Clock
 import com.enderthor.kSafe.extension.util.SystemClock
 import kotlin.math.abs
 import kotlin.math.sqrt
+import timber.log.Timber
 
 /**
  * Encapsulates the [SensorEventListener] registration, the smoothing sliding-window buffer,
@@ -118,6 +119,16 @@ class SensorReader(
     @Volatile private var vectorRingFloorMs: Long = Long.MIN_VALUE
 
     @Volatile private var registered = false
+
+    /**
+     * Wall-clock timestamp of the last sensor-thread exception logged from
+     * [onSensorChanged]. Used to rate-limit the error log so a fault that recurs on
+     * every ~50 Hz sample cannot flood the log. See [onSensorChanged].
+     *
+     * @Volatile: written and read only on the sensor thread, but kept volatile for
+     * consistency with the other cross-thread fields here.
+     */
+    @Volatile private var lastSensorErrorLogMs = 0L
 
     /**
      * Register the accelerometer (mandatory) and gyroscope (optional) at
@@ -273,15 +284,34 @@ class SensorReader(
 
     override fun onSensorChanged(event: SensorEvent?) {
         if (event == null) return
-        when (event.sensor.type) {
-            Sensor.TYPE_GYROSCOPE -> processGyro(event)
-            Sensor.TYPE_ACCELEROMETER -> processAccel(event)
+        // Hard guard around the entire 50 Hz dispatch path. A single uncaught
+        // exception here — in processAccel/processGyro, in the downstream onSample
+        // callback, or in a calibration-log formatting lambda — would otherwise
+        // propagate out of onSensorChanged and permanently, silently stop crash
+        // detection for the rest of the ride. Catching Throwable and returning
+        // means detection SURVIVES the bad sample and keeps processing subsequent
+        // ones. The error log is rate-limited to at most once per ~5 s so a fault
+        // that recurs on every sample cannot flood the log.
+        try {
+            when (event.sensor.type) {
+                Sensor.TYPE_GYROSCOPE -> processGyro(event)
+                Sensor.TYPE_ACCELEROMETER -> processAccel(event)
+            }
+        } catch (t: Throwable) {
+            val now = clock.nowMs()
+            if (now - lastSensorErrorLogMs > SENSOR_ERROR_LOG_INTERVAL_MS) {
+                lastSensorErrorLogMs = now
+                Timber.e(t, "Exception on sensor thread — sample dropped, detection continues")
+            }
         }
     }
 
     override fun onAccuracyChanged(sensor: Sensor?, accuracy: Int) {}
 
     private fun processGyro(event: SensorEvent) {
+        // Defensive: the Android contract guarantees ≥3 values for gyro, but an
+        // exotic HAL returning fewer would throw ArrayIndexOutOfBoundsException here.
+        if (event.values.size < 3) return
         val x = event.values[0]
         val y = event.values[1]
         val z = event.values[2]
@@ -289,6 +319,12 @@ class SensorReader(
     }
 
     private fun processAccel(event: SensorEvent) {
+        // Defensive: the Android contract guarantees ≥3 values for the accelerometer,
+        // but an exotic HAL returning fewer would throw ArrayIndexOutOfBoundsException.
+        if (event.values.size < 3) return
+        // Snapshot the clock once so the vector-ring timestamp and the emitted
+        // SensorSample.timestampMs describe the SAME instant for this sample.
+        val nowMs = clock.nowMs()
         val x = event.values[0]
         val y = event.values[1]
         val z = event.values[2]
@@ -302,7 +338,7 @@ class SensorReader(
         if (deviation > accelStillDeviationMax) {
             accelStillSinceMs = 0L
         } else if (accelStillSinceMs == 0L) {
-            accelStillSinceMs = clock.nowMs()
+            accelStillSinceMs = nowMs
         }
 
         // Sliding 3-sample average (~60 ms at 50 Hz) — same as production.
@@ -314,7 +350,7 @@ class SensorReader(
         varianceBuffer.add(rawMagnitude)
 
         // Pre-impact orientation ring — raw X/Y/Z plus timestamp.
-        vectorBuffer.add(x.toDouble(), y.toDouble(), z.toDouble(), clock.nowMs())
+        vectorBuffer.add(x.toDouble(), y.toDouble(), z.toDouble(), nowMs)
 
         // Production has no rolling peak window — its peak detector compares the raw
         // single sample against the peak threshold. Emit peakMagnitude == rawMagnitude
@@ -325,7 +361,7 @@ class SensorReader(
                 smoothedMagnitude = smoothedMagnitude,
                 peakMagnitude = rawMagnitude,
                 gyroMag = lastGyroMag,
-                timestampMs = clock.nowMs(),
+                timestampMs = nowMs,
                 accelX = x.toDouble(),
                 accelY = y.toDouble(),
                 accelZ = z.toDouble(),
@@ -359,6 +395,13 @@ class SensorReader(
 
         /** Capacity of the pre-impact vector ring (~3 s at 50 Hz). */
         const val PRE_IMPACT_RING_CAPACITY = 150
+
+        /**
+         * Minimum interval between sensor-thread exception logs in [onSensorChanged].
+         * Rate-limits the error log so a fault that recurs on every ~50 Hz sample
+         * cannot flood the log.
+         */
+        const val SENSOR_ERROR_LOG_INTERVAL_MS = 5_000L
     }
 }
 

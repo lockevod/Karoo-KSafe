@@ -269,6 +269,9 @@ class CrashDetectionManager(
         speedDropMonitor.stop()
         stateMachine.reset()
         resetWindowAccumulators()
+        // Clear the rolling TMO-cluster deque (cleared in start()/resume() too) so a
+        // stop leaves no stale cluster state behind.
+        recentTmoTimestamps.clear()
         // Clear the post-confirmation cooldown gate. Otherwise a rider who disables crash
         // detection mid-cooldown then re-enables it within ~30 s would have a legitimate
         // impact suppressed by stale cooldown state from the previous session.
@@ -395,7 +398,11 @@ class CrashDetectionManager(
         // Stamp the current staleness onto the sample so the state machine sees an
         // up-to-date view between speed pings, WITHOUT touching the
         // "real-speed-ever-received" sentinel (which protects the cold-start guard).
-        val sample = rawSample.copy(gpsStale = gpsCurrentlyStale)
+        // SensorReader always constructs the sample with gpsStale=false, so in the
+        // common (GPS-alive) case the value already matches and we can use rawSample
+        // directly — avoiding an unconditional ~50/s copy purely to stamp one boolean.
+        val sample = if (gpsCurrentlyStale == rawSample.gpsStale) rawSample
+                     else rawSample.copy(gpsStale = gpsCurrentlyStale)
 
         // Periodic debug log (debug builds only).
         if (BuildConfig.DEBUG && now - lastLogTime > LOG_INTERVAL_MS) {
@@ -614,11 +621,17 @@ class CrashDetectionManager(
             rebuildThresholds(boostActive = true)
 
             Timber.d("Impact window timeout (%dms) → false alarm, resetting", windowMs)
+            // Coerce the "not yet set" sentinels: minSpeedInWindow / minDeviationInWindow
+            // are seeded to Double.MAX_VALUE, and if the in-IMPACT accumulator never
+            // lowered them that 300-digit value would land in the CSV. Log -1.0 as a
+            // clean "not recorded" marker instead. Accumulator logic is unchanged.
+            val minSpdLog = if (minSpeedInWindow == Double.MAX_VALUE) -1.0 else minSpeedInWindow
+            val minDevLog = if (minDeviationInWindow == Double.MAX_VALUE) -1.0 else minDeviationInWindow
             calibLogger?.log(CalibrationLogger.Event.IMPACT_TIMEOUT) {
                 "window_ms=$windowMs,speed=%.1f,gyro=%.2f,deviation=%.2f,grade=%.1f,cadence=%.0f,preset=${config.crashSensitivity},why_no_silence=$whyNoSilence,max_smooth=%.1f,min_spd=%.1f,min_dev=%.2f,boost_s=%.0f,cluster=$isCluster,pre_valid=${stateMachine.preImpactReference.valid}".formatUs(
                     currentSpeedKmh, sample.gyroMag, deviation,
                     currentGrade, currentCadence,
-                    maxSmoothedInWindow, minSpeedInWindow, minDeviationInWindow,
+                    maxSmoothedInWindow, minSpdLog, minDevLog,
                     boostMs / 1000f, isCluster
                 )
             }
