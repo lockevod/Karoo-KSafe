@@ -1276,6 +1276,53 @@ class CrashStateMachineTest {
         assertEquals(CrashStateMachine.State.MONITORING, sm.state)
     }
 
+    // ── Stuck cadence sensor (C2 fix) ────────────────────────────────────────
+
+    @Test
+    fun `stuck cadence sensor repeating one value goes inactive and does not veto SILENCE_CHECK`() {
+        // A cadence sensor that lost signal repeats its last value bit-exact. After
+        // cadenceStaleThresholdMs with no CHANGE it must read as inactive, so it
+        // cannot veto a real crash. On-side crash -> 4.5 s window.
+        val (sm, _) = smEnteringSilence(
+            gapMs = 2_000L,
+            preRef = PreImpactRef(0.0, 0.0, 9.81, valid = true),
+            silenceAz = 0.0, silenceAx = 9.81,
+        )
+        assertEquals(CrashStateMachine.State.SILENCE_CHECK, sm.state)
+        var t = 1_002_000L
+        var confirmed = false
+        // Feed 12 s of stillness; cadence sensor stuck bit-exact at 68 RPM the whole time.
+        repeat(12) {
+            t += 1000L
+            val d = sm.onSample(sample(time = t, raw = 9.81, smoothed = 9.81, az = 0.0, ax = 9.81))
+            sm.onCadenceUpdate(68.0)   // same value every tick -> stuck sensor
+            if (d is CrashStateMachine.Decision.Confirm) confirmed = true
+        }
+        assertTrue("a stuck cadence reading must not block confirmation", confirmed)
+    }
+
+    @Test
+    fun `fluctuating cadence keeps the gate active and exits SILENCE_CHECK as a false alarm`() {
+        // A genuinely pedalling rider's cadence fluctuates every revolution. The
+        // cadence gate must stay active and trigger the false-alarm exit.
+        val (sm, _) = smEnteringSilence(
+            gapMs = 2_000L,
+            preRef = PreImpactRef(0.0, 0.0, 9.81, valid = true),
+            silenceAz = 0.0, silenceAx = 9.81,
+        )
+        assertEquals(CrashStateMachine.State.SILENCE_CHECK, sm.state)
+        var t = 1_002_000L
+        val rpms = listOf(78.0, 81.0, 79.0, 82.0, 80.0, 83.0)
+        var returned = false
+        for (rpm in rpms) {
+            t += 1000L
+            val d = sm.onSample(sample(time = t, raw = 9.81, smoothed = 9.81, az = 0.0, ax = 9.81))
+            sm.onCadenceUpdate(rpm)   // changes every tick -> genuine pedalling
+            if (d is CrashStateMachine.Decision.ReturnToMonitoring) returned = true
+        }
+        assertTrue("a fluctuating (real pedalling) cadence must trigger the gate", returned)
+    }
+
     // ── Diagnostics: lastConfirmedGapMs / lastConfirmedAngleDeg snapshots ──────
 
     /**

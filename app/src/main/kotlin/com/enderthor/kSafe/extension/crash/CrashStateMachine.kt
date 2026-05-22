@@ -101,13 +101,38 @@ class CrashStateMachine(
     @Volatile private var speedLastUpdatedAtMs: Long = SPEED_UPDATE_NEVER
 
     // ── Cadence ──────────────────────────────────────────────────────────────
-    @Volatile private var lastCadenceRpm: Double = 0.0
+    /**
+     * Most recent cadence value (RPM). Initialised to [Double.NaN] — a sentinel
+     * meaning "no cadence value received in this session." [NaN] can never equal
+     * any real cadence reading, so the first [onCadenceUpdate] call is NOT counted
+     * as a value change; only subsequent calls that carry a DIFFERENT value from
+     * the previous one set [cadenceLastChangeMs]. This prevents an ANT+ cadence
+     * sensor that has just (re)connected from being immediately classified as
+     * "actively pedalling" before we have seen it fluctuate.
+     */
+    @Volatile private var lastCadenceRpm: Double = Double.NaN
     /**
      * Sample-domain timestamp at which cadence was last received (0 = never received).
      * Set to [lastSampleMs] in [onCadenceUpdate] so it lives in the same time domain as
      * [SensorSample.timestampMs], making staleness checks meaningful.
      */
     @Volatile private var lastCadenceUpdateMs: Long = 0L
+    /**
+     * Sample-domain timestamp at which the cadence VALUE last changed (bit-exact).
+     * Sentinel `-1L` = "no value change has ever been observed in this session."
+     *
+     * A cadence sensor that has lost signal repeats its last value bit-exact while
+     * the SDK keeps emitting it — so [lastCadenceUpdateMs] (freshness-by-emission)
+     * stays current and cannot detect the stall. This field tracks
+     * freshness-by-change instead: a genuinely pedalling rider's cadence fluctuates
+     * every revolution, a stuck sensor's does not.
+     *
+     * [isCadenceActive] returns `false` when this is `-1L` (sensor never actually
+     * changed its value → stuck sensor from the start of the session) and also when
+     * `nowSampleMs - cadenceLastChangeMs > cadenceStaleThresholdMs` (sensor stopped
+     * changing mid-ride → post-signal-loss stuck reading).
+     */
+    @Volatile private var cadenceLastChangeMs: Long = -1L
 
     /** Timestamp of the last sample processed by [onSample]; used by [onCadenceUpdate]. */
     @Volatile private var lastSampleMs: Long = 0L
@@ -274,6 +299,14 @@ class CrashStateMachine(
     }
 
     fun onCadenceUpdate(cadenceRpm: Double) {
+        // Record a change only when the value actually moved AND we already have a real
+        // prior value ([lastCadenceRpm] is NOT [Double.NaN]). The NaN sentinel prevents
+        // the very first cadence reading (which always differs from NaN) from counting
+        // as a "change" — a stuck sensor that first appears at 68 RPM must accumulate
+        // at least one genuine fluctuation before the change-time is stamped.
+        if (!lastCadenceRpm.isNaN() && cadenceRpm != lastCadenceRpm) {
+            cadenceLastChangeMs = lastSampleMs
+        }
         lastCadenceRpm = cadenceRpm
         // Use lastSampleMs (sample-domain) so staleness checks stay in the same time domain
         // as the sensor samples. If no sample has been processed yet, lastSampleMs is 0 —
@@ -304,8 +337,9 @@ class CrashStateMachine(
         lastSpeedGpsStale = false
         speedLastUpdatedAtMs = SPEED_UPDATE_NEVER
         // Note: lastSpeedGpsStale will be refreshed from the next sample's gpsStale.
-        lastCadenceRpm = 0.0
+        lastCadenceRpm = Double.NaN
         lastCadenceUpdateMs = 0L
+        cadenceLastChangeMs = -1L
         lastSampleMs = 0L
         startTimeMs = 0L
         silenceWindowSumX = 0.0
@@ -338,8 +372,9 @@ class CrashStateMachine(
         lastSpeedKmh = 0.0
         lastSpeedGpsStale = false
         speedLastUpdatedAtMs = SPEED_UPDATE_NEVER
-        lastCadenceRpm = 0.0
+        lastCadenceRpm = Double.NaN
         lastCadenceUpdateMs = 0L
+        cadenceLastChangeMs = -1L
         lastSampleMs = 0L
         startTimeMs = 0L
         silenceWindowSumX = 0.0
@@ -650,6 +685,14 @@ class CrashStateMachine(
         if (lastCadenceUpdateMs == 0L) return false
         val age = nowSampleMs - lastCadenceUpdateMs
         if (age > thresholds.cadenceStaleThresholdMs) return false
+        // Freshness-by-CHANGE: [cadenceLastChangeMs] == -1L means the cadence value
+        // has NEVER fluctuated since the session started — the sensor is reporting a
+        // static value (stuck reading after signal loss, or sensor just connected and
+        // not yet verified to be live). An actively pedalling rider's cadence changes
+        // every revolution; a stuck sensor's does not.
+        if (cadenceLastChangeMs < 0L) return false
+        val sinceChange = nowSampleMs - cadenceLastChangeMs
+        if (sinceChange > thresholds.cadenceStaleThresholdMs) return false
         return lastCadenceRpm > thresholds.cadenceQuietThresholdRpm
     }
 
