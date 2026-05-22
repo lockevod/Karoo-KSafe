@@ -527,8 +527,9 @@ class CrashDetectionManager(
         Timber.d(">>> SILENCE_CHECK started (deviation=%.2f gyro=%.2f speed=%.1fkm/h)",
             deviation, sample.gyroMag, currentSpeedKmh)
         calibLogger?.log(CalibrationLogger.Event.SILENCE_ENTER) {
-            "deviation=%.2f,gyro=%.2f,speed=%.1f,gps_stale=${lastGpsStaleState}".formatUs(
-                deviation, sample.gyroMag, currentSpeedKmh)
+            val ref = stateMachine.preImpactReference
+            "deviation=%.2f,gyro=%.2f,speed=%.1f,gps_stale=${lastGpsStaleState},gap_ms=${stateMachine.firstSilenceGapMs},pre_valid=${ref.valid},pre_x=%.2f,pre_y=%.2f,pre_z=%.2f".formatUs(
+                deviation, sample.gyroMag, currentSpeedKmh, ref.x, ref.y, ref.z)
         }
     }
 
@@ -548,9 +549,19 @@ class CrashDetectionManager(
         }
         Timber.d(">>> CRASH CONFIRMED (accel dev=%.2f speed=%.1fkm/h gyro=%.2f gpsStale=%b silence_ms=%d path=%s)",
             deviation, currentSpeedKmh, sample.gyroMag, gpsStale, effectiveSilenceMs, silencePath)
+        val gapMs = stateMachine.firstSilenceGapMs
+        val angle = stateMachine.lastOrientationAngleDeg
+        val ref = stateMachine.preImpactReference
+        val decidedBy = when {
+            gapMs > stateMachine.thresholds.delayedStopGapMs -> "GAP"
+            !ref.valid -> "UNKNOWN"
+            angle < 0.0 -> "UNKNOWN"
+            angle >= stateMachine.thresholds.uprightAngleThresholdDegrees -> "ORIENT_ONSIDE"
+            else -> "ORIENT_UPRIGHT"
+        }
         calibLogger?.log(CalibrationLogger.Event.CRASH_CONFIRMED) {
-            "deviation=%.2f,speed=%.1f,confirm_spd_thr=${config.crashConfirmSpeedKmh},grade=%.1f,cadence=%.0f,gps_stale=$gpsStale,preset=${config.crashSensitivity},effective_dev_max=$effectiveDevMax,effective_silence_ms=$effectiveSilenceMs,silence_path=$silencePath,countdown_s=${config.countdownSeconds}".formatUs(
-                deviation, currentSpeedKmh, currentGrade, currentCadence)
+            "deviation=%.2f,speed=%.1f,confirm_spd_thr=${config.crashConfirmSpeedKmh},grade=%.1f,cadence=%.0f,gps_stale=$gpsStale,preset=${config.crashSensitivity},effective_dev_max=$effectiveDevMax,effective_silence_ms=$effectiveSilenceMs,silence_path=$silencePath,countdown_s=${config.countdownSeconds},gap_ms=$gapMs,pre_impact_angle=%.1f,decided_by=$decidedBy".formatUs(
+                deviation, currentSpeedKmh, currentGrade, currentCadence, angle)
         }
     }
 
@@ -584,7 +595,7 @@ class CrashDetectionManager(
 
             Timber.d("Impact window timeout (%dms) → false alarm, resetting", windowMs)
             calibLogger?.log(CalibrationLogger.Event.IMPACT_TIMEOUT) {
-                "window_ms=$windowMs,speed=%.1f,gyro=%.2f,deviation=%.2f,grade=%.1f,cadence=%.0f,preset=${config.crashSensitivity},why_no_silence=$whyNoSilence,max_smooth=%.1f,min_spd=%.1f,min_dev=%.2f,boost_s=%.0f,cluster=$isCluster".formatUs(
+                "window_ms=$windowMs,speed=%.1f,gyro=%.2f,deviation=%.2f,grade=%.1f,cadence=%.0f,preset=${config.crashSensitivity},why_no_silence=$whyNoSilence,max_smooth=%.1f,min_spd=%.1f,min_dev=%.2f,boost_s=%.0f,cluster=$isCluster,pre_valid=${stateMachine.preImpactReference.valid}".formatUs(
                     currentSpeedKmh, sample.gyroMag, deviation,
                     currentGrade, currentCadence,
                     maxSmoothedInWindow, minSpeedInWindow, minDeviationInWindow,
