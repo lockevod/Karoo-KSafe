@@ -8,6 +8,7 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.withContext
 import timber.log.Timber
 import java.io.File
 
@@ -364,6 +365,12 @@ class CalibrationLogger(
             }
             while (true) {
                 delay(FLUSH_INTERVAL_MS)
+                // Self-terminate if disable() ran while this job was in the delay().
+                // Guards against the race where restartFlushJob() or enable() launches
+                // this coroutine just after disable() cancelled the previous flushJob
+                // and set isEnabled=false — without this check the loop would keep
+                // writing after the session has ended.
+                if (!isEnabled) return@launch
                 flush()
             }
         }
@@ -374,16 +381,51 @@ class CalibrationLogger(
         Timber.i("CalibrationLogger enabled — install=$installId session=$sessionId device=${DEVICE_LABEL} v${BuildConfig.VERSION_NAME}")
     }
 
+    /**
+     * Disables the logger and flushes the remaining buffer **synchronously** on the calling
+     * thread. Safe to call from [onDestroy] where we need to guarantee the data lands on
+     * disk before the process is torn down — blocking for a few ms there is acceptable.
+     *
+     * **Do NOT call this from a coroutine running on [Dispatchers.Main]** during a live
+     * ride: [appendText] is a blocking eMMC write of up to ~500 lines and will stall the
+     * Main dispatcher for tens of milliseconds. Use [disableAsync] instead.
+     */
     fun disable() {
         isEnabled = false
         flushJob?.cancel()
         flushJob = null
-        // Write session-end marker before the final flush so it is included in the sent file
+        // Write session-end marker before the final flush so it is included in the sent file.
         // Locale.US — the calibration CSV uses commas as field separators, so the default
         // Locale (es/fr/de etc.) turning "12.0" into "12,0" would split the column.
         addEntryDirect(Event.LOG_END, "session_end,duration_s=${String.format(java.util.Locale.US, "%.0f", (System.currentTimeMillis() - startTime) / 1_000f)}")
         flush()   // write all remaining buffer entries (including LOG_END) to disk
         Timber.i("CalibrationLogger disabled — final flush done")
+    }
+
+    /**
+     * Disables the logger and dispatches the final buffer flush to [Dispatchers.IO] so the
+     * calling coroutine (running on [Dispatchers.Main]) is not blocked by disk I/O.
+     *
+     * Call this from the config-flow collector (logging toggled off mid-ride). The LOG_END
+     * marker is added to the in-memory buffer synchronously before the IO dispatch so it is
+     * guaranteed to be written in the same flush — no entries are lost.
+     *
+     * The returned [Job] can be ignored (fire-and-forget); it completes on the IO thread
+     * independently of the caller.
+     */
+    fun disableAsync(): Job {
+        isEnabled = false
+        flushJob?.cancel()
+        flushJob = null
+        // Add the session-end marker synchronously while still on the caller's thread so
+        // it lands in the buffer before we hand off to IO. The buffer is synchronized, so
+        // this is safe regardless of which thread calls us.
+        addEntryDirect(Event.LOG_END, "session_end,duration_s=${String.format(java.util.Locale.US, "%.0f", (System.currentTimeMillis() - startTime) / 1_000f)}")
+        // Dispatch only the flush to IO; everything else (state mutation above) is already done.
+        return scope.launch(Dispatchers.IO) {
+            flush()
+            Timber.i("CalibrationLogger disabled — final flush done (async)")
+        }
     }
 
     // ─── Logging API ─────────────────────────────────────────────────────────
@@ -606,9 +648,16 @@ class CalibrationLogger(
         Timber.w("CalibrationLogger: restarting flush job (health-check triggered)")
         flushJob?.cancel()
         lastFlushAtMs = System.currentTimeMillis()  // reset clock so we don't immediately re-restart
+        // Re-check isEnabled after the cancel — disable() may have run between the guard at
+        // the top of this function and here, leaving flushJob=null and isEnabled=false.
+        // Without this re-check we would launch a new flush loop after disable() intended
+        // to stop all activity.
+        if (!isEnabled) return
         flushJob = scope.launch(Dispatchers.IO) {
             while (true) {
                 delay(FLUSH_INTERVAL_MS)
+                // Self-terminate if disable() ran while this job was suspended in delay().
+                if (!isEnabled) return@launch
                 flush()
             }
         }

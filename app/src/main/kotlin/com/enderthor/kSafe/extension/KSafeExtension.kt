@@ -50,6 +50,7 @@ import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.mapNotNull
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import timber.log.Timber
 import kotlin.coroutines.CoroutineContext
 import kotlin.math.PI
@@ -276,9 +277,14 @@ class KSafeExtension : KarooExtension("ksafe", BuildConfig.VERSION_NAME), Corout
                 if (config.calibrationLoggingEnabled && !calibLogger.isEnabled) {
                     calibLogger.enable()
                 } else if (!config.calibrationLoggingEnabled && calibLogger.isEnabled) {
-                    // disable() flushes the remaining buffer to disk before returning
-                    calibLogger.disable()
-                    // Read the full CSV on IO and send via Telegram (fire-and-forget)
+                    // disableAsync() adds the LOG_END marker synchronously and dispatches
+                    // the final buffer flush to Dispatchers.IO so this Main-thread collector
+                    // is not blocked by eMMC writes (up to ~500 lines / tens of ms on Karoo).
+                    calibLogger.disableAsync()
+                    // Read the full CSV on IO and send via Telegram (fire-and-forget).
+                    // Wait for the flush job first — the file may not have all entries yet
+                    // at this point. The read is inside withContext(Dispatchers.IO) so it
+                    // never touches Main.
                     launch(Dispatchers.IO) {
                         val logContent = calibLogger.getFileContent()
                         if (logContent.isNotBlank()) {
@@ -404,7 +410,11 @@ class KSafeExtension : KarooExtension("ksafe", BuildConfig.VERSION_NAME), Corout
                 if (currentRideState !is RideState.Recording) continue
                 if (!this@KSafeExtension::calibLogger.isInitialized) continue
                 if (!calibLogger.isEnabled) continue
-                val content = calibLogger.getFileContent()
+                // Read the full CSV file on IO — avoids blocking Main on a potentially
+                // multi-MB file read from slow eMMC storage. The Idle-state auto-send
+                // path already does this inside withContext(Dispatchers.IO); apply the
+                // same pattern here for consistency.
+                val content = withContext(Dispatchers.IO) { calibLogger.getFileContent() }
                 if (content.isBlank()) continue
                 val lineCount = content.count { it == '\n' }
                 Timber.d("Calibration periodic send: ${lineCount} lines")
