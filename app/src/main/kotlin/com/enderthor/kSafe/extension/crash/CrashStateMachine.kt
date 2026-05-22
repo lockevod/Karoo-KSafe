@@ -128,20 +128,6 @@ class CrashStateMachine(
      */
     @Volatile private var startTimeMs: Long = 0L
 
-    // ── Orientation: baseline gravity vector ─────────────────────────────────
-    /**
-     * Running average of the gravity vector captured while the rider was
-     * cruising. The facade calls [feedBaselineSample] for each qualifying
-     * sample (speed > [Thresholds.baselineCruisingMinSpeedKmh] and accel std-dev
-     * low). Until [baselineSampleCount] reaches [Thresholds.baselineMinSamples]
-     * the baseline is "not ready" and the orientation gate falls back to the
-     * legacy silence duration.
-     */
-    @Volatile private var baselineX: Double = 0.0
-    @Volatile private var baselineY: Double = 0.0
-    @Volatile private var baselineZ: Double = 0.0
-    @Volatile private var baselineSampleCount: Int = 0
-
     // ── Orientation: silence-window accumulator ──────────────────────────────
     /**
      * Sum of accel X/Y/Z over samples received while inside SILENCE_CHECK,
@@ -158,10 +144,11 @@ class CrashStateMachine(
     /**
      * Latched silence-duration choice for the current SILENCE_CHECK window.
      * `0L` means "not yet decided" (cold start or just-reset window). Once
-     * `silenceWindowCount` crosses [MIN_ORIENTATION_SAMPLES] AND the baseline
-     * is ready, [computeEffectiveSilenceMs] freezes the chosen duration here
-     * for the rest of the window. Reset to `0L` by [resetSilenceWindow] on
-     * every entry/exit/break of SILENCE_CHECK so each event decides fresh.
+     * `silenceWindowCount` crosses [MIN_ORIENTATION_SAMPLES] with a valid
+     * pre-impact reference, [computeEffectiveSilenceMs] freezes the chosen
+     * duration here for the rest of the window. Reset to `0L` by
+     * [resetSilenceWindow] on every entry/exit/break of SILENCE_CHECK so each
+     * event decides fresh.
      *
      * Why latch: without this, a rider standing upright for 18s with the
      * 20s window engaged could see the running average gravity vector drift
@@ -253,47 +240,6 @@ class CrashStateMachine(
         lastCadenceUpdateMs = lastSampleMs
     }
 
-    /**
-     * Feed a qualifying cruising sample into the baseline learner. The facade
-     * is responsible for deciding what "cruising" means (speed gate + low
-     * accel std-dev). Samples received while the state machine is NOT in
-     * MONITORING are silently dropped — we never update the baseline mid-event.
-     */
-    fun feedBaselineSample(x: Double, y: Double, z: Double) {
-        if (state != State.MONITORING) return
-        // Cap the effective sample count at baselineMinSamples so the formula
-        // behaves as an EMA with α = 1/baselineMinSamples after the initial
-        // learning phase. Without the cap, the divisor grows without bound and
-        // the baseline freezes after ~30 s of cruising — a rider who remounts
-        // the Karoo mid-ride or whose mount gradually loosens cannot recover
-        // their upright reference. With the cap, the effective half-life is
-        // ~ln(2) * baselineMinSamples samples (~20 s at 50 Hz for the default
-        // 1500), so real orientation changes adapt within a minute or two of
-        // cruising.
-        //
-        // The counter itself keeps growing so [isBaselineReady] continues to
-        // reflect "we've seen at least baselineMinSamples cruising samples
-        // since the last reset."
-        val effectiveN = baselineSampleCount.coerceAtMost(thresholds.baselineMinSamples)
-        baselineX += (x - baselineX) / (effectiveN + 1)
-        baselineY += (y - baselineY) / (effectiveN + 1)
-        baselineZ += (z - baselineZ) / (effectiveN + 1)
-        baselineSampleCount += 1
-    }
-
-    /** True iff enough cruising samples have been fed to trust the baseline. */
-    fun isBaselineReady(): Boolean =
-        baselineSampleCount >= thresholds.baselineMinSamples
-
-    /**
-     * Snapshot of the current baseline gravity vector. Consumed by unit tests
-     * and by [CrashDetectionManager] (Task 7) to emit the one-shot
-     * `ORIENTATION_BASELINE` calibration event when the baseline first becomes
-     * ready. Not part of the production state-machine decision path.
-     */
-    internal fun baselineVector(): Triple<Double, Double, Double> =
-        Triple(baselineX, baselineY, baselineZ)
-
     fun onPause() {
         state = State.MONITORING
         impactStartedMs = 0L
@@ -301,9 +247,7 @@ class CrashStateMachine(
         // Drop accumulated orientation data — a pause invalidates the current
         // silence window. Without this, a SILENCE_CHECK that was in progress
         // when the rider paused would pollute the next SILENCE_CHECK event
-        // with stale gravity-vector samples. Baseline learning state is
-        // intentionally preserved (a pause doesn't invalidate what was learned
-        // during cruising before the pause).
+        // with stale gravity-vector samples.
         resetSilenceWindow()
         preImpactRef = PreImpactRef.INVALID
         firstSilenceGapMs = 0L
@@ -322,10 +266,6 @@ class CrashStateMachine(
         lastCadenceUpdateMs = 0L
         lastSampleMs = 0L
         startTimeMs = 0L
-        baselineX = 0.0
-        baselineY = 0.0
-        baselineZ = 0.0
-        baselineSampleCount = 0
         silenceWindowSumX = 0.0
         silenceWindowSumY = 0.0
         silenceWindowSumZ = 0.0
@@ -338,13 +278,15 @@ class CrashStateMachine(
 
     /**
      * Reset timing and per-event state (impact window, silence window, cadence,
-     * speed) for a ride RESUME after pause — but **preserve the learned baseline**
-     * gravity vector and its sample count. A pause-resume in the middle of a ride
-     * (traffic light, regroup, mechanical) is NOT a fresh ride; the upright
-     * reference established during the pre-pause cruising is still valid.
+     * speed, pre-impact reference) for a ride RESUME after pause. A pause-resume
+     * in the middle of a ride (traffic light, regroup, mechanical) is NOT a
+     * fresh ride, but every per-event signal — the impact/silence windows, the
+     * silence-window orientation accumulator and the pre-impact reference —
+     * belongs to a specific impact event and must start clean.
      *
-     * Use [reset] for fresh-ride / cold-start / process-restart paths where the
-     * baseline must be re-learned.
+     * Functionally equivalent to [reset] for the current implementation; kept
+     * as a distinct entry point so the facade can express "ride resume" intent
+     * and so future ride-scoped (vs event-scoped) state can diverge here.
      */
     fun resumeForRide() {
         state = State.MONITORING
@@ -357,7 +299,6 @@ class CrashStateMachine(
         lastCadenceUpdateMs = 0L
         lastSampleMs = 0L
         startTimeMs = 0L
-        // Baseline preserved.
         silenceWindowSumX = 0.0
         silenceWindowSumY = 0.0
         silenceWindowSumZ = 0.0

@@ -64,38 +64,26 @@ data class Thresholds(
      */
     val delayedStopGapMs: Long = 8_000L,
 
-    // ── Orientation-aware silence (revision 5) ───────────────────────────────
+    // ── Orientation-aware silence (pre-impact orientation revision) ──────────
     /**
-     * Silence duration to require when the bike is detected as still upright
-     * (gravity vector within [uprightAngleThresholdDegrees] of the learned
-     * baseline). Designed to eliminate the bump+brake+stop false positive: a
-     * rider who stops upright at a light will almost always shift weight,
-     * tilt the bike to put a foot down, or interact with the device within
-     * this window — any motion > [silenceDeviationMax] resets the silence
-     * clock. An unconscious rider with the bike pinned upright still
-     * confirms, just delayed by ~15s vs the on-side path.
+     * Silence duration to require when the bike is detected as still upright —
+     * i.e. the silence-window gravity vector is within
+     * [uprightAngleThresholdDegrees] of the pre-impact orientation reference
+     * captured in the ~2 s before the impact. Designed to eliminate the
+     * bump+brake+stop false positive: a rider who stops upright at a light
+     * will almost always shift weight, tilt the bike to put a foot down, or
+     * interact with the device within this window — any motion >
+     * [silenceDeviationMax] resets the silence clock. An unconscious rider
+     * with the bike pinned upright still confirms, just delayed by ~15s vs
+     * the on-side path.
      */
     val silenceDurationUprightMs: Long = 20_000L,
     /**
-     * Angle (degrees) between the current gravity vector and the learned
-     * baseline below which the bike is classified as "still upright" and
-     * the longer [silenceDurationUprightMs] applies. > this → on-side or
-     * tilted significantly → keep the standard [silenceDurationMs].
+     * Angle (degrees) between the silence-window gravity vector and the
+     * pre-impact orientation reference below which the bike is classified as
+     * "still upright" and the longer [silenceDurationUprightMs] applies.
+     * > this → on-side or tilted significantly → keep the standard
+     * [silenceDurationMs].
      */
     val uprightAngleThresholdDegrees: Double = 45.0,
-    /**
-     * Minimum number of qualifying samples (cruising conditions) the state
-     * machine must accumulate before the baseline is considered ready. At
-     * ~50 Hz this is ~30 seconds of cruising. Until then the orientation
-     * gate is bypassed and the legacy silence threshold applies (no
-     * detection regression on a freshly started ride).
-     */
-    val baselineMinSamples: Int = 1_500,
-    /**
-     * Minimum speed (km/h) for a sample to qualify as a baseline-learning
-     * candidate. Below this the rider is stopped or rolling slowly; the
-     * bike may be leaning (foot down) and the captured gravity vector
-     * would corrupt the upright reference.
-     */
-    val baselineCruisingMinSpeedKmh: Int = 15,
 )

@@ -119,12 +119,6 @@ class CrashDetectionManager(
         // The state machine treats `sample.timestampMs` as the authoritative time
         // for IMPACT/SILENCE windows. We pass wall-clock so production semantics
         // (e.g. timeSinceImpact) match the monolith verbatim.
-
-        /** Maximum accel std-dev (m/s²) for a sample to count as "cruising" for
-         *  orientation baseline learning. Below this the bike is rolling on
-         *  smooth pavement; above this the rider may be on rough terrain and
-         *  the gravity vector is too noisy to be a clean upright reference. */
-        const val BASELINE_CRUISING_MAX_STDDEV: Double = 1.5
     }
 
     // ─── State ────────────────────────────────────────────────────────────────
@@ -170,7 +164,6 @@ class CrashDetectionManager(
     @Volatile private var lastLogTime = 0L
     @Volatile private var lastGpsStaleState = false
     @Volatile private var lastLoggedSensitivity = config.crashSensitivity
-    @Volatile private var loggedBaselineReady = false
 
     // Cached effective thresholds applied to the SM (recomputed when boost / grade change)
     @Volatile private var cachedSmoothedThr = 45.0
@@ -218,7 +211,6 @@ class CrashDetectionManager(
         lastPeriodicLogMs = 0L
         lastGpsStaleState = false
         lastLoggedSensitivity = config.crashSensitivity
-        loggedBaselineReady = false
         postImpactBoostUntil = 0L
         recentTmoTimestamps.clear()
         resetWindowAccumulators()
@@ -232,13 +224,10 @@ class CrashDetectionManager(
     }
 
     /**
-     * Resume crash detection after a ride pause. Identical to [start] EXCEPT
-     * the state machine's learned baseline gravity vector is preserved (a
-     * pause-resume in the middle of a ride is not a fresh ride; the upright
-     * reference established during the pre-pause cruising is still valid).
-     *
-     * Use [start] for fresh-ride / first-Recording-event-of-the-session paths
-     * where the baseline must be re-learned from scratch.
+     * Resume crash detection after a ride pause. Equivalent to [start] for the
+     * current implementation; kept as a distinct entry point so the facade can
+     * express "ride resume" intent (vs a fresh ride) and route the state
+     * machine through [CrashStateMachine.resumeForRide].
      */
     fun resume(config: KSafeConfig) {
         this.config = config
@@ -254,13 +243,10 @@ class CrashDetectionManager(
         postImpactBoostUntil = 0L
         recentTmoTimestamps.clear()
         resetWindowAccumulators()
-        // Intentionally do NOT reset loggedBaselineReady — the ORIENTATION_BASELINE
-        // event has already fired for this ride (if baseline was ready before
-        // pause) and the calibration log honours its "once per ride" contract.
         rebuildThresholds(boostActive = false)
         stateMachine.resumeForRide()
         sensorReader.start(handler = null)
-        Timber.d("CrashDetectionManager RESUMED (baseline preserved, ready=${stateMachine.isBaselineReady()})")
+        Timber.d("CrashDetectionManager RESUMED")
         if (config.speedDropDetectionEnabled) speedDropMonitor.start(config.speedDropMinutes)
     }
 
@@ -437,37 +423,6 @@ class CrashDetectionManager(
             sample
         }
 
-        // ─── Orientation: feed baseline learner ──────────────────────────────
-        // Only qualify "cruising" samples — fast enough that the rider can't be
-        // leaning to put a foot down, and quiet enough that the bike isn't
-        // bouncing on rough terrain. The state machine drops samples received
-        // outside MONITORING internally; we gate here too for efficiency.
-        // Don't feed baseline learner when:
-        //   - we're not in MONITORING (an in-flight event would corrupt the baseline)
-        //   - speed is below the cruising threshold (rider may be foot-down at a light)
-        //   - terrain is rough (accel std-dev too high — gravity vector noisy)
-        //   - GPS speed reading is stale (SDK returns last known speed bit-exact; rider
-        //     could be stopped and leaning in a tunnel while the SDK still reports
-        //     cruising speed → samples would corrupt the upright reference)
-        //   - no real speed update has been received yet (cold start)
-        if (priorState == CrashStateMachine.State.MONITORING &&
-            speedDataReceived &&
-            !gpsCurrentlyStale &&
-            currentSpeedKmh >= stateMachine.thresholds.baselineCruisingMinSpeedKmh.toDouble() &&
-            sensorReader.accelStdDev() < BASELINE_CRUISING_MAX_STDDEV) {
-            stateMachine.feedBaselineSample(sample.accelX, sample.accelY, sample.accelZ)
-        }
-
-        // Emit the baseline-ready event exactly once per ride.
-        if (!loggedBaselineReady && stateMachine.isBaselineReady()) {
-            loggedBaselineReady = true
-            val (bx, by, bz) = stateMachine.baselineVector()
-            calibLogger?.log(CalibrationLogger.Event.ORIENTATION_BASELINE) {
-                "baseline_x=%.3f,baseline_y=%.3f,baseline_z=%.3f,samples=${stateMachine.thresholds.baselineMinSamples}"
-                    .formatUs(bx, by, bz)
-            }
-        }
-
         val decision = stateMachine.onSample(sampleForSm)
 
         // ─── Window-progress accumulators ───────────────────────────────────
@@ -557,13 +512,12 @@ class CrashDetectionManager(
         calibLogger?.log(CalibrationLogger.Event.IMPACT_ENTER) {
             val bufStr = sensorReader.magnitudeBufferSnapshot().joinToString("|") { "%.1f".formatUs(it) }
             val gBoost = gradeBoost(currentGrade)
-            val (bx, by, bz) = stateMachine.baselineVector()
-            val baselineReady = stateMachine.isBaselineReady()
-            "source=$reason,raw=%.1f,smooth=%.1f,thr=%.1f,pthr=%.1f,eff_pthr=%.1f,speed=%.1f,decel=%.1f,grade=%.1f,grade_boost=%.0f,cadence=%.0f,gyro=%.2f,buf=$bufStr,noise=%.2f,profile=$currentRoutingPreference,preset=${config.crashSensitivity},boost_active=$boostActive,ax=%.2f,ay=%.2f,az=%.2f,base_ready=$baselineReady,base_x=%.2f,base_y=%.2f,base_z=%.2f".formatUs(
+            val ref = stateMachine.preImpactReference
+            "source=$reason,raw=%.1f,smooth=%.1f,thr=%.1f,pthr=%.1f,eff_pthr=%.1f,speed=%.1f,decel=%.1f,grade=%.1f,grade_boost=%.0f,cadence=%.0f,gyro=%.2f,buf=$bufStr,noise=%.2f,profile=$currentRoutingPreference,preset=${config.crashSensitivity},boost_active=$boostActive,ax=%.2f,ay=%.2f,az=%.2f,pre_valid=${ref.valid},pre_x=%.2f,pre_y=%.2f,pre_z=%.2f".formatUs(
                 sample.rawMagnitude, sample.smoothedMagnitude, cachedSmoothedThr,
                 cachedPeakThr, cachedEffectivePeakThr, currentSpeedKmh, lastDecelerationKmhPerS,
                 currentGrade, gBoost, currentCadence, sample.gyroMag, sensorReader.accelStdDev(),
-                sample.accelX, sample.accelY, sample.accelZ, bx, by, bz
+                sample.accelX, sample.accelY, sample.accelZ, ref.x, ref.y, ref.z
             )
         }
     }

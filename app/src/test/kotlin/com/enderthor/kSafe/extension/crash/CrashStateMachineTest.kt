@@ -432,59 +432,6 @@ class CrashStateMachineTest {
         assertEquals(CrashStateMachine.State.IMPACT, sm.state)
     }
 
-    // ── Orientation: baseline learner ────────────────────────────────────────
-
-    @Test
-    fun `baseline is not ready before minSamples cruising samples have been fed`() {
-        val (sm, _) = newSm(Thresholds(baselineMinSamples = 100))
-        repeat(99) { sm.feedBaselineSample(0.0, 0.0, 9.81) }
-        assertEquals(false, sm.isBaselineReady())
-    }
-
-    @Test
-    fun `baseline becomes ready after minSamples cruising samples`() {
-        val (sm, _) = newSm(Thresholds(baselineMinSamples = 100))
-        repeat(100) { sm.feedBaselineSample(0.0, 0.0, 9.81) }
-        assertEquals(true, sm.isBaselineReady())
-    }
-
-    @Test
-    fun `baseline learner ignores samples while in IMPACT state`() {
-        val (sm, _) = newSm(Thresholds(baselineMinSamples = 10))
-        sm.onSpeedUpdate(20.0)
-        // Enter IMPACT
-        sm.onSample(sample(time = 1000, peak = 60.0, smoothed = 30.0))
-        assertEquals(CrashStateMachine.State.IMPACT, sm.state)
-        // Try to feed baseline samples — must be ignored.
-        repeat(100) { sm.feedBaselineSample(0.0, 0.0, 9.81) }
-        assertEquals(false, sm.isBaselineReady())
-    }
-
-    @Test
-    fun `baseline averages multiple samples`() {
-        val (sm, _) = newSm(Thresholds(baselineMinSamples = 2))
-        sm.feedBaselineSample(0.0, 0.0, 10.0)
-        sm.feedBaselineSample(2.0, 0.0, 8.0)
-        // Average vector: (1, 0, 9). Magnitude ≈ sqrt(82) ≈ 9.055.
-        val (x, y, z) = sm.baselineVector()
-        assertEquals(1.0, x, 1e-9)
-        assertEquals(0.0, y, 1e-9)
-        assertEquals(9.0, z, 1e-9)
-    }
-
-    @Test
-    fun `reset clears the baseline state`() {
-        val (sm, _) = newSm(Thresholds(baselineMinSamples = 10))
-        repeat(15) { sm.feedBaselineSample(0.0, 0.0, 9.81) }
-        assertEquals(true, sm.isBaselineReady())
-        sm.reset()
-        assertEquals(false, sm.isBaselineReady())
-        val (x, y, z) = sm.baselineVector()
-        assertEquals(0.0, x, 1e-9)
-        assertEquals(0.0, y, 1e-9)
-        assertEquals(0.0, z, 1e-9)
-    }
-
     // ── Orientation: silence-duration selection ──────────────────────────────
 
     /**
@@ -733,28 +680,29 @@ class CrashStateMachineTest {
         )
     }
 
-    // ── Lifecycle: resumeForRide preserves baseline ──────────────────────────
+    // ── Lifecycle: resumeForRide resets per-event state ──────────────────────
 
     @Test
-    fun `resumeForRide preserves baseline and counter`() {
-        val (sm, _) = newSm(Thresholds(baselineMinSamples = 10))
-        // Build a baseline.
-        repeat(20) { sm.feedBaselineSample(0.0, 0.0, 9.81) }
-        assertEquals(true, sm.isBaselineReady())
-        val (bx, by, bz) = sm.baselineVector()
+    fun `resumeForRide resets per-event pre-impact state`() {
+        val (sm, _) = newSm()
+        // Drive an event so per-event state is non-default: enter IMPACT, inject a
+        // valid pre-impact reference, then reach SILENCE_CHECK so firstSilenceGapMs > 0.
+        sm.onSpeedUpdate(20.0)
+        sm.onSample(sample(time = 1000, peak = 60.0, smoothed = 30.0, gyro = 0.5))
+        sm.setPreImpactReference(PreImpactRef(0.0, 0.0, 9.81, valid = true))
+        sm.onSpeedUpdate(2.0)
+        sm.onSample(sample(time = 1600, peak = QUIET, smoothed = QUIET, gyro = 0.5))
+        assertEquals(CrashStateMachine.State.SILENCE_CHECK, sm.state)
+        assertTrue("firstSilenceGapMs should be > 0 after reaching SILENCE_CHECK",
+            sm.firstSilenceGapMs > 0L)
+        assertTrue("pre-impact reference should be valid before resume",
+            sm.preImpactReference.valid)
 
-        // Simulate pause-resume on the state machine.
+        // Resume must reset the new-mechanism per-event state.
         sm.resumeForRide()
-
-        // Baseline must survive.
-        assertEquals(true, sm.isBaselineReady())
-        val (bx2, by2, bz2) = sm.baselineVector()
-        assertEquals(bx, bx2, 1e-9)
-        assertEquals(by, by2, 1e-9)
-        assertEquals(bz, bz2, 1e-9)
-
-        // But timing/state must reset to MONITORING with clean clocks.
         assertEquals(CrashStateMachine.State.MONITORING, sm.state)
+        assertEquals(0L, sm.firstSilenceGapMs)
+        assertEquals(PreImpactRef.INVALID, sm.preImpactReference)
     }
 
     @Test
@@ -807,40 +755,6 @@ class CrashStateMachineTest {
         }
     }
 
-    // ── Baseline: capped running average adapts to mount remount ─────────────
-
-    @Test
-    fun `baseline adapts to new orientation when bike is remounted mid-ride`() {
-        val t = Thresholds(baselineMinSamples = 100)
-        val (sm, _) = newSm(t)
-        // Phase 1: 5000 samples (50x baselineMinSamples) of pure upright Z=9.81.
-        // Without the EMA cap, the baseline would be so locked that 200 strong
-        // post-remount samples could only nudge it by ~4% — baseline stays
-        // essentially "old orientation".
-        repeat(5000) { sm.feedBaselineSample(0.0, 0.0, 9.81) }
-        val (bx1, by1, bz1) = sm.baselineVector()
-        // Baseline should be very close to (0, 0, 9.81) at this point.
-        assertEquals(0.0, bx1, 0.01)
-        assertEquals(9.81, bz1, 0.01)
-
-        // Phase 2: rider remounts Karoo rotated 45° around Y axis. New gravity
-        // direction is (6.94, 0, 6.94) (mag ≈ 9.81). Feed 500 samples
-        // (5x baselineMinSamples) of the new orientation.
-        repeat(500) { sm.feedBaselineSample(6.94, 0.0, 6.94) }
-        val (bx2, _, bz2) = sm.baselineVector()
-
-        // With the EMA cap at 100, alpha = 1/100 = 0.01, half-life ≈ 69 samples.
-        // After 500 samples = ~7 half-lives → baseline should be within ~1%
-        // of the new orientation (6.94, 0, 6.94).
-        //
-        // Without the cap, after 5500 total samples the per-sample weight is
-        // 1/5500 ≈ 0.0182%, and 500 new samples nudge the average by only
-        // ~500*(6.94-0)/5500 ≈ 0.63 on the X axis — baseline X stays around
-        // 0.63 instead of approaching 6.94. The test fails on buggy code.
-        assertEquals("baseline X should have adapted toward 6.94", 6.94, bx2, 0.5)
-        assertEquals("baseline Z should have adapted toward 6.94", 6.94, bz2, 0.5)
-    }
-
     // ── Diagnostics: lastConfirmedSilenceMs reflects the actual window ───────
 
     @Test
@@ -872,7 +786,6 @@ class CrashStateMachineTest {
     @Test
     fun `scenario crash with bike on side confirms at 4_5s as before`() {
         val t = Thresholds(
-            baselineMinSamples = 10,
             silenceDurationMs = 4_500L,
             silenceDurationUprightMs = 20_000L,
             uprightAngleThresholdDegrees = 45.0,
@@ -882,9 +795,6 @@ class CrashStateMachineTest {
         val (sm, _) = newSm(t)
 
         sm.onSpeedUpdate(30.0)
-        repeat(t.baselineMinSamples + 5) {
-            sm.feedBaselineSample(0.0, 0.0, 9.81)
-        }
 
         // Crash IMPACT
         sm.onSample(sample(
@@ -897,7 +807,7 @@ class CrashStateMachineTest {
         sm.setPreImpactReference(PreImpactRef(0.0, 0.0, 9.81, valid = true))
         sm.onSpeedUpdate(0.0)
 
-        // Bike on side: gravity along X (ax = 9.81, az = 0.0), baseline was along Z
+        // Bike on side: gravity along X (ax = 9.81, az = 0.0), pre-impact ref was along Z
         // → angle ≈ 90° ≥ uprightAngleThresholdDegrees (45°) → on-side → 4.5 s window.
         var tNow = 1_000L
         val step = 20L
