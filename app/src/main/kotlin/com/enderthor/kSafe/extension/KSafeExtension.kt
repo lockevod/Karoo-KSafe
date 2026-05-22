@@ -683,9 +683,9 @@ class KSafeExtension : KarooExtension("ksafe", BuildConfig.VERSION_NAME), Corout
             }
             is RideState.Paused -> {
                 // Keep crash detection active while paused (rider may have crashed).
-                // BUT reset the speed-drop accumulator — while stopped at a café the speed
-                // is 0, which would otherwise trigger speed-drop detection after N minutes
-                // even though the rider intentionally paused.
+                // BUT reset the speed-drop accumulator — speed is 0 on any pause (manual
+                // or automatic), so without this reset the speed-drop watchdog would fire
+                // spuriously during a long café stop or any other stationary pause.
                 crashManager.resetSpeedDropOnPause()
                 // Pass the SDK's auto flag: a MANUAL pause wipes any in-flight
                 // IMPACT/SILENCE state (the rider deliberately stopped — conscious and
