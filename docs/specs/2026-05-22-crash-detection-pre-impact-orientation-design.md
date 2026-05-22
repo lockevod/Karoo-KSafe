@@ -221,6 +221,16 @@ Assertion bands are tight (±15 %), not "any plausible number".
   on a steep descent) gets the 20 s window instead of 4.5 s — a ~15 s delay. The
   rider is down and will not move, so it still confirms. Judged acceptable: the
   case is rare and ambiguous, and the alternative is leaving the FP unprotected.
+  Note: this "delayed but still confirms" guarantee depends on the false-alarm
+  retry budget (`impactWindow × 2`) being measured **from SILENCE_CHECK entry**,
+  not from the impact. The first cut of this design doubled the silence window
+  but left the cutoff impact-relative — review found that a late SILENCE_CHECK
+  entry then left no room for a full 20 s window to complete after the latest
+  stillness break, so a single non-still sample (injured rider twitching, wind
+  rocking the bike) dropped a genuine crash to MONITORING with no alert. The
+  fix anchors the budget to SILENCE_CHECK entry so a full silence window always
+  fits after the latest break; the long-slide case above is only safe because
+  of that fix.
 - The pre-impact reference can be skewed if the impact happens mid-corner (the
   bike is leaned). This is mitigated by the gap regime — a mid-corner bump
   followed by riding on has a long gap → 20 s regardless of orientation.

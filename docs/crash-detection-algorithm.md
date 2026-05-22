@@ -219,10 +219,10 @@ If the algorithm required `gyro < threshold` here, that perfectly valid crash wo
 |----------|--------|
 | `isStill` AND `now - silenceStartTime >= effectiveSilenceMs` | **🚨 CRASH CONFIRMED** → fire alert |
 | `isStill` AND silence timer not yet elapsed | No action — keep counting |
-| `!isStill` AND `timeSinceImpact <= impactWindow × 2` | Reset `silenceStartTime = now` — stillness must be **continuous**, not cumulative |
-| `!isStill` AND `timeSinceImpact > impactWindow × 2` | False alarm → `resetState()` → MONITORING |
+| `!isStill` AND `now - silenceCheckEnteredTime <= impactWindow × 2` | Reset `silenceStartTime = now` — stillness must be **continuous**, not cumulative |
+| `!isStill` AND `now - silenceCheckEnteredTime > impactWindow × 2` | False alarm → `resetState()` → MONITORING |
 
-The doubled timeout (`impactWindow × 2`) gives a generous total window: for LOW preset, up to **50 seconds** from impact before finally giving up.
+The doubled timeout (`impactWindow × 2`) is the **retry budget for achieving stillness** and is measured **from the moment SILENCE_CHECK was entered** (`silenceCheckEnteredTime`), not from the impact. This matters because the effective silence window can be as long as 20 s (gap regime, upright orientation regime): if the budget were measured from the impact, a late SILENCE_CHECK entry (large impact→stillness gap) would leave too little budget for one full silence window to complete after the latest stillness break — and a single non-still sample from a dazed/injured rider twitching, or wind rocking the bike, would drop a genuine crash to MONITORING with no alert. Anchoring the budget to SILENCE_CHECK entry guarantees a full silence window always fits after the latest break, regardless of how late SILENCE_CHECK was reached. For the LOW preset this gives up to **50 seconds** of retries from SILENCE_CHECK entry before finally giving up.
 
 ---
 
@@ -703,13 +703,15 @@ Each event therefore computes orientation exclusively from its own samples.
 | Silence break | Reference unchanged; gap unchanged | Window resets |
 | Process restart / Karoo reboot | RESET (no cross-process persistence) | RESET |
 
-### False-negative analysis (zero new FN)
+### False-negative analysis
 
 The on-side branch uses the same 4.5 s threshold as Revision 4 and prior. Real crashes that lay the bike on its side (the majority — ~70–85 % per cycling-incident literature) confirm with the same latency as before. The rare crash where the bike stays upright (pinned against a wall or car, OTB with bike standing) confirms at ~20 s instead of ~4.5 s — a 15.5 s delay, well within the irrelevant range for emergency response.
 
 The `silenceDurationUprightMs` requirement is reset by ANY accel deviation > `silenceDeviationMax` (4.0 m/s²): a rider in an upright-bike crash who shifts position even slightly is detected; a rider stopped at a traffic light typically shifts within 20 s.
 
 A real crash with a long slide (gap > 8 s, e.g. steep descent) gets the 20 s window — a ~15 s delay vs the fast path. The rider is down and will not move, so it still confirms. Judged acceptable: the case is rare and already ambiguous, and the alternative is leaving the bump+brake+stop FP unprotected.
+
+The false-alarm retry budget (`impactWindow × 2`) is measured **from SILENCE_CHECK entry** — not from the impact (see *Outcomes on each accelerometer sample*). This is what makes the long-slide case above actually safe: with an impact-relative cutoff, a late SILENCE_CHECK entry plus a 20 s silence window leaves no room for a full window to complete after the latest stillness break, so a single non-still sample (an injured rider twitching, wind rocking the bike) would drop the event to MONITORING with no alert — a genuine false negative. Anchoring the budget to SILENCE_CHECK entry guarantees a full silence window can always complete after the latest break, regardless of how late SILENCE_CHECK was reached. (An earlier revision that doubled the silence window but left the cutoff impact-relative introduced exactly this false negative; it was found in review and fixed.)
 
 Edge cases that yield delayed-but-not-blocked confirm:
 - Impact within ~1–2 s of ride start or resume — reference invalid (`valid = false`) → 4.5 s (same as Revision 4). Interpreted as a prompt on-side crash; any ambiguous case at this point has not warmed up enough to apply orientation reasoning.

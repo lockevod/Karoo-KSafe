@@ -193,6 +193,23 @@ class CrashStateMachine(
         private set
 
     /**
+     * Sample-time at which the state machine FIRST entered SILENCE_CHECK for the
+     * current event. `0L` until that first transition.
+     *
+     * This is the anchor for the false-alarm "give up" retry budget in
+     * [handleSilenceCheck]. The budget MUST be measured from SILENCE_CHECK entry,
+     * NOT from the impact: with a long impact→stillness gap the silence window can
+     * be up to 20 s (gap / upright regimes), and an impact-relative cutoff would
+     * expire before a real crash could ever complete a full silence window after
+     * the latest stillness break — dropping a genuine crash to MONITORING with no
+     * alert (false negative). Anchoring on entry guarantees a full silence window
+     * always fits after the latest break, regardless of how late SILENCE_CHECK
+     * was reached.
+     */
+    @Volatile var silenceCheckEnteredMs: Long = 0L
+        private set
+
+    /**
      * Angle (degrees) between the pre-impact reference and the silence-window
      * gravity vector, as computed on the last [computeEffectiveSilenceMs] call
      * that reached the orientation branch. `-1.0` when not computed (gap regime,
@@ -251,6 +268,7 @@ class CrashStateMachine(
         resetSilenceWindow()
         preImpactRef = PreImpactRef.INVALID
         firstSilenceGapMs = 0L
+        silenceCheckEnteredMs = 0L
         lastOrientationAngleDeg = -1.0
     }
 
@@ -273,6 +291,7 @@ class CrashStateMachine(
         lockedEffectiveSilenceMs = 0L
         preImpactRef = PreImpactRef.INVALID
         firstSilenceGapMs = 0L
+        silenceCheckEnteredMs = 0L
         lastOrientationAngleDeg = -1.0
     }
 
@@ -306,6 +325,7 @@ class CrashStateMachine(
         lockedEffectiveSilenceMs = 0L
         preImpactRef = PreImpactRef.INVALID
         firstSilenceGapMs = 0L
+        silenceCheckEnteredMs = 0L
         lastOrientationAngleDeg = -1.0
     }
 
@@ -387,6 +407,10 @@ class CrashStateMachine(
             // First (and only) IMPACT → SILENCE_CHECK transition of this event:
             // freeze how long the rider kept moving after the impact.
             firstSilenceGapMs = now - impactStartedMs
+            // Anchor the false-alarm retry budget to SILENCE_CHECK entry, so a late
+            // entry still gets a full budget and a full silence window can complete
+            // after the latest stillness break.
+            silenceCheckEnteredMs = now
             return Decision.None
         }
 
@@ -411,8 +435,16 @@ class CrashStateMachine(
      * Outcomes:
      *   - `isStill` AND elapsed >= effectiveSilenceMs → Decision.Confirm
      *   - `isStill` AND not yet elapsed → keep counting (None)
-     *   - `!isStill` AND within `impactWindowMs * 2` → reset silence clock to `now`
-     *   - `!isStill` AND beyond `impactWindowMs * 2` → false alarm, return to MONITORING
+     *   - `!isStill` AND within `impactWindowMs * 2` of SILENCE_CHECK entry → reset
+     *     silence clock to `now` (retry)
+     *   - `!isStill` AND beyond `impactWindowMs * 2` of SILENCE_CHECK entry → false
+     *     alarm, return to MONITORING
+     *
+     * The retry budget is measured from SILENCE_CHECK ENTRY ([silenceCheckEnteredMs]),
+     * not from the impact. A long impact→stillness gap can engage a 20 s silence
+     * window; an impact-relative cutoff would expire before a genuinely-injured rider
+     * could complete one full silence window after their latest twitch — a false
+     * negative. Entry-relative anchoring guarantees a full window always fits.
      *
      * Cadence gate: per doc Revision 4 C5, cadence > 20 RPM during SILENCE_CHECK is an
      * instant false-alarm exit (an unconscious rider cannot pedal).
@@ -443,7 +475,6 @@ class CrashStateMachine(
         val speedDropOk = isSpeedDropConfirmed()
         val isStill = accelOk && speedDropOk
 
-        val timeSinceImpact = now - impactStartedMs
         val effectiveSilenceMs = computeEffectiveSilenceMs(gpsStale)
 
         return when {
@@ -458,7 +489,7 @@ class CrashStateMachine(
                 Decision.Confirm
             }
             isStill -> Decision.None  // keep counting
-            !isStill && timeSinceImpact <= thresholds.impactWindowMs * 2 -> {
+            !isStill && (now - silenceCheckEnteredMs) <= thresholds.impactWindowMs * 2 -> {
                 // Stillness must be continuous: restart silence clock on every break.
                 silenceStartedMs = now
                 // Drop accumulated orientation data — the new silence window starts now.
@@ -591,5 +622,6 @@ class CrashStateMachine(
         impactStartedMs = 0L
         silenceStartedMs = 0L
         firstSilenceGapMs = 0L
+        silenceCheckEnteredMs = 0L
     }
 }

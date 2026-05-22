@@ -233,11 +233,12 @@ class CrashStateMachineTest {
         sm.onSample(sample(time = 600, peak = QUIET, smoothed = QUIET, gyro = 0.5))
         assertEquals(CrashStateMachine.State.SILENCE_CHECK, sm.state)
 
-        // impactWindowMs = 20_000; doubled window = 40_000.
-        // Keep hitting the timer-reset branch within the doubled window…
+        // impactWindowMs = 20_000; doubled retry budget = 40_000, measured from
+        // SILENCE_CHECK entry (t = 600). Give-up therefore needs now > 40_600.
+        // Keep hitting the timer-reset branch within the budget…
         sm.onSample(sample(time = 20_000, peak = 15.0, smoothed = 15.0, gyro = 0.5))
-        // …then a !isStill sample BEYOND the doubled window.
-        val d = sm.onSample(sample(time = 40_100, peak = 15.0, smoothed = 15.0, gyro = 0.5))
+        // …then a !isStill sample BEYOND the entry-relative doubled budget.
+        val d = sm.onSample(sample(time = 40_700, peak = 15.0, smoothed = 15.0, gyro = 0.5))
         assertEquals(CrashStateMachine.Decision.ReturnToMonitoring, d)
         assertEquals(CrashStateMachine.State.MONITORING, sm.state)
     }
@@ -927,5 +928,99 @@ class CrashStateMachineTest {
             )
         }
         // Sanity: total elapsed so far is (5+2+20)*200 = 5400ms < 20000ms → no confirm expected.
+    }
+
+    // ── Regression: false-alarm retry budget anchored to SILENCE_CHECK entry ─
+
+    /**
+     * Drive the SM from MONITORING into SILENCE_CHECK with an explicit impact→silence
+     * gap, choosing thresholds where the gap regime engages (so the 20 s window is in
+     * force). `impactWindowMs` is small (4 s) so `impactWindowMs * 2` arithmetic is
+     * easy; `delayedStopGapMs` is small (1 s) so any gap > 1 s engages the gap regime
+     * without needing IMPACT to survive longer than its 4 s timeout.
+     *
+     * Impact fires at `base`; the rider keeps moving (speed high → IMPACT→SILENCE gate
+     * blocked) until `base + gapMs`, where one settling sample drops speed and crosses
+     * into SILENCE_CHECK. Returns the SM already in SILENCE_CHECK plus `base`.
+     */
+    private fun smEnteringSilenceGapRegime(
+        gapMs: Long,
+    ): Pair<CrashStateMachine, Long> {
+        val thr = Thresholds(impactWindowMs = 4_000L, delayedStopGapMs = 1_000L)
+        val (sm, _) = newSm(thr)
+        sm.onSpeedUpdate(20.0)
+        val base = 1_000_000L
+        sm.onSample(sample(time = base, peak = 60.0, smoothed = 30.0, gyro = 0.5))
+        assertEquals(CrashStateMachine.State.IMPACT, sm.state)
+        sm.setPreImpactReference(PreImpactRef(0.0, 0.0, 9.81, valid = true))
+        // Stay in IMPACT until `gapMs` elapsed: speed high → speed-drop gate blocks.
+        var t = base + 500L
+        while (t < base + gapMs) {
+            sm.onSample(sample(time = t, raw = 9.81, smoothed = 9.81, gyro = 0.1))
+            t += 500L
+        }
+        // Drop speed; one settling sample crosses IMPACT → SILENCE_CHECK.
+        sm.onSpeedUpdate(0.0)
+        sm.onSample(sample(time = base + gapMs, raw = 9.81, smoothed = 9.81, gyro = 0.1,
+            az = 9.81))
+        return sm to base
+    }
+
+    @Test
+    fun `false-alarm break past impact-relative cutoff but within entry budget is a retry not a give-up`() {
+        // Test A — the regression. impactWindowMs = 4_000 → doubled budget = 8_000.
+        // delayedStopGapMs = 1_000 → a 2_000 ms gap engages the gap regime (20 s window).
+        // SILENCE_CHECK entered at base + 2_000.
+        val (sm, base) = smEnteringSilenceGapRegime(gapMs = 2_000L)
+        assertEquals(CrashStateMachine.State.SILENCE_CHECK, sm.state)
+
+        // A non-still sample at base + 9_000:
+        //   impact-relative  = 9_000 > 8_000  → OLD code: give up → ReturnToMonitoring
+        //   entry-relative   = 7_000 ≤ 8_000  → NEW code: retry  → stay SILENCE_CHECK
+        val d = sm.onSample(sample(time = base + 9_000L, peak = 15.0, smoothed = 15.0,
+            raw = 15.0, gyro = 0.5))
+        assertNotEquals(
+            "a stillness break within the entry-relative retry budget must be a retry, " +
+                "not a give-up — dropping a real crash here is a false negative",
+            CrashStateMachine.Decision.ReturnToMonitoring, d
+        )
+        assertEquals(CrashStateMachine.State.SILENCE_CHECK, sm.state)
+    }
+
+    @Test
+    fun `still rider in late-entry long-gap scenario still confirms with the 20s window`() {
+        // Test B — the genuine crash. Same gap-regime setup; a still rider must still
+        // CONFIRM, with the 20 s upright/gap window recorded.
+        val (sm, base) = smEnteringSilenceGapRegime(gapMs = 2_000L)
+        assertEquals(CrashStateMachine.State.SILENCE_CHECK, sm.state)
+        // SILENCE_CHECK entered at base + 2_000; 20 s window → confirm at >= base + 22_000.
+        var confirmed = false
+        var t = base + 2_000L
+        while (!confirmed && t < base + 30_000L) {
+            t += 1_000L
+            val d = sm.onSample(sample(time = t, raw = 9.81, smoothed = 9.81, az = 9.81))
+            if (d == CrashStateMachine.Decision.Confirm) confirmed = true
+        }
+        assertTrue("a continuously-still rider must still confirm in the gap regime", confirmed)
+        assertEquals(20_000L, sm.lastConfirmedSilenceMs)
+    }
+
+    @Test
+    fun `false-alarm break past the entry-relative budget still returns to MONITORING`() {
+        // Test C — the give-up path still works. A non-still sample beyond
+        // impactWindowMs * 2 of SILENCE_CHECK entry must still give up.
+        val (sm, base) = smEnteringSilenceGapRegime(gapMs = 2_000L)
+        assertEquals(CrashStateMachine.State.SILENCE_CHECK, sm.state)
+
+        // Keep the silence clock alive with a retry inside the budget first.
+        sm.onSample(sample(time = base + 6_000L, peak = 15.0, smoothed = 15.0,
+            raw = 15.0, gyro = 0.5))
+        assertEquals(CrashStateMachine.State.SILENCE_CHECK, sm.state)
+
+        // Non-still sample at base + 11_000: entry-relative = 9_000 > 8_000 → give up.
+        val d = sm.onSample(sample(time = base + 11_000L, peak = 15.0, smoothed = 15.0,
+            raw = 15.0, gyro = 0.5))
+        assertEquals(CrashStateMachine.Decision.ReturnToMonitoring, d)
+        assertEquals(CrashStateMachine.State.MONITORING, sm.state)
     }
 }
