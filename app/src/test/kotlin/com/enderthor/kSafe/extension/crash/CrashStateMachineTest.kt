@@ -587,7 +587,7 @@ class CrashStateMachineTest {
             time = tNow, peak = 15.0, smoothed = 15.0, raw = 15.0, gyro = 0.5,
         ).copy(accelX = 9.81, accelY = 0.0, accelZ = 0.0))
 
-        // Now feed UPRIGHT quiet samples (gravity along Z, matching baseline).
+        // Now feed UPRIGHT quiet samples (gravity along Z, matching the upright pre-impact reference).
         // If the accumulator was NOT reset, the orientation average would still
         // be polluted with the on-side X-axis history → angle would stay > 45°
         // → legacy 4.5s window → confirm too soon.
