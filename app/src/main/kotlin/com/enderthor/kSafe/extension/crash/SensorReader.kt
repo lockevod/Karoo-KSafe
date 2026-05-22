@@ -250,9 +250,13 @@ class SensorReader(
      * ride pause.
      *
      * Effect: every pre-impact reference computed afterwards ignores samples captured
-     * before this instant, so an impact within ~2 s of resume yields an invalid (not
-     * stale) reference. The ring itself keeps filling on the sensor thread; once ~2 s
-     * of fresh post-resume samples have accumulated, references become valid again.
+     * before this instant. Because the listener stays registered, the ring continues
+     * filling with the bike's stationary samples during the pause. After a pause
+     * longer than the ~2.25 s averaging window (`GUARD_MS + WINDOW_MS`), those
+     * stationary samples fill the ring and a valid reference is available essentially
+     * immediately after resume. The "impact yields an invalid reference" outcome
+     * applies to a cold start or to an impact within ~2.25 s of a very brief pause
+     * where the ring does not yet hold enough post-floor samples.
      *
      * The reader stays registered across a pause, so the ring is NOT cleared by [stop]
      * in that case — only [stop] (which unregisters the listener first) actually clears

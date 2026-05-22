@@ -219,14 +219,16 @@ class CrashStateMachine(
      * current event. `0L` until that first transition.
      *
      * This is the anchor for the false-alarm "give up" retry budget in
-     * [handleSilenceCheck]. The budget MUST be measured from SILENCE_CHECK entry,
-     * NOT from the impact: with a long impact→stillness gap the silence window can
-     * be up to 20 s (gap / upright regimes), and an impact-relative cutoff would
-     * expire before a real crash could ever complete a full silence window after
-     * the latest stillness break — dropping a genuine crash to MONITORING with no
-     * alert (false negative). Anchoring on entry guarantees a full silence window
-     * always fits after the latest break, regardless of how late SILENCE_CHECK
-     * was reached.
+     * [handleSilenceCheck]. The budget (`impactWindowMs * 2`) is measured from
+     * SILENCE_CHECK entry, NOT from the impact, so a late entry is not penalised
+     * (an impact-relative cutoff would expire before a rider with a long
+     * impact→stillness gap could complete a full silence window). The budget
+     * bounds how long the machine keeps retrying to achieve uninterrupted
+     * stillness: a continuously-still rider always reaches the confirm branch
+     * because the give-up condition only fires on non-still samples. A rider who
+     * breaks stillness again after the budget edge can still be dropped to
+     * MONITORING — the budget does not guarantee that an arbitrarily late
+     * stillness break is tolerated.
      */
     @Volatile var silenceCheckEnteredMs: Long = 0L
         private set
@@ -429,9 +431,9 @@ class CrashStateMachine(
             // First (and only) IMPACT → SILENCE_CHECK transition of this event:
             // freeze how long the rider kept moving after the impact.
             firstSilenceGapMs = now - impactStartedMs
-            // Anchor the false-alarm retry budget to SILENCE_CHECK entry, so a late
-            // entry still gets a full budget and a full silence window can complete
-            // after the latest stillness break.
+            // Anchor the false-alarm retry budget to SILENCE_CHECK entry so a late
+            // entry is not penalised. A continuously-still rider always confirms;
+            // the budget bounds how long the machine retries to achieve stillness.
             silenceCheckEnteredMs = now
             return Decision.None
         }
@@ -462,11 +464,12 @@ class CrashStateMachine(
      *   - `!isStill` AND beyond `impactWindowMs * 2` of SILENCE_CHECK entry → false
      *     alarm, return to MONITORING
      *
-     * The retry budget is measured from SILENCE_CHECK ENTRY ([silenceCheckEnteredMs]),
-     * not from the impact. A long impact→stillness gap can engage a 20 s silence
-     * window; an impact-relative cutoff would expire before a genuinely-injured rider
-     * could complete one full silence window after their latest twitch — a false
-     * negative. Entry-relative anchoring guarantees a full window always fits.
+     * The retry budget (`impactWindowMs * 2`) is measured from SILENCE_CHECK ENTRY
+     * ([silenceCheckEnteredMs]), not from the impact, so a late entry (large
+     * impact→stillness gap) is not penalised. A continuously-still rider always
+     * reaches the confirm branch because the give-up branch only fires on non-still
+     * samples. The budget bounds how long the machine keeps retrying to achieve
+     * stillness — it does not guarantee tolerance of arbitrarily late breaks.
      *
      * Cadence gate: per doc Revision 4 C5, cadence > 20 RPM during SILENCE_CHECK is an
      * instant false-alarm exit (an unconscious rider cannot pedal).

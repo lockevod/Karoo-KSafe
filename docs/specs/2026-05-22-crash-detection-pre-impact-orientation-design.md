@@ -218,19 +218,21 @@ Assertion bands are tight (±15 %), not "any plausible number".
 ## Risks
 
 - A real crash whose bike keeps moving > 8 s after the impact (e.g. a long slide
-  on a steep descent) gets the 20 s window instead of 4.5 s — a ~15 s delay. The
-  rider is down and will not move, so it still confirms. Judged acceptable: the
-  case is rare and ambiguous, and the alternative is leaving the FP unprotected.
-  Note: this "delayed but still confirms" guarantee depends on the false-alarm
-  retry budget (`impactWindow × 2`) being measured **from SILENCE_CHECK entry**,
-  not from the impact. The first cut of this design doubled the silence window
-  but left the cutoff impact-relative — review found that a late SILENCE_CHECK
-  entry then left no room for a full 20 s window to complete after the latest
-  stillness break, so a single non-still sample (injured rider twitching, wind
-  rocking the bike) dropped a genuine crash to MONITORING with no alert. The
-  fix anchors the budget to SILENCE_CHECK entry so a full silence window always
-  fits after the latest break; the long-slide case above is only safe because
-  of that fix.
+  on a steep descent) gets the 20 s window instead of 4.5 s. A continuously-still
+  downed rider always confirms (gap + up to 20 s), because the false-alarm budget
+  (`impactWindow × 2`, measured from SILENCE_CHECK entry) only expires on non-still
+  samples. However, a rider with *repeated* stillness breaks in the 20 s regime
+  can see a longer tail: in a pathological scenario (repeated breaks spanning the
+  full budget) the machine may take up to ~80 s from SILENCE_CHECK entry before
+  confirming or giving up. In practice, a downed rider who stays still confirms
+  predictably; the long tail only applies when stillness is repeatedly broken
+  during a wide window. Judged acceptable: the alternative is leaving the
+  bump+brake+stop FP unprotected.
+  Note: the first cut of this design doubled the silence window but left the
+  budget impact-relative — review found that a late SILENCE_CHECK entry then left
+  insufficient budget for even one 20 s window, so a single non-still sample
+  dropped a genuine crash to MONITORING with no alert. Anchoring the budget to
+  SILENCE_CHECK entry fixes that false-negative.
 - The pre-impact reference can be skewed if the impact happens mid-corner (the
   bike is leaned). This is mitigated by the gap regime — a mid-corner bump
   followed by riding on has a long gap → 20 s regardless of orientation.

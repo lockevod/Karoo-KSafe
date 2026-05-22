@@ -362,8 +362,14 @@ class CrashDetectionManager(
      * pause starts from a clean MONITORING state, not from whatever the state
      * machine was midway through when the rider tapped pause.
      *
-     * The pre-impact vector ring buffer is also invalidated (`sensorReader.invalidateVectorRing()`)
-     * so an impact within ~2 s of resume yields an invalid (not stale) pre-impact reference.
+     * The pre-impact vector ring is also invalidated (`sensorReader.invalidateVectorRing()`),
+     * which raises a floor timestamp so samples captured before the pause are
+     * ignored. Because the accelerometer listener stays registered, the ring
+     * fills with stationary-bike samples during the pause; after a pause longer
+     * than the ~2.25 s averaging window the ring holds a valid reference
+     * essentially immediately after resume. An invalid reference is only
+     * produced on cold start or when an impact occurs within ~2.25 s of a very
+     * brief pause.
      */
     fun onPause() {
         stateMachine.onPause()
