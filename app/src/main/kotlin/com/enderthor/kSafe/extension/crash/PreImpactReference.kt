@@ -35,6 +35,14 @@ object PreImpactReference {
      * Average the X/Y/Z of every sample whose timestamp falls in
      * `[impactTsMs - GUARD_MS - WINDOW_MS , impactTsMs - GUARD_MS]`.
      * Returns [PreImpactRef.INVALID] when fewer than [MIN_SAMPLES] qualify.
+     *
+     * @param notBeforeMs Floor timestamp: samples with `tsMs < notBeforeMs` are
+     *   excluded from the average even if they fall inside the window. Used to
+     *   implement the lock-free ring invalidation on ride pause — the main thread
+     *   advances this floor instead of mutating the (sensor-thread-owned) ring, so
+     *   an impact within ~2 s of a resume yields an invalid (not stale) reference.
+     *   Defaults to [Long.MIN_VALUE], i.e. no floor — every sample in the window
+     *   qualifies, exactly as before this parameter existed.
      */
     fun compute(
         buffer: List<TimedVec3>,
@@ -42,12 +50,13 @@ object PreImpactReference {
         windowMs: Long = WINDOW_MS,
         guardMs: Long = GUARD_MS,
         minSamples: Int = MIN_SAMPLES,
+        notBeforeMs: Long = Long.MIN_VALUE,
     ): PreImpactRef {
         val hi = impactTsMs - guardMs
         val lo = hi - windowMs
         var sx = 0.0; var sy = 0.0; var sz = 0.0; var n = 0
         for (s in buffer) {
-            if (s.tsMs in lo..hi) {
+            if (s.tsMs in lo..hi && s.tsMs >= notBeforeMs) {
                 sx += s.x; sy += s.y; sz += s.z; n++
             }
         }

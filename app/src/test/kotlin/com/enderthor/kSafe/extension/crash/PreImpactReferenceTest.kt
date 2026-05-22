@@ -43,6 +43,52 @@ class PreImpactReferenceTest {
     }
 
     @Test
+    fun `notBeforeMs excludes entries below the floor from the average`() {
+        // Window for impact 100_000 is [97_750, 99_750]. "pre-pause" samples at z=9.81
+        // all sit below the floor of 98_000; "post-resume" samples at z=5.00 sit above
+        // it. With the floor applied, only the post-resume samples qualify — enough
+        // (>= MIN_SAMPLES) to stay valid, and the average reflects only z=5.00.
+        val pre = constantBuffer(0.0, 0.0, 9.81, count = 150, endTs = 97_980L)
+        // 80 post-resume samples spanning ts 98_000..99_580 — all inside the window
+        // and at/above the 98_000 floor.
+        val post = (0 until 80).map { TimedVec3(0.0, 0.0, 5.00, 98_000L + it * 20L) }
+        val ref = PreImpactReference.compute(
+            pre + post, impactTsMs = 100_000L, notBeforeMs = 98_000L,
+        )
+        assertTrue(ref.valid)
+        assertEquals(5.00, ref.z, 1e-9)
+        assertEquals(0.0, ref.x, 1e-9)
+    }
+
+    @Test
+    fun `notBeforeMs drives the result to invalid when too few entries remain above the floor`() {
+        // 200 upright samples in the window, but the floor sits so late that only ~10
+        // samples remain above it — below MIN_SAMPLES=50 → INVALID.
+        val buf = constantBuffer(0.0, 0.0, 9.81, count = 200, endTs = 99_750L)
+        // Window hi = 100_000-250 = 99_750. Floor at 99_570 leaves ts 99_570..99_750
+        // = 10 samples (20 ms spacing).
+        val ref = PreImpactReference.compute(
+            buf, impactTsMs = 100_000L, notBeforeMs = 99_570L,
+        )
+        assertFalse(ref.valid)
+    }
+
+    @Test
+    fun `omitting notBeforeMs behaves exactly as before - no floor applied`() {
+        // Same buffer as `averages the slice excluding the guard window`; with the
+        // default notBeforeMs (Long.MIN_VALUE) every sample in the window qualifies.
+        val buf = constantBuffer(0.0, 0.0, 9.81, count = 200, endTs = 100_000L)
+        val withDefault = PreImpactReference.compute(buf, impactTsMs = 100_000L)
+        val withExplicitMin =
+            PreImpactReference.compute(buf, impactTsMs = 100_000L, notBeforeMs = Long.MIN_VALUE)
+        assertTrue(withDefault.valid)
+        assertEquals(withDefault.x, withExplicitMin.x, 0.0)
+        assertEquals(withDefault.y, withExplicitMin.y, 0.0)
+        assertEquals(withDefault.z, withExplicitMin.z, 0.0)
+        assertEquals(9.81, withDefault.z, 1e-9)
+    }
+
+    @Test
     fun `the guard window excludes the impact transient`() {
         // 200 upright samples, then 5 huge "transient" samples in the last 100 ms.
         val upright = constantBuffer(0.0, 0.0, 9.81, count = 200, endTs = 99_900L)

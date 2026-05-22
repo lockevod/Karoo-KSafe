@@ -348,12 +348,12 @@ class CrashDetectionManager(
      * pause starts from a clean MONITORING state, not from whatever the state
      * machine was midway through when the rider tapped pause.
      *
-     * The pre-impact vector ring buffer is also cleared (`sensorReader.clearVectorBuffer()`)
+     * The pre-impact vector ring buffer is also invalidated (`sensorReader.invalidateVectorRing()`)
      * so an impact within ~2 s of resume yields an invalid (not stale) pre-impact reference.
      */
     fun onPause() {
         stateMachine.onPause()
-        sensorReader.clearVectorBuffer()
+        sensorReader.invalidateVectorRing()
         Timber.d("CrashDetectionManager: state machine paused")
     }
 

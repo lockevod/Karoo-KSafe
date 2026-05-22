@@ -42,12 +42,18 @@ import kotlin.math.sqrt
  *
  * ## Thread safety
  *
- * Buffers (`magnitudeBuffer`, `varianceBuffer`) are mutated only on the sensor thread.
- * [stop] unregisters the listener **before** clearing the buffers — this eliminates the
- * data race documented as item 11 in the reliability diagnostic, where a clear() on Main
- * could collide with an addLast() on the sensor thread. After unregisterListener returns,
- * no further callbacks will arrive on this listener instance, so the subsequent clear is
- * safe.
+ * Buffers (`magnitudeBuffer`, `varianceBuffer`, `vectorBuffer`) are mutated only on the
+ * sensor thread. [stop] unregisters the listener **before** clearing the buffers — this
+ * eliminates the data race documented as item 11 in the reliability diagnostic, where a
+ * clear() on Main could collide with an addLast() on the sensor thread. After
+ * unregisterListener returns, no further callbacks will arrive on this listener instance,
+ * so the subsequent clear is safe.
+ *
+ * The pre-impact vector ring is also invalidated on ride pause via [invalidateVectorRing],
+ * but the listener stays REGISTERED across a pause. To avoid a Main-vs-sensor-thread race
+ * there, [invalidateVectorRing] does NOT mutate the ring — it raises a `@Volatile` floor
+ * timestamp ([vectorRingFloorMs]) that [preImpactReference] uses to discard pre-pause
+ * samples. The sensor thread remains the sole mutator of the ring.
  *
  * @property accelStillDeviationMax Deviation-from-gravity threshold under which the
  *   accelerometer is considered "still". Defaults to [SILENCE_DEVIATION_MAX]. Note this is
@@ -98,6 +104,18 @@ class SensorReader(
      * Sensor-thread-only, like the other buffers.
      */
     private val vectorBuffer = Vec3RingBuffer(PRE_IMPACT_RING_CAPACITY)
+
+    /**
+     * Lock-free invalidation floor for [vectorBuffer]. Any ring entry with
+     * `tsMs < vectorRingFloorMs` is ignored when computing the pre-impact reference.
+     *
+     * The main thread (ride pause) only ever *raises* this floor — it never touches
+     * the ring's `head`/`size`, so the sensor thread stays the sole mutator of the
+     * ring and the 50 Hz hot path is untouched. See [invalidateVectorRing].
+     *
+     * @Volatile: written by the main thread, read by [preImpactReference].
+     */
+    @Volatile private var vectorRingFloorMs: Long = Long.MIN_VALUE
 
     @Volatile private var registered = false
 
@@ -176,7 +194,11 @@ class SensorReader(
         // on full stop (ride end / extension teardown) the buffer should be cleared
         // so a future restart begins with a clean window.
         varianceBuffer.clear()
+        // Safe to mutate the ring here — the listener is unregistered, so no sensor
+        // callback can be inside vectorBuffer.add(...) concurrently. Also reset the
+        // invalidation floor so a fresh start() after a stop() has no stale floor.
         vectorBuffer.clear()
+        vectorRingFloorMs = Long.MIN_VALUE
         accelStillSinceMs = 0L
         lastGyroMag = 0.0
     }
@@ -205,20 +227,39 @@ class SensorReader(
 
     /**
      * The pre-impact orientation reference for an impact detected at [impactTsMs].
-     * Snapshots the vector ring and delegates to the pure [PreImpactReference.compute].
+     * Snapshots the vector ring and delegates to the pure [PreImpactReference.compute],
+     * passing [vectorRingFloorMs] so any entry captured before the last
+     * [invalidateVectorRing] call is ignored.
      * Called once per impact event (rare) — the O(capacity) snapshot is negligible.
      */
     fun preImpactReference(impactTsMs: Long): PreImpactRef =
-        PreImpactReference.compute(vectorBuffer.snapshot(), impactTsMs)
+        PreImpactReference.compute(
+            vectorBuffer.snapshot(),
+            impactTsMs,
+            notBeforeMs = vectorRingFloorMs,
+        )
 
     /**
-     * Drop the pre-impact vector ring. Called by the facade when the ride pauses
-     * so an impact within ~2 s of resume yields an invalid (rather than stale)
-     * reference. The reader stays registered across a pause, so the ring is NOT
-     * cleared by [stop] in that case.
+     * Invalidate the pre-impact vector ring. Called from the **main thread** when the
+     * ride pauses.
+     *
+     * Lock-free: this does NOT mutate the ring's `head`/`size` — it only raises the
+     * [vectorRingFloorMs] floor to the current instant. The sensor thread therefore
+     * stays the sole mutator of the ring and the 50 Hz hot path is untouched, so there
+     * is no data race even though the accelerometer listener stays registered across a
+     * ride pause.
+     *
+     * Effect: every pre-impact reference computed afterwards ignores samples captured
+     * before this instant, so an impact within ~2 s of resume yields an invalid (not
+     * stale) reference. The ring itself keeps filling on the sensor thread; once ~2 s
+     * of fresh post-resume samples have accumulated, references become valid again.
+     *
+     * The reader stays registered across a pause, so the ring is NOT cleared by [stop]
+     * in that case — only [stop] (which unregisters the listener first) actually clears
+     * the ring.
      */
-    fun clearVectorBuffer() {
-        vectorBuffer.clear()
+    fun invalidateVectorRing() {
+        vectorRingFloorMs = clock.nowMs()
     }
 
     /** Test-only: exercise the buffering path without a real SensorEvent. */

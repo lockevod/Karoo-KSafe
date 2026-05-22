@@ -205,6 +205,56 @@ class SensorReaderTest {
         val ref = reader.preImpactReference(t)
         assertFalse(ref.valid)
     }
+
+    /** Mutable clock so the test can place [SensorReader.invalidateVectorRing]'s floor
+     *  precisely between the old and new sample groups. */
+    private class MutableClock(var nowMs: Long) : com.enderthor.kSafe.extension.util.Clock {
+        override fun nowMs(): Long = nowMs
+    }
+
+    @Test
+    fun `invalidateVectorRing makes pre-invalidation samples ignored`() {
+        // Controllable clock — invalidateVectorRing() stamps the floor from clock.nowMs().
+        val clock = MutableClock(1_000L)
+        val reader = SensorReader(
+            sensorManager = mock(SensorManager::class.java),
+            clock = clock,
+            onSample = { /* unused */ },
+        )
+
+        // 200 OLD samples, 20 ms apart, ending well before the invalidation instant.
+        var t = 1_000_000L
+        repeat(200) {
+            reader.pushAccelForTest(x = 0f, y = 0f, z = 9.81f, tsMs = t)
+            t += 20L
+        }
+        val lastOldTs = t - 20L  // ts of the final old sample
+
+        // Invalidate: the floor lands at clock.nowMs(), strictly after every old sample.
+        clock.nowMs = lastOldTs + 1_000L
+        reader.invalidateVectorRing()
+
+        // An impact whose pre-impact window covers ONLY the old samples → invalid,
+        // because all 200 entries sit below the floor and are discarded.
+        // Window for impactTs = lastOldTs + 250 is [lastOldTs-2000, lastOldTs].
+        val refOnlyOld = reader.preImpactReference(lastOldTs + PreImpactReference.GUARD_MS)
+        assertFalse("pre-invalidation samples must be excluded", refOnlyOld.valid)
+
+        // Push 200 NEW samples AFTER the floor; their timestamps start above the floor.
+        var tNew = clock.nowMs + 20L
+        repeat(200) {
+            reader.pushAccelForTest(x = 0f, y = 0f, z = 5.00f, tsMs = tNew)
+            tNew += 20L
+        }
+        val lastNewTs = tNew - 20L
+
+        // A later impact whose window covers the new samples → valid, and the
+        // reference reflects only the post-floor value (z = 5.00, not 9.81).
+        val refNew = reader.preImpactReference(lastNewTs + PreImpactReference.GUARD_MS)
+        assertTrue("post-invalidation samples must yield a valid reference", refNew.valid)
+        assertEquals(5.00, refNew.z, 1e-3)
+        assertEquals(0.0, refNew.x, 1e-3)
+    }
 }
 
 /**
