@@ -63,6 +63,9 @@ class CrashStateMachine(
         /** Sentinel for "no speed update received yet" — distinguishes from a legit `0.0`. */
         const val SPEED_UPDATE_NEVER = 0L
 
+        /** Sentinel for [cadenceLastChangeMs]: the cadence value has never changed. */
+        const val CADENCE_CHANGE_NEVER = -1L
+
         /** Minimum samples in the silence window before orientation classification kicks in.
          *  At 50 Hz this is ~100 ms — enough to filter the very first sample of jitter. */
         const val MIN_ORIENTATION_SAMPLES: Int = 5
@@ -132,7 +135,7 @@ class CrashStateMachine(
      * `nowSampleMs - cadenceLastChangeMs > cadenceStaleThresholdMs` (sensor stopped
      * changing mid-ride → post-signal-loss stuck reading).
      */
-    @Volatile private var cadenceLastChangeMs: Long = -1L
+    @Volatile private var cadenceLastChangeMs: Long = CADENCE_CHANGE_NEVER
 
     /** Timestamp of the last sample processed by [onSample]; used by [onCadenceUpdate]. */
     @Volatile private var lastSampleMs: Long = 0L
@@ -339,7 +342,7 @@ class CrashStateMachine(
         // Note: lastSpeedGpsStale will be refreshed from the next sample's gpsStale.
         lastCadenceRpm = Double.NaN
         lastCadenceUpdateMs = 0L
-        cadenceLastChangeMs = -1L
+        cadenceLastChangeMs = CADENCE_CHANGE_NEVER
         lastSampleMs = 0L
         startTimeMs = 0L
         silenceWindowSumX = 0.0
@@ -374,7 +377,7 @@ class CrashStateMachine(
         speedLastUpdatedAtMs = SPEED_UPDATE_NEVER
         lastCadenceRpm = Double.NaN
         lastCadenceUpdateMs = 0L
-        cadenceLastChangeMs = -1L
+        cadenceLastChangeMs = CADENCE_CHANGE_NEVER
         lastSampleMs = 0L
         startTimeMs = 0L
         silenceWindowSumX = 0.0
@@ -675,22 +678,28 @@ class CrashStateMachine(
     /**
      * Returns true when fresh cadence data indicates the rider is actively pedalling.
      *
-     * Returns false in three cases:
-     *   - [lastCadenceUpdateMs] == 0L: no cadence data has been received this session
-     *     (no sensor paired, or cadence callback fired before the first sample).
-     *   - Age of last update exceeds `cadenceStaleThresholdMs`: sensor disconnected.
-     *   - [lastCadenceRpm] <= `cadenceQuietThresholdRpm`: rider coasting / not pedalling.
+     * Returns false in five cases:
+     *   1. [lastCadenceUpdateMs] == 0L: no cadence data has been received this session
+     *      (no sensor paired, or cadence callback fired before the first sample).
+     *   2. Age of last emission exceeds `cadenceStaleThresholdMs`: sensor disconnected.
+     *   3. [cadenceLastChangeMs] == [CADENCE_CHANGE_NEVER]: the cadence value has never
+     *      fluctuated since the session started — the sensor is reporting a static value
+     *      (stuck from the first reading; not yet verified to be live).
+     *   4. Time since the cadence value last changed exceeds `cadenceStaleThresholdMs`:
+     *      sensor stopped changing mid-ride (repeating its last value after signal loss).
+     *   5. [lastCadenceRpm] not above `cadenceQuietThresholdRpm`: rider coasting / not
+     *      pedalling.
      */
     private fun isCadenceActive(nowSampleMs: Long): Boolean {
         if (lastCadenceUpdateMs == 0L) return false
         val age = nowSampleMs - lastCadenceUpdateMs
         if (age > thresholds.cadenceStaleThresholdMs) return false
-        // Freshness-by-CHANGE: [cadenceLastChangeMs] == -1L means the cadence value
-        // has NEVER fluctuated since the session started — the sensor is reporting a
-        // static value (stuck reading after signal loss, or sensor just connected and
-        // not yet verified to be live). An actively pedalling rider's cadence changes
-        // every revolution; a stuck sensor's does not.
-        if (cadenceLastChangeMs < 0L) return false
+        // Freshness-by-CHANGE: CADENCE_CHANGE_NEVER means the cadence value has NEVER
+        // fluctuated since the session started — the sensor is reporting a static value
+        // (stuck reading after signal loss, or sensor just connected and not yet verified
+        // to be live). An actively pedalling rider's cadence changes every revolution;
+        // a stuck sensor's does not.
+        if (cadenceLastChangeMs == CADENCE_CHANGE_NEVER) return false
         val sinceChange = nowSampleMs - cadenceLastChangeMs
         if (sinceChange > thresholds.cadenceStaleThresholdMs) return false
         return lastCadenceRpm > thresholds.cadenceQuietThresholdRpm
