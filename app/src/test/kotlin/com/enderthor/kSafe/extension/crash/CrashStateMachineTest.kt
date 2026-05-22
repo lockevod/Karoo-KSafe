@@ -1302,6 +1302,102 @@ class CrashStateMachineTest {
     }
 
     @Test
+    fun `cadence sensor stuck after fluctuating goes inactive via the change-staleness guard`() {
+        // Exercises guard (4) of isCadenceActive specifically:
+        //   `sinceChange > cadenceStaleThresholdMs` (sensor WAS fluctuating, then lost
+        //   signal mid-ride and repeats its last value bit-exact).
+        //
+        // Why this is distinct from the existing "stuck cadence" test:
+        //   The existing test feeds a bit-exact 68.0 from the very first call, so
+        //   cadenceLastChangeMs stays at CADENCE_CHANGE_NEVER and the test passes via
+        //   guard (3). Guard (4) — the realistic production case — is only reachable
+        //   when cadenceLastChangeMs holds a REAL (non-sentinel) timestamp, which
+        //   requires the cadence value to have actually changed at least once.
+        //
+        // Time-domain mechanics:
+        //   onCadenceUpdate stamps lastCadenceUpdateMs = lastSampleMs (current sample
+        //   domain). The test calls onCadenceUpdate AFTER each onSample, following the
+        //   production pattern. So when onSample(T) runs, lastCadenceUpdateMs reflects
+        //   the previous tick (age = one step, always fresh). cadenceLastChangeMs is
+        //   only updated when the RPM VALUE changes, not on every emission.
+        //
+        //   cadenceStaleThresholdMs = 3_000. cadenceLastChangeMs is stamped at
+        //   lastSampleMs = 200 (step 4 below). A large time-skip puts the impact
+        //   well past that stamp, so by the time SILENCE_CHECK ticks begin:
+        //     sinceChange = nowSampleMs − 200 >> 3_000   → guard (4) fires
+        //     age          = nowSampleMs − prevSampleMs = step (500) < 3_000  → guard (2) passes
+        //   Guard (4) therefore fires while emission is still fresh, exactly the
+        //   production scenario (sensor keeps emitting but its value never changes).
+        //
+        //   silenceStartedMs = 4_600; effectiveSilenceMs = 4_500 → confirm at >= 9_100.
+        val (sm, _) = newSm(thresholds = Thresholds(cadenceStaleThresholdMs = 3_000L))
+        sm.onSpeedUpdate(20.0)
+
+        // ── MONITORING phase: stamp a real cadenceLastChangeMs ───────────────
+        // Step 1: advance lastSampleMs to 100 (quiet, below impact threshold).
+        sm.onSample(sample(time = 100, peak = 5.0, smoothed = 5.0))
+        // Step 2: first cadence call — NaN → 62.0. The NaN guard
+        //   (`!lastCadenceRpm.isNaN() && rpm != last`) is false (isNaN), so
+        //   cadenceLastChangeMs stays CADENCE_CHANGE_NEVER. lastCadenceUpdateMs = 100.
+        sm.onCadenceUpdate(62.0)
+
+        // Step 3: advance lastSampleMs to 200 (still quiet).
+        sm.onSample(sample(time = 200, peak = 5.0, smoothed = 5.0))
+        // Step 4: second cadence call — 62.0 → 67.0: the guard fires and stamps
+        //   cadenceLastChangeMs = lastSampleMs = 200.  lastCadenceUpdateMs = 200.
+        //   From this point guard (3) (CADENCE_CHANGE_NEVER) is forever bypassed;
+        //   only guard (4) (sinceChange > cadenceStaleThresholdMs) can now deactivate
+        //   the sensor.
+        sm.onCadenceUpdate(67.0)
+
+        // ── Time-skip into impact — cadence NOT called between 200 and 4_100 ─
+        // Impact at t = 4_100. lastCadenceUpdateMs is still 200.
+        // sinceChange at impact = 4_100 − 200 = 3_900 > 3_000 → guard (4) already holds
+        // (but the cadence gate is only evaluated inside SILENCE_CHECK, so this
+        // transition to IMPACT is unaffected).
+        sm.onSample(sample(time = 4_100, peak = 60.0, smoothed = 30.0, gyro = 0.5))
+        assertEquals(CrashStateMachine.State.IMPACT, sm.state)
+
+        // ── On-side pre-impact reference; drop speed; enter SILENCE_CHECK ────
+        // Call onCadenceUpdate(67.0) right after the impact sample so that
+        //   lastCadenceUpdateMs = 4_100 (fresh relative to the upcoming SILENCE ticks).
+        // cadenceLastChangeMs stays at 200 (value did not change).
+        sm.onCadenceUpdate(67.0)
+        sm.setPreImpactReference(PreImpactRef(0.0, 0.0, 9.81, valid = true))
+        sm.onSpeedUpdate(0.0)
+        // timeSinceImpact = 4_700 − 4_100 = 600 ms > minTimeSinceImpactMs (500) → time gate passes.
+        // Gap = 600 ms < default delayedStopGapMs (8_000) → orientation regime.
+        // On-side vector (ax = 9.81, az = 0) vs upright reference (z = 9.81) →
+        // angle ≈ 90° ≥ uprightAngleThresholdDegrees (45°) → 4.5s window.
+        sm.onSample(sample(time = 4_700, peak = QUIET, smoothed = QUIET, gyro = 0.1,
+            ax = 9.81, az = 0.0))
+        // isCadenceActive(4_700): lastCadenceUpdateMs=4_100, age=600<3_000 (fresh);
+        //   cadenceLastChangeMs=200, sinceChange=4_500>3_000 → guard (4) fires → false.
+        // Cadence gate inactive → SILENCE_CHECK entry succeeds.
+        assertEquals(CrashStateMachine.State.SILENCE_CHECK, sm.state)
+
+        // ── Stuck sensor phase: feed stuck 67.0 on every tick ────────────────
+        // Each tick: onSample(T) → isCadenceActive(T): age = T − (T−500) = 500 (fresh);
+        //   sinceChange = T − 200 >> 3_000 → guard (4) fires → false → no veto.
+        // silenceStartedMs = 4_700; confirm at >= 9_200.
+        var t = 4_700L
+        var confirmed = false
+        while (t < 13_000L && !confirmed) {
+            t += 500L
+            val d = sm.onSample(sample(time = t, peak = QUIET, smoothed = QUIET, gyro = 0.1,
+                ax = 9.81, az = 0.0))
+            // Keep emission fresh (age = 500 < 3_000) while value stays 67.0 (no re-stamp).
+            sm.onCadenceUpdate(67.0)
+            if (d == CrashStateMachine.Decision.Confirm) confirmed = true
+        }
+        assertTrue(
+            "a cadence sensor stuck after fluctuating must go inactive via the change-staleness " +
+                "guard (guard 4) and must NOT veto crash confirmation",
+            confirmed
+        )
+    }
+
+    @Test
     fun `fluctuating cadence keeps the gate active and exits SILENCE_CHECK as a false alarm`() {
         // A genuinely pedalling rider's cadence fluctuates every revolution. The
         // cadence gate must stay active and trigger the false-alarm exit.

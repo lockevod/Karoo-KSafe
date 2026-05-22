@@ -307,6 +307,13 @@ class CrashStateMachine(
         // the very first cadence reading (which always differs from NaN) from counting
         // as a "change" — a stuck sensor that first appears at 68 RPM must accumulate
         // at least one genuine fluctuation before the change-time is stamped.
+        //
+        // Invariant: [cadenceLastChangeMs] is stamped with [lastSampleMs] (the sample-time
+        // domain), so it is only meaningful after at least one [onSample] has advanced
+        // [lastSampleMs] beyond 0. Before the first [onSample], [lastCadenceUpdateMs]
+        // remains 0 — which is the "never received in-ride" sentinel — and
+        // [isCadenceActive]'s first guard (`lastCadenceUpdateMs == 0L`) short-circuits
+        // before [cadenceLastChangeMs] is ever consulted.
         if (!lastCadenceRpm.isNaN() && cadenceRpm != lastCadenceRpm) {
             cadenceLastChangeMs = lastSampleMs
         }
