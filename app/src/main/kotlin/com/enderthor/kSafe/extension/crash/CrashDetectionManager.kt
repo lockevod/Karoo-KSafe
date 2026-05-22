@@ -549,8 +549,8 @@ class CrashDetectionManager(
         }
         Timber.d(">>> CRASH CONFIRMED (accel dev=%.2f speed=%.1fkm/h gyro=%.2f gpsStale=%b silence_ms=%d path=%s)",
             deviation, currentSpeedKmh, sample.gyroMag, gpsStale, effectiveSilenceMs, silencePath)
-        val gapMs = stateMachine.firstSilenceGapMs
-        val angle = stateMachine.lastOrientationAngleDeg
+        val gapMs = stateMachine.lastConfirmedGapMs
+        val angle = stateMachine.lastConfirmedAngleDeg
         val ref = stateMachine.preImpactReference
         val decidedBy = when {
             gapMs > stateMachine.thresholds.delayedStopGapMs -> "GAP"

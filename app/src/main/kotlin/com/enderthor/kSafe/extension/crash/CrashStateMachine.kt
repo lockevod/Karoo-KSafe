@@ -174,6 +174,28 @@ class CrashStateMachine(
     @Volatile var lastConfirmedSilenceMs: Long = 0L
         private set
 
+    /**
+     * The `firstSilenceGapMs` value at the moment the last `Decision.Confirm` fired.
+     * Captured BEFORE `resetTimers()` zeroes `firstSilenceGapMs`, so the facade
+     * can read the correct gap in CRASH_CONFIRMED calibration rows.
+     *
+     * `0L` until the first Confirm in this ride. NOT reset between rides
+     * intentionally — a fresh ride's first Confirm overwrites it.
+     */
+    @Volatile var lastConfirmedGapMs: Long = 0L
+        private set
+
+    /**
+     * The `lastOrientationAngleDeg` value at the moment the last `Decision.Confirm` fired.
+     * Captured BEFORE `resetSilenceWindow()` resets `lastOrientationAngleDeg` to -1.0,
+     * so the facade can read the correct angle in CRASH_CONFIRMED calibration rows.
+     *
+     * `-1.0` until the first Confirm that used the orientation regime. NOT reset between
+     * rides intentionally — a fresh ride's first Confirm overwrites it.
+     */
+    @Volatile var lastConfirmedAngleDeg: Double = -1.0
+        private set
+
     // ── Pre-impact orientation reference (pre-impact-revision) ───────────────
     /**
      * The bike's gravity-vector direction averaged over ~2 s before the impact.
@@ -483,6 +505,10 @@ class CrashStateMachine(
                 // before resetSilenceWindow() clears the latch — the facade
                 // reads this for CRASH_CONFIRMED diagnostic logging.
                 lastConfirmedSilenceMs = effectiveSilenceMs
+                // Snapshot gap and angle BEFORE resetTimers()/resetSilenceWindow() zero them,
+                // so the facade reads the values that were in force at confirmation time.
+                lastConfirmedGapMs = firstSilenceGapMs
+                lastConfirmedAngleDeg = lastOrientationAngleDeg
                 resetTimers()
                 resetSilenceWindow()
                 state = State.MONITORING

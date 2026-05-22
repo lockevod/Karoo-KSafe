@@ -1023,4 +1023,58 @@ class CrashStateMachineTest {
         assertEquals(CrashStateMachine.Decision.ReturnToMonitoring, d)
         assertEquals(CrashStateMachine.State.MONITORING, sm.state)
     }
+
+    // ── Diagnostics: lastConfirmedGapMs / lastConfirmedAngleDeg snapshots ──────
+
+    /**
+     * After a confirmed crash via the ORIENTATION regime (prompt stop, bike on-side,
+     * valid pre-impact reference), the snapshot fields must hold the values that were
+     * in force AT confirmation time — NOT the post-reset zeroes/sentinels.
+     *
+     * Specifically:
+     *  - [CrashStateMachine.lastConfirmedGapMs] must equal the gap the SM saw when it
+     *    entered SILENCE_CHECK (firstSilenceGapMs at that moment, NOT 0 after reset).
+     *  - [CrashStateMachine.lastConfirmedAngleDeg] must be a real non-negative angle
+     *    computed from the orientation regime (NOT -1.0 after reset).
+     */
+    @Test
+    fun `lastConfirmedGapMs and lastConfirmedAngleDeg hold pre-reset values after Confirm`() {
+        // Orientation regime: prompt stop (gap < delayedStopGapMs), valid pre-impact ref,
+        // bike on-side (gravity along X → angle ≈ 90° from upright Z reference).
+        // The gap used is 2000ms; the on-side angle should be ~90°.
+        val gapMs = 2_000L
+        val (sm, _) = smEnteringSilence(
+            gapMs = gapMs,
+            preRef = PreImpactRef(0.0, 0.0, 9.81, valid = true),
+            silenceAz = 0.0, silenceAx = 9.81,   // on-side: ~90° from upright Z reference
+        )
+        assertEquals(CrashStateMachine.State.SILENCE_CHECK, sm.state)
+
+        // Drive to confirm: on-side → orientation regime → 4.5s silence window.
+        var t = 1_000_000L + gapMs
+        var confirmed = false
+        repeat(10) {
+            t += 1_000L
+            if (sm.onSample(sample(time = t, raw = 9.81, smoothed = 9.81, az = 0.0, ax = 9.81))
+                    is CrashStateMachine.Decision.Confirm) confirmed = true
+        }
+        assertTrue("Expected Decision.Confirm within 10s of silence_check entry", confirmed)
+
+        // After confirm, resetTimers() zeroes firstSilenceGapMs → would be 0 if not snapshotted.
+        // After confirm, resetSilenceWindow() sets lastOrientationAngleDeg = -1.0 if not snapshotted.
+        // The snapshot fields must hold the pre-reset values.
+        assertEquals(
+            "lastConfirmedGapMs must equal the gap at confirmation time, not 0 after reset",
+            gapMs, sm.lastConfirmedGapMs
+        )
+        assertTrue(
+            "lastConfirmedAngleDeg must be a real angle (>=0), not the -1.0 reset sentinel; got ${sm.lastConfirmedAngleDeg}",
+            sm.lastConfirmedAngleDeg >= 0.0
+        )
+        // The on-side scenario (ax=9.81, az=0 vs ref az=9.81) yields ~90°, well above 0.
+        assertTrue(
+            "lastConfirmedAngleDeg should be close to 90° for on-side crash; got ${sm.lastConfirmedAngleDeg}",
+            sm.lastConfirmedAngleDeg > 45.0
+        )
+    }
 }
