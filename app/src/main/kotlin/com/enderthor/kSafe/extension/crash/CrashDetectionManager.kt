@@ -367,7 +367,8 @@ class CrashDetectionManager(
      */
     fun onPause() {
         stateMachine.onPause()
-        Timber.d("CrashDetectionManager: state machine paused (baseline preserved)")
+        sensorReader.clearVectorBuffer()
+        Timber.d("CrashDetectionManager: state machine paused")
     }
 
     // ─── Internal: per-sample callback from SensorReader ─────────────────────
@@ -481,6 +482,11 @@ class CrashDetectionManager(
         // ─── React to state transitions / decisions ──────────────────────────
         when (decision) {
             is CrashStateMachine.Decision.EnterImpact -> {
+                // Capture the ~2 s pre-impact orientation reference and hand it to
+                // the state machine before the SILENCE_CHECK phase consumes it.
+                stateMachine.setPreImpactReference(
+                    sensorReader.preImpactReference(sample.timestampMs)
+                )
                 logImpactEnter(sample, decision.reason, boostActive)
             }
             is CrashStateMachine.Decision.Confirm -> {
