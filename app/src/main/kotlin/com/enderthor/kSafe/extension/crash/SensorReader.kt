@@ -375,20 +375,22 @@ internal class DoubleRingBuffer(@PublishedApi internal val capacity: Int) {
 
     /**
      * Incrementally maintained sum and sum-of-squares of the live elements.
-     * Lets [stdDev] run in O(1) instead of O(N) — important because the
-     * orientation-baseline cruising gate calls it on every sample (~50 Hz),
-     * not just on the rate-limited PERIODIC log.
+     * Lets [stdDev] run in O(1) instead of O(N). The orientation-baseline
+     * cruising gate that originally drove this call on every sample (~50 Hz)
+     * has been removed; [accelStdDev] is now invoked only from the
+     * rate-limited PERIODIC calibration log and the IMPACT_ENTER log, so
+     * O(1) is a nice-to-have rather than a strict hot-path requirement.
      *
      * Numerical note: `variance = sumSq/N - mean*mean` is the textbook
      * "two-pass" formula and suffers catastrophic cancellation when the
      * variance is tiny relative to mean*mean. For accelerometer magnitudes
      * (mean ≈ 9.81 m/s², variance ≈ 0.01-2 m²/s⁴) we lose ~2-3 decimal
-     * digits of precision — orders of magnitude more than needed for the
-     * 1.5 m/s² cruising threshold. Welford's incremental algorithm would
-     * be more accurate but is much harder to apply with a fixed-window
-     * ring (every eviction requires a full revisit), so we keep the simple
-     * form and `coerceAtLeast(0.0)` the variance to guard against tiny
-     * negative results when std-dev is essentially zero.
+     * digits of precision — acceptable for a noise metric used only in
+     * calibration logs. Welford's incremental algorithm would be more
+     * accurate but is much harder to apply with a fixed-window ring (every
+     * eviction requires a full revisit), so we keep the simple form and
+     * `coerceAtLeast(0.0)` the variance to guard against tiny negative
+     * results when std-dev is essentially zero.
      */
     internal var runningSum: Double = 0.0
         private set

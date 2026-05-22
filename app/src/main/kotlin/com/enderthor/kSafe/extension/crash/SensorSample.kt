@@ -27,11 +27,12 @@ data class SensorSample(
     val gpsStale: Boolean = false,
     /**
      * Raw accelerometer X axis at sample time, m/s² (includes gravity component).
-     * Used by [CrashStateMachine] to learn the per-ride upright gravity vector and
-     * to compute the bike orientation during SILENCE_CHECK. Default 0.0 keeps the
-     * legacy magnitude-only state-machine tests behaviourally equivalent — the
-     * orientation gate degrades gracefully to the no-baseline fallback when X/Y/Z
-     * are absent or all zero.
+     * Used by [CrashStateMachine] to build the pre-impact orientation reference
+     * (averaged over ~2 s before the impact) and to classify the bike's orientation
+     * during SILENCE_CHECK. Default 0.0 keeps the legacy magnitude-only
+     * state-machine tests behaviourally equivalent — when X/Y/Z are absent or all
+     * zero the orientation gate degrades gracefully: the pre-impact reference is
+     * marked invalid and the shorter legacy silence window is used instead.
      */
     val accelX: Double = 0.0,
     /** Raw accelerometer Y axis at sample time, m/s² (includes gravity component). */

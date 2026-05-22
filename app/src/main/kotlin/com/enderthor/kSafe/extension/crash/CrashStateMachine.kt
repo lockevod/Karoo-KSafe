@@ -570,8 +570,14 @@ class CrashStateMachine(
             preImpactRef.y * preImpactRef.y +
             preImpactRef.z * preImpactRef.z
         )
-        // Degenerate vector — cannot classify; use the short window without latching
-        // (a later sample may yield a usable average).
+        // Degenerate vector — intentionally re-entrant defensive guard. A gravity-laden
+        // accelerometer average cannot have magnitude < EPSILON (1e-6) in the field;
+        // this branch is physically unreachable while gravity is present. It is left
+        // un-latched deliberately: if a transient numerical anomaly ever produced a
+        // near-zero average, the next valid sample would still reach the orientation
+        // branch and produce a real decision, rather than being forever locked into a
+        // degenerate latch. This is the only post-MIN_ORIENTATION_SAMPLES path that
+        // returns without setting lockedEffectiveSilenceMs.
         if (curMag < EPSILON || refMag < EPSILON) return legacyShort
 
         val cosAngle = ((curX * preImpactRef.x + curY * preImpactRef.y + curZ * preImpactRef.z)

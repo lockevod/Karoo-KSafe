@@ -115,6 +115,20 @@ class CrashDetectionManager(
         // sustained-impact path.
         const val CLUSTER_MIN_TMO = 2
 
+        // ── Orientation / silence-duration tuning ────────────────────────────
+        /** Minimum impact→stillness gap (ms) that triggers the delayed-stop regime
+         *  (20 s upright window). Matches the default in [Thresholds.delayedStopGapMs]. */
+        const val DELAYED_STOP_GAP_MS = 8_000L
+
+        /** Silence-window duration (ms) when the bike is assessed as upright after
+         *  the impact (orientation regime). Matches [Thresholds.silenceDurationUprightMs]. */
+        const val SILENCE_DURATION_UPRIGHT_MS = 20_000L
+
+        /** Angle threshold (degrees) above which the current gravity vector is
+         *  classified as on-side (short window); below it the bike is deemed upright
+         *  (long window). Matches [Thresholds.uprightAngleThresholdDegrees]. */
+        const val UPRIGHT_ANGLE_THRESHOLD_DEGREES = 45.0
+
         // ── CrashStateMachine "sample timestamp" base ────────────────────────
         // The state machine treats `sample.timestampMs` as the authoritative time
         // for IMPACT/SILENCE windows. We pass wall-clock so production semantics
@@ -751,6 +765,9 @@ class CrashDetectionManager(
             gpsStaleThresholdMs = GPS_STALE_MS,
             cadenceQuietThresholdRpm = CADENCE_QUIET_RPM,
             cadenceStaleThresholdMs = CADENCE_STALE_MS,
+            delayedStopGapMs = DELAYED_STOP_GAP_MS,
+            silenceDurationUprightMs = SILENCE_DURATION_UPRIGHT_MS,
+            uprightAngleThresholdDegrees = UPRIGHT_ANGLE_THRESHOLD_DEGREES,
         )
     }
 
