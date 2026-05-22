@@ -1241,6 +1241,41 @@ class CrashStateMachineTest {
         )
     }
 
+    // ── I3 fix: autopause must not wipe in-flight SILENCE_CHECK state ───────────
+
+    @Test
+    fun `autopause scenario - uninterrupted SILENCE_CHECK confirms (no onPause call)`() {
+        // An autopause must NOT call onPause(); the state machine keeps running on
+        // the accelerometer stream and an in-flight on-side crash confirms.
+        val (sm, _) = smEnteringSilence(
+            gapMs = 2_000L,
+            preRef = PreImpactRef(0.0, 0.0, 9.81, valid = true),
+            silenceAz = 0.0, silenceAx = 9.81,   // on-side -> 4.5 s window
+        )
+        assertEquals(CrashStateMachine.State.SILENCE_CHECK, sm.state)
+        var t = 1_002_000L
+        var confirmed = false
+        repeat(7) {
+            t += 1000L
+            if (sm.onSample(sample(time = t, raw = 9.81, smoothed = 9.81, az = 0.0, ax = 9.81))
+                    is CrashStateMachine.Decision.Confirm) confirmed = true
+        }
+        assertTrue("uninterrupted SILENCE_CHECK must confirm", confirmed)
+    }
+
+    @Test
+    fun `manual pause scenario - onPause mid-SILENCE_CHECK wipes to MONITORING`() {
+        // A manual pause DOES call onPause(); the in-flight state is wiped.
+        val (sm, _) = smEnteringSilence(
+            gapMs = 2_000L,
+            preRef = PreImpactRef(0.0, 0.0, 9.81, valid = true),
+            silenceAz = 0.0, silenceAx = 9.81,
+        )
+        assertEquals(CrashStateMachine.State.SILENCE_CHECK, sm.state)
+        sm.onPause()
+        assertEquals(CrashStateMachine.State.MONITORING, sm.state)
+    }
+
     // ── Diagnostics: lastConfirmedGapMs / lastConfirmedAngleDeg snapshots ──────
 
     /**

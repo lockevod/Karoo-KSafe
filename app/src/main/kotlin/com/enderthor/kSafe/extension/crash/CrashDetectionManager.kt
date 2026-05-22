@@ -358,26 +358,31 @@ class CrashDetectionManager(
     }
 
     /**
-     * Reset the state machine's per-event state (impact window, silence-window
-     * accumulator, latched silence duration) when the ride is paused. Crash
-     * detection stays active during the pause — we just want to drop any
-     * in-flight IMPACT/SILENCE state so that a crash that happens DURING the
-     * pause starts from a clean MONITORING state, not from whatever the state
-     * machine was midway through when the rider tapped pause.
+     * Handle a ride pause. [auto] is `RideState.Paused.auto` — the Karoo SDK's flag
+     * for an automatic pause (speed reached 0) vs a manual pause (rider tapped pause).
      *
-     * The pre-impact vector ring is also invalidated (`sensorReader.invalidateVectorRing()`),
-     * which raises a floor timestamp so samples captured before the pause are
-     * ignored. Because the accelerometer listener stays registered, the ring
-     * fills with stationary-bike samples during the pause; after a pause longer
-     * than the ~2.25 s averaging window the ring holds a valid reference
-     * essentially immediately after resume. An invalid reference is only
-     * produced on cold start or when an impact occurs within ~2.25 s of a very
-     * brief pause.
+     * The pre-impact vector ring is always invalidated (a floor timestamp so samples
+     * captured before the pause are ignored) — harmless to an in-flight event, whose
+     * pre-impact reference was already captured at IMPACT entry, and correct for a
+     * café-stop autopause so a later impact does not average pre-pause samples.
+     *
+     * On a **manual** pause the rider deliberately stopped — conscious and fine — so
+     * the in-flight IMPACT/SILENCE_CHECK state is wiped (`stateMachine.onPause()`).
+     *
+     * On an **automatic** pause the bike stopped on its own, which is exactly what a
+     * real crash does. The in-flight state is NOT wiped: the state machine keeps
+     * running on the always-on accelerometer stream so a crash-in-progress confirms
+     * during the pause. Without this, an autopause (~3-6 s after speed hits 0) would
+     * erase the detection of the very crash that caused the stop.
      */
-    fun onPause() {
-        stateMachine.onPause()
+    fun onPause(auto: Boolean) {
         sensorReader.invalidateVectorRing()
-        Timber.d("CrashDetectionManager: state machine paused")
+        if (auto) {
+            Timber.d("CrashDetectionManager: autopause — in-flight detection preserved")
+        } else {
+            stateMachine.onPause()
+            Timber.d("CrashDetectionManager: manual pause — state machine reset")
+        }
     }
 
     // ─── Internal: per-sample callback from SensorReader ─────────────────────
