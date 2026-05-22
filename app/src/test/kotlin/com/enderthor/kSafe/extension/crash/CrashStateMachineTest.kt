@@ -1158,15 +1158,16 @@ class CrashStateMachineTest {
         //   1. Drive a first event into SILENCE_CHECK so the SM has non-default internal state.
         //   2. Call onPause() — resets preImpactRef to INVALID and clears all event state.
         //   3. Start a NEW event: impact → setPreImpactReference(valid upright ref) →
-        //      prompt stop → on-side silence vector (angle ≈ 90° ≥ 45°).
-        //   4. Assert the crash confirms at the on-side legacyShort window (4500ms), proving
-        //      the fresh reference — not INVALID — drove computeEffectiveSilenceMs.
-        //      (If INVALID had leaked through, the SM would fall back to legacyShort too, but
-        //       via the !preImpactRef.valid branch, which does NOT distinguish on-side from upright.
-        //       We verify the angle-based on-side path fired by asserting lastConfirmedSilenceMs = 4500
-        //       AND that it confirmed within the 4.5s window rather than the 20s upright window,
-        //       since INVALID → legacyShort anyway; the critical assertion is that the angle path
-        //       executes correctly using the fresh reference.)
+        //      prompt stop → UPRIGHT silence vector (angle ≈ 0° < 45°).
+        //   4. Assert lastConfirmedSilenceMs == 20000L (silenceDurationUprightMs).
+        //
+        // WHY 20000 is the load-bearing value:
+        //   - A valid upright reference + upright silence vector → angle ≈ 0° < 45° →
+        //     orientation regime selects silenceDurationUprightMs = 20000ms.
+        //   - If the fresh reference had NOT taken effect (INVALID leaked through), the
+        //     !preImpactRef.valid branch would return the legacyShort window (4500ms) instead.
+        //   - Therefore 20000 is ONLY reachable when the fresh reference is actually used;
+        //     an INVALID reference makes it impossible to reach this value.
         val (sm, _) = newSm()
         sm.onSpeedUpdate(20.0)
 
@@ -1190,38 +1191,53 @@ class CrashStateMachineTest {
         sm.onSample(sample(time = base2, peak = 60.0, smoothed = 30.0, gyro = 0.5))
         assertEquals(CrashStateMachine.State.IMPACT, sm.state)
 
-        // Inject a FRESH valid reference AFTER onPause — this is what must take effect.
+        // Inject a FRESH valid UPRIGHT reference AFTER onPause — this is what must take effect.
+        // With an INVALID reference the SM would return legacyShort (4500); only a valid
+        // reference lets computeEffectiveSilenceMs reach the angle-comparison branch and
+        // return silenceDurationUprightMs (20000) for an upright silence vector.
         sm.setPreImpactReference(PreImpactRef(0.0, 0.0, 9.81, valid = true))
         assertTrue("fresh reference must be valid after setPreImpactReference post-pause",
             sm.preImpactReference.valid)
 
-        // Prompt stop (gap = 2000 ms < delayedStopGapMs = 8000) with on-side silence vector
-        // (ax = 9.81, az = 0) → angle ≈ 90° ≥ 45° → on-side → legacyShort = 4500ms.
+        // Prompt stop (gap = 2000 ms < delayedStopGapMs = 8000) → orientation regime.
+        // UPRIGHT silence vector (az = 9.81, ax = 0.0) matches the pre-impact reference:
+        // angle ≈ 0° < uprightAngleThresholdDegrees (45°) → silenceDurationUprightMs = 20000ms.
         sm.onSpeedUpdate(0.0)
         sm.onSample(sample(time = base2 + 2000, peak = QUIET, smoothed = QUIET, gyro = 0.5,
-            ax = 9.81, ay = 0.0, az = 0.0))
+            ax = 0.0, ay = 0.0, az = 9.81))
         assertEquals(CrashStateMachine.State.SILENCE_CHECK, sm.state)
 
-        // Feed still on-side samples until Confirm fires; must happen within 4.5s + margin.
+        // Accumulate well above MIN_ORIENTATION_SAMPLES (5) upright still samples so the
+        // orientation regime latches the 20s window, then drive past 20s of silence.
         var tNow = base2 + 2000L
-        var confirmed = false
-        while (tNow < base2 + 2000L + 6_000L) {   // 6s margin covers 4.5s + IMPACT entry slack
+        repeat(5 + 2) {  // 5 = MIN_ORIENTATION_SAMPLES (private const in CrashStateMachine)
             tNow += 200L
+            sm.onSample(sample(time = tNow, peak = QUIET, smoothed = QUIET, gyro = 0.05,
+                ax = 0.0, ay = 0.0, az = 9.81))
+        }
+
+        // Drive past the 20s silence window and assert Confirm fires.
+        var confirmed = false
+        while (tNow < base2 + 2000L + 22_000L) {
+            tNow += 500L
             val d = sm.onSample(sample(time = tNow, peak = QUIET, smoothed = QUIET, gyro = 0.05,
-                ax = 9.81, ay = 0.0, az = 0.0))
+                ax = 0.0, ay = 0.0, az = 9.81))
             if (d == CrashStateMachine.Decision.Confirm) {
                 confirmed = true
                 break
             }
         }
         assertTrue(
-            "second event must confirm — fresh post-pause reference must drive the on-side orientation decision",
+            "second event must confirm — fresh post-pause reference must drive the upright orientation decision",
             confirmed
         )
-        // The on-side angle-based path fired (angle ≈ 90° → legacyShort = 4500ms).
+        // 20000 is ONLY reachable when the fresh reference is valid and angle < 45°.
+        // An INVALID reference would have returned 4500 (legacyShort), so this assertion
+        // is genuinely load-bearing: it fails iff the fresh reference did NOT take effect.
         assertEquals(
-            "lastConfirmedSilenceMs must be silenceDurationMs (4500) — the fresh reference drove the on-side branch",
-            4_500L, sm.lastConfirmedSilenceMs
+            "lastConfirmedSilenceMs must be silenceDurationUprightMs (20000) — " +
+                "only a valid fresh reference can produce this value; INVALID would give 4500",
+            20_000L, sm.lastConfirmedSilenceMs
         )
     }
 
