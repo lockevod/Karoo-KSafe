@@ -261,7 +261,18 @@ class CrashDetectionManager(
         recentTmoTimestamps.clear()
         resetWindowAccumulators()
         rebuildThresholds(boostActive = false)
-        stateMachine.resumeForRide()
+        // If the state machine is mid-IMPACT or mid-SILENCE_CHECK at resume time
+        // (auto-resume during an in-flight crash detection — the symmetric case
+        // to I3's autopause preservation), do NOT reset it. The accelerometer
+        // pipeline has been running through the pause; the in-flight detection
+        // must be allowed to complete and confirm. After a manual pause the
+        // state machine was wiped by onPause(auto=false) and is already in
+        // MONITORING, so this conditional is a no-op for that case.
+        if (stateMachine.state != CrashStateMachine.State.MONITORING) {
+            Timber.d("CrashDetectionManager RESUMED — preserving in-flight ${stateMachine.state} (auto-resume mid-crash)")
+        } else {
+            stateMachine.resumeForRide()
+        }
         sensorReader.start(handler = null)
         Timber.d("CrashDetectionManager RESUMED")
         if (config.speedDropDetectionEnabled) speedDropMonitor.start(config.speedDropMinutes)
