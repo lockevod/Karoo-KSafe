@@ -35,6 +35,31 @@ private val BEEP_URGENT = PlayBeepPattern(listOf(
     PlayBeepPattern.Tone(frequency = 1100, durationMs = 500),
 ))
 
+/**
+ * Pure substitution kernel used by every outbound message path. Extracted from
+ * [EmergencyManager.substituteTokens] so it stays JVM-unit-testable — no Android
+ * `Context`, no [LocationManager], no coroutines.
+ *
+ * Tokens not present in [template] are simply not replaced; tokens like `{foo}`
+ * that this function doesn't know about are left literal on purpose (same
+ * convention as [com.enderthor.kSafe.extension.util.renderAlertText]).
+ *
+ * The final `.trim()` cleans up the dangling space that appears when a template
+ * such as `"Track me: {livetrack}"` is rendered without a configured livetrack
+ * key — preserves the behaviour the old `sendRideStartNotification` had inline.
+ */
+internal fun substituteAlertTokens(
+    template: String,
+    locationLink: String,
+    liveTrackLink: String,
+    reasonLabel: String,
+): String =
+    template
+        .replace("{location}", locationLink)
+        .replace("{reason}", reasonLabel)
+        .replace("{livetrack}", liveTrackLink)
+        .trim()
+
 class EmergencyManager(
     private val context: Context,
     private val karooSystem: KarooSystemService,
@@ -492,25 +517,51 @@ class EmergencyManager(
     // ─── Message builder ──────────────────────────────────────────────────────
 
     /**
-     * Builds the outgoing emergency message by substituting all placeholders.
-     * The livetrack link is appended automatically if a key is configured,
-     * even when {livetrack} is not present in the template.
+     * Substitutes the common alert tokens (`{location}`, `{livetrack}`, `{reason}`) in
+     * [template] using a fresh GPS fix and the current config. Used by every outbound
+     * non-test message path (emergency, ride start/end, custom message) so the rider
+     * sees the same placeholder semantics everywhere.
+     *
+     *  - `{location}` ← fresh GPS link (5 s timeout) or the `location_unavailable`
+     *    string if no fix is available — identical to the emergency contract.
+     *  - `{livetrack}` ← Karoo Live URL when [KSafeConfig.karooLiveKey] is set, else
+     *    empty string (which is then trimmed away by [substituteAlertTokens]).
+     *  - `{reason}` ← [EmergencyReason.label] when [reason] is non-null, else empty
+     *    string. Non-emergency callers pass `null`; unknown tokens like `{foo}` are
+     *    left literal.
+     *
+     * Length capping is intentionally NOT done here — [renderAlertText] callers own
+     * the InRideAlert title/detail limits ([ALERT_TITLE_MAX_CHARS] / [ALERT_DETAIL_MAX_CHARS]).
      */
-    suspend fun buildMessage(config: KSafeConfig, reason: EmergencyReason): String {
+    suspend fun substituteTokens(
+        template: String,
+        config: KSafeConfig,
+        reason: EmergencyReason? = null,
+    ): String {
         val locationLink = locationManager.getFreshLocationLink()
             ?: context.getString(R.string.location_unavailable)
-
         val liveTrackLink = if (config.karooLiveKey.isNotBlank())
             com.enderthor.kSafe.data.KAROO_LIVE_BASE_URL + config.karooLiveKey.trim()
         else ""
+        return substituteAlertTokens(template, locationLink, liveTrackLink, reason?.label ?: "")
+    }
 
-        var message = config.emergencyMessage
-            .replace("{location}", locationLink)
-            .replace("{reason}", reason.label)
-            .replace("{livetrack}", liveTrackLink)
-            .trim()
+    /**
+     * Builds the outgoing emergency message by substituting all placeholders.
+     * The livetrack link is appended automatically if a key is configured,
+     * even when {livetrack} is not present in the template — this auto-append
+     * behaviour is emergency-only on purpose (the rider's contacts must always
+     * be able to follow them live during an alert).
+     */
+    suspend fun buildMessage(config: KSafeConfig, reason: EmergencyReason): String {
+        var message = substituteTokens(config.emergencyMessage, config, reason)
 
-        // Always append livetrack link if key is set and it's not already in the message
+        // Emergency-only: always append livetrack link if a key is set and it's not
+        // already in the message. Non-emergency callers (custom, ride start/end) get
+        // the strict token-replacement semantics from substituteTokens above.
+        val liveTrackLink = if (config.karooLiveKey.isNotBlank())
+            com.enderthor.kSafe.data.KAROO_LIVE_BASE_URL + config.karooLiveKey.trim()
+        else ""
         if (liveTrackLink.isNotBlank() && !message.contains(liveTrackLink)) {
             message = "$message $liveTrackLink"
         }

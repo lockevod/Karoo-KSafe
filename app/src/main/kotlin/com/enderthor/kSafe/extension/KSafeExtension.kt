@@ -911,22 +911,23 @@ class KSafeExtension : KarooExtension("ksafe", BuildConfig.VERSION_NAME), Corout
      * is optional — if present, `{livetrack}` is substituted with the live-tracking
      * URL; if absent, the placeholder is stripped so the rider doesn't receive a
      * literal `{livetrack}` token. Mirrors [sendRideEndNotification]: a blank
-     * resulting message is skipped silently.
+     * resulting message is skipped silently. Token substitution is shared with
+     * the emergency path via [EmergencyManager.substituteTokens] so a rider who
+     * embeds `{location}` in the start message gets the same Maps link the
+     * emergency contacts would receive — no more literal `{location}` strings.
      */
     private fun sendRideStartNotification() {
         val config = activeConfig
         if (!config.karooLiveEnabled) return
-        val message = if (config.karooLiveKey.isBlank()) {
-            config.karooLiveStartMessage.replace("{livetrack}", "").trim()
-        } else {
-            val liveLink = com.enderthor.kSafe.data.KAROO_LIVE_BASE_URL + config.karooLiveKey.trim()
-            config.karooLiveStartMessage.replace("{livetrack}", liveLink)
-        }
-        if (message.isBlank()) return
 
         Timber.d("KSafe: sending ride start notification")
         launch {
             try {
+                val message = emergencyManager.substituteTokens(
+                    template = config.karooLiveStartMessage,
+                    config = config,
+                )
+                if (message.isBlank()) return@launch
                 sender.sendInfo(message, config.activeProvider)
             } catch (e: Exception) {
                 Timber.e(e, "KSafe: error sending ride start notification")
@@ -934,16 +935,24 @@ class KSafeExtension : KarooExtension("ksafe", BuildConfig.VERSION_NAME), Corout
         }
     }
 
-    /** Sends the ride-end notification if the feature is enabled. */
+    /**
+     * Sends the ride-end notification if the feature is enabled. Routes through
+     * [EmergencyManager.substituteTokens] so `{location}`, `{livetrack}` and the
+     * other common tokens get substituted (previously they were sent literally).
+     */
     private fun sendRideEndNotification() {
         val config = activeConfig
         if (!config.karooLiveEndEnabled) return
-        val message = config.karooLiveEndMessage
-        if (message.isBlank()) return
+        if (config.karooLiveEndMessage.isBlank()) return
 
         Timber.d("KSafe: sending ride end notification")
         launch {
             try {
+                val message = emergencyManager.substituteTokens(
+                    template = config.karooLiveEndMessage,
+                    config = config,
+                )
+                if (message.isBlank()) return@launch
                 sender.sendInfo(message, config.activeProvider)
             } catch (e: Exception) {
                 Timber.e(e, "KSafe: error sending ride end notification")
@@ -1045,7 +1054,11 @@ class KSafeExtension : KarooExtension("ksafe", BuildConfig.VERSION_NAME), Corout
         }
         Timber.d("Sending custom message slot=$slot via ${config.activeProvider}")
         CustomMessageState.update(slot, CustomMessageState.SENDING)
-        val ok = sender.sendInfo(message, config.activeProvider)
+        // Resolve {location}/{livetrack}/{reason} before send — same substitution surface
+        // the emergency path uses, so a custom message of "I'm at {location}" actually
+        // sends the Maps link instead of the literal token text.
+        val resolved = emergencyManager.substituteTokens(template = message, config = config)
+        val ok = sender.sendInfo(resolved, config.activeProvider)
         return if (ok) {
             CustomMessageState.update(slot, CustomMessageState.SENT)
             launch { kotlinx.coroutines.delay(4_000L); CustomMessageState.update(slot, CustomMessageState.IDLE) }
