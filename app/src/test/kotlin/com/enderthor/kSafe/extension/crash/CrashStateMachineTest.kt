@@ -1545,6 +1545,21 @@ class CrashStateMachineTest {
         // Even with on-side relaxation engaged, accelerometer motion (deviation > 4)
         // must still break silence. This is the strong guard against false positives
         // (rider picking up the bike, handling it, etc.).
+        //
+        // The assertion is load-bearing: it verifies that the silence CLOCK RESET to
+        // T_break (the motion sample), not merely that the SM stays in SILENCE_CHECK.
+        //
+        // smEnteringSilence(gapMs=2_000): impact at base=1_000_000; SILENCE_CHECK entered
+        // at base+2_000=1_002_000 (silenceStartedMs=1_002_000).
+        // 5 on-side lock samples at +200ms steps end at t=1_003_000.
+        // Speed raised; motion sample at t=1_004_000 → T_break=1_004_000.
+        // 4.5s from original entry = 1_006_500.
+        // 4.5s from T_break        = 1_008_500.
+        //
+        // If the motion sample did NOT reset the clock (bug), Confirm would fire at
+        // ~1_006_500 — so the "None at T_break+3_000=1_007_000" assertion would FAIL.
+        // If the clock DID reset (correct), Confirm fires at ~1_008_500, making the
+        // "None at 1_007_000" pass AND "Confirm by T_break+5_000=1_009_000" also pass.
         val (sm, _) = smEnteringSilence(
             gapMs = 2_000L,
             preRef = PreImpactRef(0.0, 0.0, 9.81, valid = true),
@@ -1552,17 +1567,61 @@ class CrashStateMachineTest {
         )
         assertEquals(CrashStateMachine.State.SILENCE_CHECK, sm.state)
         var t = 1_002_000L
+        // Accumulate >= MIN_ORIENTATION_SAMPLES (5) on-side still samples to lock the
+        // 4.5 s window and engage the on-side relaxation.
         repeat(5) {
             t += 200L
             sm.onSample(sample(time = t, raw = 9.81, smoothed = 9.81, az = 0.0, ax = 9.81))
         }
+        // t = 1_003_000 here.
         sm.onSpeedUpdate(10.0)   // speed rise (relaxation would normally ignore this)
-        // But a motion sample (raw far from gravity) must break silence.
-        t += 1000L
+        // Motion sample (raw=16.0, |16.0 - 9.81| = 6.19 > silenceDeviationMax 4.0)
+        // must break silence even with on-side relaxation engaged.
+        t += 1000L               // t = 1_004_000
         sm.onSample(sample(time = t, raw = 16.0, smoothed = 9.81, az = 0.0, ax = 9.81))
-        // After this break, the silence clock restarts at t. The SM stays in SILENCE_CHECK
-        // (this break, not a give-up — gap is small).
+        val tBreak = t           // = 1_004_000
+        // After the break, the SM must stay in SILENCE_CHECK (retry, not give-up).
         assertEquals(CrashStateMachine.State.SILENCE_CHECK, sm.state)
+
+        // Bike (and rider) came to rest — drop speed so the subsequent still samples
+        // satisfy isSpeedDropConfirmed() and the orientation regime can re-latch.
+        // (Speed was only raised to simulate the bike briefly rolling after the impact.)
+        sm.onSpeedUpdate(0.0)
+
+        // ── Phase 1: T_break + 3_000 = 1_007_000 — still short of 4.5s from T_break ──
+        // The original silenceStartedMs (1_002_000) + 4.5s = 1_006_500 < 1_007_000.
+        // If the clock had NOT reset (bug), Confirm would fire by 1_006_500 — before
+        // the first Phase-1 sample at 1_005_000 even reaches that check. None here proves
+        // the clock was reset to T_break=1_004_000 and 4.5s has NOT elapsed yet from there.
+        repeat(3) {
+            t += 1000L
+            val d = sm.onSample(sample(time = t, raw = 9.81, smoothed = 9.81, az = 0.0, ax = 9.81))
+            assertEquals(
+                "Confirm must NOT fire at t=$t (${t - tBreak}ms after motion break, " +
+                    "< 4500ms from T_break=$tBreak) — silence clock reset must be in effect",
+                CrashStateMachine.Decision.None, d
+            )
+        }
+        // t = 1_007_000 here; elapsed since T_break = 3_000 ms < 4_500 ms.
+
+        // ── Phase 2: past T_break + 4_500 = 1_008_500 — Confirm must fire ────────────
+        // Feed still on-side samples until Confirm arrives or we exceed T_break + 6_000.
+        // After 5 still samples post-break the orientation regime re-latches 4.5s;
+        // at T_break + 4_500 = 1_008_500 the elapsed-since-break check triggers Confirm.
+        var confirmed = false
+        while (t < tBreak + 6_000L) {
+            t += 500L
+            val d = sm.onSample(sample(time = t, raw = 9.81, smoothed = 9.81, az = 0.0, ax = 9.81))
+            if (d is CrashStateMachine.Decision.Confirm) {
+                confirmed = true
+                break
+            }
+        }
+        assertTrue(
+            "Confirm must fire within 6_000ms of T_break=$tBreak — silence clock must have " +
+                "reset to the motion-break timestamp, not the original SILENCE_CHECK entry",
+            confirmed
+        )
     }
 
     // ── Diagnostics: lastConfirmedGapMs / lastConfirmedAngleDeg snapshots ──────
