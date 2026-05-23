@@ -116,6 +116,16 @@ class KSafeExtension : KarooExtension("ksafe", BuildConfig.VERSION_NAME), Corout
      *  so a Paused→Recording resume doesn't re-apply it on top of in-memory state. */
     @Volatile private var pendingFuelingRestore: com.enderthor.kSafe.data.FuelingState? = null
 
+    /** Wall-clock timestamp (ms) of the most recent SOS field-tap that armed an emergency
+     *  from IDLE. Used by [handleSOSTap] to debounce the IDLE→trigger transition only —
+     *  a nervous rider can double-tap the SOS field within ~100–500 ms before the field
+     *  re-renders to clickable=false, and without this guard Tap 1 would arm the countdown
+     *  and Tap 2 would then immediately cancel it (the cancel branch protects the rider's
+     *  legitimate COUNTDOWN→cancel use-case but also makes a rapid retap suicidal). The
+     *  cancel path stays untouched: a tap several seconds later still goes through
+     *  cancelEmergency as before. See [SOS_RETAP_DEBOUNCE_MS]. */
+    @Volatile private var lastSosTriggerMs: Long = 0L
+
     /** Per-slot tap-feedback timer jobs (LOGGED→IDLE / UNDONE→IDLE delayed reverts).
      *  Cancelled before a new launch so a stale timer from an earlier tap cannot
      *  clobber a fresher state set by a subsequent tap on the same slot. Indices 1..3
@@ -154,6 +164,16 @@ class KSafeExtension : KarooExtension("ksafe", BuildConfig.VERSION_NAME), Corout
             com.enderthor.kSafe.extension.managers.CarbsTracker?>(null)
         val hydrationTrackerFlow = kotlinx.coroutines.flow.MutableStateFlow<
             com.enderthor.kSafe.extension.managers.HydrationTracker?>(null)
+
+        /** Minimum gap (ms) between two SOS field taps before the second tap may arm the
+         *  countdown. Tunes the IDLE→trigger debounce only — covers the typical queued
+         *  broadcast window (~100–500 ms) for a nervous double-tap without making the
+         *  system feel sluggish. The cancel path is NOT debounced: a legitimate retap
+         *  several seconds later still cancels an in-flight countdown.
+         *  NOTE: no facade test harness for KSafeExtension exists today; if one is added,
+         *  add tests: "SOS retap within $SOS_RETAP_DEBOUNCE_MS ms is debounced", "after
+         *  the window is honoured", "cancel during COUNTDOWN is never debounced". */
+        const val SOS_RETAP_DEBOUNCE_MS: Long = 750L
     }
 
     override val types by lazy {
@@ -1474,9 +1494,21 @@ class KSafeExtension : KarooExtension("ksafe", BuildConfig.VERSION_NAME), Corout
         launch {
             when (emergencyManager.currentStatus) {
                 EmergencyStatus.COUNTDOWN ->
+                    // NOT debounced: a legitimate cancel must always be responsive.
                     emergencyManager.cancelEmergency(activeConfig)
                 EmergencyStatus.IDLE -> {
+                    // IDLE→trigger debounce — a nervous rider can double-tap the SOS
+                    // field within ~100–500 ms before it re-renders to clickable=false,
+                    // queueing a second FieldTapReceiver broadcast. Without this guard
+                    // Tap 1 would arm COUNTDOWN and Tap 2 would then fall into the
+                    // cancel branch above and self-cancel the rider's intended alert.
+                    val now = System.currentTimeMillis()
+                    if (now - lastSosTriggerMs < SOS_RETAP_DEBOUNCE_MS) {
+                        Timber.d("SOS tap ignored — within $SOS_RETAP_DEBOUNCE_MS ms of previous trigger")
+                        return@launch
+                    }
                     if (!activeConfig.isActive) return@launch
+                    lastSosTriggerMs = now
                     emergencyManager.triggerEmergency(EmergencyReason.MANUAL_SOS, activeConfig)
                 }
                 EmergencyStatus.ALERTING -> { /* ignore tap while alerting */ }
