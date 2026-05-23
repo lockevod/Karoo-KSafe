@@ -1075,6 +1075,18 @@ class KSafeExtension : KarooExtension("ksafe", BuildConfig.VERSION_NAME), Corout
         // the emergency path uses, so a custom message of "I'm at {location}" actually
         // sends the Maps link instead of the literal token text.
         val resolved = emergencyManager.substituteTokens(template = message, config = config)
+        // Post-resolve blank guard — a non-blank template can still resolve to empty
+        // (e.g. template literally "{livetrack}" with karooLiveKey unset). Mirrors the
+        // post-substitution check in sendRideStart/EndNotification. Without it the
+        // provider receives an empty body — Pushover errors out, Telegram silently
+        // sends nothing — and the rider gets no feedback. Skip the send and surface
+        // ERROR so the field flashes the operator that nothing went out.
+        if (resolved.isBlank()) {
+            Timber.w("Custom message slot $slot resolved to blank — skipping send")
+            CustomMessageState.update(slot, CustomMessageState.ERROR)
+            launch { kotlinx.coroutines.delay(4_000L); CustomMessageState.update(slot, CustomMessageState.IDLE) }
+            return "Message resolved to empty — check tokens (e.g. {livetrack} requires a Karoo Live key)."
+        }
         val ok = sender.sendInfo(resolved, config.activeProvider)
         return if (ok) {
             CustomMessageState.update(slot, CustomMessageState.SENT)
