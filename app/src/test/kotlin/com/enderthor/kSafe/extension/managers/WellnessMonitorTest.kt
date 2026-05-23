@@ -240,21 +240,71 @@ class WellnessMonitorTest {
 
     @Test
     fun `decoupling baseline deferred when power is unstable in establishment window`() = runTest {
-        val (mon, incidents, clock) = newDecouplingMonitor()
-        mon.updateHr(140)
-        // Bouncing power: 80, 320, 80, 320, ... → mean ~200 W, stddev ~120 W → CV ~0.6,
-        // well above the 0.30 stability threshold. Baseline must NOT establish here, so
-        // even a strongly-drifted HR/W ratio after this point cannot fire (no baseline
-        // to compare against).
-        repeat(60) { mon.updatePower(if (it % 2 == 0) 80 else 320) }
-        repeat(10) {
-            clock.nowMs += 30_000L
-            mon.updateHr(140)
-            mon.tick()
+        // Load-bearing scenario: unstable power AND a slowly-drifting HR across the
+        // whole 10–25 min defer window. Without the HE1 defer, the baseline freezes at
+        // minute ~10 capturing the early-ride HR/W ratio; the subsequent drifted HR
+        // then reads as a large drift % and DECOUPLING fires. With the defer, the
+        // baseline waits until the BASELINE_MAX_DEFER_MS hard cap (25 min), by which
+        // time HR has drifted to nearly its final value — the captured baseline is
+        // closer to the drifted ratio, drift % stays below the 7 % threshold, no fire.
+        //
+        // Power pattern: 30-s blocks at 80 W and 320 W alternating. Within each
+        // 30-s block, all 30 one-second power updates are at the same level; the
+        // tick at the end of the block reads `lastPowerW` = that block's level.
+        // So ratio samples alternate cleanly between HR/80 and HR/320 every tick,
+        // while the 2-min power buffer sees four full blocks → mean = 200 W,
+        // stddev = 120 W, CV = 0.6 ≫ POWER_STABILITY_CV_MAX = 0.30 → defer fires
+        // until the BASELINE_MAX_DEFER_MS = 25 min hard cap.
+        //
+        // Verified load-bearing by temporarily forcing `shouldDeferBaseline` to
+        // always return `false`: this test then FAILS (1 DECOUPLING incident is
+        // recorded, fired from the wrong-baseline path at minute ~10).
+        val clock = TestClock(nowMs = 1_000_000L)
+        val incidents = mutableListOf<Pair<EmergencyReason, Map<String, String>>>()
+        val mon = WellnessMonitor(
+            scope = this.backgroundScope as CoroutineScope,
+            onIncident = { reason, payload -> incidents += reason to payload },
+            clock = clock,
+        )
+        mon.start(
+            KSafeConfig(
+                wellnessEnabled = true,
+                wellnessCriticalEnabled = false,
+                wellnessSustainedEnabled = false,
+                wellnessDecouplingEnabled = true,
+                wellnessDecouplingThresholdPct = 7,
+                wellnessDecouplingDurationMinutes = 1,  // short for test
+            )
+        )
+
+        // Drive the timeline at 1 Hz (1-s steps) to populate the power buffer
+        // densely enough for POWER_STABILITY_MIN_SAMPLES = 30 (the guard skips
+        // deferral when buffer < 30 samples). Tick is every 30 s. HR drifts
+        // linearly from 140 bpm at minute 0 to 170 bpm at minute 35.
+        val totalMin = 35
+        val stepsPerMin = 60          // 60 × 1 s = 60 s
+        val totalSteps = totalMin * stepsPerMin
+        val hrStartBpm = 140f
+        val hrEndBpm = 170f
+        repeat(totalSteps) { i ->
+            clock.nowMs += 1_000L
+            val frac = (i + 1).toFloat() / totalSteps.toFloat()
+            val hr = (hrStartBpm + frac * (hrEndBpm - hrStartBpm)).toInt()
+            mon.updateHr(hr)
+            // Power: 30-s blocks alternating 80 / 320 W. Step group = i / 30.
+            mon.updatePower(if ((i / 30) % 2 == 0) 80 else 320)
+            // Tick every 30 steps (every 30 s).
+            if ((i + 1) % 30 == 0) mon.tick()
         }
 
-        // No fire is possible while baseline = 0 — even if drift would otherwise qualify.
-        assertEquals(0, incidents.size)
+        // With the HE1 defer, the baseline is held off until the 25-min hard cap so
+        // the captured ratio reflects already-drifted HR. The remaining 10 min of
+        // drift is small relative to the late baseline → no DECOUPLING fire.
+        assertEquals(
+            "HE1 defer must prevent the DECOUPLING fire by anchoring the baseline to " +
+                "a late, drifted ratio rather than the early fresh-HR ratio",
+            0, incidents.size,
+        )
     }
 
     @Test

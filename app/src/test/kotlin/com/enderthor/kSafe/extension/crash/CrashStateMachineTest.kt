@@ -2066,9 +2066,28 @@ class CrashStateMachineTest {
     fun `within-budget break with gap regime DOES reset accumulator and latch`() {
         // Pins the gap-regime side of the asymmetric reset. In the gap regime the
         // SM never computes lastOrientationAngleDeg (it stays at the -1.0 sentinel),
-        // so previousLatchWasOnSide is false and the existing resetSilenceWindow()
-        // behaviour applies. The 20 s window is re-latched fresh from the gap-regime
-        // path.
+        // so previousLatchWasOnSide is false and the existing reset behaviour
+        // applies: silenceStartedMs is moved to the bump time AND the orientation
+        // accumulator + latch are wiped. The 20 s window is then re-latched fresh
+        // from the gap-regime path (firstSilenceGapMs survives resetSilenceWindow
+        // — only resetTimers() zeroes it).
+        //
+        // The load-bearing observable is the Confirm TIMING relative to the bump:
+        //   - Correct path: silenceStartedMs reset to bump time, 20 s window
+        //     re-latched → Confirm fires ~20 s post-bump.
+        //   - Broken "preserve everything" path: silenceStartedMs preserved at
+        //     SILENCE_CHECK entry time (base + 2 000), 20 s window already latched
+        //     → silenceElapsed crosses 20 s at clock = base + 22 000, i.e. ~16 s
+        //     post-bump. Confirm fires ~4 s earlier than the correct path.
+        //
+        // We assert no Confirm in the first 19 s post-bump (distinguishes the two
+        // paths: broken would confirm at ~16 s) and then a Confirm by 21 s
+        // post-bump (the correct path's expected time, with a small slack).
+        //
+        // Verified load-bearing by temporarily removing the `if
+        // (!previousLatchWasOnSide) { silenceStartedMs = now; resetSilenceWindow() }`
+        // block (i.e. always preserve): the first assertion fails — Confirm fires
+        // at ~16 s post-bump from the carried-over silenceStartedMs.
         val (sm, base) = smEnteringSilenceGapRegime(gapMs = 2_000L)
         assertEquals(CrashStateMachine.State.SILENCE_CHECK, sm.state)
         // The gap-regime SM uses Thresholds(impactWindowMs = 4_000) → retry budget
@@ -2085,29 +2104,55 @@ class CrashStateMachineTest {
         )
         assertEquals(CrashStateMachine.State.SILENCE_CHECK, sm.state)
 
-        // After the gap-regime reset, the accumulator is empty and the latch is
-        // cleared. lockedEffectiveSilenceMs goes back to 0L; on the next
-        // computeEffectiveSilenceMs call the gap regime fires again (firstSilenceGapMs
-        // is preserved across resetSilenceWindow — only resetTimers() zeroes it),
-        // re-latching the 20 s window. Feed 6 s of accel-still on-side samples —
-        // if the CR2 preservation had incorrectly engaged, the on-side accumulator
-        // (had it been on-side) would have been preserved with a 4.5 s latch and
-        // confirm in ~4.5 s. With correct gap-regime behaviour, no Confirm fires
-        // within 6 s post-bump.
+        // Drive on-side accel-still samples post-bump. Sample every 20 ms.
+        //   - 19 s window (950 samples): correct path silenceElapsed = 19 s < 20 s
+        //     → no Confirm. Broken path silenceElapsed = 19 s + 4 s = 23 s ≥ 20 s
+        //     → Confirm already fired around the 16 s mark → FAIL here.
+        //   - Additional 2 s window (100 samples → total 21 s post-bump): correct
+        //     path crosses silenceElapsed = 20 s at the 20-s post-bump mark →
+        //     Confirm fires inside this extension.
         var t = bumpT
-        var confirmed = false
-        repeat(300) {   // 300 * 20 ms = 6 s — past the 4.5 s mark, short of 20 s
+        var earlyConfirm = false
+        repeat(950) {   // 950 × 20 ms = 19 s
             t += 20L
             if (sm.onSample(sample(time = t, raw = 9.81, smoothed = 9.81, az = 0.0, ax = 9.81))
                     is CrashStateMachine.Decision.Confirm) {
-                confirmed = true
+                earlyConfirm = true
                 return@repeat
             }
         }
         assertEquals(
-            "gap-regime break must reset the latch — the 20 s window must apply, no Confirm " +
-                "in the first 6 s post-bump",
-            false, confirmed,
+            "Confirm must NOT fire within 19 s post-bump — the broken 'preserve everything' " +
+                "path would confirm at ~16 s post-bump because silenceStartedMs carries over " +
+                "from SILENCE_CHECK entry; the correct reset resets it to the bump time so a " +
+                "fresh 20 s window has to elapse",
+            false, earlyConfirm,
+        )
+
+        // Now keep driving stillness for another 2 s — total 21 s post-bump. The
+        // correct reset path must finally confirm here, exercising both the
+        // "asymmetric reset re-arms the silence clock" and "gap regime re-latches
+        // the 20 s window from firstSilenceGapMs" effects.
+        var lateConfirmT = 0L
+        repeat(100) {   // 100 × 20 ms = 2 s
+            t += 20L
+            if (sm.onSample(sample(time = t, raw = 9.81, smoothed = 9.81, az = 0.0, ax = 9.81))
+                    is CrashStateMachine.Decision.Confirm) {
+                lateConfirmT = t
+                return@repeat
+            }
+        }
+        assertNotEquals(
+            "Confirm must fire by 21 s post-bump — the gap regime re-latches the 20 s " +
+                "window from firstSilenceGapMs after resetSilenceWindow() and the bump-relative " +
+                "silence clock crosses 20 s",
+            0L, lateConfirmT,
+        )
+        // The latched window is the gap-regime 20 s window — pinned by the facade
+        // observable that survives the Confirm.
+        assertEquals(
+            "Confirm must use the gap-regime 20 s window",
+            20_000L, sm.lastConfirmedSilenceMs,
         )
     }
 
