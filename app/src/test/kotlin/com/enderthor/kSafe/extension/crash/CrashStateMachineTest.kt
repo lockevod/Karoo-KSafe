@@ -1874,7 +1874,7 @@ class CrashStateMachineTest {
 
     @Test
     fun `on-side relaxation - speed rise BEFORE the orientation latch breaks silence`() {
-        // While silenceWindowCount < MIN_ORIENTATION_SAMPLES the orientation
+        // While orientationSampleCount < MIN_ORIENTATION_SAMPLES the orientation
         // regime has not yet latched (lockedEffectiveSilenceMs is still 0L),
         // so onSideRelaxed is false. A speed rise in that pre-lock window
         // must break silence via the regular speed-drop gate, the silence

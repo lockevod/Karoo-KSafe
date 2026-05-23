@@ -167,11 +167,15 @@ class CrashStateMachine(
     // ── Orientation: accumulator (IMPACT + SILENCE_CHECK) ───────────────────
     /**
      * Running sum of accel X/Y/Z over samples received during the current
-     * orientation-accumulation window. Currently accumulated only during
-     * SILENCE_CHECK; Task 3 will extend accumulation to begin at IMPACT entry
-     * so the gravity-vector estimate is available sooner. Reset every time the
-     * state machine enters or leaves SILENCE_CHECK so the orientation reading
-     * reflects the current event, not a stale one.
+     * orientation-accumulation window. Accumulated during IMPACT (gated on
+     * `accelOk` to filter post-impact noise — see [handleImpact]) and during
+     * SILENCE_CHECK (unconditional — `!isStill` samples drop the window via
+     * [resetSilenceWindow], so a separate per-sample gate is redundant there).
+     *
+     * On the IMPACT→SILENCE_CHECK transition the accumulator is conditionally
+     * reset: full reset on the `speedDropOk` path; carried forward on the
+     * `onSideRelaxed` path so the latch can fire on the first SILENCE_CHECK
+     * sample (see the asymmetric branch in [handleImpact]).
      */
     @Volatile private var orientationSumX: Double = 0.0
     @Volatile private var orientationSumY: Double = 0.0
@@ -183,9 +187,11 @@ class CrashStateMachine(
      * `0L` means "not yet decided" (cold start or just-reset window). Once
      * `orientationSampleCount` crosses [MIN_ORIENTATION_SAMPLES] with a valid
      * pre-impact reference, [computeEffectiveSilenceMs] freezes the chosen
-     * duration here for the rest of the window. Reset to `0L` by
-     * [resetSilenceWindow] on every entry/exit/break of SILENCE_CHECK so each
-     * event decides fresh.
+     * duration here for the rest of the window. Reset to `0L` either by
+     * [resetSilenceWindow] (every entry/exit/break of SILENCE_CHECK on the
+     * regular paths) or directly by the `onSideRelaxed` branch of
+     * [handleImpact] (which clears just the latch markers while preserving
+     * the accumulator). Either way: each SILENCE_CHECK event decides fresh.
      *
      * Why latch: without this, a rider standing upright for 18s with the
      * 20s window engaged could see the running average gravity vector drift
@@ -591,6 +597,10 @@ class CrashStateMachine(
                            else thresholds.silenceDeviationMax
 
         // Accumulate X/Y/Z for orientation classification (Revision 5).
+        // Unconditional here (no accelOk gate, unlike the IMPACT accumulation
+        // in handleImpact): a sample with deviation > silenceDeviationMax is
+        // !isStill below and triggers resetSilenceWindow(), which wipes the
+        // accumulator wholesale — so an extra per-sample gate is redundant.
         orientationSumX += sample.accelX
         orientationSumY += sample.accelY
         orientationSumZ += sample.accelZ
