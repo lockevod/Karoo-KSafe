@@ -1419,6 +1419,152 @@ class CrashStateMachineTest {
         assertTrue("a fluctuating (real pedalling) cadence must trigger the gate", returned)
     }
 
+    // ── On-side speed-rise relaxation ───────────────────────────────────────────
+
+    @Test
+    fun `on-side relaxation - speed rise above confirm threshold does not break silence (bike escaping)`() {
+        // On-side prompt stop (angle ~90°), orientation locks at 4.5 s window.
+        // After the lock, raise the speed above crashConfirmSpeedKmh (default 5) —
+        // without the relaxation this would break silence; with it, the accel-only
+        // isStill keeps the silence window running and Confirm fires.
+        val (sm, _) = smEnteringSilence(
+            gapMs = 2_000L,
+            preRef = PreImpactRef(0.0, 0.0, 9.81, valid = true),
+            silenceAz = 0.0, silenceAx = 9.81,   // angle ~90° from upright reference
+        )
+        assertEquals(CrashStateMachine.State.SILENCE_CHECK, sm.state)
+        var t = 1_002_000L
+        // 5 still on-side samples to drive the orientation lock (>= MIN_ORIENTATION_SAMPLES).
+        repeat(5) {
+            t += 200L
+            sm.onSample(sample(time = t, raw = 9.81, smoothed = 9.81, az = 0.0, ax = 9.81))
+        }
+        // Bike rolls — speed rises above the confirm threshold.
+        sm.onSpeedUpdate(10.0)
+        // Keep feeding still on-side samples for > 4.5 s of accumulated silence.
+        var confirmed = false
+        repeat(7) {
+            t += 1000L
+            if (sm.onSample(sample(time = t, raw = 9.81, smoothed = 9.81, az = 0.0, ax = 9.81))
+                    is CrashStateMachine.Decision.Confirm) confirmed = true
+        }
+        assertTrue("on-side relaxation must allow Confirm despite speed rise", confirmed)
+        assertEquals(4_500L, sm.lastConfirmedSilenceMs)
+    }
+
+    @Test
+    fun `on-side relaxation - 45 to 60 degree band does NOT relax (only strong on-side qualifies)`() {
+        // Angle ~55° (between the 45° on-side gate and the 60° relaxation gate):
+        // orientation regime still locks the 4.5 s on-side window, but the
+        // relaxation does NOT engage — a speed rise breaks silence as before.
+        // Construct silence vector with magnitude ~9.81: az = 5.63, ax = 8.04 gives
+        // angle ≈ acos(5.63/9.81) ≈ 55°, magnitude ≈ sqrt(31.7+64.6) ≈ 9.81.
+        val (sm, _) = smEnteringSilence(
+            gapMs = 2_000L,
+            preRef = PreImpactRef(0.0, 0.0, 9.81, valid = true),
+            silenceAz = 5.63, silenceAx = 8.04,
+        )
+        assertEquals(CrashStateMachine.State.SILENCE_CHECK, sm.state)
+        var t = 1_002_000L
+        repeat(5) {
+            t += 200L
+            sm.onSample(sample(time = t, raw = 9.81, smoothed = 9.81, az = 5.63, ax = 8.04))
+        }
+        sm.onSpeedUpdate(10.0)   // speed rise that should break silence (no relax in 45-60° band)
+        var confirmed = false
+        repeat(7) {
+            t += 1000L
+            if (sm.onSample(sample(time = t, raw = 9.81, smoothed = 9.81, az = 5.63, ax = 8.04))
+                    is CrashStateMachine.Decision.Confirm) confirmed = true
+        }
+        assertEquals(
+            "speed rise must keep breaking silence when angle is below the 60° relaxation gate",
+            false, confirmed,
+        )
+    }
+
+    @Test
+    fun `on-side relaxation - upright regime does NOT relax`() {
+        // Prompt stop, upright silence vector — orientation locks at 20 s (upright).
+        // lastOrientationAngleDeg ~0° < 60°, no relaxation, speed rise breaks silence.
+        val (sm, _) = smEnteringSilence(
+            gapMs = 2_000L,
+            preRef = PreImpactRef(0.0, 0.0, 9.81, valid = true),
+            silenceAz = 9.81, silenceAx = 0.0,
+        )
+        assertEquals(CrashStateMachine.State.SILENCE_CHECK, sm.state)
+        var t = 1_002_000L
+        repeat(5) {
+            t += 200L
+            sm.onSample(sample(time = t, raw = 9.81, smoothed = 9.81, az = 9.81, ax = 0.0))
+        }
+        sm.onSpeedUpdate(10.0)
+        var confirmed = false
+        repeat(7) {
+            t += 1000L
+            if (sm.onSample(sample(time = t, raw = 9.81, smoothed = 9.81, az = 9.81, ax = 0.0))
+                    is CrashStateMachine.Decision.Confirm) confirmed = true
+        }
+        assertEquals(
+            "upright regime must not engage the relaxation — speed rise still breaks silence",
+            false, confirmed,
+        )
+    }
+
+    @Test
+    fun `on-side relaxation - gap regime does NOT relax (no orientation evidence)`() {
+        // Long gap (> delayedStopGapMs 8 s) forces the gap regime; lastOrientationAngleDeg
+        // stays at the -1.0 sentinel — relaxation must not engage.
+        val (sm, _) = smEnteringSilence(
+            gapMs = 12_000L,
+            preRef = PreImpactRef(0.0, 0.0, 9.81, valid = true),
+            silenceAz = 0.0, silenceAx = 9.81,   // would be on-side BUT gap regime ignores
+        )
+        assertEquals(CrashStateMachine.State.SILENCE_CHECK, sm.state)
+        var t = 1_012_000L
+        repeat(5) {
+            t += 200L
+            sm.onSample(sample(time = t, raw = 9.81, smoothed = 9.81, az = 0.0, ax = 9.81))
+        }
+        sm.onSpeedUpdate(10.0)
+        var confirmed = false
+        // Feed 6 s of stillness (well past the 4.5 s legacy window but well short of 20 s).
+        repeat(6) {
+            t += 1000L
+            if (sm.onSample(sample(time = t, raw = 9.81, smoothed = 9.81, az = 0.0, ax = 9.81))
+                    is CrashStateMachine.Decision.Confirm) confirmed = true
+        }
+        assertEquals(
+            "gap regime must not engage the relaxation — speed rise still breaks silence",
+            false, confirmed,
+        )
+    }
+
+    @Test
+    fun `on-side relaxation - accel motion still breaks silence even when relaxed`() {
+        // Even with on-side relaxation engaged, accelerometer motion (deviation > 4)
+        // must still break silence. This is the strong guard against false positives
+        // (rider picking up the bike, handling it, etc.).
+        val (sm, _) = smEnteringSilence(
+            gapMs = 2_000L,
+            preRef = PreImpactRef(0.0, 0.0, 9.81, valid = true),
+            silenceAz = 0.0, silenceAx = 9.81,
+        )
+        assertEquals(CrashStateMachine.State.SILENCE_CHECK, sm.state)
+        var t = 1_002_000L
+        repeat(5) {
+            t += 200L
+            sm.onSample(sample(time = t, raw = 9.81, smoothed = 9.81, az = 0.0, ax = 9.81))
+        }
+        sm.onSpeedUpdate(10.0)   // speed rise (relaxation would normally ignore this)
+        // But a motion sample (raw far from gravity) must break silence.
+        t += 1000L
+        sm.onSample(sample(time = t, raw = 16.0, smoothed = 9.81, az = 0.0, ax = 9.81))
+        // After this break, the silence clock restarts at t. The SM stays in SILENCE_CHECK
+        // (this break, not a give-up — gap is small).
+        assertEquals(CrashStateMachine.State.SILENCE_CHECK, sm.state)
+    }
+
     // ── Diagnostics: lastConfirmedGapMs / lastConfirmedAngleDeg snapshots ──────
 
     /**

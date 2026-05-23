@@ -543,7 +543,17 @@ class CrashStateMachine(
         val deviation = abs(sample.rawMagnitude - GRAVITY)
         val accelOk = deviation <= deviationMax
         val speedDropOk = isSpeedDropConfirmed()
-        val isStill = accelOk && speedDropOk
+        // Once the orientation regime has LOCKED decisively on-side (angle ≥
+        // onSideRelaxationAngleDeg, a stricter threshold than the regular 45°
+        // on-side gate), a bike on the ground cannot be ridden — if it is
+        // moving, the bike has escaped the downed rider. Accel stillness alone
+        // is sufficient evidence; the speed rise is the bike rolling, not the
+        // rider riding. The accel gate remains the strong FP guard: any
+        // handling of the bike (picking it up, holding it) breaks silence
+        // regardless of speed.
+        val onSideRelaxed = lockedEffectiveSilenceMs > 0L &&
+                            lastOrientationAngleDeg >= thresholds.onSideRelaxationAngleDeg
+        val isStill = if (onSideRelaxed) accelOk else (accelOk && speedDropOk)
 
         val effectiveSilenceMs = computeEffectiveSilenceMs(gpsStale)
 
