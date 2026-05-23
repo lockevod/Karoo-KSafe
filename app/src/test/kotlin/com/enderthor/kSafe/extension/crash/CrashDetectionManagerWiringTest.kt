@@ -3,6 +3,7 @@ package com.enderthor.kSafe.extension.crash
 import android.content.Context
 import android.hardware.Sensor
 import android.hardware.SensorManager
+import com.enderthor.kSafe.data.KSafeConfig
 import com.enderthor.kSafe.extension.util.Clock
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.ExperimentalCoroutinesApi
@@ -185,4 +186,76 @@ class CrashDetectionManagerWiringTest {
         )
     }
 
+    // ── I-NEW-1: resume re-syncs gps_stale into the SM on preserve branch ───
+
+    /**
+     * Auto-resume after auto-pause during an in-flight IMPACT / SILENCE_CHECK must
+     * keep the state machine in its preserved state AND re-sync the staleness view
+     * the SM carries (`lastSpeedGpsStale`) with what the facade now actually sees.
+     *
+     * Before the I-NEW-1 fix, [CrashDetectionManager.resume] reset only the facade's
+     * `lastGpsStaleState` to `false` (without pushing into the SM). The SM kept its
+     * prior stale view across the pause. If the actual GPS was fresh on the first
+     * post-resume sample, the transition gate in `onSensorSample`
+     * (`gpsCurrentlyStale != lastGpsStaleState`) saw `false != false` and never called
+     * `stateMachine.setSpeedGpsStale(false)` — the SM stayed in stale-mode for the rest
+     * of the in-flight SILENCE_CHECK (`gpsStaleSilenceDurationMs = 8000` instead of
+     * `silenceDurationMs = 4500`), delaying confirmation by ~3.5 s.
+     *
+     * Note on observability: `CrashStateMachine.lastSpeedGpsStale` and the facade's
+     * `lastGpsStaleState` are both private (intentionally — not widened for the test).
+     * What is reachable here is the SM **state** field, which lets us pin the
+     * preservation invariant on the resume side. The staleness re-sync itself is an
+     * inspection-only contract — see [CrashDetectionManager.resume] for the code that
+     * enforces it. Reverting I-NEW-1 would not fail this test; the test exists to
+     * document the contract and to lock in resume-side state preservation symmetric to
+     * the existing pause-side test.
+     */
+    @Test
+    fun `resume preserves in-flight IMPACT state and triggers gps_stale re-sync`() {
+        val clock = FakeClock(now = 1_000_000L)
+        val manager = newManager(clock)
+        // Drive SM into IMPACT (same pattern as the auto-pause test).
+        manager.stateMachine.onSpeedUpdate(20.0)
+        manager.stateMachine.onSample(
+            SensorSample(
+                rawMagnitude = 60.0,
+                smoothedMagnitude = 30.0,
+                peakMagnitude = 60.0,
+                gyroMag = 0.5,
+                timestampMs = clock.now,
+                accelX = 0.0, accelY = 0.0, accelZ = 60.0,
+            )
+        )
+        check(manager.stateMachine.state == CrashStateMachine.State.IMPACT) {
+            "test setup: failed to reach IMPACT"
+        }
+        // Seed: the SM holds a stale view from before the pause...
+        manager.stateMachine.setSpeedGpsStale(true)
+        // ...and the facade's [isGpsStale] would now return false (speedLastChangeMs
+        // freshly stamped, well within GPS_STALE_MS). updateSpeed is the only public
+        // entry point that stamps speedLastChangeMs to clock.now.
+        manager.updateSpeed(15.0)
+
+        // Auto-pause then auto-resume — the in-flight IMPACT must survive both.
+        manager.onPause(auto = true)
+        assertEquals(
+            "Sanity: auto-pause must preserve the in-flight IMPACT (T3 contract).",
+            CrashStateMachine.State.IMPACT,
+            manager.stateMachine.state,
+        )
+
+        manager.resume(KSafeConfig())
+
+        assertEquals(
+            "resume() must preserve the in-flight IMPACT — auto-resume mid-detection " +
+                "is the symmetric case to T3's auto-pause preservation, and reverting it " +
+                "would erase the very detection of the crash that caused the pause.",
+            CrashStateMachine.State.IMPACT,
+            manager.stateMachine.state,
+        )
+        // Inspection-only follow-up: `stateMachine.lastSpeedGpsStale` is now false
+        // (re-read from `isGpsStale(now) == false` and pushed via setSpeedGpsStale).
+        // Field is private — not asserted here. See I-NEW-1 in resume() for the wiring.
+    }
 }

@@ -268,7 +268,6 @@ class CrashDetectionManager(
         startTime = clock.nowMs()
         speedDataReceived = false
         lastPeriodicLogMs = 0L
-        lastGpsStaleState = false
         lastLoggedSensitivity = config.crashSensitivity
         postImpactBoostUntil = 0L
         synchronized(recentTmoTimestamps) { recentTmoTimestamps.clear() }
@@ -282,8 +281,21 @@ class CrashDetectionManager(
         // state machine was wiped by onPause(auto=false) and is already in
         // MONITORING, so this conditional is a no-op for that case.
         if (stateMachine.state != CrashStateMachine.State.MONITORING) {
-            Timber.d("CrashDetectionManager RESUMED — preserving in-flight ${stateMachine.state} (auto-resume mid-crash)")
+            // I-NEW-1: the SM carries its prior [lastSpeedGpsStale] across the pause.
+            // If the facade reset its own [lastGpsStaleState] to a fixed value here,
+            // the transition gate in [onSensorSample] (`gpsCurrentlyStale != lastGpsStaleState`)
+            // could evaluate false on the first post-resume sample and the SM would
+            // never get a fresh push — leaving it in stale-mode (8 s silence window)
+            // when GPS is actually fresh (4.5 s window). Re-read the current staleness
+            // and push it into the SM so both views are coherent from sample 1.
+            val staleNow = isGpsStale(clock.nowMs())
+            lastGpsStaleState = staleNow
+            stateMachine.setSpeedGpsStale(staleNow)
+            Timber.d("CrashDetectionManager RESUMED — preserving in-flight ${stateMachine.state} (auto-resume mid-crash), re-synced gps_stale=$staleNow")
         } else {
+            // Fresh-monitoring branch: the SM is about to be reset, so it correctly
+            // starts with `lastSpeedGpsStale = false`. The facade flag follows suit.
+            lastGpsStaleState = false
             stateMachine.resumeForRide()
             Timber.d("CrashDetectionManager RESUMED — state machine reset (manual-pause resume or no in-flight detection)")
         }
@@ -350,8 +362,10 @@ class CrashDetectionManager(
         if (changed || speedKmh == 0.0 || speedLastChangeMs == 0L) speedLastChangeMs = now
 
         // Push to the state machine — this is the ONLY path that marks "real speed update
-        // received", which the cold-start guard keys off. The per-sample staleness view
-        // travels on [SensorSample.gpsStale] (filled in by [onSensorSample]).
+        // received", which the cold-start guard keys off. The staleness view is pushed
+        // separately to the SM via `stateMachine.setSpeedGpsStale` on transition (see
+        // [onSensorSample]). [SensorSample] no longer carries a per-tick `gpsStale` field
+        // as of P1 — the SM holds its own `lastSpeedGpsStale` flag updated by that setter.
         stateMachine.onSpeedUpdate(speedKmh)
         speedDropMonitor.onSpeedUpdate(speedKmh, isGpsStale(now))
     }
