@@ -51,6 +51,16 @@ android {
         compose = true
         buildConfig = true
     }
+    testOptions {
+        // Make android.os.Build.MODEL (and other final-static stub fields) return
+        // their declared defaults (null / 0 / false) instead of throwing
+        // "Method not mocked". The CalibrationLogger DEVICE_LABEL initializer reads
+        // Build.MODEL; without this it NPEs the moment enable() is called from a
+        // JVM unit test. The CalibrationLogger lazy already has `.ifEmpty { "device" }`
+        // as a fallback, but the prior `MODEL.trim()` step NPEs on null. Default
+        // values is the standard AGP knob for this — Robolectric would be heavier.
+        unitTests.isReturnDefaultValues = true
+    }
 }
 
 dependencies {
