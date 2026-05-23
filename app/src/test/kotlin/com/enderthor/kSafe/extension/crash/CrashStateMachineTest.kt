@@ -2198,4 +2198,183 @@ class CrashStateMachineTest {
         )
         assertEquals(CrashStateMachine.State.MONITORING, sm.state)
     }
+
+    // ── CR3: IMPACT-relax composes with SILENCE_CHECK gap regime ─────────────
+    //
+    // Without the angle propagation in [CrashStateMachine.handleImpact]'s
+    // IMPACT-relax branch, a real crash where the bike rolls/tumbles for >8 s
+    // before accel-settling enters SILENCE_CHECK with `firstSilenceGapMs > 8000`,
+    // gap regime latches the 20 s window WITHOUT touching `lastOrientationAngleDeg`,
+    // the SILENCE_CHECK on-side relaxation evaluates false (angle still -1.0),
+    // isStill needs speedDropOk while the bike is still rolling → never still →
+    // the impactWindowMs*2 retry budget is exhausted → ReturnToMonitoring. The
+    // SpeedDropMonitor backstop is the only remaining defence.
+    //
+    // The fix stamps the just-computed on-side angle (≥60° — the IMPACT-relax
+    // gate threshold) so the SILENCE_CHECK relaxation engages on the very first
+    // sample even when the gap regime is in force, and isStill = accelOk alone.
+
+    @Test
+    fun `IMPACT-relax with gap above 8s confirms via SILENCE_CHECK on-side relaxation`() {
+        // Default thresholds: impactWindowMs = 20_000, delayedStopGapMs = 8_000,
+        // silenceDurationUprightMs = 20_000, onSideRelaxationAngleDeg = 60°,
+        // crashConfirmSpeedKmh = 5. Impact at base. The bike then tumbles for
+        // ~9 s — no samples reach the IMPACT accumulator (`accelOk = false`).
+        // At base + 9_000 the bike settles on its side and starts emitting
+        // 50 Hz on-side accel-still samples. The 25th such sample (~500 ms
+        // later, at base + 9_500) fires IMPACT-relax with
+        // firstSilenceGapMs = 9_500 > 8_000 → SILENCE_CHECK gap regime.
+        // Speed stays at 10 km/h throughout (bike rolling), so speedDropOk
+        // never holds. WITHOUT the angle propagation: SILENCE_CHECK relax
+        // gate never engages, isStill needs speedDropOk → never confirms.
+        // WITH it: relax gate engages on first sample, isStill = accelOk →
+        // Confirm fires ~20 s into SILENCE_CHECK on the gap-regime window.
+        val (sm, _) = newSm()
+        sm.onSpeedUpdate(25.0)                              // gate minSpeedForCrashKmh = 10
+        val base = 1_000_000L
+        sm.onSample(sample(time = base, peak = 70.0, smoothed = 40.0, gyro = 1.0))
+        assertEquals(CrashStateMachine.State.IMPACT, sm.state)
+        sm.setPreImpactReference(PreImpactRef(0.0, 0.0, 9.81, valid = true))
+        sm.onSpeedUpdate(10.0)                              // bike rolling — speedDropOk stays false
+        // Skip ~9 s of tumble (no samples → no IMPACT accumulation). Start
+        // emitting settled on-side samples at base + 9_000.
+        var t = base + 9_000L
+        var transitioned = false
+        // Drive ≥25 on-side samples; IMPACT-relax fires around base + 9_500.
+        repeat(30) {
+            t += 20L
+            sm.onSample(sample(time = t, raw = 9.81, smoothed = 9.81, gyro = 0.5,
+                az = 0.0, ax = 9.81))
+            if (sm.state == CrashStateMachine.State.SILENCE_CHECK) transitioned = true
+        }
+        assertTrue("IMPACT-relax must transition to SILENCE_CHECK after ~9.5 s gap",
+            transitioned)
+        // firstSilenceGapMs must be > delayedStopGapMs so the gap regime engages.
+        assertTrue(
+            "firstSilenceGapMs=${sm.firstSilenceGapMs} must exceed 8_000 ms for gap regime",
+            sm.firstSilenceGapMs > 8_000L,
+        )
+
+        // Drive 21 s of on-side accel-still samples. With the fix the SILENCE_CHECK
+        // on-side relaxation engages on the first sample (lastOrientationAngleDeg
+        // already ≥ 60° from the IMPACT-relax stamp), isStill = accelOk, and Confirm
+        // fires ~20 s into SILENCE_CHECK. Without the fix the retry budget
+        // (impactWindowMs * 2 = 40 s) eventually exhausts on the first non-still
+        // sample — and even if no break happened, isStill would never hold because
+        // speedDropOk stays false.
+        var confirmed = false
+        repeat(1_050) {   // 1_050 * 20 ms = 21 s
+            t += 20L
+            if (sm.onSample(sample(time = t, raw = 9.81, smoothed = 9.81, gyro = 0.5,
+                    az = 0.0, ax = 9.81)) is CrashStateMachine.Decision.Confirm) {
+                confirmed = true
+            }
+        }
+        assertTrue(
+            "Confirm must fire within 21 s of SILENCE_CHECK entry — without the angle " +
+                "propagation the SILENCE_CHECK relaxation cannot engage when the gap regime " +
+                "is in force, and isStill needs speedDropOk which the rolling bike never satisfies",
+            confirmed,
+        )
+        // The gap regime latched the 20 s window.
+        assertEquals(20_000L, sm.lastConfirmedSilenceMs)
+        assertTrue(
+            "lastConfirmedAngleDeg=${sm.lastConfirmedAngleDeg} must reflect the on-side " +
+                "evidence stamped at IMPACT-relax (≥ 60°)",
+            sm.lastConfirmedAngleDeg >= 60.0,
+        )
+    }
+
+    @Test
+    fun `IMPACT-relax with gap above 8s and marginal angle does NOT confirm`() {
+        // Same gap timing as the previous test, but the on-side angle is ~55° —
+        // BELOW the 60° onSideRelaxationAngleDeg gate, ABOVE the 45° upright
+        // threshold. With angle < 60°, the IMPACT-relax `onSideRelaxed` gate
+        // never fires (speedDropOk stays false because the bike is still rolling),
+        // IMPACT_TIMEOUT eventually triggers a ReturnToMonitoring with no confirm.
+        // Pins the safety boundary: the composed path requires the strict 60°
+        // evidence the IMPACT-relax decision is based on; a 55° marginal lean
+        // cannot bypass the speed gate.
+        //
+        // Vector (8.039, 0, 5.625): magnitude = sqrt(64.6 + 31.6) ≈ 9.81;
+        // dot with reference (0,0,9.81) = 5.625·9.81 ≈ 55.18; cos(angle) =
+        // 55.18 / (9.81·9.81) ≈ 0.5735 → angle ≈ 55°.
+        val (sm, _) = newSm()
+        sm.onSpeedUpdate(25.0)
+        val base = 1_000_000L
+        sm.onSample(sample(time = base, peak = 70.0, smoothed = 40.0, gyro = 1.0))
+        sm.setPreImpactReference(PreImpactRef(0.0, 0.0, 9.81, valid = true))
+        sm.onSpeedUpdate(10.0)
+        var t = base + 9_000L
+        var transitioned = false
+        // 30 settled marginal-lean samples — IMPACT-relax must NOT fire (angle < 60°).
+        repeat(30) {
+            t += 20L
+            sm.onSample(sample(time = t, raw = 9.81, smoothed = 9.81, gyro = 0.5,
+                az = 5.625, ax = 8.039))
+            if (sm.state == CrashStateMachine.State.SILENCE_CHECK) transitioned = true
+        }
+        assertEquals(
+            "marginal-lean angle (<60°) must not bypass the speed gate at IMPACT-relax",
+            false, transitioned,
+        )
+        assertEquals(CrashStateMachine.State.IMPACT, sm.state)
+        // Sanity: drive past impactWindowMs (= 20_000) to confirm IMPACT_TIMEOUT eventually
+        // gives up (no confirm fires).
+        val tTimeout = base + 20_500L
+        val d = sm.onSample(sample(time = tTimeout, raw = 9.81, smoothed = 9.81,
+            gyro = 0.5, az = 5.625, ax = 8.039))
+        assertEquals(CrashStateMachine.Decision.ReturnToMonitoring, d)
+        assertEquals(CrashStateMachine.State.MONITORING, sm.state)
+    }
+
+    @Test
+    fun `IMPACT-relax with gap below 8s confirms via orientation regime relaxation`() {
+        // Control case for the CR3 fix. Same IMPACT-relax mechanism, but the
+        // gap (5 s) is below delayedStopGapMs (8 s), so SILENCE_CHECK takes
+        // the orientation regime branch instead of the gap regime. The
+        // orientation regime overwrites `lastOrientationAngleDeg` with the
+        // freshly-computed silence-window angle, so this test passes both
+        // before and after the CR3 fix (the angle propagation is a no-op when
+        // the orientation regime fires). Asserts the on-side 4.5 s window
+        // confirms — not the 20 s gap window — and the relaxation lets isStill
+        // hold while the bike is rolling.
+        val (sm, _) = newSm()
+        sm.onSpeedUpdate(25.0)
+        val base = 1_000_000L
+        sm.onSample(sample(time = base, peak = 70.0, smoothed = 40.0, gyro = 1.0))
+        sm.setPreImpactReference(PreImpactRef(0.0, 0.0, 9.81, valid = true))
+        sm.onSpeedUpdate(10.0)                              // bike rolling
+        // Tumble silently for ~5 s, then settle on-side. IMPACT-relax fires at
+        // ~base + 5_500 → firstSilenceGapMs = 5_500 < 8_000 → orientation regime.
+        var t = base + 5_000L
+        var transitioned = false
+        repeat(30) {
+            t += 20L
+            sm.onSample(sample(time = t, raw = 9.81, smoothed = 9.81, gyro = 0.5,
+                az = 0.0, ax = 9.81))
+            if (sm.state == CrashStateMachine.State.SILENCE_CHECK) transitioned = true
+        }
+        assertTrue("IMPACT-relax must transition at ~5.5 s gap", transitioned)
+        assertTrue(
+            "firstSilenceGapMs=${sm.firstSilenceGapMs} must be < 8_000 to engage orientation regime",
+            sm.firstSilenceGapMs in 5_000L..7_999L,
+        )
+        // 5 s of on-side accel-still — orientation regime + on-side relaxation lets
+        // Confirm fire at the 4.5 s mark while speed stays above the confirm gate.
+        var confirmed = false
+        repeat(250) {   // 250 * 20 ms = 5 s
+            t += 20L
+            if (sm.onSample(sample(time = t, raw = 9.81, smoothed = 9.81, gyro = 0.5,
+                    az = 0.0, ax = 9.81)) is CrashStateMachine.Decision.Confirm) {
+                confirmed = true
+            }
+        }
+        assertTrue("Confirm must fire on the orientation-regime 4.5 s window", confirmed)
+        assertEquals(
+            "orientation regime must latch the 4.5 s on-side window — not the 20 s gap window",
+            4_500L, sm.lastConfirmedSilenceMs,
+        )
+    }
+
 }

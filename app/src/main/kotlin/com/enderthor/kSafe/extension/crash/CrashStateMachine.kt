@@ -538,8 +538,17 @@ class CrashStateMachine(
         // evidence"), but THIS one is recomputed live from the IMPACT accumulator
         // while the SILENCE_CHECK one reads the latched value. Intentional name
         // sharing for conceptual unity across phases.
+        //
+        // Capture the live orientation angle here so we can both (a) gate the
+        // relaxation and (b) propagate the same value to SILENCE_CHECK on the
+        // relaxation transition (CR3 fix below). Re-evaluating
+        // currentOrientationAngleDeg() after the transition is not safe — the
+        // first SILENCE_CHECK sample feeds new X/Y/Z into the accumulator and
+        // can shift the running average enough to fall below the 60° gate
+        // before the latch can read it.
+        val angleNow = currentOrientationAngleDeg()
         val onSideRelaxed = orientationSampleCount >= IMPACT_RELAXATION_MIN_SAMPLES &&
-                            currentOrientationAngleDeg() >= thresholds.onSideRelaxationAngleDeg
+                            angleNow >= thresholds.onSideRelaxationAngleDeg
         val gateOk = accelOk && gyroOk && timeOk && (speedDropOk || onSideRelaxed)
         if (gateOk) {
             state = State.SILENCE_CHECK
@@ -569,7 +578,32 @@ class CrashStateMachine(
                 // the IMPACT→SILENCE_CHECK transition. Both branches together form the
                 // "real crash with bike still moving" safety net (CR2, May 2026).
                 lockedEffectiveSilenceMs = 0L
-                lastOrientationAngleDeg = -1.0
+                // CR3 (May 2026) — propagate the decisive-evidence angle that just
+                // fired the IMPACT-relax gate so it composes with the SILENCE_CHECK
+                // gap regime. When firstSilenceGapMs > delayedStopGapMs (e.g. the
+                // bike rolled / tumbled for 9 s after impact before accel settled),
+                // computeEffectiveSilenceMs takes the gap-regime branch and latches
+                // the 20 s window WITHOUT touching lastOrientationAngleDeg. If we
+                // cleared the angle here to -1.0, the SILENCE_CHECK on-side
+                // relaxation gate (`lockedEffectiveSilenceMs > 0L && angle >= 60°`)
+                // would evaluate false on every sample for the entire 20 s window,
+                // isStill would require speedDropOk, and a rolling bike would burn
+                // the entire impactWindowMs*2 budget retrying — losing the crash
+                // on the fast path and falling through to the SpeedDropMonitor
+                // backstop. Stamping the just-computed angle (already ≥ 60°, the
+                // stricter relaxation threshold — not the 45° latch threshold) lets
+                // the SILENCE_CHECK relaxation engage on the very first sample even
+                // when gap regime is in force. A marginal lean (45° < angle < 60°)
+                // cannot exploit this path because onSideRelaxed required ≥ 60°.
+                //
+                // Cross-event handoff: angleNow is captured BEFORE the state
+                // transition. The first SILENCE_CHECK sample (handleSilenceCheck)
+                // adds one more X/Y/Z entry to the accumulator before checking the
+                // latch, which can shift the running average by ~1/26 of one sample
+                // — enough to fall below the 60° gate in pathological cases. Using
+                // the just-computed angleNow guarantees the relaxation gate sees
+                // exactly the evidence the IMPACT-relax decision was based on.
+                lastOrientationAngleDeg = angleNow
             } else {
                 resetSilenceWindow()   // SILENCE_CHECK starts with fresh accumulator
             }
@@ -668,11 +702,23 @@ class CrashStateMachine(
         // accel gate remains the strong FP guard.
         val onSideRelaxed = lockedEffectiveSilenceMs > 0L &&
                             lastOrientationAngleDeg >= thresholds.onSideRelaxationAngleDeg
-        // Note: the gap regime's no-relaxation guarantee depends on
-        // lastOrientationAngleDeg remaining at its -1.0 sentinel — the
-        // angle is never computed when the gap regime fires. If a future
-        // change ever stamps the angle in the gap branch, this gate will
-        // need an explicit gap-regime check.
+        // Note: when SILENCE_CHECK is entered via the regular speedDropOk path,
+        // computeEffectiveSilenceMs's gap-regime branch never touches
+        // lastOrientationAngleDeg — it stays at the -1.0 sentinel and this gate
+        // evaluates false, which is the intended "gap regime → 20 s upright
+        // window, no relaxation" behaviour for a rider who took 9 s to coast
+        // to a stop.
+        //
+        // CR3 (May 2026) carve-out: when SILENCE_CHECK is entered via the
+        // IMPACT-relax path (bike still rolling, ≥25 samples on-side at ≥60°),
+        // [handleImpact] stamps lastOrientationAngleDeg with the angle that
+        // fired the relaxation — so this gate engages on the very first
+        // SILENCE_CHECK sample EVEN when the gap regime latches the 20 s
+        // window. Intended: that path already proved the bike is decisively
+        // on the ground, and we need the relaxation to keep isStill = accelOk
+        // (not && speedDropOk) so the rolling bike does not burn the entire
+        // retry budget. The ≥ 60° threshold here is the same gate that fired
+        // IMPACT-relax — a marginal lean cannot exploit the composed path.
         val isStill = if (onSideRelaxed) accelOk else (accelOk && speedDropOk)
 
         return when {
