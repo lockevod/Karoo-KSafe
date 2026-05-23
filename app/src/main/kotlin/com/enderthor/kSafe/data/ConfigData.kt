@@ -336,8 +336,12 @@ data class KSafeConfig(
     // ─── Critical HR tier (tier 1 — early warning) ───────────────────────────
     /** Sub-toggle for the critical-HR tier. Fires earlier than the sustained tier — high HR for short time. */
     val wellnessCriticalEnabled: Boolean = true,
-    /** Critical HR threshold in absolute bpm, used when [wellnessUseMaxHrPercent] is false. */
-    val wellnessCriticalThresholdBpm: Int = 175,
+    /** Critical HR threshold in absolute bpm, used when [wellnessUseMaxHrPercent] is false.
+     *  Must sit ABOVE [wellnessHighHrThreshold] (185 vs 180 by default) so the critical tier
+     *  fires only when HR exceeds the sustained-tier threshold — otherwise the two tiers would
+     *  invert (critical firing below sustained) and "critical" would activate at a normal
+     *  tempo/threshold HR (~178 bpm) for a fit rider. */
+    val wellnessCriticalThresholdBpm: Int = 185,
     /** Critical HR threshold as % of max HR, used when [wellnessUseMaxHrPercent] is true. 95 % is the
      *  top of zone 5 (VO2max → anaerobic) — sustained more than a few minutes is real overexertion. */
     val wellnessCriticalThresholdPct: Int = 95,
