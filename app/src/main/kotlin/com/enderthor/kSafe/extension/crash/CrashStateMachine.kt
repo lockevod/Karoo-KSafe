@@ -70,6 +70,14 @@ class CrashStateMachine(
          *  At 50 Hz this is ~100 ms — enough to filter the very first sample of jitter. */
         const val MIN_ORIENTATION_SAMPLES: Int = 5
 
+        /** Minimum samples in the IMPACT-phase orientation accumulator before
+         *  the on-side speed-rise relaxation can engage. At ~50 Hz this is
+         *  ~500 ms of sustained on-side accel-still — stricter than
+         *  [MIN_ORIENTATION_SAMPLES] because bypassing the speed gate at
+         *  IMPACT→SILENCE_CHECK transition is more consequential than the
+         *  in-SILENCE_CHECK latch decision. */
+        const val IMPACT_RELAXATION_MIN_SAMPLES: Int = 25
+
         /** Magnitude floor below which a gravity vector is treated as numerically degenerate. */
         const val EPSILON: Double = 1e-6
     }
@@ -484,7 +492,21 @@ class CrashStateMachine(
             orientationSampleCount++
         }
 
-        if (accelOk && gyroOk && timeOk && speedDropOk) {
+        // On-side relaxation: bypass the speed gate when there is decisive
+        // evidence the bike is on the ground. A bike on its side cannot be
+        // ridden, so if the bike is moving (speed-drop gate is open because
+        // the bike rolled after the rider went down), accelerometer
+        // stillness plus on-side orientation is sufficient to transition
+        // into SILENCE_CHECK. Other gates (accelOk, gyroOk, timeOk) remain
+        // as the strong false-positive guards — handling motion, sustained
+        // rotation (cornering), or insufficient settle time all block this
+        // path. The 25-sample minimum prevents a transient angle flicker
+        // from bypassing speed; ~500 ms of sustained on-side evidence is
+        // required.
+        val onSideRelaxed = orientationSampleCount >= IMPACT_RELAXATION_MIN_SAMPLES &&
+                            currentOrientationAngleDeg() >= thresholds.onSideRelaxationAngleDeg
+        val gateOk = accelOk && gyroOk && timeOk && (speedDropOk || onSideRelaxed)
+        if (gateOk) {
             state = State.SILENCE_CHECK
             silenceStartedMs = now
             // First (and only) IMPACT → SILENCE_CHECK transition of this event:
@@ -494,7 +516,20 @@ class CrashStateMachine(
             // entry is not penalised. A continuously-still rider always confirms;
             // the budget bounds how long the machine retries to achieve stillness.
             silenceCheckEnteredMs = now
-            resetSilenceWindow()   // SILENCE_CHECK starts with fresh accumulator
+            if (onSideRelaxed) {
+                // Carry the IMPACT-phase orientation accumulator into SILENCE_CHECK.
+                // The 25 on-side samples that proved the bike is on its side are still
+                // valid evidence; resetting them would force SILENCE_CHECK to rebuild
+                // the orientation latch from scratch while speed is still high — making
+                // the latch unreachable (each non-still sample resets the accumulator
+                // before it can reach MIN_ORIENTATION_SAMPLES). Only the latch marker
+                // is cleared so that SILENCE_CHECK re-evaluates its own window choice
+                // cleanly from the preserved orientation data.
+                lockedEffectiveSilenceMs = 0L
+                lastOrientationAngleDeg = -1.0
+            } else {
+                resetSilenceWindow()   // SILENCE_CHECK starts with fresh accumulator
+            }
             return Decision.None
         }
 

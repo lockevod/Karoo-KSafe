@@ -1709,6 +1709,169 @@ class CrashStateMachineTest {
         assertEquals(4_500L, sm.lastConfirmedSilenceMs)
     }
 
+    // ── IMPACT-phase on-side relaxation ─────────────────────────────────────────
+
+    @Test
+    fun `IMPACT on-side relaxation engages with sustained on-side and speed high`() {
+        // Bike crashes and continues moving (rolls); speed never drops below
+        // crashConfirmSpeedKmh = 5. Without the IMPACT relaxation, the IMPACT
+        // gate would never open (speedDropOk stays false) and IMPACT_TIMEOUT
+        // would fire. With the relaxation, ≥25 on-side samples (~500 ms) of
+        // accel-still accumulation in IMPACT triggers the bypass.
+        val (sm, _) = newSm()
+        sm.onSpeedUpdate(25.0)   // satisfy minSpeedForCrashKmh = 10 at impact entry
+        val base = 1_000_000L
+        sm.onSample(sample(time = base, peak = 60.0, smoothed = 30.0, gyro = 0.5))
+        assertEquals(CrashStateMachine.State.IMPACT, sm.state)
+        sm.setPreImpactReference(PreImpactRef(0.0, 0.0, 9.81, valid = true))
+        sm.onSpeedUpdate(10.0)   // bike rolling — speed stays above crashConfirmSpeedKmh = 5
+        var t = base + 1000L     // beyond minTimeSinceImpactMs = 500
+        var transitioned = false
+        // 30 still on-side samples at 50 Hz (~600 ms) — past the 25-sample threshold.
+        repeat(30) {
+            t += 20L
+            sm.onSample(sample(time = t, raw = 9.81, smoothed = 9.81, gyro = 0.5,
+                az = 0.0, ax = 9.81))
+            if (sm.state == CrashStateMachine.State.SILENCE_CHECK) transitioned = true
+        }
+        assertTrue(
+            "IMPACT relaxation must transition to SILENCE_CHECK after ≥25 on-side samples",
+            transitioned,
+        )
+    }
+
+    @Test
+    fun `IMPACT relaxation does NOT engage with fewer than 25 samples accumulated`() {
+        // Only 20 on-side accel-still samples — short of the 25-sample threshold.
+        val (sm, _) = newSm()
+        sm.onSpeedUpdate(25.0)
+        val base = 1_000_000L
+        sm.onSample(sample(time = base, peak = 60.0, smoothed = 30.0, gyro = 0.5))
+        assertEquals(CrashStateMachine.State.IMPACT, sm.state)
+        sm.setPreImpactReference(PreImpactRef(0.0, 0.0, 9.81, valid = true))
+        sm.onSpeedUpdate(10.0)
+        var t = base + 1000L
+        repeat(20) {   // < IMPACT_RELAXATION_MIN_SAMPLES = 25
+            t += 20L
+            sm.onSample(sample(time = t, raw = 9.81, smoothed = 9.81, gyro = 0.5,
+                az = 0.0, ax = 9.81))
+        }
+        assertEquals(
+            "fewer than 25 samples must keep IMPACT relaxation off",
+            CrashStateMachine.State.IMPACT, sm.state,
+        )
+    }
+
+    @Test
+    fun `IMPACT relaxation does NOT engage when gyro is high (cornering)`() {
+        // gyro > 2.0 rad/s simulates sustained cornering. gyroOk must block
+        // the relaxation regardless of orientation.
+        val (sm, _) = newSm()
+        sm.onSpeedUpdate(25.0)
+        val base = 1_000_000L
+        sm.onSample(sample(time = base, peak = 60.0, smoothed = 30.0, gyro = 0.5))
+        assertEquals(CrashStateMachine.State.IMPACT, sm.state)
+        sm.setPreImpactReference(PreImpactRef(0.0, 0.0, 9.81, valid = true))
+        sm.onSpeedUpdate(10.0)
+        var t = base + 1000L
+        repeat(30) {
+            t += 20L
+            // High gyro every sample — gyroOk = false → gate blocked.
+            sm.onSample(sample(time = t, raw = 9.81, smoothed = 9.81, gyro = 3.0,
+                az = 0.0, ax = 9.81))
+        }
+        assertEquals(
+            "high gyro must block IMPACT relaxation (cornering safeguard)",
+            CrashStateMachine.State.IMPACT, sm.state,
+        )
+    }
+
+    @Test
+    fun `IMPACT relaxation does NOT engage when orientation is upright`() {
+        // Upright accel vector matches the pre-impact reference — angle ~0°,
+        // well below the 60° relaxation threshold. Without speedDropOk, the
+        // gate stays closed.
+        val (sm, _) = newSm()
+        sm.onSpeedUpdate(25.0)
+        val base = 1_000_000L
+        sm.onSample(sample(time = base, peak = 60.0, smoothed = 30.0, gyro = 0.5))
+        assertEquals(CrashStateMachine.State.IMPACT, sm.state)
+        sm.setPreImpactReference(PreImpactRef(0.0, 0.0, 9.81, valid = true))
+        sm.onSpeedUpdate(10.0)
+        var t = base + 1000L
+        repeat(30) {
+            t += 20L
+            sm.onSample(sample(time = t, raw = 9.81, smoothed = 9.81, gyro = 0.5,
+                az = 9.81, ax = 0.0))   // upright — angle ≈ 0°
+        }
+        assertEquals(
+            "upright orientation must not engage the IMPACT relaxation",
+            CrashStateMachine.State.IMPACT, sm.state,
+        )
+    }
+
+    @Test
+    fun `IMPACT relaxation does NOT engage when pre-impact reference is invalid`() {
+        // With an invalid pre-impact reference, currentOrientationAngleDeg()
+        // returns -1.0 and the relaxation cannot fire.
+        val (sm, _) = newSm()
+        sm.onSpeedUpdate(25.0)
+        val base = 1_000_000L
+        sm.onSample(sample(time = base, peak = 60.0, smoothed = 30.0, gyro = 0.5))
+        assertEquals(CrashStateMachine.State.IMPACT, sm.state)
+        sm.setPreImpactReference(PreImpactRef.INVALID)
+        sm.onSpeedUpdate(10.0)
+        var t = base + 1000L
+        repeat(30) {
+            t += 20L
+            sm.onSample(sample(time = t, raw = 9.81, smoothed = 9.81, gyro = 0.5,
+                az = 0.0, ax = 9.81))
+        }
+        assertEquals(
+            "invalid pre-impact reference must block IMPACT relaxation",
+            CrashStateMachine.State.IMPACT, sm.state,
+        )
+    }
+
+    @Test
+    fun `IMPACT on-side relaxation chains into SILENCE_CHECK relaxation for full crash-and-roll`() {
+        // Full chain: real crash → IMPACT phase → bike rolls (speed stays high)
+        // → IMPACT relaxation transitions to SILENCE_CHECK → SILENCE_CHECK
+        // relaxation keeps the silence window running through the persisting
+        // speed rise → Confirm fires at the 4.5 s on-side window.
+        // Reproduces the MTB-descent residual scenario end-to-end.
+        val (sm, _) = newSm()
+        sm.onSpeedUpdate(25.0)
+        val base = 1_000_000L
+        sm.onSample(sample(time = base, peak = 70.0, smoothed = 40.0, gyro = 1.0))
+        assertEquals(CrashStateMachine.State.IMPACT, sm.state)
+        sm.setPreImpactReference(PreImpactRef(0.0, 0.0, 9.81, valid = true))
+        sm.onSpeedUpdate(10.0)   // bike rolling, well above crashConfirmSpeedKmh = 5
+        var t = base + 1000L
+        // Phase 1: 30 IMPACT samples → IMPACT relaxation engages → SILENCE_CHECK.
+        var transitioned = false
+        repeat(30) {
+            t += 20L
+            sm.onSample(sample(time = t, raw = 9.81, smoothed = 9.81, gyro = 0.5,
+                az = 0.0, ax = 9.81))
+            if (sm.state == CrashStateMachine.State.SILENCE_CHECK) transitioned = true
+        }
+        assertTrue("phase 1: IMPACT relaxation must transition to SILENCE_CHECK", transitioned)
+        // Phase 2: SILENCE_CHECK on-side relaxation keeps the silence window
+        // running through the speed rise; Confirm fires at the 4.5 s window.
+        // 250 samples at 20 ms = 5 s — past the 4.5 s confirm window.
+        var confirmed = false
+        repeat(250) {
+            t += 20L
+            if (sm.onSample(sample(time = t, raw = 9.81, smoothed = 9.81, gyro = 0.5,
+                    az = 0.0, ax = 9.81)) is CrashStateMachine.Decision.Confirm) {
+                confirmed = true
+            }
+        }
+        assertTrue("phase 2: SILENCE_CHECK on-side relaxation must allow Confirm", confirmed)
+        assertEquals(4_500L, sm.lastConfirmedSilenceMs)
+    }
+
     @Test
     fun `on-side relaxation - speed rise BEFORE the orientation latch breaks silence`() {
         // While silenceWindowCount < MIN_ORIENTATION_SAMPLES the orientation
