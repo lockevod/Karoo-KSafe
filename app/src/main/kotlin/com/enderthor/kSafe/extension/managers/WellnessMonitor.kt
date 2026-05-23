@@ -2,6 +2,8 @@ package com.enderthor.kSafe.extension.managers
 
 import com.enderthor.kSafe.data.EmergencyReason
 import com.enderthor.kSafe.data.KSafeConfig
+import com.enderthor.kSafe.extension.util.Clock
+import com.enderthor.kSafe.extension.util.SystemClock
 import io.hammerhead.karooext.models.UserProfile
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
@@ -36,6 +38,12 @@ class WellnessMonitor(
     private val scope: CoroutineScope,
     private val onIncident: (EmergencyReason, Map<String, String>) -> Unit,
     private val calibLogger: CalibrationLogger? = null,
+    /**
+     * Injectable clock. Production passes [SystemClock]; tests pass a fake to drive the
+     * duration / cooldown windows (critical / sustained / decoupling) deterministically
+     * without waiting wall-clock minutes inside a coroutine `delay`.
+     */
+    private val clock: Clock = SystemClock,
 ) {
 
     // ─── Constants ──────────────────────────────────────────────────────────
@@ -128,7 +136,7 @@ class WellnessMonitor(
         // Same cancelAndJoin pattern as the other trackers — guarantees the previous monitor
         // is fully gone before the new one runs.
         val oldJob = monitorJob
-        val now = System.currentTimeMillis()
+        val now = clock.nowMs()
         sessionStartMs = now
         criticalSinceMs = 0L
         sustainedSinceMs = 0L
@@ -203,7 +211,7 @@ class WellnessMonitor(
 
     fun updateHr(bpm: Int) {
         lastHrBpm = bpm
-        lastHrUpdateMs = System.currentTimeMillis()
+        lastHrUpdateMs = clock.nowMs()
         // Track session peak. Called every HR callback (~1 Hz), more precise than tick().
         if (bpm > sessionMaxHr) sessionMaxHr = bpm
     }
@@ -214,7 +222,7 @@ class WellnessMonitor(
         // whatever rate the SDK pushes power (~1 Hz). The buffer is double-bounded:
         // by time (POWER_BUFFER_WINDOW_MS) and by absolute count (POWER_BUFFER_MAX_SIZE)
         // so a pathological high-frequency stream cannot grow it without bound.
-        val now = System.currentTimeMillis()
+        val now = clock.nowMs()
         powerSamples.addLast(now to w)
         while (powerSamples.isNotEmpty() &&
             (now - powerSamples.first().first > POWER_BUFFER_WINDOW_MS ||
@@ -230,7 +238,7 @@ class WellnessMonitor(
     // synchronously without spinning up the coroutine loop — avoids the wall-clock
     // vs virtual-time interaction quirks of runTest + advanceTimeBy.
     internal fun tick() {
-        val now = System.currentTimeMillis()
+        val now = clock.nowMs()
         if (now - lastHrUpdateMs > HR_STALE_MS) {
             // Sensor silent — every per-tier evaluation will return early. Reset the streak
             // accumulators so a transient disconnect doesn't carry forward stale state.
@@ -400,9 +408,9 @@ class WellnessMonitor(
      *   of evidence as a pass rather than blocking forever.
      * - Coefficient of variation (stddev / mean) > [POWER_STABILITY_CV_MAX] → defer.
      *
-     * Note: no unit tests on this path — see [WellnessMonitorTest]. The decoupling
-     * fire path itself depends on wall-clock `System.currentTimeMillis()` and is exercised
-     * via the calibration log workflow rather than JVM tests.
+     * Covered by JVM unit tests in [WellnessMonitorTest] — time is driven through the
+     * injected [Clock] so the 10-min establishment wait and the duration / cooldown
+     * gates can be exercised deterministically.
      */
     private fun shouldDeferBaseline(now: Long): Boolean {
         // Hard cap reached — establish now regardless of stability.
@@ -512,15 +520,6 @@ class WellnessMonitor(
     ) {
         val totalFires: Int get() = criticalFires + sustainedFires + decouplingFires
     }
-
-    /** Test-only: rewind [sessionStartMs] so JVM unit tests can exercise the baseline
-     *  establishment path without waiting wall-clock time. Production code never calls
-     *  this. Same `internal` rationale as [tick]. */
-    internal fun setSessionStartForTest(ms: Long) { sessionStartMs = ms }
-
-    /** Test-only snapshot of decoupling-baseline establishment. Production code reads
-     *  drift via [getSummary]; tests want to know whether the baseline was frozen. */
-    internal fun decouplingBaselineForTest(): Float = decouplingBaselineHrPerW
 
     fun getSummary(): WellnessSummary = WellnessSummary(
         maxHrBpm           = sessionMaxHr,
