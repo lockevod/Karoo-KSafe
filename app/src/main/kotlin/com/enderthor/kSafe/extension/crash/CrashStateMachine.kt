@@ -624,8 +624,30 @@ class CrashStateMachine(
             lockedEffectiveSilenceMs = legacyShort   // never becomes valid → latch now
             return legacyShort
         }
-        if (orientationSampleCount < MIN_ORIENTATION_SAMPLES) return legacyShort  // may still grow
 
+        val angleDeg = currentOrientationAngleDeg()
+        if (angleDeg < 0.0) return legacyShort  // not enough samples / invalid ref / degenerate
+        lastOrientationAngleDeg = angleDeg
+
+        val chosen = if (angleDeg >= thresholds.uprightAngleThresholdDegrees) legacyShort
+                     else thresholds.silenceDurationUprightMs
+        lockedEffectiveSilenceMs = chosen
+        return chosen
+    }
+
+    /**
+     * Live orientation angle (degrees) between the accumulated gravity-vector
+     * average and the pre-impact reference. Returns the `-1.0` sentinel when:
+     *  - fewer than [MIN_ORIENTATION_SAMPLES] have been accumulated,
+     *  - the pre-impact reference is invalid,
+     *  - either vector magnitude is degenerate (< EPSILON).
+     *
+     * Consumed by [computeEffectiveSilenceMs] (latch decision in SILENCE_CHECK)
+     * and by [handleImpact] (on-side relaxation gate — Task 4).
+     */
+    private fun currentOrientationAngleDeg(): Double {
+        if (orientationSampleCount < MIN_ORIENTATION_SAMPLES) return -1.0
+        if (!preImpactRef.valid) return -1.0
         val n = orientationSampleCount.toDouble()
         val curX = orientationSumX / n
         val curY = orientationSumY / n
@@ -636,25 +658,10 @@ class CrashStateMachine(
             preImpactRef.y * preImpactRef.y +
             preImpactRef.z * preImpactRef.z
         )
-        // Degenerate vector — intentionally re-entrant defensive guard. A gravity-laden
-        // accelerometer average cannot have magnitude < EPSILON (1e-6) in the field;
-        // this branch is physically unreachable while gravity is present. It is left
-        // un-latched deliberately: if a transient numerical anomaly ever produced a
-        // near-zero average, the next valid sample would still reach the orientation
-        // branch and produce a real decision, rather than being forever locked into a
-        // degenerate latch. This is the only post-MIN_ORIENTATION_SAMPLES path that
-        // returns without setting lockedEffectiveSilenceMs.
-        if (curMag < EPSILON || refMag < EPSILON) return legacyShort
-
+        if (curMag < EPSILON || refMag < EPSILON) return -1.0
         val cosAngle = ((curX * preImpactRef.x + curY * preImpactRef.y + curZ * preImpactRef.z)
                        / (curMag * refMag)).coerceIn(-1.0, 1.0)
-        val angleDeg = Math.toDegrees(acos(cosAngle))
-        lastOrientationAngleDeg = angleDeg
-
-        val chosen = if (angleDeg >= thresholds.uprightAngleThresholdDegrees) legacyShort
-                     else thresholds.silenceDurationUprightMs
-        lockedEffectiveSilenceMs = chosen
-        return chosen
+        return Math.toDegrees(acos(cosAngle))
     }
 
     private fun resetSilenceWindow() {
