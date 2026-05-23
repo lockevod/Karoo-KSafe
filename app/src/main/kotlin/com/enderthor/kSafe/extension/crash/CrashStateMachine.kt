@@ -156,23 +156,24 @@ class CrashStateMachine(
      */
     @Volatile private var startTimeMs: Long = 0L
 
-    // ── Orientation: silence-window accumulator ──────────────────────────────
+    // ── Orientation: accumulator (IMPACT + SILENCE_CHECK) ───────────────────
     /**
-     * Sum of accel X/Y/Z over samples received while inside SILENCE_CHECK,
-     * used to compute the average gravity-vector direction of the current
-     * stillness phase. Reset every time the state machine enters or leaves
-     * SILENCE_CHECK so the orientation reading reflects the current event,
-     * not a stale one.
+     * Running sum of accel X/Y/Z over samples received during the current
+     * orientation-accumulation window. Currently accumulated only during
+     * SILENCE_CHECK; Task 3 will extend accumulation to begin at IMPACT entry
+     * so the gravity-vector estimate is available sooner. Reset every time the
+     * state machine enters or leaves SILENCE_CHECK so the orientation reading
+     * reflects the current event, not a stale one.
      */
-    @Volatile private var silenceWindowSumX: Double = 0.0
-    @Volatile private var silenceWindowSumY: Double = 0.0
-    @Volatile private var silenceWindowSumZ: Double = 0.0
-    @Volatile private var silenceWindowCount: Int = 0
+    @Volatile private var orientationSumX: Double = 0.0
+    @Volatile private var orientationSumY: Double = 0.0
+    @Volatile private var orientationSumZ: Double = 0.0
+    @Volatile private var orientationSampleCount: Int = 0
 
     /**
      * Latched silence-duration choice for the current SILENCE_CHECK window.
      * `0L` means "not yet decided" (cold start or just-reset window). Once
-     * `silenceWindowCount` crosses [MIN_ORIENTATION_SAMPLES] with a valid
+     * `orientationSampleCount` crosses [MIN_ORIENTATION_SAMPLES] with a valid
      * pre-impact reference, [computeEffectiveSilenceMs] freezes the chosen
      * duration here for the rest of the window. Reset to `0L` by
      * [resetSilenceWindow] on every entry/exit/break of SILENCE_CHECK so each
@@ -352,10 +353,10 @@ class CrashStateMachine(
         cadenceLastChangeMs = CADENCE_CHANGE_NEVER
         lastSampleMs = 0L
         startTimeMs = 0L
-        silenceWindowSumX = 0.0
-        silenceWindowSumY = 0.0
-        silenceWindowSumZ = 0.0
-        silenceWindowCount = 0
+        orientationSumX = 0.0
+        orientationSumY = 0.0
+        orientationSumZ = 0.0
+        orientationSampleCount = 0
         lockedEffectiveSilenceMs = 0L
         preImpactRef = PreImpactRef.INVALID
         firstSilenceGapMs = 0L
@@ -387,10 +388,10 @@ class CrashStateMachine(
         cadenceLastChangeMs = CADENCE_CHANGE_NEVER
         lastSampleMs = 0L
         startTimeMs = 0L
-        silenceWindowSumX = 0.0
-        silenceWindowSumY = 0.0
-        silenceWindowSumZ = 0.0
-        silenceWindowCount = 0
+        orientationSumX = 0.0
+        orientationSumY = 0.0
+        orientationSumZ = 0.0
+        orientationSampleCount = 0
         lockedEffectiveSilenceMs = 0L
         preImpactRef = PreImpactRef.INVALID
         firstSilenceGapMs = 0L
@@ -533,10 +534,10 @@ class CrashStateMachine(
                            else thresholds.silenceDeviationMax
 
         // Accumulate X/Y/Z for orientation classification (Revision 5).
-        silenceWindowSumX += sample.accelX
-        silenceWindowSumY += sample.accelY
-        silenceWindowSumZ += sample.accelZ
-        silenceWindowCount++
+        orientationSumX += sample.accelX
+        orientationSumY += sample.accelY
+        orientationSumZ += sample.accelZ
+        orientationSampleCount++
 
         // Use rawMagnitude — production CrashDetectionManager.processAccelerometer() uses
         // `abs(magnitude - GRAVITY)` (raw, not smoothed). Behavioural-equivalence requirement.
@@ -623,12 +624,12 @@ class CrashStateMachine(
             lockedEffectiveSilenceMs = legacyShort   // never becomes valid → latch now
             return legacyShort
         }
-        if (silenceWindowCount < MIN_ORIENTATION_SAMPLES) return legacyShort  // may still grow
+        if (orientationSampleCount < MIN_ORIENTATION_SAMPLES) return legacyShort  // may still grow
 
-        val n = silenceWindowCount.toDouble()
-        val curX = silenceWindowSumX / n
-        val curY = silenceWindowSumY / n
-        val curZ = silenceWindowSumZ / n
+        val n = orientationSampleCount.toDouble()
+        val curX = orientationSumX / n
+        val curY = orientationSumY / n
+        val curZ = orientationSumZ / n
         val curMag = sqrt(curX * curX + curY * curY + curZ * curZ)
         val refMag = sqrt(
             preImpactRef.x * preImpactRef.x +
@@ -657,10 +658,10 @@ class CrashStateMachine(
     }
 
     private fun resetSilenceWindow() {
-        silenceWindowSumX = 0.0
-        silenceWindowSumY = 0.0
-        silenceWindowSumZ = 0.0
-        silenceWindowCount = 0
+        orientationSumX = 0.0
+        orientationSumY = 0.0
+        orientationSumZ = 0.0
+        orientationSampleCount = 0
         lockedEffectiveSilenceMs = 0L
         lastOrientationAngleDeg = -1.0
     }
