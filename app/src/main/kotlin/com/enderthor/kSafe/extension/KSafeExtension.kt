@@ -144,6 +144,46 @@ class KSafeExtension : KarooExtension("ksafe", BuildConfig.VERSION_NAME), Corout
     private val carbTapRevertJobs: Array<kotlinx.coroutines.Job?> = arrayOfNulls(4)
     private val hydTapRevertJobs: Array<kotlinx.coroutines.Job?> = arrayOfNulls(3)
 
+    /** Per-slot revert-to-IDLE jobs for webhook and custom-message field state.
+     *  Same problem the carb/hyd arrays solve: every ERROR / SUCCESS branch in
+     *  handleWebhookTap and sendCustomMessage schedules a delayed `update(slot, IDLE)`.
+     *  Without per-slot tracking a job from an earlier tap can outlive the 4 s wait
+     *  and stomp a fresher state set by a subsequent tap on the same slot —
+     *  e.g. an early-error tap at T+0 schedules IDLE at T+4 s, the rider toggles
+     *  master ON at T+1, re-taps at T+2 and the new attempt reaches FIRING, then
+     *  the T+0 revert job fires at T+4 s and clobbers FIRING mid-HTTP. The
+     *  cancel-before-launch pattern (see [scheduleWebhookRevert] / [scheduleCustomRevert])
+     *  closes the race.
+     *  Webhook has slots 1..2 (array size 3, index 0 unused); custom message has
+     *  slots 1..3 (array size 4, index 0 unused). Touched only on the Main
+     *  dispatcher, so plain arrays are safe. */
+    private val webhookRevertJobs: Array<kotlinx.coroutines.Job?> = arrayOfNulls(3)
+    private val customRevertJobs: Array<kotlinx.coroutines.Job?> = arrayOfNulls(4)
+
+    /** Schedules a delayed revert of the webhook slot's field state to IDLE, cancelling
+     *  any previously scheduled revert for the same slot first. Closes the
+     *  early-error-stomps-fresh-FIRING race documented on [webhookRevertJobs]. */
+    private fun scheduleWebhookRevert(slot: Int, delayMs: Long) {
+        webhookRevertJobs[slot]?.cancel()
+        webhookRevertJobs[slot] = launch {
+            kotlinx.coroutines.delay(delayMs)
+            WebhookState.update(slot, WebhookState.IDLE)
+            webhookRevertJobs[slot] = null
+        }
+    }
+
+    /** Schedules a delayed revert of the custom-message slot's field state to IDLE,
+     *  cancelling any previously scheduled revert for the same slot first. Mirrors
+     *  [scheduleWebhookRevert]; see [customRevertJobs] for the stomp scenario. */
+    private fun scheduleCustomRevert(slot: Int, delayMs: Long) {
+        customRevertJobs[slot]?.cancel()
+        customRevertJobs[slot] = launch {
+            kotlinx.coroutines.delay(delayMs)
+            CustomMessageState.update(slot, CustomMessageState.IDLE)
+            customRevertJobs[slot] = null
+        }
+    }
+
     companion object {
         // @Volatile: written from onCreate / onDestroy on the Main thread but read from
         // FieldTapReceiver (binder thread), DataType polling coroutines (Dispatchers.Default),
@@ -1046,7 +1086,7 @@ class KSafeExtension : KarooExtension("ksafe", BuildConfig.VERSION_NAME), Corout
         val config = activeConfig
         if (!config.isActive) {
             CustomMessageState.update(slot, CustomMessageState.ERROR)
-            launch { kotlinx.coroutines.delay(4_000L); CustomMessageState.update(slot, CustomMessageState.IDLE) }
+            scheduleCustomRevert(slot, 4_000L)
             return "Extension is disabled — enable it in Settings first."
         }
         val enabled = when (slot) {
@@ -1061,12 +1101,12 @@ class KSafeExtension : KarooExtension("ksafe", BuildConfig.VERSION_NAME), Corout
         }
         if (!enabled) {
             CustomMessageState.update(slot, CustomMessageState.ERROR)
-            launch { kotlinx.coroutines.delay(3_000L); CustomMessageState.update(slot, CustomMessageState.IDLE) }
+            scheduleCustomRevert(slot, 3_000L)
             return "Custom message $slot is disabled — enable it in Settings first."
         }
         if (message.isBlank()) {
             CustomMessageState.update(slot, CustomMessageState.ERROR)
-            launch { kotlinx.coroutines.delay(3_000L); CustomMessageState.update(slot, CustomMessageState.IDLE) }
+            scheduleCustomRevert(slot, 3_000L)
             return "No text configured for message $slot."
         }
         Timber.d("Sending custom message slot=$slot via ${config.activeProvider}")
@@ -1084,13 +1124,13 @@ class KSafeExtension : KarooExtension("ksafe", BuildConfig.VERSION_NAME), Corout
         if (resolved.isBlank()) {
             Timber.w("Custom message slot $slot resolved to blank — skipping send")
             CustomMessageState.update(slot, CustomMessageState.ERROR)
-            launch { kotlinx.coroutines.delay(4_000L); CustomMessageState.update(slot, CustomMessageState.IDLE) }
+            scheduleCustomRevert(slot, 4_000L)
             return "Message resolved to empty — check tokens (e.g. {livetrack} requires a Karoo Live key)."
         }
         val ok = sender.sendInfo(resolved, config.activeProvider)
         return if (ok) {
             CustomMessageState.update(slot, CustomMessageState.SENT)
-            launch { kotlinx.coroutines.delay(4_000L); CustomMessageState.update(slot, CustomMessageState.IDLE) }
+            scheduleCustomRevert(slot, 4_000L)
             "Custom message sent! ✓"
         } else {
             CustomMessageState.update(slot, CustomMessageState.ERROR)
@@ -1311,7 +1351,7 @@ class KSafeExtension : KarooExtension("ksafe", BuildConfig.VERSION_NAME), Corout
             if (!config.isActive) {
                 Timber.d("handleWebhookTap slot=$slot blocked — master switch OFF")
                 WebhookState.update(slot, WebhookState.ERROR, "disabled")
-                launch { kotlinx.coroutines.delay(4_000L); WebhookState.update(slot, WebhookState.IDLE) }
+                scheduleWebhookRevert(slot, 4_000L)
                 dispatchWebhookFeedback(
                     id = "ksafe-webhook-$slot-master-off",
                     header = label,
@@ -1326,7 +1366,7 @@ class KSafeExtension : KarooExtension("ksafe", BuildConfig.VERSION_NAME), Corout
             if (!enabled) {
                 Timber.d("handleWebhookTap slot=$slot disabled")
                 WebhookState.update(slot, WebhookState.ERROR, "disabled")
-                launch { kotlinx.coroutines.delay(4_000L); WebhookState.update(slot, WebhookState.IDLE) }
+                scheduleWebhookRevert(slot, 4_000L)
                 dispatchWebhookFeedback(
                     id = "ksafe-webhook-$slot-disabled",
                     header = label,
@@ -1341,7 +1381,7 @@ class KSafeExtension : KarooExtension("ksafe", BuildConfig.VERSION_NAME), Corout
             if (url.isBlank()) {
                 Timber.d("handleWebhookTap slot=$slot no URL")
                 WebhookState.update(slot, WebhookState.ERROR, "no URL")
-                launch { kotlinx.coroutines.delay(4_000L); WebhookState.update(slot, WebhookState.IDLE) }
+                scheduleWebhookRevert(slot, 4_000L)
                 dispatchWebhookFeedback(
                     id = "ksafe-webhook-$slot-nourl",
                     header = label,
@@ -1362,7 +1402,7 @@ class KSafeExtension : KarooExtension("ksafe", BuildConfig.VERSION_NAME), Corout
                 val curLon = curFix?.lng ?: 0.0
                 if (curLat == 0.0 && curLon == 0.0) {
                     WebhookState.update(slot, WebhookState.ERROR, "no GPS")
-                    launch { kotlinx.coroutines.delay(4_000L); WebhookState.update(slot, WebhookState.IDLE) }
+                    scheduleWebhookRevert(slot, 4_000L)
                     dispatchWebhookFeedback(
                         id = "ksafe-webhook-$slot-geo-nofix",
                         header = label,
@@ -1373,7 +1413,7 @@ class KSafeExtension : KarooExtension("ksafe", BuildConfig.VERSION_NAME), Corout
                 }
                 if (targetLat == 0.0 && targetLon == 0.0) {
                     WebhookState.update(slot, WebhookState.ERROR, "no target")
-                    launch { kotlinx.coroutines.delay(4_000L); WebhookState.update(slot, WebhookState.IDLE) }
+                    scheduleWebhookRevert(slot, 4_000L)
                     dispatchWebhookFeedback(
                         id = "ksafe-webhook-$slot-geo-nocfg",
                         header = label,
@@ -1386,7 +1426,7 @@ class KSafeExtension : KarooExtension("ksafe", BuildConfig.VERSION_NAME), Corout
                 if (distance > radiusM) {
                     val distKm = if (distance >= 1000) "${"%.1f".formatUs(distance/1000)}km" else "${distance.toInt()}m"
                     WebhookState.update(slot, WebhookState.ERROR, "geo $distKm")
-                    launch { kotlinx.coroutines.delay(5_000L); WebhookState.update(slot, WebhookState.IDLE) }
+                    scheduleWebhookRevert(slot, 5_000L)
                     dispatchWebhookFeedback(
                         id = "ksafe-webhook-$slot-geo-far",
                         header = label,
@@ -1405,7 +1445,7 @@ class KSafeExtension : KarooExtension("ksafe", BuildConfig.VERSION_NAME), Corout
             Timber.d("handleWebhookTap slot=$slot result=${result.success} msg=${result.message}")
             val resultMsg = if (result.success) "OK ✓" else "ERR"
             WebhookState.update(slot, if (result.success) WebhookState.SUCCESS else WebhookState.ERROR, resultMsg)
-            launch { kotlinx.coroutines.delay(4_000L); WebhookState.update(slot, WebhookState.IDLE) }
+            scheduleWebhookRevert(slot, 4_000L)
 
             dispatchWebhookFeedback(
                 id = "ksafe-webhook-$slot-${if (result.success) "ok" else "err"}",
@@ -1428,7 +1468,7 @@ class KSafeExtension : KarooExtension("ksafe", BuildConfig.VERSION_NAME), Corout
         } catch (e: Exception) {
             Timber.e(e, "handleWebhookTap slot=$slot EXCEPTION: ${e.message}")
             WebhookState.update(slot, WebhookState.ERROR, "exception")
-            launch { kotlinx.coroutines.delay(4_000L); WebhookState.update(slot, WebhookState.IDLE) }
+            scheduleWebhookRevert(slot, 4_000L)
         }
     }
 
