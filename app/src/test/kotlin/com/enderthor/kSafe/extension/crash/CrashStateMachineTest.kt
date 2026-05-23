@@ -2377,4 +2377,111 @@ class CrashStateMachineTest {
         )
     }
 
+    // ── I5: IMPACT_TIMEOUT resets the orientation accumulator ────────────────
+    //
+    // Pins commit 1a5ffcb's `resetSilenceWindow()` call in the IMPACT_TIMEOUT
+    // branch of [CrashStateMachine.handleImpact]. The existing IMPACT_TIMEOUT
+    // test asserts only the state transition; nothing pins the accumulator
+    // clear. Without the reset, a marginal-lean IMPACT that accumulated 25+
+    // samples on-side but never satisfied the relax/speed gates leaves the
+    // accumulator filled — and the very next IMPACT's first sample would see
+    // a 26-sample accumulator (potentially with the wrong orientation against
+    // the new pre-impact ref), letting IMPACT-relax engage on essentially no
+    // fresh evidence.
+
+    @Test
+    fun `IMPACT_TIMEOUT resets orientation accumulator so next IMPACT starts fresh`() {
+        // First impact: 30 on-side samples accumulate at ~55° (above 45° upright
+        // threshold so it would latch SILENCE_CHECK upright, but BELOW the 60°
+        // IMPACT-relax gate). Speed stays high (bike rolling) → speedDropOk false,
+        // onSideRelaxed false → gate stays closed for the entire impact window
+        // until IMPACT_TIMEOUT fires. Then a SECOND impact: assert that 26
+        // on-side fresh samples are required to engage IMPACT-relax — meaning
+        // the accumulator MUST have been cleared at IMPACT_TIMEOUT (otherwise
+        // the leftover 30 samples + 1 = 31 ≥ 25 would trip the relax gate on
+        // the first sample of impact 2).
+        val (sm, _) = newSm()
+        sm.onSpeedUpdate(25.0)
+        val base1 = 1_000_000L
+        // Impact 1.
+        sm.onSample(sample(time = base1, peak = 70.0, smoothed = 40.0, gyro = 1.0))
+        assertEquals(CrashStateMachine.State.IMPACT, sm.state)
+        sm.setPreImpactReference(PreImpactRef(0.0, 0.0, 9.81, valid = true))
+        sm.onSpeedUpdate(10.0)
+        // 30 marginal-lean samples (~55°, below the 60° relax gate). accelOk
+        // holds → accumulator fills to 30. gateOk stays false (no speedDrop,
+        // no relax). State stays IMPACT.
+        var t = base1 + 1_000L
+        repeat(30) {
+            t += 20L
+            sm.onSample(sample(time = t, raw = 9.81, smoothed = 9.81, gyro = 0.5,
+                az = 5.625, ax = 8.039))
+        }
+        assertEquals(
+            "marginal lean must not engage IMPACT-relax — state stays IMPACT",
+            CrashStateMachine.State.IMPACT, sm.state,
+        )
+
+        // Trigger IMPACT_TIMEOUT: jump past impactWindowMs (20_000 default) with
+        // any sample. Production resetSilenceWindow() in the timeout branch
+        // wipes the 30-sample accumulator.
+        val tTimeout = base1 + 20_500L
+        val d = sm.onSample(sample(time = tTimeout, raw = 9.81, smoothed = 9.81,
+            gyro = 0.5, az = 5.625, ax = 8.039))
+        assertEquals(CrashStateMachine.Decision.ReturnToMonitoring, d)
+        assertEquals(CrashStateMachine.State.MONITORING, sm.state)
+
+        // Second impact, far enough in the future that the cold-start guard is
+        // long past. Speed gate satisfied (lastSpeedKmh still 10 from earlier,
+        // need >= minSpeedForCrashKmh = 10).
+        sm.onSpeedUpdate(25.0)
+        val base2 = tTimeout + 10_000L
+        sm.onSample(sample(time = base2, peak = 70.0, smoothed = 40.0, gyro = 1.0,
+            az = 0.0, ax = 9.81))   // ON-SIDE on the impact spike sample itself
+        assertEquals(CrashStateMachine.State.IMPACT, sm.state)
+        sm.setPreImpactReference(PreImpactRef(0.0, 0.0, 9.81, valid = true))
+        sm.onSpeedUpdate(10.0)
+
+        // Load-bearing assertion: with a clean accumulator post-timeout, the
+        // first IMPACT sample of impact 2 — using ON-SIDE orientation (would
+        // trip the relax gate IF the accumulator had carried over) — must NOT
+        // transition to SILENCE_CHECK. The relax gate requires 25 fresh
+        // samples; one sample is not enough.
+        val tFirst = base2 + 600L   // beyond minTimeSinceImpactMs = 500
+        sm.onSample(sample(time = tFirst, raw = 9.81, smoothed = 9.81, gyro = 0.5,
+            az = 0.0, ax = 9.81))
+        assertEquals(
+            "first sample of impact 2 must not fire IMPACT-relax — accumulator must " +
+                "have been cleared at IMPACT_TIMEOUT (load-bearing for commit 1a5ffcb)",
+            CrashStateMachine.State.IMPACT, sm.state,
+        )
+
+        // Stronger pin: feed 20 more on-side samples (count would reach 21 under
+        // the fix — still under 25, no relax). State must still be IMPACT. Under
+        // the buggy variant, count would be 51 and the SM would have transitioned
+        // long ago.
+        var t2 = tFirst
+        repeat(20) {
+            t2 += 20L
+            sm.onSample(sample(time = t2, raw = 9.81, smoothed = 9.81, gyro = 0.5,
+                az = 0.0, ax = 9.81))
+        }
+        assertEquals(
+            "with a clean accumulator, 21 on-side samples (< 25) must not engage IMPACT-relax",
+            CrashStateMachine.State.IMPACT, sm.state,
+        )
+
+        // Final check: 5 more samples (count = 26 under the fix) — NOW the relax
+        // gate must fire and transition to SILENCE_CHECK. Guards against an
+        // over-corrected variant that would never let the relaxation fire again.
+        repeat(5) {
+            t2 += 20L
+            sm.onSample(sample(time = t2, raw = 9.81, smoothed = 9.81, gyro = 0.5,
+                az = 0.0, ax = 9.81))
+        }
+        assertEquals(
+            "26 fresh on-side samples post-reset must engage IMPACT-relax → SILENCE_CHECK",
+            CrashStateMachine.State.SILENCE_CHECK, sm.state,
+        )
+    }
 }
