@@ -272,6 +272,7 @@ class CrashDetectionManager(
             Timber.d("CrashDetectionManager RESUMED — preserving in-flight ${stateMachine.state} (auto-resume mid-crash)")
         } else {
             stateMachine.resumeForRide()
+            Timber.d("CrashDetectionManager RESUMED — state machine reset (manual-pause resume or no in-flight detection)")
         }
         sensorReader.start(handler = null)
         Timber.d("CrashDetectionManager RESUMED")

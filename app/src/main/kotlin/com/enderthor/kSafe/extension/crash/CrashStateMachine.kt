@@ -83,7 +83,7 @@ class CrashStateMachine(
         data object ReturnToMonitoring : Decision()
     }
 
-    var state: State = State.MONITORING
+    @Volatile var state: State = State.MONITORING
         private set
 
     // ── Speed / GPS ──────────────────────────────────────────────────────────

@@ -1500,7 +1500,7 @@ class CrashStateMachineTest {
         }
         sm.onSpeedUpdate(10.0)
         var confirmed = false
-        repeat(7) {
+        repeat(25) {
             t += 1000L
             if (sm.onSample(sample(time = t, raw = 9.81, smoothed = 9.81, az = 9.81, ax = 0.0))
                     is CrashStateMachine.Decision.Confirm) confirmed = true
@@ -1528,8 +1528,11 @@ class CrashStateMachineTest {
         }
         sm.onSpeedUpdate(10.0)
         var confirmed = false
-        // Feed 6 s of stillness (well past the 4.5 s legacy window but well short of 20 s).
-        repeat(6) {
+        // Feed 25 s of stillness while speed is high. With correct behaviour, the speed-drop
+        // requirement keeps breaking silence indefinitely — no Confirm fires. If the relaxation
+        // incorrectly engaged (bug), the 4.5 s legacy window would confirm within ~5 s of
+        // the speed rise, well before the 25 s mark, and the assertion below would catch it.
+        repeat(25) {
             t += 1000L
             if (sm.onSample(sample(time = t, raw = 9.81, smoothed = 9.81, az = 0.0, ax = 9.81))
                     is CrashStateMachine.Decision.Confirm) confirmed = true

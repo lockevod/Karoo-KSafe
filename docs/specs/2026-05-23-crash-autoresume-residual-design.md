@@ -189,6 +189,15 @@ no sent-alert risk.
   away on a slope still loses fast-path detection. No clean discriminator
   exists (coasting rider with no cadence input is indistinguishable from
   escaping bike). The SpeedDropMonitor backstop remains.
+- **IMPACT-phase auto-resume.** If the autopause/auto-resume cycle straddles
+  the IMPACT phase (impact lands within the ~3-6 s autopause-trigger window),
+  the state machine is still in IMPACT at resume time. The relaxation in this
+  spec lives in `handleSilenceCheck`, so it does not apply yet; `handleImpact`
+  still requires `speedDropOk` to transition to SILENCE_CHECK, which the
+  rising post-resume speed blocks. The IMPACT window then times out into a
+  false-alarm and the SpeedDropMonitor backstop is the only remaining path.
+  Narrow exposure (impact must land in that brief window) and a backstop
+  covers it; left for a future iteration.
 - The `updateGrade` mid-ride threshold-rebuild race (pre-existing, flagged in
   review, not a defect).
 - `CrashDetectionManager` and `EmergencyManager` unit-test harness (no facade
