@@ -64,6 +64,12 @@ class MedicalEpisodeDetector(
     private val ACTIVE_SPEED_KMH           = 5.0
     private val PERIODIC_LOG_INTERVAL_MS   = 120_000L  // 2 min, matching CrashDetectionManager.PERIODIC
 
+    /** Matches [CrashDetectionManager.GPS_STALE_MS]: when speed-value bytes have not changed
+     *  for this long the Karoo SDK is replaying the last known value (GPS lock lost). For the
+     *  COLLAPSE concurrent-speed gate we treat a stale stream as "not moving" to bias toward
+     *  FP reduction — see H2 fix. */
+    private val SPEED_STALE_MS             = 10_000L
+
     // ─── State (all `@Volatile` fields are read from the monitor coroutine) ──────────────
     @Volatile private var currentHrBpm        = 0
     @Volatile private var lastHrUpdateMs      = 0L
@@ -74,6 +80,12 @@ class MedicalEpisodeDetector(
     @Volatile private var collapseCooldownUntilMs = 0L
     @Volatile private var lastHrStaleState    = false
     @Volatile private var lastPeriodicLogMs   = 0L
+
+    /** H2 fix — timestamp of the most recent speed emission whose VALUE changed (or was an
+     *  explicit zero, or the very first emission). Mirrors [CrashDetectionManager.speedLastChangeMs]
+     *  — the SDK replays the last-known speed bit-exact while GPS is lost, so a stretch of
+     *  identical non-zero values is the canonical staleness signature. */
+    @Volatile private var speedLastChangeMs   = 0L
 
     /**
      * Rolling HR history used by [computeAverageHrInWindow] for the COLLAPSE baseline
@@ -133,6 +145,12 @@ class MedicalEpisodeDetector(
         hrDataReceived = false
         currentHrBpm = 0
         lastHrUpdateMs = 0L
+        // H2 fix — reset speed-staleness bookkeeping so a new ride does not inherit a
+        // stuck speedLastChangeMs from the previous ride (would either falsely report
+        // stale forever or, worse, falsely report fresh during the new ride's cold start).
+        speedLastChangeMs = 0L
+        lastSpeedKmh = 0.0
+        lastSpeedAboveActiveMs = 0L
         Timber.d("MedicalEpisodeDetector stopped")
     }
 
@@ -167,8 +185,29 @@ class MedicalEpisodeDetector(
     }
 
     fun updateSpeed(kmh: Double) {
+        val now = clock.nowMs()
+        // H2 fix — stamp [speedLastChangeMs] on real value changes, on explicit-zero
+        // emissions (rider stopped at a light: GPS still alive even though the value is
+        // bit-exact 0.0 across emissions), and on the very first emission (bootstrap).
+        // A stuck non-zero value across emissions is the SDK's GPS-lost behaviour, so
+        // leaving the timestamp untouched is what trips [isSpeedSignalStale] after
+        // SPEED_STALE_MS. Same shape as CrashDetectionManager.updateSpeed.
+        val changed = kmh != lastSpeedKmh
+        if (changed || kmh == 0.0 || speedLastChangeMs == 0L) speedLastChangeMs = now
         lastSpeedKmh = kmh
-        if (kmh >= ACTIVE_SPEED_KMH) lastSpeedAboveActiveMs = clock.nowMs()
+        if (kmh >= ACTIVE_SPEED_KMH) lastSpeedAboveActiveMs = now
+    }
+
+    /**
+     * H2 fix — staleness for the concurrent speed gate. Returns `true` iff we have ever
+     * received a speed sample AND the value has not changed (and was non-zero) for
+     * [SPEED_STALE_MS] — the canonical signature of the SDK replaying its last-known
+     * value while GPS lock is lost. Conservative on cold start: if no speed has arrived
+     * yet, we report stale (no concurrent confirmation possible).
+     */
+    private fun isSpeedSignalStale(now: Long): Boolean {
+        if (speedLastChangeMs == 0L) return true
+        return (now - speedLastChangeMs) > SPEED_STALE_MS
     }
 
     // ─── Monitor tick (runs on `scope`, every MONITOR_TICK_MS) ────────────────────────────
@@ -239,7 +278,16 @@ class MedicalEpisodeDetector(
 
     private fun evaluateCollapse(now: Long, isStale: Boolean) {
         if (!hrDataReceived || isStale) return
-        if (now - lastSpeedAboveActiveMs > ACTIVE_RECENT_MS) return
+        // H2 fix — concurrent speed gate. The previous "active in the last 60 s" window
+        // (`now - lastSpeedAboveActiveMs > ACTIVE_RECENT_MS`) routinely false-fired on a
+        // trained cyclist finishing a hard effort and stopping: a 160 → 80 bpm drop in
+        // 45–60 s is normal post-exercise parasympathetic rebound, easily crossing the
+        // 40 % gate while the residual 60 s window still considers the rider "active".
+        // Require the rider to be moving NOW (≥ ACTIVE_SPEED_KMH) with a fresh speed
+        // signal. A stale speed signal (GPS lost) is treated as not-moving to bias
+        // toward FP suppression — losing a true mid-ride collapse to GPS loss is the
+        // less harmful failure mode than dispatching emergency services for a café stop.
+        if (lastSpeedKmh < ACTIVE_SPEED_KMH || isSpeedSignalStale(now)) return
         if (now < collapseCooldownUntilMs) return
         if (!hasEnoughHistoryFor(now)) return
 
