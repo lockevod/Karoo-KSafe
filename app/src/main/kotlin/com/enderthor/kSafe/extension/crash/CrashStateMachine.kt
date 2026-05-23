@@ -471,6 +471,19 @@ class CrashStateMachine(
         val timeOk = timeSinceImpact > thresholds.minTimeSinceImpactMs
         val speedDropOk = isSpeedDropConfirmed()
 
+        // Accumulate orientation during IMPACT on settled samples only. accelOk
+        // filters the impact transient and any post-impact tumble noise, so the
+        // average reflects the bike's actual resting orientation. The accumulator
+        // is cleared on transition to SILENCE_CHECK below (resetSilenceWindow())
+        // so SILENCE_CHECK starts with a fresh count (preserving the latch's
+        // MIN_ORIENTATION_SAMPLES semantics).
+        if (accelOk) {
+            orientationSumX += sample.accelX
+            orientationSumY += sample.accelY
+            orientationSumZ += sample.accelZ
+            orientationSampleCount++
+        }
+
         if (accelOk && gyroOk && timeOk && speedDropOk) {
             state = State.SILENCE_CHECK
             silenceStartedMs = now
@@ -481,6 +494,7 @@ class CrashStateMachine(
             // entry is not penalised. A continuously-still rider always confirms;
             // the budget bounds how long the machine retries to achieve stillness.
             silenceCheckEnteredMs = now
+            resetSilenceWindow()   // SILENCE_CHECK starts with fresh accumulator
             return Decision.None
         }
 
