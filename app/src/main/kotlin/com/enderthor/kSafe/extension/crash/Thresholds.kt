@@ -86,4 +86,14 @@ data class Thresholds(
      * [silenceDurationMs].
      */
     val uprightAngleThresholdDegrees: Double = 45.0,
+    /**
+     * Angle (degrees) from the pre-impact reference above which the bike is
+     * considered "decisively on the ground" — used to gate the speed-rise
+     * relaxation in SILENCE_CHECK. Stricter than [uprightAngleThresholdDegrees]
+     * (45°) so that bikes merely tilted (leaned against something, partial
+     * fall, rider walking the bike) do not get the speed gate relaxed. Real
+     * crashes that leave the bike flat are at 80–95°; a value of 60° captures
+     * these while excluding partial leans.
+     */
+    val onSideRelaxationAngleDeg: Double = 60.0,
 )

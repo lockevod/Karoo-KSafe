@@ -129,6 +129,9 @@ class CrashDetectionManager(
          *  (long window). Matches [Thresholds.uprightAngleThresholdDegrees]. */
         const val UPRIGHT_ANGLE_THRESHOLD_DEGREES = 45.0
 
+        /** Angle (deg) above which the SILENCE_CHECK speed-rise relaxation engages. */
+        const val ON_SIDE_RELAXATION_ANGLE_DEG = 60.0
+
         // ── CrashStateMachine "sample timestamp" base ────────────────────────
         // The state machine treats `sample.timestampMs` as the authoritative time
         // for IMPACT/SILENCE windows. We pass wall-clock so production semantics
@@ -807,6 +810,7 @@ class CrashDetectionManager(
             delayedStopGapMs = DELAYED_STOP_GAP_MS,
             silenceDurationUprightMs = SILENCE_DURATION_UPRIGHT_MS,
             uprightAngleThresholdDegrees = UPRIGHT_ANGLE_THRESHOLD_DEGREES,
+            onSideRelaxationAngleDeg = ON_SIDE_RELAXATION_ANGLE_DEG,
         )
     }
 
