@@ -78,6 +78,9 @@ class HydrationTracker(
      * de-facto cadence).
      */
     @Volatile private var lastLogMs = 0L
+    /** See [CarbsTracker.lastRealLogMs] — same field, hydration side. Tracks the last
+     *  REAL log (not time-alert fire) so `{elapsed}` reflects time-since-real-log. */
+    @Volatile private var lastRealLogMs = 0L
     @Volatile private var lastAlertMs = 0L
     @Volatile private var lastPeriodicLogMs = 0L
 
@@ -114,6 +117,8 @@ class HydrationTracker(
     // hydration slot can be added without touching the bookkeeping.
     private val lastLoggedMlBySlot = IntArray(4)
     private val lastLogMsBeforeBySlot = LongArray(4)
+    /** See [CarbsTracker.lastRealLogMsBeforeBySlot] — same pattern, hydration side. */
+    private val lastRealLogMsBeforeBySlot = LongArray(4)
 
     @Volatile private var config = KSafeConfig()
     private var monitorJob: Job? = null
@@ -139,17 +144,26 @@ class HydrationTracker(
             cumLoggedMl = restoreFrom.cumLoggedMl
             sessionStartMs = restoreFrom.sessionStartMs.takeIf { it > 0 } ?: now
             lastLogMs = restoreFrom.lastLogMs.takeIf { it > 0 } ?: now
+            // See CarbsTracker.start — pre-I8 snapshots have lastRealLogMs = 0, in which case
+            // the legacy lastLogMs (which under v14 / pre-F1 meant "last real log") is the
+            // best available proxy.
+            lastRealLogMs = restoreFrom.lastRealLogMs.takeIf { it > 0 } ?: lastLogMs
             lastAlertMs = restoreFrom.lastAlertMs
         } else {
             cumTargetMl = 0f
             cumLoggedMl = 0
             sessionStartMs = now
             lastLogMs = now
+            lastRealLogMs = now
             lastAlertMs = 0L
         }
         lastTickMs = 0L
         lastPeriodicLogMs = 0L
-        for (i in lastLoggedMlBySlot.indices) { lastLoggedMlBySlot[i] = 0; lastLogMsBeforeBySlot[i] = 0L }
+        for (i in lastLoggedMlBySlot.indices) {
+            lastLoggedMlBySlot[i] = 0
+            lastLogMsBeforeBySlot[i] = 0L
+            lastRealLogMsBeforeBySlot[i] = 0L
+        }
         monitorJob = scope.launch {
             oldJob?.cancelAndJoin()
             while (true) { delay(MONITOR_TICK_MS); tick() }
@@ -177,6 +191,7 @@ class HydrationTracker(
         sessionStartMs = sessionStartMs,
         lastLogMs = lastLogMs,
         lastAlertMs = lastAlertMs,
+        lastRealLogMs = lastRealLogMs,
     )
 
     fun stop() {
@@ -264,9 +279,12 @@ class HydrationTracker(
         // Save what we're about to mutate so an undo within the on-screen window can
         // reverse exactly this entry — same pattern as CarbsTracker.
         lastLogMsBeforeBySlot[slot] = lastLogMs
+        lastRealLogMsBeforeBySlot[slot] = lastRealLogMs
         lastLoggedMlBySlot[slot] = ml
         cumLoggedMl += ml
-        lastLogMs = System.currentTimeMillis()
+        val now = System.currentTimeMillis()
+        lastLogMs = now
+        lastRealLogMs = now
         calibLogger?.log(CalibrationLogger.Event.FUELING_HYDRATION_LOGGED) {
             "slot=$slot,ml=$ml,cum_logged=$cumLoggedMl,cum_target=${cumTargetMl.toInt()}"
         }
@@ -284,8 +302,10 @@ class HydrationTracker(
         if (ml <= 0) return 0
         cumLoggedMl = (cumLoggedMl - ml).coerceAtLeast(0)
         lastLogMs = lastLogMsBeforeBySlot[slot]
+        lastRealLogMs = lastRealLogMsBeforeBySlot[slot]
         lastLoggedMlBySlot[slot] = 0
         lastLogMsBeforeBySlot[slot] = 0L
+        lastRealLogMsBeforeBySlot[slot] = 0L
         calibLogger?.log(CalibrationLogger.Event.FUELING_HYDRATION_UNDONE) {
             "slot=$slot,ml=-$ml,cum_logged=$cumLoggedMl,cum_target=${cumTargetMl.toInt()}"
         }
@@ -384,7 +404,7 @@ class HydrationTracker(
         val deficit = (cumTargetMl - cumLoggedMl).toInt()
         if (deficit < config.hydrationDeficitThresholdMl) return
         if (now - lastAlertMs < ALERT_COOLDOWN_MS) return
-        fireAlert("deficit", deficit, (now - lastLogMs) / 60_000)
+        fireAlert("deficit", deficit, (now - lastRealLogMs) / 60_000)
     }
 
     private fun evaluateTimeAlert(now: Long) {
@@ -402,11 +422,14 @@ class HydrationTracker(
         // or after a manual log. With a 1-min interval the cooldown collapses to 1 min, so
         // tests that drive 1-min intervals still see one alert per minute.
         if (now - lastAlertMs < minOf(ALERT_COOLDOWN_MS, intervalMs)) return
-        fireAlert("time", (cumTargetMl - cumLoggedMl).toInt(), (now - lastLogMs) / 60_000)
+        fireAlert("time", (cumTargetMl - cumLoggedMl).toInt(), (now - lastRealLogMs) / 60_000)
         // F1 fix — treat a time-alert fire as a soft "time mark" so the configured interval
         // is respected even when the rider misses logs. Without this, `lastLogMs` stays
         // frozen, the interval gate latches open, and the only throttle becomes the 5-min
         // cooldown — turning "alert me every 20 min" into "alert me every 5 min".
+        //
+        // I8 — do NOT touch `lastRealLogMs` here; it tracks the rider's last actual log so
+        // that `{elapsed}` in a later deficit alert reflects time-since-real-log.
         lastLogMs = now
     }
 

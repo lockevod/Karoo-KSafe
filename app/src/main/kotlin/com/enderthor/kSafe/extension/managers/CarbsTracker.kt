@@ -100,6 +100,29 @@ class CarbsTracker(
      * de-facto cadence).
      */
     @Volatile private var lastLogMs = 0L
+    /**
+     * Wall-clock ms of the last REAL rider log (independent of time-alert fires). Updated only
+     * by [logEntry] (and rolled back by [undoLastForSlot]) so `(now - lastRealLogMs)` always
+     * reflects the true time since the rider last logged carbs. Used to compute the
+     * `{elapsed}` token in alert templates.
+     *
+     * I8 fix: the F1 fix repurposed [lastLogMs] as a "time mark" that also bumps on
+     * time-alert fires, which is correct for the interval gate but wrong for `{elapsed}`
+     * in a subsequent deficit alert (the rider had not actually logged anything, but
+     * `{elapsed}` would otherwise show "time since last alert" instead of "time since
+     * last real log"). Splitting the two responsibilities into separate fields keeps
+     * both behaviours correct.
+     *
+     * Note on testing: the F1+I8 interaction is verified by inspection rather than by a
+     * unit test — the observable signal (the rendered `{elapsed}` text in an [InRideAlert])
+     * is produced via [fireAlert] which dispatches through [KarooSystemService] and reads
+     * resource strings via [android.content.Context]. The JVM unit-test harness in this
+     * project does not mock either (no Robolectric, no fueling-tracker harness), so a
+     * faithful end-to-end assertion would require infrastructure out of scope for this
+     * fix. The contract is short enough to verify by reading [evaluateDeficitAlert] /
+     * [evaluateTimeAlert] / [logEntry] / [undoLastForSlot] together.
+     */
+    @Volatile private var lastRealLogMs = 0L
     @Volatile private var lastAlertMs = 0L
     @Volatile private var lastZoneSnapshot = ZoneSnapshot(ZoneSource.NONE, -1, 0, 1f)
     @Volatile private var lastPeriodicLogMs = 0L
@@ -113,6 +136,13 @@ class CarbsTracker(
     // a new [logEntry] populates it again. Indices 1..3; slot 0 is unused.
     private val lastLoggedGramsBySlot = IntArray(4)
     private val lastLogMsBeforeBySlot = LongArray(4)
+    /**
+     * Per-slot snapshot of [lastRealLogMs] taken at log time so [undoLastForSlot] can roll
+     * it back exactly. Parallel to [lastLogMsBeforeBySlot] — kept as a separate array because
+     * [lastLogMs] is now bumped by time-alert fires too (F1) while [lastRealLogMs] is bumped
+     * only by real logs (I8); the two snapshots can therefore legitimately differ.
+     */
+    private val lastRealLogMsBeforeBySlot = LongArray(4)
 
     @Volatile private var config = KSafeConfig()
     private var monitorJob: Job? = null
@@ -158,18 +188,28 @@ class CarbsTracker(
             cumLoggedG = restoreFrom.cumLoggedG
             sessionStartMs = restoreFrom.sessionStartMs.takeIf { it > 0 } ?: now
             lastLogMs = restoreFrom.lastLogMs.takeIf { it > 0 } ?: now
+            // I8 migration — pre-fix snapshots have no lastRealLogMs (defaults to 0). Under
+            // v14 / pre-F1 semantics, lastLogMs was "last real log", so fall back to it when
+            // the persisted lastRealLogMs is absent. New snapshots write both fields and the
+            // takeIf below picks the saved value directly.
+            lastRealLogMs = restoreFrom.lastRealLogMs.takeIf { it > 0 } ?: lastLogMs
             lastAlertMs = restoreFrom.lastAlertMs
         } else {
             cumTargetG = 0f
             cumLoggedG = 0
             sessionStartMs = now
             lastLogMs = now                  // first time-based alert counts from session start
+            lastRealLogMs = now              // {elapsed} measured from session start until first log
             lastAlertMs = 0L
         }
         lastTickMs = 0L                  // 0 = "no previous tick"; first tick won't accumulate
         lastPeriodicLogMs = 0L
         lastZoneSnapshot = ZoneSnapshot(ZoneSource.NONE, -1, 0, 1f)
-        for (i in lastLoggedGramsBySlot.indices) { lastLoggedGramsBySlot[i] = 0; lastLogMsBeforeBySlot[i] = 0L }
+        for (i in lastLoggedGramsBySlot.indices) {
+            lastLoggedGramsBySlot[i] = 0
+            lastLogMsBeforeBySlot[i] = 0L
+            lastRealLogMsBeforeBySlot[i] = 0L
+        }
         monitorJob = scope.launch {
             oldJob?.cancelAndJoin()
             while (true) { delay(MONITOR_TICK_MS); tick() }
@@ -202,6 +242,7 @@ class CarbsTracker(
         sessionStartMs = sessionStartMs,
         lastLogMs = lastLogMs,
         lastAlertMs = lastAlertMs,
+        lastRealLogMs = lastRealLogMs,
     )
 
     fun stop() {
@@ -284,9 +325,12 @@ class CarbsTracker(
         // Save what we're about to mutate so an undo within the on-screen window can
         // reverse exactly this entry without affecting unrelated state.
         lastLogMsBeforeBySlot[slot] = lastLogMs
+        lastRealLogMsBeforeBySlot[slot] = lastRealLogMs
         lastLoggedGramsBySlot[slot] = grams
         cumLoggedG += grams
-        lastLogMs = System.currentTimeMillis()
+        val now = System.currentTimeMillis()
+        lastLogMs = now
+        lastRealLogMs = now
         calibLogger?.log(CalibrationLogger.Event.FUELING_CARB_LOGGED) {
             "slot=$slot,grams=$grams,cum_logged=$cumLoggedG,cum_target=${cumTargetG.toInt()}"
         }
@@ -306,8 +350,10 @@ class CarbsTracker(
         if (grams <= 0) return 0
         cumLoggedG = (cumLoggedG - grams).coerceAtLeast(0)
         lastLogMs = lastLogMsBeforeBySlot[slot]
+        lastRealLogMs = lastRealLogMsBeforeBySlot[slot]
         lastLoggedGramsBySlot[slot] = 0
         lastLogMsBeforeBySlot[slot] = 0L
+        lastRealLogMsBeforeBySlot[slot] = 0L
         calibLogger?.log(CalibrationLogger.Event.FUELING_CARB_UNDONE) {
             "slot=$slot,grams=-$grams,cum_logged=$cumLoggedG,cum_target=${cumTargetG.toInt()}"
         }
@@ -424,7 +470,7 @@ class CarbsTracker(
         val deficit = (cumTargetG - cumLoggedG).toInt()
         if (deficit < config.carbDeficitThresholdG) return
         if (now - lastAlertMs < ALERT_COOLDOWN_MS) return
-        fireAlert(source = "deficit", deficit = deficit, elapsedMin = (now - lastLogMs) / 60_000)
+        fireAlert(source = "deficit", deficit = deficit, elapsedMin = (now - lastRealLogMs) / 60_000)
     }
 
     private fun evaluateTimeAlert(now: Long) {
@@ -444,12 +490,16 @@ class CarbsTracker(
         // line is reached only on the first fire of a session.
         if (now - lastAlertMs < minOf(ALERT_COOLDOWN_MS, intervalMs)) return
         val deficit = (cumTargetG - cumLoggedG).toInt()
-        fireAlert(source = "time", deficit = deficit, elapsedMin = (now - lastLogMs) / 60_000)
+        fireAlert(source = "time", deficit = deficit, elapsedMin = (now - lastRealLogMs) / 60_000)
         // F1 fix — treat a time-alert fire as a soft "time mark" so the configured interval
         // is respected even when the rider misses logs. Without this, `lastLogMs` stays
         // frozen at the previous log (or sessionStart), the interval gate latches open, and
         // the only throttle becomes the 5-min cooldown — turning "alert me every 25 min"
         // into "alert me every 5 min". See the branch-review notes for the full trace.
+        //
+        // Critically we do NOT touch `lastRealLogMs` here (I8 fix) — that field tracks the
+        // rider's last actual log so `{elapsed}` in any subsequent alert reports time-
+        // since-real-log, not time-since-last-alert.
         lastLogMs = now
     }
 

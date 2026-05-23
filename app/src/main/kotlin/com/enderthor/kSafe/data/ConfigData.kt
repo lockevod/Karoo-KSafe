@@ -643,6 +643,19 @@ data class CarbFuelingState(
     val sessionStartMs: Long = 0L,
     val lastLogMs: Long = 0L,
     val lastAlertMs: Long = 0L,
+    /**
+     * Wall-clock ms of the last REAL rider log (independent of time-alert fires).
+     * The F1 fix repurposed `lastLogMs` as a soft "time mark" updated on every time-alert
+     * fire so the interval gate honours the configured cadence; that broke the `{elapsed}`
+     * token in deficit alerts, which used to compute "time since last log" off the same
+     * field. `lastRealLogMs` is the I8 fix: only `logEntry` and per-slot undo touch it,
+     * so `(now - lastRealLogMs)` always reflects the true time since the rider's last log.
+     *
+     * Additive field — old (v14, pre-I8) snapshots deserialise with `lastRealLogMs = 0`,
+     * which `CarbsTracker.start(restoreFrom)` falls back to the legacy `lastLogMs` value
+     * (which under pre-F1 semantics meant "last real log").
+     */
+    val lastRealLogMs: Long = 0L,
 )
 
 @Serializable
@@ -652,6 +665,8 @@ data class HydFuelingState(
     val sessionStartMs: Long = 0L,
     val lastLogMs: Long = 0L,
     val lastAlertMs: Long = 0L,
+    /** See [CarbFuelingState.lastRealLogMs] — same field, hydration side. */
+    val lastRealLogMs: Long = 0L,
 )
 
 /**
