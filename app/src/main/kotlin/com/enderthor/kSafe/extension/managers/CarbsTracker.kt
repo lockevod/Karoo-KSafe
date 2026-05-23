@@ -431,11 +431,18 @@ class CarbsTracker(
         }
         val intervalMs = config.carbTimeIntervalMin * 60_000L
         if (now - lastLogMs < intervalMs) return
-        // See HydrationTracker.evaluateTimeAlert — cooldown for time alerts respects the
-        // rider's configured interval so a 1-min interval truly fires every minute.
+        // Defensive cooldown — see HydrationTracker.evaluateTimeAlert. In practice the
+        // post-fire `lastLogMs = now` below makes the gate above re-arm correctly, so this
+        // line is reached only on the first fire of a session.
         if (now - lastAlertMs < minOf(ALERT_COOLDOWN_MS, intervalMs)) return
         val deficit = (cumTargetG - cumLoggedG).toInt()
         fireAlert(source = "time", deficit = deficit, elapsedMin = (now - lastLogMs) / 60_000)
+        // F1 fix — treat a time-alert fire as a soft "time mark" so the configured interval
+        // is respected even when the rider misses logs. Without this, `lastLogMs` stays
+        // frozen at the previous log (or sessionStart), the interval gate latches open, and
+        // the only throttle becomes the 5-min cooldown — turning "alert me every 25 min"
+        // into "alert me every 5 min". See the branch-review notes for the full trace.
+        lastLogMs = now
     }
 
     private fun fireAlert(source: String, deficit: Int, elapsedMin: Long) {

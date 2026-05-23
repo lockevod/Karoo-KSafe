@@ -389,13 +389,17 @@ class HydrationTracker(
         }
         val intervalMs = config.hydrationTimeIntervalMin * 60_000L
         if (now - lastLogMs < intervalMs) return
-        // Cooldown for time alerts uses the smaller of ALERT_COOLDOWN_MS (5 min anti-spam
-        // for deficit alerts) and the rider's configured interval. With a 1-min interval
-        // (typical for testing) the rider gets a 1-min cooldown so the alert truly fires
-        // every minute as configured; with a 20-min interval the 5-min cooldown is
-        // effectively unused because the interval check (gate above) already gates.
+        // Defensive cooldown — the post-fire `lastLogMs = now` below makes the gate above
+        // re-arm correctly, so the cooldown is reached only on the first fire of a session
+        // or after a manual log. With a 1-min interval the cooldown collapses to 1 min, so
+        // tests that drive 1-min intervals still see one alert per minute.
         if (now - lastAlertMs < minOf(ALERT_COOLDOWN_MS, intervalMs)) return
         fireAlert("time", (cumTargetMl - cumLoggedMl).toInt(), (now - lastLogMs) / 60_000)
+        // F1 fix — treat a time-alert fire as a soft "time mark" so the configured interval
+        // is respected even when the rider misses logs. Without this, `lastLogMs` stays
+        // frozen, the interval gate latches open, and the only throttle becomes the 5-min
+        // cooldown — turning "alert me every 20 min" into "alert me every 5 min".
+        lastLogMs = now
     }
 
     private fun fireAlert(source: String, deficitMl: Int, elapsedMin: Long) {
