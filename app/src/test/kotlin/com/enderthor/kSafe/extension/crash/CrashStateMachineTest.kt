@@ -42,14 +42,18 @@ class CrashStateMachineTest {
         fun advance(ms: Long) { t += ms }
     }
 
-    /** Build a [SensorSample]. `peak`, `smoothed`, `raw` default to each other. */
+    /** Build a [SensorSample]. `peak`, `smoothed`, `raw` default to each other.
+     *
+     *  Note: as of P1 (May 2026) `gpsStale` is no longer on [SensorSample] — push it via
+     *  `sm.setSpeedGpsStale(true)` before processing the stale samples. The four
+     *  GPS-stale tests in this file follow that pattern (search for `setSpeedGpsStale`).
+     */
     private fun sample(
         time: Long,
         peak: Double = 0.0,
         smoothed: Double = peak,
         raw: Double = peak,
         gyro: Double = 0.0,
-        gpsStale: Boolean = false,
         ax: Double = 0.0,
         ay: Double = 0.0,
         az: Double = 0.0,
@@ -59,7 +63,6 @@ class CrashStateMachineTest {
         peakMagnitude = peak,
         gyroMag = gyro,
         timestampMs = time,
-        gpsStale = gpsStale,
         accelX = ax,
         accelY = ay,
         accelZ = az,
@@ -103,9 +106,10 @@ class CrashStateMachineTest {
     @Test
     fun `MONITORING entry gate is NOT bypassed when gpsStale=true`() {
         val (sm, _) = newSm()
-        // Below minSpeed; staleness travels on the sample. Per doc, no bypass at MONITORING entry.
+        // Below minSpeed; staleness now pushed via setSpeedGpsStale (P1). Per doc, no bypass at MONITORING entry.
+        sm.setSpeedGpsStale(true)
         sm.onSpeedUpdate(2.0)
-        val d = sm.onSample(sample(time = 1000, peak = 60.0, smoothed = 30.0, gyro = 0.5, gpsStale = true))
+        val d = sm.onSample(sample(time = 1000, peak = 60.0, smoothed = 30.0, gyro = 0.5))
         assertEquals(CrashStateMachine.Decision.None, d)
         assertEquals(CrashStateMachine.State.MONITORING, sm.state)
     }
@@ -165,24 +169,25 @@ class CrashStateMachineTest {
     @Test
     fun `SILENCE_CHECK GPS-stale path uses gpsStaleSilenceDurationMs and gpsStaleSilenceDeviationMax`() {
         // With crashConfirmSpeedKmh=0 the speed gate is disabled — required so we can
-        // get past the MONITORING entry gate at speed=0. Staleness is carried on each
-        // sample so the IMPACT/SILENCE_CHECK path uses hardened thresholds.
+        // get past the MONITORING entry gate at speed=0. Staleness pushed via
+        // setSpeedGpsStale (P1) so the IMPACT/SILENCE_CHECK path uses hardened thresholds.
         val (sm, _) = newSm(
             thresholds = Thresholds(crashConfirmSpeedKmh = 0, minSpeedForCrashKmh = 0)
         )
+        sm.setSpeedGpsStale(true)
         sm.onSpeedUpdate(0.0)
-        sm.onSample(sample(time = 0, peak = 60.0, smoothed = 30.0, gyro = 0.5, gpsStale = true))
+        sm.onSample(sample(time = 0, peak = 60.0, smoothed = 30.0, gyro = 0.5))
         // Magnitude well inside the GPS-stale 1.5 deviation max (|9.80-9.81|=0.01)
-        sm.onSample(sample(time = 600, peak = QUIET, smoothed = QUIET, gyro = 0.5, gpsStale = true))
+        sm.onSample(sample(time = 600, peak = QUIET, smoothed = QUIET, gyro = 0.5))
         assertEquals(CrashStateMachine.State.SILENCE_CHECK, sm.state)
 
         // Just shy of gpsStaleSilenceDurationMs (8000) — must NOT confirm yet.
-        val notYet = sm.onSample(sample(time = 8000, peak = QUIET, smoothed = QUIET, gyro = 0.5, gpsStale = true))
+        val notYet = sm.onSample(sample(time = 8000, peak = QUIET, smoothed = QUIET, gyro = 0.5))
         // silenceStartedMs = 600; elapsed at t=8000 → 7400 < 8000 → no confirm
         assertEquals(CrashStateMachine.Decision.None, notYet)
 
         // Past the gpsStaleSilenceDurationMs window — should confirm.
-        val confirmed = sm.onSample(sample(time = 8700, peak = QUIET, smoothed = QUIET, gyro = 0.5, gpsStale = true))
+        val confirmed = sm.onSample(sample(time = 8700, peak = QUIET, smoothed = QUIET, gyro = 0.5))
         assertEquals(CrashStateMachine.Decision.Confirm, confirmed)
     }
 
@@ -193,11 +198,12 @@ class CrashStateMachineTest {
         val (sm, _) = newSm(
             thresholds = Thresholds(crashConfirmSpeedKmh = 0, minSpeedForCrashKmh = 0)
         )
+        sm.setSpeedGpsStale(true)
         sm.onSpeedUpdate(0.0)
-        sm.onSample(sample(time = 0, peak = 60.0, smoothed = 30.0, gyro = 0.5, gpsStale = true))
+        sm.onSample(sample(time = 0, peak = 60.0, smoothed = 30.0, gyro = 0.5))
         // Magnitude = 11.5 → deviation = 1.69 > 1.5 (gpsStaleSilenceDeviationMax)
         // Must NOT enter SILENCE_CHECK.
-        sm.onSample(sample(time = 600, peak = 11.5, smoothed = 11.5, gyro = 0.5, gpsStale = true))
+        sm.onSample(sample(time = 600, peak = 11.5, smoothed = 11.5, gyro = 0.5))
         assertEquals(CrashStateMachine.State.IMPACT, sm.state)
     }
 
@@ -350,18 +356,18 @@ class CrashStateMachineTest {
         )
         // Fire 5 samples spanning 6 seconds of sample time. The wall clock starts at 0
         // and we tick it only slightly so we stay inside coldStartGuardMs (8s).
-        sm.onSample(sample(time = 0, peak = 60.0, smoothed = 30.0, gyro = 0.5, gpsStale = false))
+        sm.onSample(sample(time = 0, peak = 60.0, smoothed = 30.0, gyro = 0.5))
         handle.advance(1_000)
-        sm.onSample(sample(time = 1_500, peak = QUIET, smoothed = QUIET, gyro = 0.5, gpsStale = false))
+        sm.onSample(sample(time = 1_500, peak = QUIET, smoothed = QUIET, gyro = 0.5))
         handle.advance(1_500)
-        sm.onSample(sample(time = 3_000, peak = QUIET, smoothed = QUIET, gyro = 0.5, gpsStale = false))
+        sm.onSample(sample(time = 3_000, peak = QUIET, smoothed = QUIET, gyro = 0.5))
         handle.advance(1_500)
-        sm.onSample(sample(time = 4_500, peak = QUIET, smoothed = QUIET, gyro = 0.5, gpsStale = false))
+        sm.onSample(sample(time = 4_500, peak = QUIET, smoothed = QUIET, gyro = 0.5))
         handle.advance(1_500)
         // Even after sample-time 6 s and silenceDurationMs (4500) elapsed since entering
         // SILENCE_CHECK, the cold-start guard must still block confirmation because
         // onSpeedUpdate was never called. Wall clock now at ~5.5s — still < 8 s guard.
-        val d = sm.onSample(sample(time = 6_000, peak = QUIET, smoothed = QUIET, gyro = 0.5, gpsStale = false))
+        val d = sm.onSample(sample(time = 6_000, peak = QUIET, smoothed = QUIET, gyro = 0.5))
         assertNotEquals(CrashStateMachine.Decision.Confirm, d)
         // SILENCE_CHECK entry itself must not have happened either (isSpeedDropConfirmed
         // is false for the IMPACT→SILENCE_CHECK transition too).
@@ -1062,10 +1068,11 @@ class CrashStateMachineTest {
         val (sm, _) = newSm(
             thresholds = Thresholds(crashConfirmSpeedKmh = 0, minSpeedForCrashKmh = 0)
         )
+        sm.setSpeedGpsStale(true)
         sm.onSpeedUpdate(0.0)
 
-        // Impact at t=0 (gpsStale=true on all samples).
-        sm.onSample(sample(time = 0, peak = 60.0, smoothed = 30.0, gyro = 0.5, gpsStale = true))
+        // Impact at t=0 (gpsStale=true via setSpeedGpsStale above).
+        sm.onSample(sample(time = 0, peak = 60.0, smoothed = 30.0, gyro = 0.5))
         assertEquals(CrashStateMachine.State.IMPACT, sm.state)
 
         // Inject a valid upright pre-impact reference (gravity along Z — same as smEnteringSilence).
@@ -1076,7 +1083,7 @@ class CrashStateMachineTest {
         // → on-side branch → legacyShort = gpsStaleSilenceDurationMs (8000).
         // Magnitude = QUIET = 9.80; deviation = 0.01 ≤ gpsStaleSilenceDeviationMax (1.5) → isStill.
         sm.onSample(sample(time = 2000, peak = QUIET, smoothed = QUIET, gyro = 0.5,
-            gpsStale = true, ax = 9.81, ay = 0.0, az = 0.0))
+            ax = 9.81, ay = 0.0, az = 0.0))
         assertEquals(CrashStateMachine.State.SILENCE_CHECK, sm.state)
 
         // Accumulate well above MIN_ORIENTATION_SAMPLES (5) on-side still samples
@@ -1085,13 +1092,13 @@ class CrashStateMachineTest {
         repeat(8) {
             tNow += 200L
             sm.onSample(sample(time = tNow, peak = QUIET, smoothed = QUIET, gyro = 0.1,
-                gpsStale = true, ax = 9.81, ay = 0.0, az = 0.0))
+                ax = 9.81, ay = 0.0, az = 0.0))
         }
 
         // silenceStartedMs = 2000; 4500ms would be at t=6500. Feed a sample at t=7000
         // (elapsed = 5000 ms) — must NOT confirm (8000 ms window required).
         val notYet = sm.onSample(sample(time = 7000, peak = QUIET, smoothed = QUIET, gyro = 0.1,
-            gpsStale = true, ax = 9.81, ay = 0.0, az = 0.0))
+            ax = 9.81, ay = 0.0, az = 0.0))
         assertEquals("must not confirm before 8 s with GPS-stale on-side orientation",
             CrashStateMachine.Decision.None, notYet)
 
@@ -1100,7 +1107,7 @@ class CrashStateMachineTest {
         while (tNow < 12_000L) {
             tNow += 200L
             if (sm.onSample(sample(time = tNow, peak = QUIET, smoothed = QUIET, gyro = 0.1,
-                    gpsStale = true, ax = 9.81, ay = 0.0, az = 0.0)) is CrashStateMachine.Decision.Confirm) {
+                    ax = 9.81, ay = 0.0, az = 0.0)) is CrashStateMachine.Decision.Confirm) {
                 confirmed = true
                 break
             }

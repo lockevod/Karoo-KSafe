@@ -97,9 +97,17 @@ class CrashStateMachine(
     // ── Speed / GPS ──────────────────────────────────────────────────────────
     @Volatile private var lastSpeedKmh: Double = 0.0
     /**
-     * Most recent GPS-stale view, sourced from [SensorSample.gpsStale] on each [onSample].
-     * Lives in the sample domain so the staleness view stays current between speed pings
-     * (an accel sample arrives ~50 Hz; speed pings ~1 Hz).
+     * Most recent GPS-stale view, pushed in by the facade via [setSpeedGpsStale] whenever
+     * its derived staleness flag flips (per the SDK speed-staleness model — the value-
+     * change-based detector in [CrashDetectionManager]). Read by IMPACT / SILENCE_CHECK on
+     * every sample.
+     *
+     * **P1 fix (May 2026)** — decoupled from [onSample]: previously each accel tick read
+     * [SensorSample.gpsStale] which forced the facade to `.copy()` the sample whenever
+     * the staleness flag disagreed with the raw sample. During a GPS-stale stretch
+     * (tunnel, dense forest) the disagreement is permanent and the per-tick copy was
+     * allocating ~14 MB / hour of young-gen GC. With the setter pattern the hot path
+     * stays allocation-free.
      */
     @Volatile private var lastSpeedGpsStale: Boolean = false
     /**
@@ -293,10 +301,9 @@ class CrashStateMachine(
     fun onSample(sample: SensorSample): Decision {
         val now = sample.timestampMs
         lastSampleMs = now
-        // Refresh the staleness view on every sample. This MUST NOT touch
-        // [speedLastUpdatedAtMs] — that sentinel marks "real speed update received"
-        // and powers the cold-start guard.
-        lastSpeedGpsStale = sample.gpsStale
+        // P1 — staleness no longer flows on the sample; it's pushed in via
+        // [setSpeedGpsStale] by the facade on transition. Keeps the 50 Hz hot path
+        // allocation-free (avoids a sample.copy on every tick during GPS-stale stretches).
         if (startTimeMs == 0L) startTimeMs = clock.nowMs()
 
         return when (state) {
@@ -308,12 +315,25 @@ class CrashStateMachine(
 
     /**
      * Real speed-update event handler. Call this **only** when an actual speed reading
-     * arrived (from the SDK speed stream) — not on every accel sample. The per-sample
-     * staleness signal travels on [SensorSample.gpsStale] instead.
+     * arrived (from the SDK speed stream) — not on every accel sample. The staleness
+     * signal is pushed separately via [setSpeedGpsStale].
      */
     fun onSpeedUpdate(speedKmh: Double) {
         lastSpeedKmh = speedKmh
         speedLastUpdatedAtMs = clock.nowMs()
+    }
+
+    /**
+     * Update the GPS-staleness view used by IMPACT / SILENCE_CHECK. Called by the facade
+     * whenever its derived staleness flag changes (or on every sample — the write is a
+     * cheap volatile store and the facade currently debounces via `lastGpsStaleState`).
+     *
+     * MUST NOT touch [speedLastUpdatedAtMs] — that sentinel marks "real speed update
+     * received" and powers the cold-start guard. P1 fix decouples staleness from
+     * [SensorSample] so the accel hot path can stay allocation-free.
+     */
+    fun setSpeedGpsStale(stale: Boolean) {
+        lastSpeedGpsStale = stale
     }
 
     fun onCadenceUpdate(cadenceRpm: Double) {

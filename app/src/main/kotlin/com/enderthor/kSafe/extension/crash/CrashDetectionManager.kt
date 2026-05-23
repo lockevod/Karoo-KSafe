@@ -429,20 +429,19 @@ class CrashDetectionManager(
         val gpsCurrentlyStale = isGpsStale(now)
         if (gpsCurrentlyStale != lastGpsStaleState) {
             lastGpsStaleState = gpsCurrentlyStale
+            // P1 — push the new staleness view to the SM only on transition; otherwise
+            // the per-sample volatile write is wasted bandwidth. The SM reads the field
+            // lazily inside IMPACT / SILENCE_CHECK only.
+            stateMachine.setSpeedGpsStale(gpsCurrentlyStale)
             if (gpsCurrentlyStale) {
                 calibLogger?.log(CalibrationLogger.Event.GPS_STALE) {
                     "stale=true,since_ms=${now - speedLastChangeMs},last_speed=%.1f,state=${stateMachine.state}".formatUs(currentSpeedKmh)
                 }
             }
         }
-        // Stamp the current staleness onto the sample so the state machine sees an
-        // up-to-date view between speed pings, WITHOUT touching the
-        // "real-speed-ever-received" sentinel (which protects the cold-start guard).
-        // SensorReader always constructs the sample with gpsStale=false, so in the
-        // common (GPS-alive) case the value already matches and we can use rawSample
-        // directly — avoiding an unconditional ~50/s copy purely to stamp one boolean.
-        val sample = if (gpsCurrentlyStale == rawSample.gpsStale) rawSample
-                     else rawSample.copy(gpsStale = gpsCurrentlyStale)
+        // P1 — no per-tick sample.copy. Use rawSample directly; the SM picks up
+        // staleness from the volatile field set on transition above.
+        val sample = rawSample
 
         // Periodic debug log (debug builds only).
         if (BuildConfig.DEBUG && now - lastLogTime > LOG_INTERVAL_MS) {
