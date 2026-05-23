@@ -974,6 +974,19 @@ class KSafeExtension : KarooExtension("ksafe", BuildConfig.VERSION_NAME), Corout
      * Returns a human-readable result string for display in the UI.
      */
     suspend fun sendCustomMessage(slot: Int = 1): String {
+        // Double-tap guard: bail if a previous tap on the same slot is still in flight.
+        // A Karoo data-field tap re-fires within ~100–500 ms before the field re-renders
+        // to clickable=false, queueing a second FieldTapReceiver broadcast that would
+        // launch its own coroutine and send the message twice. The per-slot state flow
+        // is updated synchronously to SENDING below before any suspend, so reading it
+        // here at function entry reliably catches the queued tap.
+        // NOTE: no facade test harness for KSafeExtension exists today; if one is added,
+        // add a "send during SENDING is ignored" test against this guard.
+        val inFlight = CustomMessageState.flowForSlot(slot).value
+        if (inFlight == CustomMessageState.SENDING || inFlight == CustomMessageState.SENT) {
+            Timber.d("Custom message slot=$slot tap ignored — already in $inFlight")
+            return "Already sending — please wait."
+        }
         val config = activeConfig
         if (!config.isActive) {
             CustomMessageState.update(slot, CustomMessageState.ERROR)
@@ -1200,6 +1213,22 @@ class KSafeExtension : KarooExtension("ksafe", BuildConfig.VERSION_NAME), Corout
      */
     suspend fun handleWebhookTap(slot: Int) {
         Timber.d("handleWebhookTap called slot=$slot")
+        // Double-tap guard: bail if a previous tap on the same slot is still in flight.
+        // A nervous rider can double-tap the Karoo field within ~100–500 ms before the
+        // field re-renders to clickable=false; the second FieldTapReceiver broadcast
+        // launches its own coroutine and would otherwise re-run geo-fence + auth + HTTP.
+        // For external integrations (Home Assistant unlock, Pushover broadcast) this
+        // duplicated request is genuinely bad. WebhookState transitions to FIRING below
+        // (and to SUCCESS / ERROR on completion, before the auto-reset to IDLE) so the
+        // queued tap reliably sees a non-IDLE/ERROR state and exits.
+        // NOTE: no facade test harness for KSafeExtension exists today; if one is added,
+        // add "webhook tap during in-flight FIRING is ignored" + "after success returns
+        // to IDLE then fires normally" tests against this guard.
+        val inFlight = WebhookState.flowForSlot(slot).value.state
+        if (inFlight == WebhookState.FIRING || inFlight == WebhookState.SUCCESS) {
+            Timber.d("Webhook slot=$slot tap ignored — already in $inFlight")
+            return
+        }
         try {
             val config = activeConfig
             val label = if (slot == 1) config.webhook1Label.ifBlank { "Action 1" }
