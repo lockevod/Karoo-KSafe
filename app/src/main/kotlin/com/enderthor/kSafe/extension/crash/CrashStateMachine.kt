@@ -481,10 +481,13 @@ class CrashStateMachine(
 
         // Accumulate orientation during IMPACT on settled samples only. accelOk
         // filters the impact transient and any post-impact tumble noise, so the
-        // average reflects the bike's actual resting orientation. The accumulator
-        // is cleared on transition to SILENCE_CHECK below (resetSilenceWindow())
-        // so SILENCE_CHECK starts with a fresh count (preserving the latch's
-        // MIN_ORIENTATION_SAMPLES semantics).
+        // average reflects the bike's actual resting orientation. The transition
+        // to SILENCE_CHECK below resets the accumulator on the speed-drop path
+        // (so SILENCE_CHECK starts with a fresh count, preserving the latch's
+        // MIN_ORIENTATION_SAMPLES semantics) — but DELIBERATELY carries it
+        // forward on the on-side relaxation path. The conditional reset is
+        // explained at the gate-success branch; do not "simplify" by unifying
+        // the two paths.
         if (accelOk) {
             orientationSumX += sample.accelX
             orientationSumY += sample.accelY
@@ -503,6 +506,11 @@ class CrashStateMachine(
         // path. The 25-sample minimum prevents a transient angle flicker
         // from bypassing speed; ~500 ms of sustained on-side evidence is
         // required.
+        // Note: a SILENCE_CHECK-scoped `onSideRelaxed` with the same name exists
+        // in handleSilenceCheck — same physical meaning ("decisive on-side
+        // evidence"), but THIS one is recomputed live from the IMPACT accumulator
+        // while the SILENCE_CHECK one reads the latched value. Intentional name
+        // sharing for conceptual unity across phases.
         val onSideRelaxed = orientationSampleCount >= IMPACT_RELAXATION_MIN_SAMPLES &&
                             currentOrientationAngleDeg() >= thresholds.onSideRelaxationAngleDeg
         val gateOk = accelOk && gyroOk && timeOk && (speedDropOk || onSideRelaxed)
