@@ -548,8 +548,15 @@ class CrashStateMachine(
         }
 
         if (timeSinceImpact > thresholds.impactWindowMs) {
-            // False alarm: never settled within the impact window.
+            // False alarm: never settled within the impact window. Reset BOTH the timing
+            // fields AND the orientation accumulator — the accumulator carries X/Y/Z sums
+            // gated against the pre-impact reference of THIS impact; leaving them filled
+            // would cause the next impact's `currentOrientationAngleDeg()` to compute
+            // `new_ref · stale_sums`, a geometrically incoherent average that can fire the
+            // IMPACT on-side relaxation with as few as ~5 fresh samples instead of the
+            // documented 25. CR1 fix.
             resetTimers()
+            resetSilenceWindow()
             state = State.MONITORING
             return Decision.ReturnToMonitoring
         }
