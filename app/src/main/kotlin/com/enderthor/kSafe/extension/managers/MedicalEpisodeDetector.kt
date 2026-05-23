@@ -78,6 +78,18 @@ class MedicalEpisodeDetector(
     private val CADENCE_ACTIVE_RPM         = 10.0
     private val POWER_ACTIVE_W             = 30
 
+    /** I2 fix — staleness window for the cadence/power cross-check. Mirrors
+     *  [com.enderthor.kSafe.extension.crash.Thresholds.cadenceStaleThresholdMs] (10 s)
+     *  but kept local to the medical sub-system: the [com.enderthor.kSafe.extension.crash.Thresholds]
+     *  field is owned by the crash state machine and tuning it for medical use would
+     *  cross-couple two unrelated detectors. A stuck ANT+/BLE cadence sensor (magnet
+     *  hovering just inside sensing range) or a stuck power meter (frozen at the last
+     *  emitted W) keeps reporting the same bit-exact value across every emission, so
+     *  freshness-by-emission cannot catch it. We track freshness-by-VALUE-CHANGE: if
+     *  the value has not moved for [CADENCE_POWER_STALE_MS], treat the sensor as
+     *  inactive in the cross-check and fall through to the original FLATLINE logic. */
+    private val CADENCE_POWER_STALE_MS     = 10_000L
+
     // ─── State (all `@Volatile` fields are read from the monitor coroutine) ──────────────
     @Volatile private var currentHrBpm        = 0
     @Volatile private var lastHrUpdateMs      = 0L
@@ -104,6 +116,28 @@ class MedicalEpisodeDetector(
     @Volatile private var cadenceDataReceived = false
     @Volatile private var currentPowerW       = 0
     @Volatile private var powerDataReceived   = false
+
+    // I2 fix — value-change timestamps for the cadence + power cross-check. A stuck
+    // sensor keeps emitting the same value; `cadenceDataReceived` / `powerDataReceived`
+    // (sticky once-per-session) cannot disambiguate "actively pedalling at 60 RPM" from
+    // "magnet stuck at 60 RPM since the bike was rolled out". We stamp these timestamps
+    // only when the value actually CHANGES, mirroring the freshness-by-change pattern in
+    // [com.enderthor.kSafe.extension.crash.CrashStateMachine.cadenceLastChangeMs].
+    //
+    // Sentinel semantics: `*LastChangeMs == 0L` means "no value-change observed yet this
+    // session" — either (a) the sensor has never emitted, or (b) it has only emitted a
+    // single, identical value (first reading does not count as a change). In either case
+    // the cross-check falls through to the existing FLATLINE logic (`*Fresh` is false →
+    // `*SaysActive` is false → original behaviour preserved). See the
+    // `H3 - flatline fires when no cadence or power signal is plumbed` regression guard.
+    //
+    // `prevCadenceRpm` uses `Double.NaN` as the "never seen" marker so the first emission
+    // does not count as a change (a single reading at 60 RPM should not be treated as
+    // fluctuation against a non-existent prior value). `prevPowerW` uses `-1` analogously.
+    @Volatile private var cadenceLastChangeMs: Long = 0L
+    @Volatile private var prevCadenceRpm: Double = Double.NaN
+    @Volatile private var powerLastChangeMs: Long = 0L
+    @Volatile private var prevPowerW: Int = -1
 
     /**
      * Rolling HR history used by [computeAverageHrInWindow] for the COLLAPSE baseline
@@ -176,6 +210,15 @@ class MedicalEpisodeDetector(
         currentCadenceRpm = 0.0
         powerDataReceived = false
         currentPowerW = 0
+        // I2 fix — reset freshness-by-change bookkeeping for the same reason as the H2
+        // speedLastChangeMs reset above: a new ride must not inherit a stale value-change
+        // timestamp from the previous ride (would either spuriously mark a stuck sensor as
+        // fresh forever, or — once the clock ages past the threshold — claim staleness
+        // before any value has been observed in the new session).
+        cadenceLastChangeMs = 0L
+        prevCadenceRpm = Double.NaN
+        powerLastChangeMs = 0L
+        prevPowerW = -1
         Timber.d("MedicalEpisodeDetector stopped")
     }
 
@@ -226,12 +269,28 @@ class MedicalEpisodeDetector(
      * H3 fix — optional cadence input for the FLATLINE cross-check. A bike cadence sensor
      * (ANT+/BLE) typically emits at 1–4 Hz; absent sensor → method never called and the
      * cross-check falls through to the existing FLATLINE logic (graceful degradation).
+     *
+     * I2 fix — also stamps [cadenceLastChangeMs] when the value actually changes. A stuck
+     * ANT+/BLE cadence sensor (magnet hovering just inside sensing range) keeps emitting
+     * the same value bit-exact across every callback, so the sticky [cadenceDataReceived]
+     * cannot tell "actively pedalling at 60 RPM" from "stuck at 60 RPM since the bike was
+     * rolled out". The freshness-by-CHANGE timestamp lets [evaluateFlatline] age past the
+     * cross-check window and fall through to the underlying FLATLINE signal. Matches the
+     * NaN-sentinel pattern in [com.enderthor.kSafe.extension.crash.CrashStateMachine.onCadenceUpdate]:
+     * the very first emission does NOT count as a value change (no prior value to compare
+     * against), so a sensor that latches at its very first sample never trips the freshness
+     * window and the cross-check correctly treats it as inactive.
      */
     fun updateCadence(rpm: Double) {
+        val now = clock.nowMs()
         if (!cadenceDataReceived) {
             cadenceDataReceived = true
             Timber.d("MedicalEpisodeDetector: first cadence reading $rpm RPM")
         }
+        if (!prevCadenceRpm.isNaN() && rpm != prevCadenceRpm) {
+            cadenceLastChangeMs = now
+        }
+        prevCadenceRpm = rpm
         currentCadenceRpm = rpm
     }
 
@@ -239,12 +298,25 @@ class MedicalEpisodeDetector(
      * H3 fix — optional power input for the FLATLINE cross-check. Power meters emit at
      * 1 Hz typically; absent sensor → method never called and the cross-check is skipped
      * (see [updateCadence] for the graceful-degradation rationale).
+     *
+     * I2 fix — also stamps [powerLastChangeMs] when the value actually changes. A stuck
+     * power meter (frozen at the last emitted W, a known pathology with some pedal-based
+     * units after a strain-gauge dropout) keeps the sticky [powerDataReceived] true and
+     * the value above [POWER_ACTIVE_W] indefinitely. The freshness-by-CHANGE timestamp
+     * lets [evaluateFlatline] age past the cross-check window and fall through. Uses `-1`
+     * (`prevPowerW`) as the "never seen" sentinel so the first emission is not mistaken
+     * for a value change.
      */
     fun updatePower(w: Int) {
+        val now = clock.nowMs()
         if (!powerDataReceived) {
             powerDataReceived = true
             Timber.d("MedicalEpisodeDetector: first power reading $w W")
         }
+        if (prevPowerW != -1 && w != prevPowerW) {
+            powerLastChangeMs = now
+        }
+        prevPowerW = w
         currentPowerW = w
     }
 
@@ -325,8 +397,26 @@ class MedicalEpisodeDetector(
                 // still work for them). If EITHER signal is plumbed and indicates the
                 // rider is still active (cadence > 10 RPM or power > 30 W), suppress
                 // the fire and reset the timer.
-                val cadenceSaysActive = cadenceDataReceived && currentCadenceRpm > CADENCE_ACTIVE_RPM
-                val powerSaysActive = powerDataReceived && currentPowerW > POWER_ACTIVE_W
+                // I2 fix — also gate the cross-check on freshness-BY-VALUE-CHANGE. A
+                // stuck cadence/power sensor keeps `cadenceDataReceived` / `powerDataReceived`
+                // sticky-true and its frozen value above the active threshold forever,
+                // which would silently suppress a real FLATLINE for the entire stuck
+                // window. `*LastChangeMs == 0L` means "no value-change seen yet this
+                // session" → treat as not-fresh, so a never-changed signal does not
+                // contribute to the cross-check; this preserves the
+                // `H3 - flatline fires when no cadence or power signal is plumbed`
+                // graceful-fallback contract (we keep the sticky `*DataReceived` AND-gate
+                // so a sensor that has only ever emitted one identical value can never
+                // satisfy `*SaysActive` — same as the original H3 cross-check for an
+                // unpaired sensor). After [CADENCE_POWER_STALE_MS] without a value change
+                // the sensor is considered stale: cross-check falls through, FLATLINE can
+                // fire on the underlying HR signal.
+                val cadenceFresh = cadenceLastChangeMs > 0L &&
+                        (now - cadenceLastChangeMs) < CADENCE_POWER_STALE_MS
+                val powerFresh = powerLastChangeMs > 0L &&
+                        (now - powerLastChangeMs) < CADENCE_POWER_STALE_MS
+                val cadenceSaysActive = cadenceDataReceived && cadenceFresh && currentCadenceRpm > CADENCE_ACTIVE_RPM
+                val powerSaysActive = powerDataReceived && powerFresh && currentPowerW > POWER_ACTIVE_W
                 if (cadenceSaysActive || powerSaysActive) {
                     Timber.d(
                         "HR_FLATLINE suppressed by cross-check: bpm=$currentHrBpm " +

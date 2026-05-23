@@ -292,15 +292,19 @@ class MedicalEpisodeDetectorTest {
     @Test
     fun `H3 - flatline does NOT fire when cadence indicates the rider is still pedalling`() {
         // HR strap drops below 30 bpm for 35 s (sweat / contact loss). The rider is
-        // clearly still riding — cadence reads 60 RPM throughout. With H3 the
-        // cross-check suppresses the FLATLINE fire.
+        // clearly still riding — cadence fluctuates naturally around 60 RPM throughout
+        // (a real pedalling cadence varies revolution-to-revolution; the I2 staleness
+        // check requires value-change emissions to consider the sensor fresh). With H3
+        // the cross-check suppresses the FLATLINE fire.
         val f = Fixture()
         f.speed(20.0)
         f.detector.updateCadence(60.0)      // seed: well above CADENCE_ACTIVE_RPM = 10
         for (sec in 0..35) {
             f.clock.nowMs += 1_000L
             f.hr(20)
-            f.detector.updateCadence(60.0)
+            // Vary the cadence each sample so I2's freshness-by-change keeps the
+            // sensor classified as fresh — same shape as a genuinely pedalling rider.
+            f.detector.updateCadence(60.0 + (sec % 5))
             if (sec % 5 == 0) f.detector.tick()
         }
         assertNull(
@@ -311,14 +315,18 @@ class MedicalEpisodeDetectorTest {
 
     @Test
     fun `H3 - flatline does NOT fire when power indicates the rider is still riding`() {
-        // Same shape — HR strap drops out but power reads 200 W. Cross-check suppresses.
+        // Same shape — HR strap drops out but power reads ~200 W with natural
+        // fluctuation (real power-meter output varies pedal stroke to pedal stroke,
+        // which the I2 freshness-by-change check uses to classify the sensor as fresh).
+        // Cross-check suppresses.
         val f = Fixture()
         f.speed(20.0)
         f.detector.updatePower(200)         // well above POWER_ACTIVE_W = 30
         for (sec in 0..35) {
             f.clock.nowMs += 1_000L
             f.hr(20)
-            f.detector.updatePower(200)
+            // Fluctuate so I2 freshness-by-change keeps the sensor classified as fresh.
+            f.detector.updatePower(200 + (sec % 5))
             if (sec % 5 == 0) f.detector.tick()
         }
         assertNull(
@@ -368,6 +376,165 @@ class MedicalEpisodeDetectorTest {
             f.captured != null,
         )
         assertEquals(EmergencyReason.MEDICAL_FLATLINE, f.captured!!.first)
+    }
+
+    // ── I2 — stuck cadence/power sensor staleness ──────────────────────────────
+
+    @Test
+    fun `I2 - H3 FLATLINE fires when cadence sensor is stuck (stale)`() {
+        // A known ANT+ pathology: the cadence magnet sits just inside the sensor's
+        // sensing range and the sensor keeps emitting the last reading bit-exact long
+        // after the wheel has stopped. Pre-I2, the sticky `cadenceDataReceived` plus
+        // the stuck 60 RPM kept `cadenceSaysActive = true` indefinitely, silently
+        // suppressing every genuine FLATLINE that lined up with a stuck sensor. With
+        // I2 the freshness-by-VALUE-CHANGE check ages past the 10 s window and the
+        // cross-check correctly falls through to the underlying HR signal.
+        val f = Fixture()
+        // Phase 1 — bouncing cadence for 30 s seeds [cadenceLastChangeMs].
+        // HR is still healthy here (no FLATLINE accumulating). Keep speed fresh
+        // every sample so the ACTIVE_RECENT_MS (60 s) gate never trips during
+        // phase 2's accumulation window.
+        var cadenceVal = 50.0
+        for (sec in 0 until 30) {
+            f.clock.nowMs += 1_000L
+            f.hr(120)
+            f.speed(20.0 + (sec % 5) * 0.1)
+            cadenceVal = when (sec % 3) { 0 -> 50.0; 1 -> 55.0; else -> 60.0 }
+            f.detector.updateCadence(cadenceVal)
+            if (sec % 5 == 0) f.detector.tick()
+        }
+        // Phase 2 — sensor freezes at 60 RPM AND HR drops below 30 bpm. After
+        // CADENCE_POWER_STALE_MS (10 s) without a value change the sensor goes stale;
+        // after HR_FLATLINE_DURATION_SEC (30 s) under threshold the FLATLINE fires.
+        for (sec in 0 until 35) {
+            f.clock.nowMs += 1_000L
+            f.hr(20)
+            f.speed(20.0 + (sec % 5) * 0.1)
+            f.detector.updateCadence(60.0)  // stuck — bit-exact each call
+            if (sec % 5 == 0) f.detector.tick()
+        }
+        assertTrue(
+            "stuck cadence must NOT suppress FLATLINE — I2 staleness gate should kick in: ${f.captured}",
+            f.captured != null,
+        )
+        assertEquals(EmergencyReason.MEDICAL_FLATLINE, f.captured!!.first)
+    }
+
+    @Test
+    fun `I2 - H3 FLATLINE fires when power meter is stuck (stale)`() {
+        // Same shape as the cadence case — a frozen power meter (strain-gauge dropout
+        // that keeps reporting the last value) must not silently mask a real FLATLINE.
+        val f = Fixture()
+        var powerVal = 150
+        for (sec in 0 until 30) {
+            f.clock.nowMs += 1_000L
+            f.hr(120)
+            f.speed(20.0 + (sec % 5) * 0.1)
+            powerVal = when (sec % 3) { 0 -> 150; 1 -> 175; else -> 200 }
+            f.detector.updatePower(powerVal)
+            if (sec % 5 == 0) f.detector.tick()
+        }
+        for (sec in 0 until 35) {
+            f.clock.nowMs += 1_000L
+            f.hr(20)
+            f.speed(20.0 + (sec % 5) * 0.1)
+            f.detector.updatePower(200)     // stuck — bit-exact each call
+            if (sec % 5 == 0) f.detector.tick()
+        }
+        assertTrue(
+            "stuck power meter must NOT suppress FLATLINE — I2 staleness gate should kick in: ${f.captured}",
+            f.captured != null,
+        )
+        assertEquals(EmergencyReason.MEDICAL_FLATLINE, f.captured!!.first)
+    }
+
+    @Test
+    fun `I2 - H3 FLATLINE blocked when cadence is genuinely fresh and active`() {
+        // Regression guard for the I2 change: a real pedalling rider whose cadence
+        // varies every revolution must STILL have FLATLINE suppressed by the H3 cross-
+        // check. This is the "I2 must not break H3" invariant — staleness only kicks
+        // in when the value has actually stopped changing.
+        val f = Fixture()
+        f.speed(20.0)
+        for (sec in 0..35) {
+            f.clock.nowMs += 1_000L
+            f.hr(20)
+            // Bounce through 50 / 55 / 60 / 65 — every sample is a value change, so
+            // [cadenceLastChangeMs] stays current and [cadenceFresh] stays true.
+            val rpm = when (sec % 4) { 0 -> 50.0; 1 -> 55.0; 2 -> 60.0; else -> 65.0 }
+            f.detector.updateCadence(rpm)
+            if (sec % 5 == 0) f.detector.tick()
+        }
+        assertNull(
+            "fresh-changing cadence must still suppress FLATLINE (H3 invariant): ${f.captured}",
+            f.captured,
+        )
+    }
+
+    @Test
+    fun `I2 - cadence staleness uses 10s threshold from last value change`() {
+        // Two halves with separate fixtures to exercise both sides of the 10 s
+        // freshness-by-change threshold. Separate fixtures because [evaluateFlatline]'s
+        // suppression branch resets [flatlineSinceMs] (re-arm semantics) — running both
+        // halves on the same instance would force the second half to re-accumulate the
+        // full 30 s after the first half's suppressive tick.
+        //
+        // Part 1 — frozen for 9 s ⇒ fresh ⇒ suppress.
+        //   Seed two distinct cadence values 1 s apart, then freeze. Accumulate 30 s of
+        //   HR < 30, ticking only at the very end when the last value change is just
+        //   under 10 s ago (re-stamped at the final second via a 50 → 60 transition).
+        val f1 = Fixture()
+        f1.detector.updateCadence(40.0)
+        f1.clock.nowMs += 1_000L
+        f1.detector.updateCadence(50.0)        // stamps cadenceLastChangeMs
+        // 29 s of HR < 30 with frozen cadence; refresh cadence once on the very last
+        // second so the final tick lands ~0 s past the latest change (well inside the
+        // 10 s fresh window).
+        for (sec in 0 until 29) {
+            f1.clock.nowMs += 1_000L
+            f1.hr(20)
+            f1.speed(20.0 + (sec % 5) * 0.1)
+            // No tick during accumulation — let flatlineSinceMs build uninterrupted.
+            f1.detector.updateCadence(50.0)    // identical — no change stamped
+        }
+        // Final second — re-stamp cadenceLastChangeMs by changing the value, then tick.
+        f1.clock.nowMs += 1_000L
+        f1.hr(20)
+        f1.speed(25.0)
+        f1.detector.updateCadence(60.0)        // value change → cadenceLastChangeMs = now
+        f1.detector.tick()
+        assertNull(
+            "≤10 s since last cadence change → cross-check fresh → must suppress: ${f1.captured}",
+            f1.captured,
+        )
+
+        // Part 2 — frozen for 11 s ⇒ stale ⇒ fire.
+        //   Same seed; freeze for 11 s BEFORE HR drops to keep the flatline timer at
+        //   zero during the freeze. Then 35 s of HR < 30 with cadence still frozen —
+        //   the cross-check stays stale across the entire FLATLINE window so the fire
+        //   is not suppressed.
+        val f2 = Fixture()
+        f2.detector.updateCadence(40.0)
+        f2.clock.nowMs += 1_000L
+        f2.detector.updateCadence(50.0)        // stamps cadenceLastChangeMs
+        for (sec in 0 until 11) {
+            f2.clock.nowMs += 1_000L
+            f2.speed(20.0 + (sec % 5) * 0.1)
+            f2.detector.updateCadence(50.0)    // identical
+        }
+        // Cross-check is now stale (11 s since last change). Drive 35 s of HR < 30.
+        for (sec in 0 until 35) {
+            f2.clock.nowMs += 1_000L
+            f2.hr(20)
+            f2.speed(20.0 + (sec % 5) * 0.1)
+            f2.detector.updateCadence(50.0)    // identical — still stale
+            if (sec % 5 == 0) f2.detector.tick()
+        }
+        assertTrue(
+            ">10 s since last cadence change → cross-check stale → FLATLINE must fire: ${f2.captured}",
+            f2.captured != null,
+        )
+        assertEquals(EmergencyReason.MEDICAL_FLATLINE, f2.captured!!.first)
     }
 
     // ── Universal guards ────────────────────────────────────────────────────────
