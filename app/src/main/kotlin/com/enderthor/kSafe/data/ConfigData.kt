@@ -70,7 +70,7 @@ const val KAROO_LIVE_BASE_URL = "https://dashboard.hammerhead.io/live/"
  *             keeps the previous "same text for time and deficit" behaviour. A blank legacy
  *             field leaves the new fields blank → the source-specific default strings apply.
  */
-const val CONFIG_VERSION = 14
+const val CONFIG_VERSION = 15
 
 /**
  * Canonical minSpeedForCrashKmh value per preset.
@@ -1020,6 +1020,26 @@ fun KSafeConfig.migrateToLatest(): KSafeConfig {
             configVersion = 14,
         )
         Timber.i("KSafeConfig migrated v%d→v14 (split fueling alert detail messages)", originalVersion)
+    }
+
+    if (c.configVersion < 15) {
+        // v14 → v15: default wellnessCriticalThresholdBpm raised 175 → 185 so the critical
+        // tier sits ABOVE the sustained tier (180). Riders who never touched the value got
+        // the broken default 175 (critical BELOW sustained — the tier inversion this fixes).
+        //
+        // Only nudge riders who are still on BOTH old defaults (critical 175 AND sustained
+        // 180). If the rider customised either field they keep their choice — even if their
+        // critical happens to equal 175 deliberately, we can't tell intent apart from default,
+        // but the customised sustained signals "I'm tuning this tier, don't touch". New
+        // installs naturally start at the new 185 default.
+        val newCritical =
+            if (c.wellnessCriticalThresholdBpm == 175 && c.wellnessHighHrThreshold == 180) 185
+            else c.wellnessCriticalThresholdBpm
+        c = c.copy(wellnessCriticalThresholdBpm = newCritical, configVersion = 15)
+        Timber.i(
+            "KSafeConfig migrated v%d→v15 (wellness critical default; critical %d→%d)",
+            originalVersion, 175, newCritical,
+        )
     }
 
     return c

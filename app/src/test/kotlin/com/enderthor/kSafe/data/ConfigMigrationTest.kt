@@ -55,4 +55,56 @@ class ConfigMigrationTest {
         assertEquals("already-time", migrated.carbAlertCustomDetailTime)
         assertEquals("already-deficit", migrated.carbAlertCustomDetailDeficit)
     }
+
+    @Test
+    fun `v14 with default 175 and default sustained 180 nudges critical to 185`() {
+        val old = KSafeConfig(
+            configVersion = 14,
+            wellnessCriticalThresholdBpm = 175,
+            wellnessHighHrThreshold = 180,
+        )
+        val migrated = old.migrateToLatest()
+        assertEquals(CONFIG_VERSION, migrated.configVersion)
+        assertEquals(185, migrated.wellnessCriticalThresholdBpm)
+        assertEquals(180, migrated.wellnessHighHrThreshold)
+    }
+
+    @Test
+    fun `v14 with customised critical keeps the customisation`() {
+        val old = KSafeConfig(
+            configVersion = 14,
+            wellnessCriticalThresholdBpm = 170,
+            wellnessHighHrThreshold = 180,
+        )
+        val migrated = old.migrateToLatest()
+        assertEquals(CONFIG_VERSION, migrated.configVersion)
+        assertEquals(170, migrated.wellnessCriticalThresholdBpm)
+        assertEquals(180, migrated.wellnessHighHrThreshold)
+    }
+
+    @Test
+    fun `v14 with customised sustained keeps both unchanged`() {
+        val old = KSafeConfig(
+            configVersion = 14,
+            wellnessCriticalThresholdBpm = 175,
+            wellnessHighHrThreshold = 175,
+        )
+        val migrated = old.migrateToLatest()
+        assertEquals(CONFIG_VERSION, migrated.configVersion)
+        assertEquals(175, migrated.wellnessCriticalThresholdBpm)
+        assertEquals(175, migrated.wellnessHighHrThreshold)
+    }
+
+    @Test
+    fun `v15 config is left unchanged by the migration`() {
+        val current = KSafeConfig(
+            configVersion = 15,
+            wellnessCriticalThresholdBpm = 175,
+            wellnessHighHrThreshold = 180,
+        )
+        val migrated = current.migrateToLatest()
+        assertEquals(15, migrated.configVersion)
+        assertEquals(175, migrated.wellnessCriticalThresholdBpm)
+        assertEquals(180, migrated.wellnessHighHrThreshold)
+    }
 }
