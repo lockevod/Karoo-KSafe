@@ -141,7 +141,11 @@ class CrashDetectionManager(
     // ─── State ────────────────────────────────────────────────────────────────
 
     @Volatile private var config = KSafeConfig()
-    @Volatile private var lastCrashTime = 0L
+    // `internal` (was `private`) so unit tests can pin the cooldown contract — see
+    // `clearCrashCooldown` and CrashDetectionManagerWiringTest. The field still has
+    // no public API surface (module-internal at runtime). No production caller reads
+    // or writes it from outside this class.
+    @Volatile internal var lastCrashTime = 0L
     @Volatile private var currentSpeedKmh = 0.0
     /** Timestamp of the most recent [updateSpeed] emission — any emission, even one that
      *  carries the same value as the previous one. Used for dv/dt math in [updateSpeed]. */
@@ -207,7 +211,10 @@ class CrashDetectionManager(
         onSample = { sample -> onSensorSample(sample) },
     )
 
-    private val stateMachine = CrashStateMachine(
+    // `internal` (was `private`) so unit tests can drive the state machine into IMPACT /
+    // SILENCE_CHECK and assert the facade's onPause(auto) preservation logic — see
+    // CrashDetectionManagerWiringTest. Read-only from outside this class.
+    internal val stateMachine = CrashStateMachine(
         thresholds = buildThresholds(config, effectivePeakThr = cachedEffectivePeakThr),
         clock = clock,
     )
