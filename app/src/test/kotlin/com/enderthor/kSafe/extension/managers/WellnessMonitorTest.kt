@@ -167,6 +167,74 @@ class WellnessMonitorTest {
         assertEquals(0, mon.getSummary().sustainedFires)
     }
 
+    // ── HE1: decoupling baseline-stability guard ─────────────────────────────
+
+    /** Builds a monitor with the decoupling tier enabled and rewinds `sessionStartMs` so
+     *  the establishment-time condition (`now - sessionStartMs >= 10 min`) is already met.
+     *  Tests can then drive a single tick to evaluate baseline establishment. */
+    private fun TestScope.newDecouplingMonitor():
+        Pair<WellnessMonitor, MutableList<Pair<EmergencyReason, Map<String, String>>>>
+    {
+        val incidents = mutableListOf<Pair<EmergencyReason, Map<String, String>>>()
+        val monitor = WellnessMonitor(
+            scope = this.backgroundScope as CoroutineScope,
+            onIncident = { reason, payload -> incidents += reason to payload },
+        )
+        monitor.start(
+            KSafeConfig(
+                wellnessEnabled = true,
+                wellnessCriticalEnabled = false,
+                wellnessSustainedEnabled = false,
+                wellnessDecouplingEnabled = true,
+            )
+        )
+        // Rewind session start so the "wait 10 min" gate has passed but we're still well
+        // under the 25-min hard defer cap.
+        monitor.setSessionStartForTest(System.currentTimeMillis() - 11L * 60_000L)
+        return monitor to incidents
+    }
+
+    @Test
+    fun `decoupling baseline establishes when power is stable`() = runTest {
+        val (mon, _) = newDecouplingMonitor()
+        // Pre-load the ratio buffer with >= DECOUPLING_MIN_SAMPLES (8) ticks of fresh data
+        // at steady HR/power so the rolling 5-min average is well-formed.
+        mon.updateHr(140)
+        // Stable power: 200 W ± a few watts — CV well below the 0.30 threshold.
+        repeat(60) { mon.updatePower(200 + (it % 5)) }
+        repeat(10) { mon.tick() }
+
+        // Baseline must be frozen (non-zero), no decoupling alert fired yet.
+        assertEquals(true, mon.decouplingBaselineForTest() > 0f)
+    }
+
+    @Test
+    fun `decoupling baseline deferred when power is unstable in establishment window`() = runTest {
+        val (mon, incidents) = newDecouplingMonitor()
+        mon.updateHr(140)
+        // Bouncing power: 80, 320, 80, 320, ... → mean ~200 W, stddev ~120 W → CV ~0.6,
+        // well above the 0.30 stability threshold.
+        repeat(60) { mon.updatePower(if (it % 2 == 0) 80 else 320) }
+        repeat(10) { mon.tick() }
+
+        // Baseline must NOT be established (still 0). No alert fired.
+        assertEquals(0f, mon.decouplingBaselineForTest(), 0.0001f)
+        assertEquals(0, incidents.size)
+    }
+
+    @Test
+    fun `decoupling baseline does not establish without a power signal`() = runTest {
+        val (mon, _) = newDecouplingMonitor()
+        mon.updateHr(140)
+        // No updatePower calls — rider has no power meter. `evaluateDecouplingTier`
+        // returns at the `lastPowerW ?: return` gate; ratio buffer stays empty, baseline
+        // never establishes. This matches the legacy behaviour for power-less riders and
+        // confirms the HE1 guard is bypassed cleanly when there's no power data to gate on.
+        repeat(10) { mon.tick() }
+
+        assertEquals(0f, mon.decouplingBaselineForTest(), 0.0001f)
+    }
+
     @Test
     fun `totalFires sums all three tier counters`() = runTest {
         val s = WellnessMonitor.WellnessSummary(

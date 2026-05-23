@@ -47,6 +47,31 @@ class WellnessMonitor(
     private val DECOUPLING_MIN_SAMPLES       = 8               // need at least 8 samples in the buffer to evaluate
     private val DECOUPLING_COOLDOWN_MS       = 30L * 60_000L   // once decoupling fires, wait 30 min before re-fire
 
+    // ── Baseline-stability guard (HE1) ──────────────────────────────────────
+    // Power-stability gating for the decoupling baseline. If the rider's power has been
+    // bouncing all over the place during the establishment window (warm-up at z1 then
+    // race-day ramp, hot lead-out then steady tempo, interval workout opening), freezing
+    // the baseline at exactly minute 10 anchors it to an atypical "fresh state". Every
+    // subsequent drift % then references the wrong anchor — HR rise from genuine effort
+    // change is read as decoupling and the WARNING fires.
+    //
+    // The guard collects a 2-min ring buffer of 1 Hz power samples (pushed by
+    // `updatePower`). At each baseline-establishment attempt we compute the coefficient
+    // of variation (stddev / mean) over that window. If CV > [POWER_STABILITY_CV_MAX]
+    // we DEFER establishment by [BASELINE_RETRY_INTERVAL_MS] (2 min) and try again, up
+    // to [BASELINE_MAX_DEFER_MS] (25 min) after `sessionStartMs`. Past that cap, we
+    // establish with whatever we have — better a stable-ish late baseline than none.
+    //
+    // No power meter → `evaluateDecouplingTier` returns at the `lastPowerW ?: return`
+    // gate long before reaching the establishment branch, so this guard is naturally
+    // bypassed: the legacy fixed-time path is unchanged for power-less riders.
+    private val POWER_BUFFER_WINDOW_MS       = 2L * 60_000L    // 2 min of 1 Hz samples
+    private val POWER_BUFFER_MAX_SIZE        = 150             // hard cap (~2.5 min at 1 Hz)
+    private val POWER_STABILITY_MIN_SAMPLES  = 30              // need >= 30 s of data to judge stability
+    private val POWER_STABILITY_CV_MAX       = 0.30f           // stddev / mean threshold
+    private val BASELINE_RETRY_INTERVAL_MS   = 2L * 60_000L    // re-attempt every 2 min after first defer
+    private val BASELINE_MAX_DEFER_MS        = 25L * 60_000L   // hard cap from sessionStartMs
+
     // ─── Live data (push from KSafeExtension) ────────────────────────────────
     @Volatile private var lastHrBpm: Int? = null
     @Volatile private var lastPowerW: Int? = null
@@ -72,6 +97,13 @@ class WellnessMonitor(
      *  is modest, but the running-sum pattern is consistent with the larger Medical
      *  detector optimisation and removes a per-tick autoboxing pass over the Pairs. */
     private var ratioRunningSum = 0.0
+
+    // Baseline-stability guard state (HE1). [powerSamples] is fed from `updatePower`
+    // at ~1 Hz (the rate of the SDK power stream). [lastBaselineAttemptMs] gates the
+    // re-attempt cadence so we only re-evaluate stability every BASELINE_RETRY_INTERVAL_MS,
+    // not on every tick.
+    private val powerSamples = ArrayDeque<Pair<Long, Int>>()
+    @Volatile private var lastBaselineAttemptMs = 0L
 
     // ─── Session accumulators (consumed by FIT export + Health tab) ─────────
     // Granularity is MONITOR_TICK_MS (~30 s) for the time-in-zone buckets — exact
@@ -107,6 +139,8 @@ class WellnessMonitor(
         lastDecouplingTriggerMs = 0L
         ratioSamples.clear()
         ratioRunningSum = 0.0
+        powerSamples.clear()
+        lastBaselineAttemptMs = 0L
         // Reset session accumulators — fresh ride, fresh totals.
         sessionMaxHr = 0
         cumMsCriticalAbove = 0L
@@ -145,6 +179,10 @@ class WellnessMonitor(
         sustainedSinceMs = 0L
         decouplingExceededSinceMs = 0L
         decouplingBaselineHrPerW = 0f
+        // Same continuity argument as the streak timers: the OFF period invalidates the
+        // power stability window, so the guard re-evaluates from scratch on resume.
+        powerSamples.clear()
+        lastBaselineAttemptMs = 0L
         monitorJob = scope.launch {
             oldJob?.cancelAndJoin()
             while (true) { delay(MONITOR_TICK_MS); tick() }
@@ -170,7 +208,21 @@ class WellnessMonitor(
         if (bpm > sessionMaxHr) sessionMaxHr = bpm
     }
 
-    fun updatePower(w: Int) { lastPowerW = w }
+    fun updatePower(w: Int) {
+        lastPowerW = w
+        // Feed the 2-min ring buffer used by the baseline-stability guard. Sampled at
+        // whatever rate the SDK pushes power (~1 Hz). The buffer is double-bounded:
+        // by time (POWER_BUFFER_WINDOW_MS) and by absolute count (POWER_BUFFER_MAX_SIZE)
+        // so a pathological high-frequency stream cannot grow it without bound.
+        val now = System.currentTimeMillis()
+        powerSamples.addLast(now to w)
+        while (powerSamples.isNotEmpty() &&
+            (now - powerSamples.first().first > POWER_BUFFER_WINDOW_MS ||
+                powerSamples.size > POWER_BUFFER_MAX_SIZE)
+        ) {
+            powerSamples.removeFirst()
+        }
+    }
     fun updateUserProfile(p: UserProfile) { lastUserProfile = p }
 
     // ─── Per-tier evaluation (runs on `scope`, every MONITOR_TICK_MS) ────────
@@ -276,8 +328,19 @@ class WellnessMonitor(
 
         // Establish baseline ONCE per session — after BASELINE_WAIT_MS of riding accumulated
         // enough samples in the rolling window. Captures the rider's "fresh" ratio.
+        //
+        // HE1: gate the establishment moment on power stability. If the rider's power is
+        // bouncing (warm-up + ramp, intervals, hot lead-out) at minute 10, freezing the
+        // baseline here anchors it to an atypical state and every subsequent drift % is
+        // referenced against the wrong "fresh" — surfacing as false WARNING fires later
+        // in the ride from genuine effort change. Defer + re-attempt; cap defers so a
+        // rider whose power is unstable for the whole hour still gets some baseline.
         if (decouplingBaselineHrPerW == 0f) {
             if (now - sessionStartMs >= DECOUPLING_BASELINE_WAIT_MS && ratioSamples.size >= DECOUPLING_MIN_SAMPLES) {
+                if (shouldDeferBaseline(now)) {
+                    lastBaselineAttemptMs = now
+                    return
+                }
                 decouplingBaselineHrPerW = (ratioRunningSum / ratioSamples.size).toFloat()
                 calibLogger?.log(CalibrationLogger.Event.WELLNESS_FIRED) {
                     String.format(Locale.US, "subkind=decoupling_baseline,baseline_hr_per_w=%.4f,samples=%d", decouplingBaselineHrPerW, ratioSamples.size)
@@ -320,6 +383,62 @@ class WellnessMonitor(
     }
 
     // ─── Helpers ─────────────────────────────────────────────────────────────
+
+    /**
+     * HE1 baseline-stability guard. Returns `true` when establishment should be deferred
+     * because the rider's power over the last [POWER_BUFFER_WINDOW_MS] is too variable to
+     * yield a representative HR/W "fresh" anchor.
+     *
+     * Decision tree:
+     * - Past the hard defer cap ([BASELINE_MAX_DEFER_MS] from session start) → **never defer**,
+     *   establish whatever we have. Better a stable-ish late baseline than indefinite waiting.
+     * - First attempt at the establishment moment (i.e. `lastBaselineAttemptMs == 0L`) → evaluate.
+     *   Subsequent attempts must be ≥ [BASELINE_RETRY_INTERVAL_MS] apart so we don't burn CPU on
+     *   every 30-s tick re-running stddev over the same buffer.
+     * - Not enough power samples to judge ([POWER_STABILITY_MIN_SAMPLES]) → don't defer.
+     *   In practice this only happens if the power stream just connected; treat the absence
+     *   of evidence as a pass rather than blocking forever.
+     * - Coefficient of variation (stddev / mean) > [POWER_STABILITY_CV_MAX] → defer.
+     *
+     * Note: no unit tests on this path — see [WellnessMonitorTest]. The decoupling
+     * fire path itself depends on wall-clock `System.currentTimeMillis()` and is exercised
+     * via the calibration log workflow rather than JVM tests.
+     */
+    private fun shouldDeferBaseline(now: Long): Boolean {
+        // Hard cap reached — establish now regardless of stability.
+        if (now - sessionStartMs >= BASELINE_MAX_DEFER_MS) return false
+        // Rate-limit re-attempts so we evaluate at fixed 2-min intervals, not every tick.
+        if (lastBaselineAttemptMs != 0L && now - lastBaselineAttemptMs < BASELINE_RETRY_INTERVAL_MS) {
+            return true
+        }
+        val n = powerSamples.size
+        if (n < POWER_STABILITY_MIN_SAMPLES) return false
+        // Single-pass mean + variance using the running-sum / sum-of-squares form. Cheap and
+        // good enough for n ≈ 120 with all-positive integer watts; we don't need a
+        // numerically-stable Welford pass for this magnitude range.
+        var sum = 0.0
+        var sumSq = 0.0
+        for ((_, w) in powerSamples) {
+            val wd = w.toDouble()
+            sum += wd
+            sumSq += wd * wd
+        }
+        val mean = sum / n
+        if (mean <= 0.0) return false  // all zeros / degenerate — let establishment proceed
+        val variance = (sumSq / n) - (mean * mean)
+        val stddev = if (variance > 0.0) kotlin.math.sqrt(variance) else 0.0
+        val cv = (stddev / mean).toFloat()
+        val defer = cv > POWER_STABILITY_CV_MAX
+        if (defer) {
+            Timber.d(String.format(
+                Locale.US,
+                "WellnessMonitor: decoupling baseline DEFERRED — power unstable (cv=%.2f, mean=%.0fW, n=%d)",
+                cv, mean, n,
+            ))
+        }
+        return defer
+    }
+
 
     /** Threshold (bpm) for the critical tier, accounting for the absolute-vs-% mode.
      *
@@ -393,6 +512,15 @@ class WellnessMonitor(
     ) {
         val totalFires: Int get() = criticalFires + sustainedFires + decouplingFires
     }
+
+    /** Test-only: rewind [sessionStartMs] so JVM unit tests can exercise the baseline
+     *  establishment path without waiting wall-clock time. Production code never calls
+     *  this. Same `internal` rationale as [tick]. */
+    internal fun setSessionStartForTest(ms: Long) { sessionStartMs = ms }
+
+    /** Test-only snapshot of decoupling-baseline establishment. Production code reads
+     *  drift via [getSummary]; tests want to know whether the baseline was frozen. */
+    internal fun decouplingBaselineForTest(): Float = decouplingBaselineHrPerW
 
     fun getSummary(): WellnessSummary = WellnessSummary(
         maxHrBpm           = sessionMaxHr,

@@ -219,6 +219,44 @@ Phase 2 — Drift evaluation (every tick, after baseline):
 | Rider starts cold and warms up gradually | Baseline is established at minute 10, by which point HR/W has stabilised. Drift is measured against this warm-baseline. |
 | Long ride with no rest stops | Cooldown of 30 min between fires; rider could see 1-2 alerts on a 4-hour ride if drift is really severe. Acceptable. |
 
+#### HE1 — Baseline-stability guard (when to freeze the anchor)
+
+The single biggest false-positive risk for this tier is **anchoring the baseline to an atypical first 10 min**. Two real-world failure modes:
+
+- Rider warms up at z1, then ramps to z4 race-day effort. Baseline freezes at the low-effort HR/W; the second-hour HR rise at the same power is read as decoupling drift.
+- Rider opens with a hot lead-out then settles into steady tempo. Baseline freezes high; the natural HR settle later masks real drift (false negative path of the same root cause).
+
+The mitigation is a **power-stability gate** on the establishment moment:
+
+```
+At each baseline-establishment attempt (first attempt = minute 10):
+  if (now - sessionStartMs >= BASELINE_MAX_DEFER_MS):   # 25 min hard cap
+    establish_now()                                      # better late than never
+  elif (powerSamples_2min.size < POWER_STABILITY_MIN_SAMPLES):
+    establish_now()                                      # not enough data to judge — pass
+  elif (stddev / mean over last 2 min > 0.30):
+    defer; re-attempt in BASELINE_RETRY_INTERVAL_MS (2 min)
+  else:
+    establish_now()
+```
+
+Constants live in `WellnessMonitor.kt`:
+
+| Name | Value | Rationale |
+|---|---|---|
+| `POWER_BUFFER_WINDOW_MS` | 2 min | Smooths over single-second power spikes while still being responsive to a sustained interval. |
+| `POWER_BUFFER_MAX_SIZE` | 150 | Hard cap on the ring buffer; ~2.5 min at 1 Hz. Protects against pathological high-rate streams. |
+| `POWER_STABILITY_MIN_SAMPLES` | 30 | Need at least 30 s of power data before we trust the CV measurement. |
+| `POWER_STABILITY_CV_MAX` | 0.30 | Coefficient of variation threshold. Steady tempo runs ~0.05–0.15; intervals / surges run > 0.5. 0.30 splits the two reliably. |
+| `BASELINE_RETRY_INTERVAL_MS` | 2 min | Re-attempt cadence after a defer. Matches the buffer window so each evaluation sees fresh data. |
+| `BASELINE_MAX_DEFER_MS` | 25 min | Hard cap from `sessionStartMs`. Past this, establish whatever we have — a late stable-ish baseline beats no baseline. |
+
+**No-power case (residual)**: when `lastPowerW` is `null` the tier returns at the `lastPowerW ?: return` gate long before reaching the establishment branch — the guard never runs. Riders without a power meter retain the **un-guarded fixed-time baseline** that the tier had before HE1. There is no signal we could use to gate establishment in that case; the tier's documented requirement of "paired power meter" already implies the rider opts into the limitation.
+
+**Why no Pa:Hr first-vs-second-half comparison?** Coggan-style first-half-vs-second-half decoupling is a stronger signal but requires the ride to be long enough and split-able. The current design is intentionally simple — single rolling baseline, single drift % — so it works on short rides too. Moving to a half-split design would need an empirical false-positive rate from the calibration logs first; HE1 is the cheaper mitigation that addresses the worst documented anchor-failure modes without changing the tier's user-visible contract.
+
+**Threshold / duration unchanged**: HE1 is a *structural* change (when to freeze the anchor), not a parametric one. `wellnessDecouplingThresholdPct` and `wellnessDecouplingDurationMinutes` still mean what they always meant.
+
 ### Picking your wellness tier values
 
 The defaults are tuned for a "general endurance rider" — moderate weekly volume, occasional threshold work, no structured Z5 interval programme. If your riding doesn't match that profile, the three tiers reward tuning. Same structure as the [deficit-threshold guidance for Fueling](health-fueling.md#picking-the-deficit-threshold): pick a profile column, then respect the hard guardrails.
