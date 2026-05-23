@@ -562,7 +562,16 @@ class CrashStateMachineTest {
     // ── Regression: silence-window accumulator resets on silence-break ───────
 
     @Test
-    fun `orientation accumulator resets when stillness is broken`() {
+    fun `orientation accumulator resets when stillness is broken in the upright regime`() {
+        // Original "leak protection" regression. CR2 (May 2026) introduced an
+        // asymmetric within-budget reset: an on-side latch survives a small
+        // bump, while the upright and gap regimes still get a full reset.
+        // This test pins the UPRIGHT-regime side of that asymmetry — orientation
+        // pollution across a silence-break must still flush so that a recovering
+        // rider switching from upright to on-side can re-latch the appropriate
+        // window. The on-side side of the asymmetry is covered by the CR2 tests
+        // further down (`within-budget break preserves on-side latch and accumulator`
+        // et al).
         val t = Thresholds(
             silenceDurationMs = 4_500L,
             silenceDurationUprightMs = 20_000L,
@@ -572,41 +581,52 @@ class CrashStateMachineTest {
         )
         val sm = smInSilenceCheck(t)  // pre-impact ref along Z, currently in SILENCE_CHECK
 
-        // Feed ~1s of on-side samples so the orientation accumulator points along X.
+        // Feed ~1s of UPRIGHT samples so the orientation accumulator points along Z.
+        // Angle vs the upright pre-impact reference is ~0° → upright regime locks
+        // the 20 s window. `lastOrientationAngleDeg` stays well below the 60°
+        // on-side relaxation gate, so the CR2 preservation does NOT engage.
         var tNow = 2_000L
         repeat(50) {
             tNow += 20
             sm.onSample(sample(
                 time = tNow, peak = 0.0, smoothed = 9.81, raw = 9.81, gyro = 0.05,
-            ).copy(accelX = 9.81, accelY = 0.0, accelZ = 0.0))
+            ).copy(accelX = 0.0, accelY = 0.0, accelZ = 9.81))
         }
 
-        // Inject a spike (deviation > 4) to break stillness. This must trigger
-        // the silence-break branch and reset the accumulator + silence clock.
+        // Inject a spike (deviation > 4) to break stillness. Upright latch was in
+        // force at the moment of the break → resetSilenceWindow() must fire and
+        // drop accumulator + latch (the CR2 preservation only kicks in when the
+        // previous latch was decisively on-side).
         tNow += 20
         sm.onSample(sample(
             time = tNow, peak = 15.0, smoothed = 15.0, raw = 15.0, gyro = 0.5,
-        ).copy(accelX = 9.81, accelY = 0.0, accelZ = 0.0))
+        ).copy(accelX = 0.0, accelY = 0.0, accelZ = 9.81))
 
-        // Now feed UPRIGHT quiet samples (gravity along Z, matching the upright pre-impact reference).
-        // If the accumulator was NOT reset, the orientation average would still
-        // be polluted with the on-side X-axis history → angle would stay > 45°
-        // → legacy 4.5s window → confirm too soon.
-        // If the accumulator IS reset (correct behaviour) → orientation immediately
-        // reflects the new upright posture → 20s window → must NOT confirm before that.
-
-        // Run for 4.5s + slack of upright quiet samples. Confirm must NOT fire.
+        // Now feed ON-SIDE quiet samples (gravity along X). With the upright
+        // accumulator wiped, the orientation immediately rebuilds along X →
+        // angle ~90° → orientation regime latches the 4.5 s on-side window →
+        // Confirm fires ~4.5 s after the bump. If the accumulator had leaked
+        // its upright Z history, the angle would stay below 45° for a long
+        // time, the 20 s window would be re-latched, and no Confirm would fire
+        // within 5.5 s.
         val tBreak = tNow
-        while (tNow < tBreak + 5_500L) {  // 5.5s — well past legacy 4.5s threshold
+        var confirmed = false
+        while (!confirmed && tNow < tBreak + 5_500L) {
             tNow += 20
             val d = sm.onSample(sample(
                 time = tNow, peak = 0.0, smoothed = 9.81, raw = 9.81, gyro = 0.05,
-            ).copy(accelX = 0.0, accelY = 0.0, accelZ = 9.81))
-            assertNotEquals(
-                "Decision.Confirm fired at t=$tNow — accumulator must have leaked on-side history",
-                CrashStateMachine.Decision.Confirm, d
-            )
+            ).copy(accelX = 9.81, accelY = 0.0, accelZ = 0.0))
+            if (d is CrashStateMachine.Decision.Confirm) confirmed = true
         }
+        assertTrue(
+            "Confirm must fire within 5.5 s of the bump — upright accumulator must have " +
+                "been flushed so the new on-side posture can latch the 4.5 s window",
+            confirmed,
+        )
+        assertEquals(
+            "Confirm must use the on-side 4.5 s window after the upright accumulator flush",
+            4_500L, sm.lastConfirmedSilenceMs,
+        )
     }
 
     // ── Regression: onPause clears the silence-window accumulator ────────────
@@ -1544,25 +1564,27 @@ class CrashStateMachineTest {
     }
 
     @Test
-    fun `on-side relaxation - accel motion still breaks silence even when relaxed`() {
-        // Even with on-side relaxation engaged, accelerometer motion (deviation > 4)
-        // must still break silence. This is the strong guard against false positives
-        // (rider picking up the bike, handling it, etc.).
+    fun `on-side relaxation - accel motion within budget tolerated by latch preservation`() {
+        // CR2 (May 2026) updated this test. Pre-CR2 the silence clock RESET on every
+        // !isStill sample even when on-side relaxation was engaged, so Confirm fired
+        // at T_break + 4.5 s. CR2 makes the within-budget reset asymmetric: when the
+        // latch was decisively on-side the bump is tolerated — accumulator, latch
+        // AND silenceStartedMs all survive — and the silence-elapsed measurement keeps
+        // growing across the bump. Confirm therefore fires at the originally latched
+        // 4.5 s from SILENCE_CHECK entry, not from the bump.
         //
-        // The assertion is load-bearing: it verifies that the silence CLOCK RESET to
-        // T_break (the motion sample), not merely that the SM stays in SILENCE_CHECK.
+        // What this test still pins (its real value): the SM stays in SILENCE_CHECK
+        // after a within-budget bump (retry, not give-up) AND Confirm eventually
+        // fires from the on-side regime. The strong false-positive guards remain in
+        // place at the budget boundary (see the companion test
+        // `out-of-budget break still gives up regardless of on-side latch`).
         //
-        // smEnteringSilence(gapMs=2_000): impact at base=1_000_000; SILENCE_CHECK entered
-        // at base+2_000=1_002_000 (silenceStartedMs=1_002_000).
-        // 5 on-side lock samples at +200ms steps end at t=1_003_000.
-        // Speed raised; motion sample at t=1_004_000 → T_break=1_004_000.
-        // 4.5s from original entry = 1_006_500.
-        // 4.5s from T_break        = 1_008_500.
-        //
-        // If the motion sample did NOT reset the clock (bug), Confirm would fire at
-        // ~1_006_500 — so the "None at T_break+3_000=1_007_000" assertion would FAIL.
-        // If the clock DID reset (correct), Confirm fires at ~1_008_500, making the
-        // "None at 1_007_000" pass AND "Confirm by T_break+5_000=1_009_000" also pass.
+        // Timing arithmetic for the assertions below.
+        // smEnteringSilence(gapMs = 2_000): impact at base = 1_000_000; SILENCE_CHECK
+        // entered at base + 2_000 = 1_002_000 (silenceStartedMs = 1_002_000).
+        // 5 on-side lock samples at +200 ms steps end at t = 1_003_000.
+        // Speed raised; motion sample at t = 1_004_000 → T_break = 1_004_000.
+        // 4.5 s from original entry = 1_006_500.
         val (sm, _) = smEnteringSilence(
             gapMs = 2_000L,
             preRef = PreImpactRef(0.0, 0.0, 9.81, valid = true),
@@ -1578,53 +1600,39 @@ class CrashStateMachineTest {
         }
         // t = 1_003_000 here.
         sm.onSpeedUpdate(10.0)   // speed rise (relaxation would normally ignore this)
-        // Motion sample (raw=16.0, |16.0 - 9.81| = 6.19 > silenceDeviationMax 4.0)
-        // must break silence even with on-side relaxation engaged.
+        // Motion sample (raw = 16.0, |16.0 - 9.81| = 6.19 > silenceDeviationMax 4.0).
+        // Under CR2 this is a within-budget on-side break → tolerated, no reset.
         t += 1000L               // t = 1_004_000
         sm.onSample(sample(time = t, raw = 16.0, smoothed = 9.81, az = 0.0, ax = 9.81))
         val tBreak = t           // = 1_004_000
         // After the break, the SM must stay in SILENCE_CHECK (retry, not give-up).
         assertEquals(CrashStateMachine.State.SILENCE_CHECK, sm.state)
 
-        // Bike (and rider) came to rest — drop speed so the subsequent still samples
-        // satisfy isSpeedDropConfirmed() and the orientation regime can re-latch.
-        // (Speed was only raised to simulate the bike briefly rolling after the impact.)
+        // Drop speed for the still samples (the on-side relaxation already keeps
+        // isStill = accelOk, so this is belt-and-braces; left in to match the original
+        // intent of "the bike came to rest after the bump").
         sm.onSpeedUpdate(0.0)
 
-        // ── Phase 1: T_break + 3_000 = 1_007_000 — still short of 4.5s from T_break ──
-        // The original silenceStartedMs (1_002_000) + 4.5s = 1_006_500 < 1_007_000.
-        // If the clock had NOT reset (bug), Confirm would fire by 1_006_500 — before
-        // the first Phase-1 sample at 1_005_000 even reaches that check. None here proves
-        // the clock was reset to T_break=1_004_000 and 4.5s has NOT elapsed yet from there.
-        repeat(3) {
-            t += 1000L
-            val d = sm.onSample(sample(time = t, raw = 9.81, smoothed = 9.81, az = 0.0, ax = 9.81))
-            assertEquals(
-                "Confirm must NOT fire at t=$t (${t - tBreak}ms after motion break, " +
-                    "< 4500ms from T_break=$tBreak) — silence clock reset must be in effect",
-                CrashStateMachine.Decision.None, d
-            )
-        }
-        // t = 1_007_000 here; elapsed since T_break = 3_000 ms < 4_500 ms.
-
-        // ── Phase 2: past T_break + 4_500 = 1_008_500 — Confirm must fire ────────────
-        // Feed still on-side samples until Confirm arrives or we exceed T_break + 6_000.
-        // After 5 still samples post-break the orientation regime re-latches 4.5s;
-        // at T_break + 4_500 = 1_008_500 the elapsed-since-break check triggers Confirm.
-        var confirmed = false
-        while (t < tBreak + 6_000L) {
+        // Walk forward in 500 ms steps and check exactly when Confirm fires.
+        // Under CR2 silenceStartedMs = 1_002_000 was preserved across the bump.
+        // First post-bump sample (t = 1_004_500): elapsed = 2_500 ms < 4_500.
+        // Sample at t = 1_006_500: elapsed = 4_500 → Confirm.
+        var firstConfirmAt = 0L
+        while (firstConfirmAt == 0L && t < tBreak + 6_000L) {
             t += 500L
             val d = sm.onSample(sample(time = t, raw = 9.81, smoothed = 9.81, az = 0.0, ax = 9.81))
-            if (d is CrashStateMachine.Decision.Confirm) {
-                confirmed = true
-                break
-            }
+            if (d is CrashStateMachine.Decision.Confirm) firstConfirmAt = t
         }
+        assertTrue("Confirm must fire within 6 s of T_break", firstConfirmAt > 0L)
+        // Confirm must arrive at ~entry + 4_500 = 1_006_500, NOT at T_break + 4_500 =
+        // 1_008_500 (the broken pre-CR2 alternative). Allow a small window of slack
+        // for the 500 ms step granularity used above.
         assertTrue(
-            "Confirm must fire within 6_000ms of T_break=$tBreak — silence clock must have " +
-                "reset to the motion-break timestamp, not the original SILENCE_CHECK entry",
-            confirmed
+            "Confirm must fire ~4.5 s from SILENCE_CHECK entry (silenceStartedMs preserved " +
+                "across the on-side bump), got firstConfirmAt = $firstConfirmAt",
+            firstConfirmAt in 1_006_500L..1_007_000L,
         )
+        assertEquals(4_500L, sm.lastConfirmedSilenceMs)
     }
 
     // ── Diagnostics: lastConfirmedGapMs / lastConfirmedAngleDeg snapshots ──────
@@ -1902,5 +1910,285 @@ class CrashStateMachineTest {
             "pre-lock speed rise must keep breaking silence (no relaxation possible)",
             false, confirmed,
         )
+    }
+
+    // ── CR2: within-budget silence break preserves on-side latch ────────────────
+    //
+    // Companion to the existing IMPACT→SILENCE_CHECK asymmetric reset (lines 533-546
+    // in CrashStateMachine.kt). In SILENCE_CHECK a within-budget break used to call
+    // resetSilenceWindow() unconditionally, wiping the orientation accumulator AND
+    // the latch. For a real on-side crash where the bike rolls fast and bounces over
+    // a small obstacle ~2 s into the silence window, the bounce wipes the on-side
+    // latch, the bike is still rolling (speedDropOk false), isStill never holds for
+    // long enough to rebuild the latch, and the SM falls through to SILENCE_TIMEOUT.
+    //
+    // CR2 makes the within-budget reset asymmetric: an on-side latch is durable
+    // evidence (a bike on its side cannot be ridden, so a small bump while it rolls
+    // does not undo what the latch established), and survives the break. The upright
+    // and gap regimes still get the full reset — their evidence is weaker.
+
+    @Test
+    fun `within-budget break preserves on-side latch and accumulator`() {
+        // Drive into SILENCE_CHECK with an on-side latch firmly set (angle ~90°).
+        // Speed is held high (10 km/h, above crashConfirmSpeedKmh = 5) so that
+        // without the latch surviving, isStill = accelOk && speedDropOk would
+        // require speedDropOk → never satisfied → SILENCE_TIMEOUT. WITH the fix,
+        // the latch survives the bump, onSideRelaxed stays true, isStill = accelOk
+        // alone, and Confirm fires within the 4.5 s window.
+        val (sm, _) = smEnteringSilence(
+            gapMs = 2_000L,
+            preRef = PreImpactRef(0.0, 0.0, 9.81, valid = true),
+            silenceAz = 0.0, silenceAx = 9.81,   // angle ~90° vs upright Z reference
+        )
+        assertEquals(CrashStateMachine.State.SILENCE_CHECK, sm.state)
+        // SILENCE_CHECK entered at t = 1_002_000. silenceStartedMs = 1_002_000.
+        var t = 1_002_000L
+        // Build the on-side latch: ≥ MIN_ORIENTATION_SAMPLES (5) of on-side stillness.
+        repeat(10) {
+            t += 20L
+            sm.onSample(sample(time = t, raw = 9.81, smoothed = 9.81, az = 0.0, ax = 9.81))
+        }
+        // Bike rolls — speed rises above the confirm threshold. With on-side
+        // relaxation engaged this does not break silence by itself.
+        sm.onSpeedUpdate(10.0)
+        // Phase A — accumulate ~2 s of accel-still on-side samples post-latch.
+        repeat(100) {   // 100 * 20ms = 2 s
+            t += 20L
+            assertEquals(
+                CrashStateMachine.Decision.None,
+                sm.onSample(sample(time = t, raw = 9.81, smoothed = 9.81, az = 0.0, ax = 9.81)),
+            )
+        }
+        // ~2 s into the silence window. Feed ONE bump sample (deviation > 4).
+        // Without the fix this would wipe the latch and the accumulator — speed
+        // is still high, so the latch can never re-engage.
+        t += 20L
+        val bumpTime = t
+        sm.onSample(sample(time = t, raw = 16.0, smoothed = 9.81, az = 0.0, ax = 9.81))
+        assertEquals(
+            "within-budget break must stay in SILENCE_CHECK (retry, not give-up)",
+            CrashStateMachine.State.SILENCE_CHECK, sm.state,
+        )
+
+        // Phase B — sustained accel-still samples post-bump. With CR2 fix:
+        // silenceStartedMs preserved → elapsed at bumpTime + 2.5 s = 4.5 s+
+        // total from entry → Confirm. Without the fix: latch wiped, speedDropOk
+        // false, isStill never holds → no Confirm in this window.
+        var confirmed = false
+        repeat(150) {   // 150 * 20ms = 3 s — plenty of slack
+            t += 20L
+            if (sm.onSample(sample(time = t, raw = 9.81, smoothed = 9.81, az = 0.0, ax = 9.81))
+                    is CrashStateMachine.Decision.Confirm) {
+                confirmed = true
+                return@repeat
+            }
+        }
+        assertTrue(
+            "Confirm must fire after the bump — the on-side latch must survive a within-budget " +
+                "break so the bike-rolling speed-rise does not block the orientation regime",
+            confirmed,
+        )
+        assertEquals(
+            "Confirm must fire on the on-side (4.5 s) window — the latched value the SM " +
+                "had decided before the bump",
+            4_500L, sm.lastConfirmedSilenceMs,
+        )
+        // Bump consumed ~20 ms; sanity-check that Confirm fired close to the latched
+        // 4.5 s of elapsed silence rather than 9 s (the broken alternative where the
+        // silence clock had restarted from scratch after the bump).
+        assertTrue(
+            "Confirm must fire within ~5 s of SILENCE_CHECK entry (silenceStartedMs " +
+                "preserved across the bump), got t=$t",
+            t <= 1_002_000L + 5_500L,
+        )
+    }
+
+    @Test
+    fun `within-budget break with upright latch DOES reset accumulator and latch`() {
+        // Pins the upright side of the asymmetric reset. With an upright latch
+        // (angle ~0°, well below the 60° onSideRelaxationAngleDeg gate), the CR2
+        // preservation does NOT apply — the within-budget break still calls
+        // resetSilenceWindow(). After the bump the SM must REBUILD the latch from
+        // scratch from whatever orientation evidence arrives next.
+        val (sm, _) = smEnteringSilence(
+            gapMs = 2_000L,
+            preRef = PreImpactRef(0.0, 0.0, 9.81, valid = true),
+            silenceAz = 9.81, silenceAx = 0.0,   // upright: same direction as ref
+        )
+        assertEquals(CrashStateMachine.State.SILENCE_CHECK, sm.state)
+        var t = 1_002_000L
+        // Build the upright latch.
+        repeat(10) {
+            t += 20L
+            sm.onSample(sample(time = t, raw = 9.81, smoothed = 9.81, az = 9.81, ax = 0.0))
+        }
+        // Confirm the SM has chosen the 20 s window (upright regime).
+        // Speed stays low so the on-side relaxation does not change isStill below.
+        sm.onSpeedUpdate(0.0)
+        // The bump.
+        t += 20L
+        sm.onSample(sample(time = t, raw = 16.0, smoothed = 9.81, az = 9.81, ax = 0.0))
+        assertEquals(CrashStateMachine.State.SILENCE_CHECK, sm.state)
+
+        // Now feed on-side samples (gravity along X). If the accumulator had been
+        // preserved (i.e. the CR2 preservation incorrectly fired for upright), the
+        // ten upright Z samples would dominate for a long time, keeping the angle
+        // below 45° and the 20 s window in force. With the correct reset, the
+        // orientation rebuilds along X within ~5 samples (~100 ms), angle ~90° →
+        // the orientation regime re-latches the 4.5 s on-side window and Confirm
+        // fires ~4.5 s after the bump.
+        val tBreak = t
+        var confirmed = false
+        while (!confirmed && t < tBreak + 5_500L) {
+            t += 20L
+            if (sm.onSample(sample(time = t, raw = 9.81, smoothed = 9.81, az = 0.0, ax = 9.81))
+                    is CrashStateMachine.Decision.Confirm) confirmed = true
+        }
+        assertTrue(
+            "Confirm must fire within 5.5 s — upright latch must have been wiped on the " +
+                "bump so the new on-side posture can latch the 4.5 s window",
+            confirmed,
+        )
+        assertEquals(
+            "Confirm must use the on-side 4.5 s window after the upright reset",
+            4_500L, sm.lastConfirmedSilenceMs,
+        )
+    }
+
+    @Test
+    fun `within-budget break with gap regime DOES reset accumulator and latch`() {
+        // Pins the gap-regime side of the asymmetric reset. In the gap regime the
+        // SM never computes lastOrientationAngleDeg (it stays at the -1.0 sentinel),
+        // so previousLatchWasOnSide is false and the existing resetSilenceWindow()
+        // behaviour applies. The 20 s window is re-latched fresh from the gap-regime
+        // path.
+        val (sm, base) = smEnteringSilenceGapRegime(gapMs = 2_000L)
+        assertEquals(CrashStateMachine.State.SILENCE_CHECK, sm.state)
+        // The gap-regime SM uses Thresholds(impactWindowMs = 4_000) → retry budget
+        // = 8 000 ms. lockedEffectiveSilenceMs = 20 000, lastOrientationAngleDeg = -1.0
+        // sentinel → previousLatchWasOnSide = false.
+        // Feed a stillness break inside the budget (entry at base + 2_000;
+        // bump at base + 6_000 → entry-relative = 4_000 ≤ 8_000).
+        val bumpT = base + 6_000L
+        val d = sm.onSample(sample(time = bumpT, peak = 15.0, smoothed = 15.0,
+            raw = 15.0, gyro = 0.5, az = 0.0, ax = 9.81))
+        assertNotEquals(
+            "within-budget break must be a retry, not a give-up",
+            CrashStateMachine.Decision.ReturnToMonitoring, d,
+        )
+        assertEquals(CrashStateMachine.State.SILENCE_CHECK, sm.state)
+
+        // After the gap-regime reset, the accumulator is empty and the latch is
+        // cleared. lockedEffectiveSilenceMs goes back to 0L; on the next
+        // computeEffectiveSilenceMs call the gap regime fires again (firstSilenceGapMs
+        // is preserved across resetSilenceWindow — only resetTimers() zeroes it),
+        // re-latching the 20 s window. Feed 6 s of accel-still on-side samples —
+        // if the CR2 preservation had incorrectly engaged, the on-side accumulator
+        // (had it been on-side) would have been preserved with a 4.5 s latch and
+        // confirm in ~4.5 s. With correct gap-regime behaviour, no Confirm fires
+        // within 6 s post-bump.
+        var t = bumpT
+        var confirmed = false
+        repeat(300) {   // 300 * 20 ms = 6 s — past the 4.5 s mark, short of 20 s
+            t += 20L
+            if (sm.onSample(sample(time = t, raw = 9.81, smoothed = 9.81, az = 0.0, ax = 9.81))
+                    is CrashStateMachine.Decision.Confirm) {
+                confirmed = true
+                return@repeat
+            }
+        }
+        assertEquals(
+            "gap-regime break must reset the latch — the 20 s window must apply, no Confirm " +
+                "in the first 6 s post-bump",
+            false, confirmed,
+        )
+    }
+
+    @Test
+    fun `within-budget break on-side allows confirm via accumulated time across the bump`() {
+        // CR2 integration test: 1 s pre-bump + 0.1 s bump + 3.5 s post-bump =
+        // ~4.6 s wall-clock from SILENCE_CHECK entry. Because the on-side latch
+        // is preserved AND silenceStartedMs is preserved, the silence-elapsed
+        // measurement (now - silenceStartedMs) keeps growing across the bump,
+        // and Confirm fires at the ~4.5 s mark within ~4.6 s wall-clock — NOT at
+        // 9 s (which is what would happen if the silence clock had been reset to
+        // the bump time).
+        val (sm, _) = smEnteringSilence(
+            gapMs = 2_000L,
+            preRef = PreImpactRef(0.0, 0.0, 9.81, valid = true),
+            silenceAz = 0.0, silenceAx = 9.81,
+        )
+        assertEquals(CrashStateMachine.State.SILENCE_CHECK, sm.state)
+        val tEntry = 1_002_000L
+        var t = tEntry
+        // Latch + 1 s of accel-still on-side samples.
+        repeat(50) {   // 50 * 20 ms = 1 s
+            t += 20L
+            sm.onSample(sample(time = t, raw = 9.81, smoothed = 9.81, az = 0.0, ax = 9.81))
+        }
+        // Speed rises (bike rolling). On-side relaxation is engaged, so this
+        // alone does not break silence.
+        sm.onSpeedUpdate(10.0)
+        // The bump: ~100 ms of accel motion, single sample for simplicity.
+        t += 100L
+        sm.onSample(sample(time = t, raw = 16.0, smoothed = 9.81, az = 0.0, ax = 9.81))
+        assertEquals(CrashStateMachine.State.SILENCE_CHECK, sm.state)
+        // Post-bump accel-still samples: feed until Confirm or 3.5 s elapse,
+        // expecting Confirm well before the 3.5 s ceiling.
+        val tPostBump = t
+        var confirmed = false
+        var confirmT = 0L
+        while (t < tPostBump + 3_500L) {
+            t += 20L
+            if (sm.onSample(sample(time = t, raw = 9.81, smoothed = 9.81, az = 0.0, ax = 9.81))
+                    is CrashStateMachine.Decision.Confirm) {
+                confirmed = true
+                confirmT = t
+                break
+            }
+        }
+        assertTrue("Confirm must fire within 3.5 s of the bump", confirmed)
+        val elapsedFromEntry = confirmT - tEntry
+        // The silence clock must have survived the bump — Confirm fires roughly
+        // 4.5 s after SILENCE_CHECK entry, NOT 4.5 s after the bump (which would
+        // be ~5.6 s) and certainly NOT 9 s (entry-to-bump 1.1 s + bump-to-Confirm
+        // 4.5 s + re-latch overhead ≈ 5.7 s under the more naive "reset clock but
+        // keep latch" variant; this assertion catches both broken alternatives).
+        assertTrue(
+            "Confirm must fire at ~4.5 s from SILENCE_CHECK entry (silenceStartedMs preserved), " +
+                "got elapsed=${elapsedFromEntry}ms — must be in [4500, 4900]ms",
+            elapsedFromEntry in 4_500L..4_900L,
+        )
+    }
+
+    @Test
+    fun `out-of-budget break still gives up regardless of on-side latch`() {
+        // CR2 backstop sanity check. The preservation only applies WITHIN the
+        // retry budget — past it, the SM must still ReturnToMonitoring even if
+        // the latch was on-side. The budget protects against falling into an
+        // infinite stillness-retry loop.
+        val (sm, _) = smEnteringSilence(
+            gapMs = 2_000L,
+            preRef = PreImpactRef(0.0, 0.0, 9.81, valid = true),
+            silenceAz = 0.0, silenceAx = 9.81,
+        )
+        assertEquals(CrashStateMachine.State.SILENCE_CHECK, sm.state)
+        // SILENCE_CHECK entered at t = 1_002_000. impactWindowMs = 20_000 →
+        // entry-relative budget = 40_000.
+        var t = 1_002_000L
+        // Build the on-side latch.
+        repeat(10) {
+            t += 20L
+            sm.onSample(sample(time = t, raw = 9.81, smoothed = 9.81, az = 0.0, ax = 9.81))
+        }
+        sm.onSpeedUpdate(10.0)   // bike rolling
+        // Jump past entry + 40_000 with one decisive motion sample.
+        t = 1_002_000L + 41_000L
+        val d = sm.onSample(sample(time = t, raw = 16.0, smoothed = 9.81, az = 0.0, ax = 9.81))
+        assertEquals(
+            "out-of-budget break must give up regardless of latch state",
+            CrashStateMachine.Decision.ReturnToMonitoring, d,
+        )
+        assertEquals(CrashStateMachine.State.MONITORING, sm.state)
     }
 }

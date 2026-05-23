@@ -539,6 +539,14 @@ class CrashStateMachine(
                 // before it can reach MIN_ORIENTATION_SAMPLES). Only the latch marker
                 // is cleared so that SILENCE_CHECK re-evaluates its own window choice
                 // cleanly from the preserved orientation data.
+                //
+                // Asymmetric-reset family: the same "on-side latch is durable evidence"
+                // principle drives the SILENCE_CHECK within-budget-break path
+                // (`previousLatchWasOnSide` in [handleSilenceCheck]'s !isStill branch).
+                // A within-budget bump while the bike is still rolling must NOT wipe
+                // the latch either, for the same reason it must not be wiped here at
+                // the IMPACT→SILENCE_CHECK transition. Both branches together form the
+                // "real crash with bike still moving" safety net (CR2, May 2026).
                 lockedEffectiveSilenceMs = 0L
                 lastOrientationAngleDeg = -1.0
             } else {
@@ -606,8 +614,15 @@ class CrashStateMachine(
         // Accumulate X/Y/Z for orientation classification (Revision 5).
         // Unconditional here (no accelOk gate, unlike the IMPACT accumulation
         // in handleImpact): a sample with deviation > silenceDeviationMax is
-        // !isStill below and triggers resetSilenceWindow(), which wipes the
-        // accumulator wholesale — so an extra per-sample gate is redundant.
+        // !isStill below and the upright/gap/no-latch path triggers
+        // resetSilenceWindow(), which wipes the accumulator wholesale — so an
+        // extra per-sample gate is redundant for those paths. The CR2 on-side
+        // preservation path (see the !isStill branch below) keeps the
+        // accumulator across a within-budget bump; the bump sample itself
+        // contributes one X/Y/Z entry whose direction matches the surrounding
+        // on-side stillness (a small jolt at on-side orientation), so its
+        // contribution to the gravity-vector average is negligible and the
+        // latch's angle classification stays correct.
         orientationSumX += sample.accelX
         orientationSumY += sample.accelY
         orientationSumZ += sample.accelZ
@@ -656,10 +671,46 @@ class CrashStateMachine(
             }
             isStill -> Decision.None  // keep counting
             !isStill && (now - silenceCheckEnteredMs) <= thresholds.impactWindowMs * 2 -> {
-                // Stillness must be continuous: restart silence clock on every break.
-                silenceStartedMs = now
-                // Drop accumulated orientation data — the new silence window starts now.
-                resetSilenceWindow()
+                // CR2 (May 2026) — asymmetric within-budget reset. Companion to the
+                // IMPACT→SILENCE_CHECK asymmetric reset at the `gateOk` branch in
+                // [handleImpact] (search this file for `onSideRelaxed` in
+                // handleImpact): a decisive on-side latch is durable evidence (a
+                // bike on its side cannot be ridden), so a small within-budget bump
+                // must NOT undo it. The 25-sample on-side accumulator that fired
+                // the latch is still valid; wiping it would force a rebuild from
+                // scratch while the bike is still rolling (`speedDropOk` false),
+                // the accumulator would never refill to the lock threshold, the
+                // latch would never re-engage, and the SM would fall through to
+                // SILENCE_TIMEOUT despite a genuine crash. Mirrors the IMPACT-side
+                // rationale: see the comment block at the `gateOk` branch in
+                // [handleImpact].
+                //
+                // Narrow scope: ONLY the on-side path (angle ≥
+                // [Thresholds.onSideRelaxationAngleDeg], a stricter threshold than
+                // the 45° upright gate) bypasses the reset. The upright (45° to
+                // 60° + invalid-ref legacy short) and gap regimes still get the
+                // full [resetSilenceWindow]: their evidence is weaker (a rider
+                // tilted forward at a light, a rider who took 9 s to stop) and
+                // an orientation-pollution flush remains the right behaviour for
+                // those regimes.
+                //
+                // The silence-elapsed anchor [silenceStartedMs] is ALSO preserved
+                // on the on-side path so that `(now - silenceStartedMs)` continues
+                // to grow across the bump and Confirm fires at the originally
+                // latched 4.5 s mark — not at bump + 4.5 s. Otherwise a real
+                // crash + small bump scenario would still confirm, just delayed,
+                // wasting the latch's evidence value.
+                val previousLatchWasOnSide = lockedEffectiveSilenceMs > 0L &&
+                    lastOrientationAngleDeg >= thresholds.onSideRelaxationAngleDeg
+                if (!previousLatchWasOnSide) {
+                    // Upright / gap / no-latch path: existing behaviour — restart
+                    // the silence clock AND wipe the orientation accumulator + latch.
+                    silenceStartedMs = now
+                    resetSilenceWindow()
+                }
+                // On-side path: leave silenceStartedMs, the accumulator and the
+                // latch in place. The next still sample resumes the cumulative
+                // silence window where the bump interrupted it.
                 Decision.None
             }
             else -> {
