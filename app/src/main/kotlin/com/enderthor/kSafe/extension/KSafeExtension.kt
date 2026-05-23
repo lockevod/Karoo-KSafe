@@ -514,6 +514,11 @@ class KSafeExtension : KarooExtension("ksafe", BuildConfig.VERSION_NAME), Corout
                 .collect { streamState ->
                     val cadenceRpm = streamState.cadenceRpm() ?: return@collect
                     crashManager.updateCadence(cadenceRpm)
+                    // H3 fix — fan out to the medical detector's FLATLINE cross-check.
+                    // Optional sensor: if no cadence is paired the flow emits nothing and
+                    // the detector falls through to the original FLATLINE path. See
+                    // MedicalEpisodeDetector.updateCadence for graceful-degradation notes.
+                    medicalDetector.updateCadence(cadenceRpm)
                 }
         }
 
@@ -569,6 +574,11 @@ class KSafeExtension : KarooExtension("ksafe", BuildConfig.VERSION_NAME), Corout
                         carbsTracker.updatePower(w)
                         wellnessMonitor.updatePower(w)
                         hydrationTracker.updatePower(w)
+                        // H3 fix — fan out to the medical detector's FLATLINE cross-check.
+                        // Optional sensor: most rider setups have HR but not power, so the
+                        // detector treats absence-of-power as "cross-check not plumbed" and
+                        // falls through to the original FLATLINE path.
+                        medicalDetector.updatePower(w)
                     }
             }
 

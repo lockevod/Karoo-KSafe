@@ -70,6 +70,14 @@ class MedicalEpisodeDetector(
      *  FP reduction — see H2 fix. */
     private val SPEED_STALE_MS             = 10_000L
 
+    /** H3 fix — cross-check thresholds before FLATLINE. If cadence is above this OR power is
+     *  above [POWER_ACTIVE_W] the rider is clearly still pedalling under load and the HR
+     *  reading is almost certainly a strap dropout / contact loss, not asystole. The numbers
+     *  are intentionally generous: a slow tourist climbing soft-pedalling sits around 40 RPM
+     *  / 80 W, far above either floor. */
+    private val CADENCE_ACTIVE_RPM         = 10.0
+    private val POWER_ACTIVE_W             = 30
+
     // ─── State (all `@Volatile` fields are read from the monitor coroutine) ──────────────
     @Volatile private var currentHrBpm        = 0
     @Volatile private var lastHrUpdateMs      = 0L
@@ -86,6 +94,16 @@ class MedicalEpisodeDetector(
      *  — the SDK replays the last-known speed bit-exact while GPS is lost, so a stretch of
      *  identical non-zero values is the canonical staleness signature. */
     @Volatile private var speedLastChangeMs   = 0L
+
+    // H3 fix — cadence + power cross-check inputs. Both are optional (no sensor paired is
+    // common, especially power). Their "received" flags are sticky for the session: once a
+    // sensor has emitted at least one sample we trust its absence-of-recent-value as a real
+    // signal that the rider stopped pedalling. Before any sample arrives we treat the
+    // cross-check as "not plumbed" and fall through to the existing FLATLINE logic.
+    @Volatile private var currentCadenceRpm   = 0.0
+    @Volatile private var cadenceDataReceived = false
+    @Volatile private var currentPowerW       = 0
+    @Volatile private var powerDataReceived   = false
 
     /**
      * Rolling HR history used by [computeAverageHrInWindow] for the COLLAPSE baseline
@@ -151,6 +169,13 @@ class MedicalEpisodeDetector(
         speedLastChangeMs = 0L
         lastSpeedKmh = 0.0
         lastSpeedAboveActiveMs = 0L
+        // H3 fix — reset cross-check inputs. The "sensor was paired" sticky flags belong
+        // to a single ride session: if the rider unpairs / re-pairs between rides we want
+        // the fresh ride to bootstrap cleanly.
+        cadenceDataReceived = false
+        currentCadenceRpm = 0.0
+        powerDataReceived = false
+        currentPowerW = 0
         Timber.d("MedicalEpisodeDetector stopped")
     }
 
@@ -196,6 +221,32 @@ class MedicalEpisodeDetector(
         if (changed || kmh == 0.0 || speedLastChangeMs == 0L) speedLastChangeMs = now
         lastSpeedKmh = kmh
         if (kmh >= ACTIVE_SPEED_KMH) lastSpeedAboveActiveMs = now
+    }
+
+    /**
+     * H3 fix — optional cadence input for the FLATLINE cross-check. A bike cadence sensor
+     * (ANT+/BLE) typically emits at 1–4 Hz; absent sensor → method never called and the
+     * cross-check falls through to the existing FLATLINE logic (graceful degradation).
+     */
+    fun updateCadence(rpm: Double) {
+        if (!cadenceDataReceived) {
+            cadenceDataReceived = true
+            Timber.d("MedicalEpisodeDetector: first cadence reading $rpm RPM")
+        }
+        currentCadenceRpm = rpm
+    }
+
+    /**
+     * H3 fix — optional power input for the FLATLINE cross-check. Power meters emit at
+     * 1 Hz typically; absent sensor → method never called and the cross-check is skipped
+     * (see [updateCadence] for the graceful-degradation rationale).
+     */
+    fun updatePower(w: Int) {
+        if (!powerDataReceived) {
+            powerDataReceived = true
+            Timber.d("MedicalEpisodeDetector: first power reading $w W")
+        }
+        currentPowerW = w
     }
 
     /**
@@ -264,9 +315,37 @@ class MedicalEpisodeDetector(
             if (flatlineSinceMs == 0L) flatlineSinceMs = now
             val durationMs = (now - flatlineSinceMs)
             if (durationMs >= HR_FLATLINE_DURATION_SEC * 1000L) {
+                // H3 fix — cross-check against cadence / power before firing. A loose HR
+                // strap (sweat, jersey shift, ANT+ dropout) routinely emits readings under
+                // 30 bpm for 30 s+ while the rider is still pedalling normally; without
+                // a cross-check that's enough to satisfy FLATLINE and trigger an
+                // EMERGENCY-level countdown + outbound SOS. Cadence and power are both
+                // optional inputs: if neither sensor has ever published, fall through to
+                // the original behaviour (graceful degradation — riders without a power
+                // meter or cadence sensor still have HR straps, so the detector must
+                // still work for them). If EITHER signal is plumbed and indicates the
+                // rider is still active (cadence > 10 RPM or power > 30 W), suppress
+                // the fire and reset the timer.
+                val cadenceSaysActive = cadenceDataReceived && currentCadenceRpm > CADENCE_ACTIVE_RPM
+                val powerSaysActive = powerDataReceived && currentPowerW > POWER_ACTIVE_W
+                if (cadenceSaysActive || powerSaysActive) {
+                    Timber.d(
+                        "HR_FLATLINE suppressed by cross-check: bpm=$currentHrBpm " +
+                                "cadence=%.0f power=$currentPowerW (cadence_data=$cadenceDataReceived power_data=$powerDataReceived)"
+                            .formatUs(currentCadenceRpm)
+                    )
+                    calibLogger?.log(CalibrationLogger.Event.HR_FLATLINE) {
+                        "bpm=$currentHrBpm,suppressed=true,reason=cross_check,cadence=%.0f,power=$currentPowerW,duration_s=${durationMs / 1000}".formatUs(currentCadenceRpm)
+                    }
+                    // Re-arm: the rider is patently still riding — treat as if HR had
+                    // never dropped. A subsequent genuine drop must accumulate its own
+                    // 30 s window.
+                    flatlineSinceMs = 0L
+                    return
+                }
                 Timber.d(">>> HR_FLATLINE fired: bpm=$currentHrBpm sustained for ${durationMs / 1000}s")
                 calibLogger?.log(CalibrationLogger.Event.HR_FLATLINE) {
-                    "bpm=$currentHrBpm,duration_s=${durationMs / 1000},speed=%.1f,threshold=$HR_FLATLINE_MAX_BPM".formatUs(lastSpeedKmh)
+                    "bpm=$currentHrBpm,duration_s=${durationMs / 1000},speed=%.1f,threshold=$HR_FLATLINE_MAX_BPM,cadence=%.0f,power=$currentPowerW,cadence_data=$cadenceDataReceived,power_data=$powerDataReceived".formatUs(lastSpeedKmh, currentCadenceRpm)
                 }
                 flatlineSinceMs = 0L  // re-arm: requires HR to rise above threshold then fall again
                 onIncident(EmergencyReason.MEDICAL_FLATLINE, mapOf("bpm" to currentHrBpm.toString()))

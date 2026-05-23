@@ -287,6 +287,89 @@ class MedicalEpisodeDetectorTest {
         )
     }
 
+    // ── H3 — MEDICAL_FLATLINE cadence/power cross-check ─────────────────────────
+
+    @Test
+    fun `H3 - flatline does NOT fire when cadence indicates the rider is still pedalling`() {
+        // HR strap drops below 30 bpm for 35 s (sweat / contact loss). The rider is
+        // clearly still riding — cadence reads 60 RPM throughout. With H3 the
+        // cross-check suppresses the FLATLINE fire.
+        val f = Fixture()
+        f.speed(20.0)
+        f.detector.updateCadence(60.0)      // seed: well above CADENCE_ACTIVE_RPM = 10
+        for (sec in 0..35) {
+            f.clock.nowMs += 1_000L
+            f.hr(20)
+            f.detector.updateCadence(60.0)
+            if (sec % 5 == 0) f.detector.tick()
+        }
+        assertNull(
+            "cadence cross-check must suppress FLATLINE: ${f.captured}",
+            f.captured,
+        )
+    }
+
+    @Test
+    fun `H3 - flatline does NOT fire when power indicates the rider is still riding`() {
+        // Same shape — HR strap drops out but power reads 200 W. Cross-check suppresses.
+        val f = Fixture()
+        f.speed(20.0)
+        f.detector.updatePower(200)         // well above POWER_ACTIVE_W = 30
+        for (sec in 0..35) {
+            f.clock.nowMs += 1_000L
+            f.hr(20)
+            f.detector.updatePower(200)
+            if (sec % 5 == 0) f.detector.tick()
+        }
+        assertNull(
+            "power cross-check must suppress FLATLINE: ${f.captured}",
+            f.captured,
+        )
+    }
+
+    @Test
+    fun `H3 - flatline fires when both cadence and power confirm zero`() {
+        // Both sensors are plumbed and both confirm the rider has stopped pedalling —
+        // cadence = 0 RPM, power = 0 W. Combined with HR < 30 for 30 s+ this is the
+        // canonical asystole scenario; the H3 cross-check must NOT suppress.
+        val f = Fixture()
+        f.speed(20.0)
+        f.detector.updateCadence(0.0)
+        f.detector.updatePower(0)
+        for (sec in 0..35) {
+            f.clock.nowMs += 1_000L
+            f.hr(20)
+            f.detector.updateCadence(0.0)
+            f.detector.updatePower(0)
+            if (sec % 5 == 0) f.detector.tick()
+        }
+        assertTrue(
+            "FLATLINE must still fire when both cadence + power are zero: ${f.captured}",
+            f.captured != null,
+        )
+        assertEquals(EmergencyReason.MEDICAL_FLATLINE, f.captured!!.first)
+    }
+
+    @Test
+    fun `H3 - flatline fires when no cadence or power signal is plumbed`() {
+        // Graceful degradation — no power meter, no cadence sensor (a common rider
+        // setup: just HR strap). The detector must fall through to the original
+        // FLATLINE behaviour so a real flatline on a basic setup is still detected.
+        val f = Fixture()
+        f.speed(20.0)
+        // Deliberately do NOT call updateCadence / updatePower.
+        for (sec in 0..35) {
+            f.clock.nowMs += 1_000L
+            f.hr(20)
+            if (sec % 5 == 0) f.detector.tick()
+        }
+        assertTrue(
+            "FLATLINE must fire when no cross-check signal is plumbed: ${f.captured}",
+            f.captured != null,
+        )
+        assertEquals(EmergencyReason.MEDICAL_FLATLINE, f.captured!!.first)
+    }
+
     // ── Universal guards ────────────────────────────────────────────────────────
 
     @Test
