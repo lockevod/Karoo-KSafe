@@ -543,19 +543,26 @@ class CrashStateMachine(
         val deviation = abs(sample.rawMagnitude - GRAVITY)
         val accelOk = deviation <= deviationMax
         val speedDropOk = isSpeedDropConfirmed()
+        // Compute the silence-window duration first — this may also LATCH the
+        // orientation regime (set lockedEffectiveSilenceMs and lastOrientationAngleDeg)
+        // on the sample that crosses MIN_ORIENTATION_SAMPLES. Reading onSideRelaxed
+        // AFTER this ensures the relaxation can engage on the very sample that
+        // establishes the latch, not just on subsequent samples.
+        val effectiveSilenceMs = computeEffectiveSilenceMs(gpsStale)
         // Once the orientation regime has LOCKED decisively on-side (angle ≥
         // onSideRelaxationAngleDeg, a stricter threshold than the regular 45°
-        // on-side gate), a bike on the ground cannot be ridden — if it is
-        // moving, the bike has escaped the downed rider. Accel stillness alone
-        // is sufficient evidence; the speed rise is the bike rolling, not the
-        // rider riding. The accel gate remains the strong FP guard: any
-        // handling of the bike (picking it up, holding it) breaks silence
-        // regardless of speed.
+        // on-side gate), a bike on the ground cannot be ridden — if it is moving,
+        // the bike has escaped the downed rider. Accel stillness alone is sufficient
+        // evidence; the speed rise is the bike rolling, not the rider riding. The
+        // accel gate remains the strong FP guard.
         val onSideRelaxed = lockedEffectiveSilenceMs > 0L &&
                             lastOrientationAngleDeg >= thresholds.onSideRelaxationAngleDeg
+        // Note: the gap regime's no-relaxation guarantee depends on
+        // lastOrientationAngleDeg remaining at its -1.0 sentinel — the
+        // angle is never computed when the gap regime fires. If a future
+        // change ever stamps the angle in the gap branch, this gate will
+        // need an explicit gap-regime check.
         val isStill = if (onSideRelaxed) accelOk else (accelOk && speedDropOk)
-
-        val effectiveSilenceMs = computeEffectiveSilenceMs(gpsStale)
 
         return when {
             isStill && (now - silenceStartedMs) >= effectiveSilenceMs -> {

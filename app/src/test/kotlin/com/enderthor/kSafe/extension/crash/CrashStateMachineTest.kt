@@ -1680,4 +1680,64 @@ class CrashStateMachineTest {
             sm.lastConfirmedAngleDeg > 45.0
         )
     }
+
+    @Test
+    fun `on-side relaxation - engages at the exact 60 degree boundary`() {
+        // Vector (8.496, 0, 4.905): magnitude = sqrt(72.18 + 24.06) ≈ 9.81;
+        // dot with reference (0,0,9.81) = 4.905·9.81 ≈ 48.12; cos(angle) =
+        // 48.12 / (9.81·9.81) = 0.5 → angle = 60.00° exactly. The relaxation
+        // gate uses `>=`, so 60° must engage.
+        val (sm, _) = smEnteringSilence(
+            gapMs = 2_000L,
+            preRef = PreImpactRef(0.0, 0.0, 9.81, valid = true),
+            silenceAz = 4.905, silenceAx = 8.496,
+        )
+        assertEquals(CrashStateMachine.State.SILENCE_CHECK, sm.state)
+        var t = 1_002_000L
+        repeat(5) {
+            t += 200L
+            sm.onSample(sample(time = t, raw = 9.81, smoothed = 9.81, az = 4.905, ax = 8.496))
+        }
+        sm.onSpeedUpdate(10.0)
+        var confirmed = false
+        repeat(7) {
+            t += 1000L
+            if (sm.onSample(sample(time = t, raw = 9.81, smoothed = 9.81, az = 4.905, ax = 8.496))
+                    is CrashStateMachine.Decision.Confirm) confirmed = true
+        }
+        assertTrue("relaxation must engage at the exact 60° boundary (>=)", confirmed)
+        assertEquals(4_500L, sm.lastConfirmedSilenceMs)
+    }
+
+    @Test
+    fun `on-side relaxation - speed rise BEFORE the orientation latch breaks silence`() {
+        // While silenceWindowCount < MIN_ORIENTATION_SAMPLES the orientation
+        // regime has not yet latched (lockedEffectiveSilenceMs is still 0L),
+        // so onSideRelaxed is false. A speed rise in that pre-lock window
+        // must break silence via the regular speed-drop gate, the silence
+        // accumulator never reaches the lock threshold, and no confirm fires.
+        val (sm, _) = smEnteringSilence(
+            gapMs = 2_000L,
+            preRef = PreImpactRef(0.0, 0.0, 9.81, valid = true),
+            silenceAz = 0.0, silenceAx = 9.81,
+        )
+        assertEquals(CrashStateMachine.State.SILENCE_CHECK, sm.state)
+        // Speed rises IMMEDIATELY after entry — before any lock samples accumulate.
+        sm.onSpeedUpdate(10.0)
+        var t = 1_002_000L
+        var confirmed = false
+        // 25 s of on-side samples: with no relaxation engaged, the speed-drop gate
+        // breaks silence on every sample (clock keeps resetting), the count
+        // never reaches MIN_ORIENTATION_SAMPLES, the latch never fires, and
+        // the relaxation never engages.
+        repeat(25) {
+            t += 1000L
+            if (sm.onSample(sample(time = t, raw = 9.81, smoothed = 9.81, az = 0.0, ax = 9.81))
+                    is CrashStateMachine.Decision.Confirm) confirmed = true
+        }
+        assertEquals(
+            "pre-lock speed rise must keep breaking silence (no relaxation possible)",
+            false, confirmed,
+        )
+    }
 }

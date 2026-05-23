@@ -275,7 +275,6 @@ class CrashDetectionManager(
             Timber.d("CrashDetectionManager RESUMED — state machine reset (manual-pause resume or no in-flight detection)")
         }
         sensorReader.start(handler = null)
-        Timber.d("CrashDetectionManager RESUMED")
         if (config.speedDropDetectionEnabled) speedDropMonitor.start(config.speedDropMinutes)
     }
 
