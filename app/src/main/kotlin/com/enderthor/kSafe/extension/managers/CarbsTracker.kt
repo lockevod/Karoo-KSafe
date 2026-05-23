@@ -91,6 +91,14 @@ class CarbsTracker(
     @Volatile private var cumLoggedG = 0
     @Volatile private var sessionStartMs = 0L
     @Volatile private var lastTickMs = 0L
+    /**
+     * Wall-clock ms of the last rider log OR the last time-alert fire (F1 fix —
+     * see [evaluateTimeAlert]). Drives the time-alert interval gate, so treating
+     * an unacknowledged fire as a soft "time mark" is what keeps "alert me every
+     * N minutes" honest when the rider misses logs (without it the interval gate
+     * stays latched-open after the first fire and the 5-min cooldown becomes the
+     * de-facto cadence).
+     */
     @Volatile private var lastLogMs = 0L
     @Volatile private var lastAlertMs = 0L
     @Volatile private var lastZoneSnapshot = ZoneSnapshot(ZoneSource.NONE, -1, 0, 1f)

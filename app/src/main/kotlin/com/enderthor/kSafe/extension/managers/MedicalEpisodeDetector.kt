@@ -183,7 +183,6 @@ class MedicalEpisodeDetector(
      * See [HydrationTracker.updateConfig] for the rationale of the [isRecording] gate
      * on the auto-start branch. Same shape, same reason.
      */
-    @Suppress("unused") // called from KSafeExtension.initializeSystem() config-change flow
     fun updateConfig(config: KSafeConfig, isRecording: Boolean) {
         val wasEnabled = this.config.medicalEpisodeEnabled
         this.config = config

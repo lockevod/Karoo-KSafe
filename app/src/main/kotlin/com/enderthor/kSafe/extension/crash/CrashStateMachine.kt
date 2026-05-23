@@ -10,7 +10,8 @@ import kotlin.math.sqrt
  * Pure state machine: MONITORING → IMPACT → SILENCE_CHECK → (CRASH_CONFIRMED | back to MONITORING).
  *
  * Faithful re-expression of the algorithm specified in `docs/crash-detection-algorithm.md`
- * (May 2026, revision 5) and the production logic in [CrashDetectionManager].
+ * (May 2026, revision 7 — IMPACT-phase on-side relaxation) and the production logic
+ * in [CrashDetectionManager].
  *
  * The state machine is **pure**: no Android imports, no coroutines, no time.sleep, no I/O.
  * It owns no buffers — those live in `SensorReader`/[CrashDetectionManager]. Each call to

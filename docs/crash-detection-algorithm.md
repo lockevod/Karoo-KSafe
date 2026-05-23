@@ -1,6 +1,6 @@
 # KSafe — Crash Detection Algorithm
 
-> **Version:** May 2026 (revision 6 — pre-impact orientation reference)
+> **Version:** May 2026 (revision 7 — IMPACT-phase on-side relaxation)
 > **File:** `CrashDetectionManager.kt`
 > **Sensors:** Android SensorManager (accelerometer + gyroscope) + Karoo SDK (speed, cadence, grade)
 
@@ -87,8 +87,6 @@ The **peak** detector fires on a single raw sample exceeding this bar, without t
 > **Why two detectors:** the smoothed path rejects single-sample noise from cobblestones, dirt-to-asphalt transitions or speed bumps. But a real rigid impact (handlebar against asphalt, direct collision with an obstacle) can produce a peak that lasts only 10–20ms — a single sample at 50 Hz. Smoothing alone would dilute a 70 m/s² peak with two surrounding 15 m/s² samples down to ~33 m/s², below the MEDIUM/HIGH smoothed thresholds, causing a silent false negative. The peak path catches these short events.
 
 > **v2.1 deliberation (not applied):** a candidate v2.1 change considered widening the peak thresholds to 68/56/45 (LOW/MED/HIGH) after FP reports. Subsequent commit-history review attributed those reports to the v1.2.0-era gyro entry path (a third entry branch `gyro > 6 rad/s` that triggered on hard cornering / shoulder checks). That branch was removed in commit `ab69a40` before v2.0.0 shipped, so v2.0+ riders are not exposed to the FP pattern those reports described. The peak-threshold widening was reverted; future tuning will be data-driven from v2.0+ FP logs (now that the calibration logger reliably preserves them across crashes).
-
-> **Why two detectors:** the smoothed path rejects single-sample noise from cobblestones, dirt-to-asphalt transitions or speed bumps. But a real rigid impact (handlebar against asphalt, direct collision with an obstacle) can produce a peak that lasts only 10–20ms — a single sample at 50 Hz. Smoothing alone would dilute a 70 m/s² peak with two surrounding 15 m/s² samples down to ~33 m/s², below the MEDIUM/HIGH smoothed thresholds, causing a silent false negative. The peak path catches these short events.
 
 > **Reference (IEEE Accident Detection literature):**
 > Normal bumps / hard braking → up to ~1.5g (14.7 m/s²)
@@ -341,6 +339,7 @@ Captures the scenario where the rider falls and is unconscious at low speed (e.g
 | Rider still pedalling during crash confirmation | Cadence gate: >20 RPM in SILENCE_CHECK → instant false-alarm exit |
 | Bump+brake+stop (gravel / off-road) | Gap regime: impact→stop gap > 8 s → 20 s silence window; rider who rides on after the bump does not confirm |
 | Upright stop after impact (traffic light, check) | Orientation regime: bike still upright vs pre-impact reference → 20 s window |
+| Real crash, bike rolls past auto-pause (auto-resume residual) | IMPACT-phase + SILENCE_CHECK on-side relaxation (revision 7): decisive on-side evidence (angle ≥ 60°, ≥ 25 samples in IMPACT or latched in SILENCE_CHECK) bypasses the speed gate so a rolling bike does not block confirmation |
 
 ---
 
@@ -441,6 +440,18 @@ The class does not use locks. The algorithm tolerates slightly stale reads acros
 ---
 
 ## Change Log (vs. previous revision)
+
+### Revision 7 — May 2026 (auto-resume residual + IMPACT-phase on-side relaxation)
+
+| ID | Change | Status |
+|----|--------|--------|
+| **R7-A** | **I3: preserve mid-IMPACT / mid-SILENCE_CHECK across auto-pause + auto-resume.** Auto-pause no longer wipes the state machine; only an explicit manual pause does. A real crash whose bike rolls long enough to trip Karoo autopause now continues its in-flight detection on resume instead of dropping back to MONITORING. | ✅ Implemented |
+| **R7-B** | **SILENCE_CHECK on-side speed-rise relaxation.** Once the orientation latch fires on-side (angle ≥ `onSideRelaxationAngleDeg = 60°`), `isStill` ignores the speed-drop gate inside SILENCE_CHECK. Closes the residual where the bike rolls after the rider goes down. CR2 preserves the on-side latch across within-budget silence breaks for the same reason. | ✅ Implemented |
+| **R7-C** | **IMPACT-phase on-side relaxation.** `handleImpact`'s IMPACT → SILENCE_CHECK gate becomes `accelOk && gyroOk && timeOk && (speedDropOk || onSideRelaxed)`, where `onSideRelaxed = orientationSampleCount >= 25 && angle ≥ 60°`. Allows the transition when the bike has been decisively flat for ~500 ms even with speed still up — closes the autoresume-mid-IMPACT residual. New companion-object constant `IMPACT_RELAXATION_MIN_SAMPLES = 25`; new `Thresholds` field `onSideRelaxationAngleDeg = 60.0`. The orientation accumulator (`orientationSum*` / `orientationSampleCount`, renamed from `silenceWindow*`) now fills during IMPACT (gated on `accelOk`) in addition to SILENCE_CHECK. The transition carries the accumulator forward on the on-side relaxation path so the SILENCE_CHECK latch is reachable while the bike is still rolling. | ✅ Implemented |
+| **R7-D** | **CR1: IMPACT-timeout accumulator reset.** On `timeSinceImpact > impactWindowMs`, the accumulator is wiped along with the timers. Without this, the next impact's `currentOrientationAngleDeg()` would compute against stale X/Y/Z averages bound to the previous pre-impact reference, and the IMPACT relaxation could fire with as few as ~5 fresh samples. | ✅ Implemented |
+| **R7-E** | **MedicalEpisode: FLATLINE suppression on active pedalling/power.** FLATLINE is not raised when cadence > threshold or power > threshold — a flat-HR rider who is still actively pedalling is a sensor-loss case, not a medical event. | ✅ Implemented (MedicalEpisodeDetector) |
+| **R7-F** | **Actions debounce.** SOS arming and webhook / custom-message taps are debounced to prevent double-tap self-cancel and double-fire on the field-tap broadcast path. | ✅ Implemented (FieldTapReceiver / EmergencyManager) |
+| **R7-G** | **Perf: route `gpsStale` via state-machine field.** `lastSpeedGpsStale` set by `setSpeedGpsStale` instead of carried on each `SensorSample`; eliminates the per-tick `sample.copy()` that allocated ~14 MB/h during GPS-stale stretches. | ✅ Implemented |
 
 ### Revision 6 — May 2026 (pre-impact orientation reference)
 
@@ -665,10 +676,10 @@ if (!preImpactRef.valid):
     latch(legacyShort)                     // never becomes valid → latch immediately
     return legacyShort
 
-if (silenceWindowCount < MIN_ORIENTATION_SAMPLES (5)):
+if (orientationSampleCount < MIN_ORIENTATION_SAMPLES (5)):
     return legacyShort                     // unlatched: count may grow
 
-angle = angleBetween(preImpactRef, silenceWindowAverage)   // acos of normalised dot product
+angle = angleBetween(preImpactRef, orientationAverage)     // acos of normalised dot product
 chosen = if (angle >= uprightAngleThresholdDegrees (45°))
              legacyShort
          else
@@ -677,30 +688,39 @@ latch(chosen)
 return chosen
 ```
 
-`silenceWindowAverage` is computed from the existing `silenceWindowSumX/Y/Z / silenceWindowCount` accumulators accumulated throughout SILENCE_CHECK.
+`orientationAverage` is computed from the `orientationSumX/Y/Z / orientationSampleCount` accumulators. Those accumulators are filled during BOTH IMPACT (on samples that satisfy `accelOk`, to skip the impact transient and post-impact tumble) and SILENCE_CHECK (unconditional — a non-still sample resets the accumulator via `resetSilenceWindow()` anyway). The IMPACT-phase fill is what allows the on-side relaxation gate in `handleImpact` to bypass the speed check; see *IMPACT-phase on-side relaxation* below. The accumulator is named `orientation*` rather than `silenceWindow*` so the broader scope is obvious at the call site.
 
 **Latch (`lockedEffectiveSilenceMs`):** once the decision is made it is frozen for the remainder of the window. Without the latch, a rider standing upright with the 20 s window could lean the bike past 45° at second 19 — the running-average gravity vector would cross the threshold, `computeEffectiveSilenceMs` would return 4 500, the elapsed-time check would instantly satisfy, and Confirm would fire. The latch protects the full safety margin. The latch is cleared by `resetSilenceWindow` on every entry, exit, or break of SILENCE_CHECK so each event decides fresh.
 
-### Silence-window orientation accumulator
+### Orientation accumulator (IMPACT + SILENCE_CHECK)
 
-Inside SILENCE_CHECK, `handleSilenceCheck` accumulates the X/Y/Z of every sample in the current stillness window. `resetSilenceWindow` clears the accumulators on:
-- Entry into SILENCE_CHECK
-- Silence-break (`!isStill` within the doubled window — silence clock restarts)
+The orientation accumulator (`orientationSumX/Y/Z`, `orientationSampleCount`) starts filling in IMPACT — `handleImpact` adds the X/Y/Z of every sample whose accelerometer deviation already satisfies `accelOk` (< `silenceDeviationMax`). Gating on `accelOk` skips the impact transient and any post-impact tumble so the average reflects the bike's actual resting orientation. SILENCE_CHECK then continues to accumulate every sample it sees (unconditional — a `!isStill` sample either resets via the within-budget reset path or wipes the accumulator via `resetSilenceWindow()`, so an extra per-sample gate is redundant).
+
+`resetSilenceWindow` clears the accumulators on:
+- Entry into SILENCE_CHECK on the **speed-drop path** — SILENCE_CHECK starts fresh and the latch decision is rebuilt from its own samples.
+- Silence-break (`!isStill` within the doubled window — silence clock restarts) — exception: see *IMPACT-phase on-side relaxation* below for the within-budget on-side preservation rule.
 - Exit from SILENCE_CHECK (Confirm, false-alarm, cadence-gate)
+- IMPACT timeout (false alarm — accumulator is bound to the THIS impact's pre-impact reference and must not bleed into the next event)
 - Pause (via `onPause`)
 
-Each event therefore computes orientation exclusively from its own samples.
+The IMPACT → SILENCE_CHECK transition on the **on-side relaxation path** does NOT reset the accumulator (only the latch marker is cleared). That preservation is the point of the on-side relaxation — see the next section.
 
 ### Lifecycle
 
-| Event | Effect on pre-impact reference | Effect on silence window |
-|-------|-------------------------------|--------------------------|
+| Event | Effect on pre-impact reference | Effect on silence window / orientation accumulator |
+|-------|-------------------------------|----------------------------------------------------|
 | First `Recording` of session | RESET (ring cleared) | RESET |
-| `Paused → Recording` resume | RESET (ring cleared in `onPause`) | RESET |
-| `Recording → Paused` | RESET (ring cleared in `onPause`) | RESET |
-| Impact detected (`Decision.EnterImpact`) | **CAPTURED** from ring buffer at this moment | n/a (entering IMPACT) |
-| IMPACT → SILENCE_CHECK | Reference already set; gap is recorded | Window starts fresh |
-| Silence break | Reference unchanged; gap unchanged | Window resets |
+| `Paused (manual) → Recording` resume | RESET (ring cleared in `onPause`) | RESET (manual pause wipes the state machine — I3 fix) |
+| `Paused (auto) → Recording` resume | PRESERVED (auto-pause does not call `onPause` on the SM) | **PRESERVED** — mid-IMPACT or mid-SILENCE_CHECK survives the autopause + auto-resume cycle (I3 + auto-resume residual fixes). A real crash whose bike rolls long enough to trip autopause continues its in-flight detection on resume |
+| `Recording → Paused (manual)` | RESET (ring cleared in `onPause`) | RESET |
+| `Recording → Paused (auto)` | PRESERVED (auto-pause does not reach `onPause`) | PRESERVED |
+| Impact detected (`Decision.EnterImpact`) | **CAPTURED** from ring buffer at this moment | Orientation accumulator starts filling (gated on `accelOk`) |
+| IMPACT → SILENCE_CHECK (speed-drop path) | Reference already set; gap is recorded | Accumulator **reset** — SILENCE_CHECK rebuilds the latch from its own samples |
+| IMPACT → SILENCE_CHECK (on-side relaxation path) | Reference already set; gap is recorded | Accumulator **carries forward** — the ≥25 on-side IMPACT samples are durable evidence; only `lockedEffectiveSilenceMs` and `lastOrientationAngleDeg` are cleared so the latch re-evaluates cleanly from the preserved data |
+| Silence break, within-budget, on-side latched | Reference unchanged; gap unchanged | Accumulator **carries forward** (CR2 preserve-on-side rule — the within-budget bump must not wipe the latch, for the same reason the on-side relaxation transition doesn't) |
+| Silence break, within-budget, NOT on-side | Reference unchanged; gap unchanged | Accumulator resets via `resetSilenceWindow()` |
+| Silence break, beyond `impactWindowMs × 2` | RESET (returning to MONITORING) | RESET |
+| IMPACT timeout | RESET (returning to MONITORING) | RESET — accumulator is bound to the THIS impact's pre-impact reference; leaving it filled would let the next impact's on-side gate fire with ≈5 fresh samples instead of the documented 25 (CR1 fix) |
 | Process restart / Karoo reboot | RESET (no cross-process persistence) | RESET |
 
 ### False-negative analysis
@@ -742,3 +762,48 @@ The `ORIENTATION_BASELINE` (`ORIENT_BASE`) event no longer exists — there is n
 | `gpsStaleSilenceDurationMs` | 8 000 ms | On-side / invalid-reference duration when GPS is stale |
 | `uprightAngleThresholdDegrees` | 45.0° | Angle below which the bike is classified as "still upright" |
 | `delayedStopGapMs` | 8 000 ms | Impact→stillness gap above which the stop is treated as delayed (long 20 s window) |
+| `onSideRelaxationAngleDeg` | 60.0° | Angle from the pre-impact reference above which the bike is "decisively on the ground". Used to bypass the speed gate in BOTH the SILENCE_CHECK speed-rise relaxation AND the IMPACT-phase on-side relaxation. Stricter than `uprightAngleThresholdDegrees` so merely-leaned bikes do not relax the speed check. |
+
+Companion-object constants (in `CrashStateMachine`, not `Thresholds`):
+
+| Constant | Value | Purpose |
+|----------|-------|---------|
+| `MIN_ORIENTATION_SAMPLES` | 5 | Samples needed before the SILENCE_CHECK latch's orientation classification kicks in (~100 ms at 50 Hz). |
+| `IMPACT_RELAXATION_MIN_SAMPLES` | 25 | Samples of sustained on-side `accelOk` accumulation required before the IMPACT-phase relaxation can bypass the speed gate (~500 ms at 50 Hz). Stricter than `MIN_ORIENTATION_SAMPLES` because bypassing the speed gate at IMPACT→SILENCE_CHECK entry is more consequential than the in-SILENCE_CHECK latch decision. |
+
+---
+
+## IMPACT-phase on-side relaxation (revision 7)
+
+The SILENCE_CHECK on-side speed-rise relaxation introduced earlier in this branch closes the auto-resume residual when the state machine has already reached SILENCE_CHECK before the bike starts rolling. A narrower residual remains when the bike keeps moving long enough that the Karoo autopause + auto-resume cycle unfolds entirely **inside IMPACT**: `handleImpact`'s standard transition gate requires `speedDropOk` (`currentSpeedKmh < crashConfirmSpeedKmh`), so a bike still rolling above 5 km/h cannot reach SILENCE_CHECK on the fast path. The IMPACT window times out at 15–25 s, the event drops to MONITORING, and detection falls back to the `SpeedDropMonitor` (~5 min + 60 s stillness) — not always reliable in environments with light vibration (windy pass, traffic shoulder).
+
+The IMPACT-phase relaxation closes that gap symmetrically:
+
+```
+onSideRelaxed = (orientationSampleCount >= IMPACT_RELAXATION_MIN_SAMPLES)
+              AND (currentOrientationAngleDeg() >= onSideRelaxationAngleDeg)   // 60°
+gateOk        = accelOk AND gyroOk AND timeOk AND (speedDropOk OR onSideRelaxed)
+```
+
+Decisive on-side evidence (≥25 samples = ~500 ms of sustained `accelOk` on-side accumulation, angle ≥ 60° from the pre-impact reference) allows the IMPACT → SILENCE_CHECK transition to bypass the speed gate. Rationale: a bike that is decisively on the ground cannot be ridden — if the bike is moving while flat, the bike has escaped the downed rider.
+
+**Why this preserves false-positive safety:**
+
+- The other gates stay intact. `accelOk` (< 4 m/s² deviation) blocks a rider still handling the bike; `gyroOk` (< 2 rad/s) blocks sustained cornering rotation; `timeOk` (> 500 ms since impact) enforces a settle period; the 60° angle threshold rejects merely-leaned bikes (the upright angle threshold is 45° for the latch — 60° is reserved for "decisively flat").
+- The 25-sample minimum prevents a transient angle flicker from triggering the bypass. ~500 ms of sustained on-side accumulation is required.
+- The pre-impact reference must be valid. An invalid reference (cold start, < ~1 s after a resume) makes `currentOrientationAngleDeg()` return the `-1.0` sentinel and the gate cannot engage.
+
+**Accumulator preservation on the relaxation path.** On the on-side relaxation transition, the orientation accumulator is **carried forward** into SILENCE_CHECK rather than reset. The 25 samples that proved the bike is on its side are still valid evidence; resetting them would force SILENCE_CHECK to rebuild the latch from scratch while speed is still high — and each non-still sample resets the accumulator before it can reach `MIN_ORIENTATION_SAMPLES`, making the latch unreachable. Only `lockedEffectiveSilenceMs` and `lastOrientationAngleDeg` are cleared so SILENCE_CHECK re-evaluates its own window choice cleanly from the preserved data. The speed-drop transition path retains the previous behaviour (full `resetSilenceWindow()`) because there is no on-side evidence to protect on that path.
+
+**Rationale (auto-resume residual closure).** Together with the auto-resume SILENCE_CHECK relaxation, the IMPACT-phase relaxation closes the "bike continues moving when Karoo autopause fires mid-IMPACT" residual. End-to-end trace on a downhill crash where the bike rolls:
+
+1. Impact spike → IMPACT entered. Accelerometer noisy for ~100-300 ms.
+2. Bike settles on its side. `accelOk` starts holding. Orientation accumulator begins filling in IMPACT.
+3. Karoo autopause fires (~3-6 s after speed → 0). The I3 fix preserves the in-flight IMPACT.
+4. Bike rolls down slope; speed picks up. Auto-resume fires (~3-5 km/h sustained). Auto-resume-residual fix preserves the in-flight IMPACT.
+5. By ~500 ms of accel-still in IMPACT, `orientationSampleCount >= 25` and `currentOrientationAngleDeg() >= 60°`.
+6. New gate fires: `gateOk = accelOk && gyroOk && timeOk && onSideRelaxed = true`. Transition to SILENCE_CHECK with the accumulator preserved.
+7. SILENCE_CHECK's orientation latch locks on-side ≥60° immediately (the preserved accumulator already has > MIN_ORIENTATION_SAMPLES on-side samples) → 4.5 s window, and the SILENCE_CHECK relaxation engages so a speed rise does not break stillness.
+8. Continuous 4.5 s of accel-still → Confirm → emergency countdown.
+
+Total time from impact to confirm: roughly 1-2 s (settle) + 4.5 s (silence window) ≈ 5-7 s on the fast path, vs the SpeedDropMonitor backstop's ~5 min in the cases where that backstop is even reliable.

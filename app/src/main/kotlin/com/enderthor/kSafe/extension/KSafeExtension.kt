@@ -1242,7 +1242,9 @@ class KSafeExtension : KarooExtension("ksafe", BuildConfig.VERSION_NAME), Corout
             // Idle — rider is in the launcher / KSafe Settings. SystemNotification is
             // visible there. A system overlay (SosOverlayManager-style) would be richer
             // but requires SYSTEM_ALERT_WINDOW permission; the rider may not have granted
-            // it. Keep SystemNotification as the Idle fallback for now — see TODO above.
+            // it. Keep SystemNotification as the Idle fallback for now — the design-guide
+            // "no system notifications mid-ride" rule (see KDoc above) only forbids the
+            // Recording / Paused branch, which already routes to InRideAlert.
             karooSystem.dispatch(SystemNotification(id = id, header = header, message = message))
         }
     }
