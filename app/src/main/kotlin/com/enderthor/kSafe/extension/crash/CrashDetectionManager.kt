@@ -164,6 +164,12 @@ class CrashDetectionManager(
 
     // ─── Boost & calibration tracking ────────────────────────────────────────
     @Volatile private var postImpactBoostUntil = 0L
+    // Cluster-detection rolling queue. CO1 fix — accessed from the sensor thread
+    // (addLast/first/removeFirst/size inside the IMPACT_TIMEOUT branch) AND from Main
+    // (clear() in start/stop/resume lifecycle methods). All mutations and reads MUST be
+    // wrapped in `synchronized(recentTmoTimestamps) { ... }` to avoid a torn-state read
+    // that would silently corrupt the cluster bookkeeping (cluster detection misfiring or
+    // missing). The sensor-thread try/catch in SensorReader would mask the symptom.
     private val recentTmoTimestamps = ArrayDeque<Long>(8)
 
     // Window-progress accumulators (re-emitted in IMPACT_TIMEOUT calibration row)
@@ -229,7 +235,7 @@ class CrashDetectionManager(
         lastGpsStaleState = false
         lastLoggedSensitivity = config.crashSensitivity
         postImpactBoostUntil = 0L
-        recentTmoTimestamps.clear()
+        synchronized(recentTmoTimestamps) { recentTmoTimestamps.clear() }
         resetWindowAccumulators()
 
         rebuildThresholds(boostActive = false)
@@ -258,7 +264,7 @@ class CrashDetectionManager(
         lastGpsStaleState = false
         lastLoggedSensitivity = config.crashSensitivity
         postImpactBoostUntil = 0L
-        recentTmoTimestamps.clear()
+        synchronized(recentTmoTimestamps) { recentTmoTimestamps.clear() }
         resetWindowAccumulators()
         rebuildThresholds(boostActive = false)
         // If the state machine is mid-IMPACT or mid-SILENCE_CHECK at resume time
@@ -285,7 +291,7 @@ class CrashDetectionManager(
         resetWindowAccumulators()
         // Clear the rolling TMO-cluster deque (cleared in start()/resume() too) so a
         // stop leaves no stale cluster state behind.
-        recentTmoTimestamps.clear()
+        synchronized(recentTmoTimestamps) { recentTmoTimestamps.clear() }
         // Clear the post-confirmation cooldown gate. Otherwise a rider who disables crash
         // detection mid-cooldown then re-enables it within ~30 s would have a legitimate
         // impact suppressed by stale cooldown state from the previous session.
@@ -642,13 +648,17 @@ class CrashDetectionManager(
                 gyroBlockedCnt > 0 -> "GYRO"
                 else -> "UNKNOWN"
             }
-            // Cluster detection on rolling TMO queue
-            recentTmoTimestamps.addLast(now)
-            while (recentTmoTimestamps.isNotEmpty() &&
-                   now - recentTmoTimestamps.first() > CLUSTER_WINDOW_MS) {
-                recentTmoTimestamps.removeFirst()
+            // Cluster detection on rolling TMO queue. CO1 — read-modify-write under the
+            // deque monitor so a concurrent lifecycle-clear from Main can't tear the state.
+            val tmoCount = synchronized(recentTmoTimestamps) {
+                recentTmoTimestamps.addLast(now)
+                while (recentTmoTimestamps.isNotEmpty() &&
+                       now - recentTmoTimestamps.first() > CLUSTER_WINDOW_MS) {
+                    recentTmoTimestamps.removeFirst()
+                }
+                recentTmoTimestamps.size
             }
-            val isCluster = recentTmoTimestamps.size >= CLUSTER_MIN_TMO
+            val isCluster = tmoCount >= CLUSTER_MIN_TMO
             val boostMs = if (isCluster) POST_CLUSTER_COOLDOWN_MS else POST_TMO_COOLDOWN_MS
             postImpactBoostUntil = now + boostMs
             // Force a threshold rebuild so the boost takes effect on the next sample.
@@ -671,7 +681,9 @@ class CrashDetectionManager(
             }
             if (isCluster) {
                 calibLogger?.log(CalibrationLogger.Event.TERRAIN_CLUSTER) {
-                    "count=${recentTmoTimestamps.size},window_s=${CLUSTER_WINDOW_MS / 1000},boost_s=${boostMs / 1000}"
+                    // Use the snapshot taken under the lock above (tmoCount) rather than
+                    // a fresh .size read that could be torn by a concurrent lifecycle clear.
+                    "count=$tmoCount,window_s=${CLUSTER_WINDOW_MS / 1000},boost_s=${boostMs / 1000}"
                 }
             }
             resetWindowAccumulators()
