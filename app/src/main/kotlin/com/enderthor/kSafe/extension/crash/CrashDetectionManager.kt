@@ -223,7 +223,7 @@ class CrashDetectionManager(
         scope = scope,
         clock = clock,
         accelStillSinceProvider = { sensorReader.accelStillSinceMs },
-        cooldownGate = { (clock.nowMs() - lastCrashTime) > crashCooldownMs },
+        cooldownGate = { (clock.monotonicMs() - lastCrashTime) > crashCooldownMs },
         onConfirm = { confirmCrash(CrashSource.SPEED_DROP) },
         calibLogger = calibLogger,
     )
@@ -342,6 +342,14 @@ class CrashDetectionManager(
     }
 
     fun updateSpeed(speedKmh: Double) {
+        // D6/G2 fix — drop NaN AND Infinity samples. NaN equality is non-reflexive
+        // (`NaN != currentSpeedKmh` is always true) so a single NaN would stamp
+        // speedLastChangeMs forever and disable GPS-stale detection. Infinity passes
+        // the NaN guard but latches `lastSpeedKmh = Infinity` in the state machine,
+        // making `lastSpeedKmh < crashConfirmSpeedKmh` always false → IMPACT can't
+        // transition to SILENCE_CHECK via the speed-drop branch until the GPS-stale
+        // fallback engages 10 s later.
+        if (!speedKmh.isFinite()) return
         val now = clock.nowMs()
         val elapsed = if (speedLastEmissionMs > 0) (now - speedLastEmissionMs) / 1000.0 else 0.0
         if (elapsed >= 0.2 && speedDataReceived) {
@@ -485,7 +493,14 @@ class CrashDetectionManager(
         // peak/smoothed/gyro magnitudes — this avoids the SM seeing a "spike" during
         // cooldown that would otherwise lead to a re-trigger immediately after the
         // user cancels.
-        val cooldownOk = (now - lastCrashTime) > crashCooldownMs
+        //
+        // D2 fix — uses [Clock.monotonicMs] (elapsedRealtime on Android) instead of
+        // sample.timestampMs / clock.nowMs (wall-clock). Without this, an NTP step
+        // mid-ride or a manual date change can make (now - lastCrashTime) suddenly
+        // exceed crashCooldownMs and lift the cooldown early (duplicate emergency)
+        // or go negative and extend it (briefly suppressed). The cooldown is purely
+        // in-memory so monotonic time is the right domain.
+        val cooldownOk = (clock.monotonicMs() - lastCrashTime) > crashCooldownMs
 
         // Track the state before submitting the sample so we can detect transitions
         // and emit rich calibration events for them.
@@ -904,7 +919,9 @@ class CrashDetectionManager(
      * without inflating confirmed-crash counts.
      */
     private fun confirmCrash(source: CrashSource, alreadyLogged: Boolean = false) {
-        val now = clock.nowMs()
+        // D2 — cooldown stamps + reads use monotonic time so NTP / date changes
+        // can't shift the gate (see [Thresholds]-side comment in onSensorSample).
+        val now = clock.monotonicMs()
         if ((now - lastCrashTime) <= crashCooldownMs) {
             Timber.d("Confirm $source suppressed — within cooldown window")
             calibLogger?.log(CalibrationLogger.Event.CRASH_GATE_SUPPRESSED) {

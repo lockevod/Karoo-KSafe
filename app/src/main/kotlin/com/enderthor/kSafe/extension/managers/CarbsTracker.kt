@@ -212,7 +212,14 @@ class CarbsTracker(
         }
         monitorJob = scope.launch {
             oldJob?.cancelAndJoin()
-            while (true) { delay(MONITOR_TICK_MS); tick() }
+            // H3 — defensive try/catch around tick() so a single throw doesn't
+            // disable carb integration and alerts for the rest of the ride.
+            while (true) {
+                delay(MONITOR_TICK_MS)
+                try { tick() }
+                catch (e: kotlinx.coroutines.CancellationException) { throw e }
+                catch (e: Exception) { Timber.e(e, "CarbsTracker.tick threw — continuing") }
+            }
         }
         calibLogger?.log(CalibrationLogger.Event.FUELING_CARB_START) {
             "base_gph=${config.carbTargetGperHour}," +
@@ -268,7 +275,14 @@ class CarbsTracker(
         lastTickMs = 0L
         monitorJob = scope.launch {
             oldJob?.cancelAndJoin()
-            while (true) { delay(MONITOR_TICK_MS); tick() }
+            // H3 — defensive try/catch around tick() so a single throw doesn't
+            // disable carb integration and alerts for the rest of the ride.
+            while (true) {
+                delay(MONITOR_TICK_MS)
+                try { tick() }
+                catch (e: kotlinx.coroutines.CancellationException) { throw e }
+                catch (e: Exception) { Timber.e(e, "CarbsTracker.tick threw — continuing") }
+            }
         }
         Timber.d("CarbsTracker resumed (cumTargetG=${cumTargetG.toInt()}, cumLoggedG=$cumLoggedG)")
         publishStatus()
@@ -289,6 +303,9 @@ class CarbsTracker(
     fun updateHr(bpm: Int)                { lastHrBpm = bpm }
     fun updatePower(w: Int)               { lastPowerW = w }
     fun updateSpeed(kmh: Double) {
+        // D6/G2 fix — drop NaN AND Infinity samples; see MedicalEpisodeDetector
+        // for the IEEE-754 taint mechanism this guards against.
+        if (!kmh.isFinite()) return
         val prev = lastSpeedKmh
         // Stamp lastSpeedChangeMs on real value changes, on explicit-zero emissions
         // (rider stopped at the lights — GPS is alive even if 0.0 repeats bit-exact),
@@ -349,8 +366,31 @@ class CarbsTracker(
         val grams = lastLoggedGramsBySlot[slot]
         if (grams <= 0) return 0
         cumLoggedG = (cumLoggedG - grams).coerceAtLeast(0)
-        lastLogMs = lastLogMsBeforeBySlot[slot]
-        lastRealLogMs = lastRealLogMsBeforeBySlot[slot]
+        // E2 fix — only roll [lastLogMs] / [lastRealLogMs] back to the pre-slot snapshot
+        // when no OTHER slot has logged since this slot did. We can detect that by
+        // checking whether the current value is still strictly greater than the snapshot:
+        // an unmodified snapshot means our `logEntry` stamp is the most recent. If
+        // another slot has logged in between, its stamp is now the live value and the
+        // snapshot would silently roll the {elapsed} token back past it — making the
+        // alert lie about how long it has been since the LAST log of any kind.
+        val snapLog = lastLogMsBeforeBySlot[slot]
+        val snapReal = lastRealLogMsBeforeBySlot[slot]
+        if (snapLog > 0L && lastLogMs >= snapLog &&
+            // No interleaved log means our post-stamp is still the live one. We don't
+            // store post-stamps, but we know `lastLogMs == lastLogMs at logEntry` only
+            // if nothing has touched it since — and the same is true of lastRealLogMs.
+            // The safe-rollback predicate is "the snapshot is strictly older than the
+            // current live value by ONLY the gap this slot's logEntry introduced". We
+            // approximate that by comparing live to the slot's saved post-stamp; since
+            // we don't store the post-stamp, use the snapshots-of-record pair: if any
+            // other slot has interleaved, AT LEAST one of the cross-slot snapshots will
+            // also be > snapLog. That's tracked by lastLoggedGramsBySlot for the OTHER
+            // slots — if any of them is > 0 with a snapshot > snapLog, an interleave
+            // happened and we must NOT roll back.
+            !hasInterleavedLogAfter(slot, snapLog)) {
+            lastLogMs = snapLog
+            lastRealLogMs = snapReal
+        }
         lastLoggedGramsBySlot[slot] = 0
         lastLogMsBeforeBySlot[slot] = 0L
         lastRealLogMsBeforeBySlot[slot] = 0L
@@ -359,6 +399,18 @@ class CarbsTracker(
         }
         publishStatus()
         return grams
+    }
+
+    /** Returns true if a slot OTHER than [excludeSlot] has logged after [thresholdMs] —
+     *  i.e. its [lastLogMsBeforeBySlot] is at or after the timestamp we'd be rolling back
+     *  to. When true, undoing [excludeSlot]'s timestamp would silently destroy the time
+     *  mark of that interleaved log. */
+    private fun hasInterleavedLogAfter(excludeSlot: Int, thresholdMs: Long): Boolean {
+        for (i in 1..3) {
+            if (i == excludeSlot) continue
+            if (lastLoggedGramsBySlot[i] > 0 && lastLogMsBeforeBySlot[i] >= thresholdMs) return true
+        }
+        return false
     }
 
     /**

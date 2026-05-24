@@ -77,8 +77,12 @@ class Sender(
                             continue
                         }
                         val body = response.body?.toString(Charsets.UTF_8) ?: ""
+                        // J1 — use the same robust success predicate as attemptSend
+                        // so a misconfigured CallMeBot fails BOTH paths consistently
+                        // (testSend reporting "sent ✓" while sendAlert silently fails
+                        // is the worst-of-both-worlds UX).
                         when {
-                            response.statusCode in 200..299 && !body.contains("ERROR") ->
+                            isCallMeBotSuccess(response.statusCode, body) ->
                                 results.add("$label: sent ✓")
                             body.contains("not authorized", ignoreCase = true) ||
                             body.contains("apikey", ignoreCase = true) ->
@@ -116,7 +120,9 @@ class Sender(
                         } else {
                             val body = response.body?.toString(Charsets.UTF_8) ?: ""
                             when {
-                                response.statusCode in 200..299 && body.contains("\"status\":1") ->
+                                // K2 — anchored check, see attemptSend Pushover branch.
+                                response.statusCode in 200..299 &&
+                                    (body.contains("\"status\":1,") || body.contains("\"status\":1}")) ->
                                     results.add("$label: sent ✓")
                                 response.statusCode == 429 ->
                                     results.add("$label: rate limited — try again later.")
@@ -223,6 +229,16 @@ class Sender(
             return false
         }
 
+        // Pre-flight credential validation — every provider's attemptSend short-circuits
+        // with `return false` on blank credentials, but without this check the retry
+        // loop would burn the full 9-attempt × ~30 min budget calling that same
+        // short-circuit. Fail fast so the rider's delivery-failure notification fires
+        // immediately instead of after half an hour.
+        if (!hasUsableCredentials(provider, config)) {
+            Timber.e("sendWithRetry: blank/missing credentials for $provider — failing fast without retries")
+            return false
+        }
+
         var totalAttempts = 0
         var currentCycle = 0
 
@@ -235,9 +251,24 @@ class Sender(
                         Timber.d("Retry attempt $totalAttempts, waiting ${waitSeconds}s")
                         delay(waitSeconds * 1000L)
                     }
-                    val result = withTimeoutOrNull(ATTEMPT_BLOCK_TIMEOUT_MS) {
-                        attemptSend(message, provider, isEmergency, config)
-                    } == true
+                    // Per-attempt try/catch — without this, a synchronous throw from
+                    // attemptSend (RemoteException / IllegalStateException from a
+                    // momentarily-unbound karooSystem, or any provider-specific glitch
+                    // not handled inside attemptSend) would escape withTimeoutOrNull,
+                    // escape the repeat/while, and hit the OUTER catch(Exception) below
+                    // — collapsing the entire 9-attempt × 30-min retry budget into one
+                    // failed try and silently dropping the rider's emergency alert.
+                    val result = try {
+                        withTimeoutOrNull(ATTEMPT_BLOCK_TIMEOUT_MS) {
+                            attemptSend(message, provider, isEmergency, config)
+                        } == true
+                    } catch (e: kotlinx.coroutines.CancellationException) {
+                        // Cancellation must still propagate (caller scope tear-down).
+                        throw e
+                    } catch (e: Exception) {
+                        Timber.w(e, "Attempt $totalAttempts threw — treating as failed, continuing retry chain")
+                        false
+                    }
 
                     if (result) {
                         Timber.d("Message sent on attempt $totalAttempts")
@@ -259,9 +290,78 @@ class Sender(
             // would leave the parent coroutine running past the cancellation point.
             throw e
         } catch (e: Exception) {
+            // Defensive backstop — per-attempt catch above now handles the per-attempt
+            // throw path; this remains for any unexpected exception escaping the
+            // surrounding control flow (delay between cycles, config load, etc.).
             Timber.e(e, "Retry error: ${e.message}")
             false
         }
+    }
+
+    /**
+     * Pre-flight check called once from [sendWithRetry] so an unconfigured provider
+     * fails the retry loop in microseconds instead of burning ~30 minutes calling
+     * attemptSend's `return false` short-circuit. Mirrors the per-provider blank
+     * checks at the start of each attemptSend branch.
+     *
+     * J3 — checks ALL configured slots (1..3) for providers that support multi-recipient
+     * (CallMeBot, Pushover, Telegram). A rider who deliberately blanks slot 1 (e.g. to
+     * avoid self-notification) and configures contacts in slot 2/3 must still be able
+     * to send — the original slot-1-only check would have made the pre-flight return
+     * false and silently swallow the entire retry budget.
+     */
+    private fun hasUsableCredentials(provider: ProviderType, config: SenderConfig): Boolean = when (provider) {
+        ProviderType.CALLMEBOT -> callMeBotRecipients(config).isNotEmpty() && config.apiKey.isNotBlank()
+        ProviderType.PUSHOVER  -> config.apiKey.isNotBlank() &&
+            listOf(config.userKey, config.userKey2, config.userKey3).any { it.isNotBlank() }
+        ProviderType.NTFY      -> config.apiKey.isNotBlank()
+        ProviderType.TELEGRAM  -> config.apiKey.isNotBlank() &&
+            listOf(config.userKey, config.userKey2, config.userKey3).any { it.isNotBlank() }
+    }
+
+    /**
+     * CallMeBot success predicate. The provider returns HTTP 200 even on most failure
+     * modes — the body string is the discriminator. Documented body patterns:
+     *  - Success: "Message Sent", "Message queued", standalone "OK"
+     *  - Failure: "APIKEY_INVALID", "WhatsApp Number not found", "You need to authorize
+     *    this number", "ERROR: ...", "Forbidden", "Token expired", "Revoked", etc.
+     *
+     * K1 — the previous version had two false-positive vectors:
+     *  1. The whitelist contained the bare 2-char substring "ok", which also matches
+     *     inside common English words found in failure bodies (`tOKen`, `revOKed`,
+     *     `looKup`). A failure body like "Token expired" silently returned true.
+     *  2. `body.isBlank()` treated an empty 2xx response as success, but an empty body
+     *     is a tell-tale signature of a captive-portal / proxy interception, NOT
+     *     a real CallMeBot success — those always include a non-empty status string.
+     *
+     * Robust check: require an explicit success marker as a multi-word phrase OR
+     * standalone-"OK" via trim+equals (so "OK" by itself works, but "tOKen" doesn't).
+     * Blacklist still runs first as a defense-in-depth catch for known failure modes.
+     */
+    private fun isCallMeBotSuccess(statusCode: Int, body: String): Boolean {
+        if (statusCode !in 200..299) return false
+        if (body.isBlank()) return false   // captive portal / proxy intercept — never trust.
+        val lower = body.lowercase()
+        val knownFailures = listOf(
+            "error",
+            "apikey_invalid",
+            "not authorized",
+            "not found",
+            "you need to",
+            "forbidden",
+            "invalid",
+            "expired",
+            "revoked",
+            "limit",         // rate-limit hits ("daily limit reached", "limit exceeded")
+            "denied",
+        )
+        if (knownFailures.any { lower.contains(it) }) return false
+        // Whitelist — multi-word phrases that can't accidentally appear inside other
+        // English words. Standalone "OK" (trim+equals, case-insensitive) covers the
+        // legacy minimal-success endpoint without the substring fragility.
+        if (body.trim().equals("OK", ignoreCase = true)) return true
+        val knownSuccess = listOf("message sent", "message queued")
+        return knownSuccess.any { lower.contains(it) }
     }
 
     // ─── Provider implementations ─────────────────────────────────────────────
@@ -297,7 +397,15 @@ class Sender(
                         continue
                     }
                     val body = response.body?.toString(Charsets.UTF_8) ?: ""
-                    val ok = response.statusCode in 200..299 && !body.contains("ERROR")
+                    // J1 — CallMeBot returns HTTP 200 with various failure bodies that
+                    // do NOT contain the literal word "ERROR" (e.g. "APIKEY_INVALID",
+                    // "WhatsApp Number not found", "You need to authorize this number").
+                    // The previous `!body.contains("ERROR")` would treat all of these
+                    // as success, so a misconfigured / expired CallMeBot setup silently
+                    // returned true and the rider's contacts never received the alert.
+                    // Require a positive success marker ("Message Sent" or "Message
+                    // queued"), then double-check no known failure substring is present.
+                    val ok = isCallMeBotSuccess(response.statusCode, body)
                     if (ok) anyOk = true
                     else Timber.e("CallMeBot error (phone=$phone) ${response.statusCode}: $body")
                 }
@@ -332,7 +440,14 @@ class Sender(
                         continue
                     }
                     val body = response.body?.toString(Charsets.UTF_8) ?: ""
-                    val ok = response.statusCode in 200..299 && body.contains("\"status\":1")
+                    // K2 — anchored substring check. The previous `"status":1` matched
+                    // both `"status":1,` (real success) AND `"status":10,` / `"status":11,`
+                    // (hypothetical future Pushover codes). Pushover documents only 0/1
+                    // today so it's not triggerable yet, but the J1 round-7 finding proved
+                    // this fragility class ships silently for years. Require a JSON value
+                    // terminator (`,` for non-last field, `}` for the last field).
+                    val ok = response.statusCode in 200..299 &&
+                        (body.contains("\"status\":1,") || body.contains("\"status\":1}"))
                     if (ok) anyOk = true
                     else Timber.e("Pushover error (userKey=$key) ${response.statusCode}: $body")
                 }

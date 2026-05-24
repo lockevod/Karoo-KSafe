@@ -79,7 +79,12 @@ fun SafetyScreen(vm: MainViewModel) {
         vm.saveConfig(
             config.copy(
                 emergencyMessage        = emergencyMessage,
-                countdownSeconds        = countdownSeconds.toIntOrNull() ?: 30,
+                // Clamp on commit — a literal "0" parses as 0, which would skip the
+                // entire cancel UI loop (`for (n in 0 downTo 1)` is an empty range)
+                // and fire the alert with no rider abort window. Five seconds is
+                // the documented minimum the SOS overlay can usefully render; 120 s
+                // is the practical maximum any real rider would set.
+                countdownSeconds        = (countdownSeconds.toIntOrNull() ?: 30).coerceIn(5, 120),
                 crashDetectionEnabled   = crashEnabled,
                 crashSensitivity        = crashSensitivity,
                 customCrashThreshold    = customThreshold,
@@ -88,9 +93,15 @@ fun SafetyScreen(vm: MainViewModel) {
                 crashMonitorOutsideRide = crashOutsideRide,
                 crashMonitorOutsideRideAnySpeed = crashOutsideRideAny,
                 speedDropDetectionEnabled = speedDropEnabled,
-                speedDropMinutes        = speedDropMinutes.toIntOrNull() ?: 5,
+                // J4 — clamp on commit. A literal "0" would persist 0 and cause
+                // delay(0) in startCheckinJobs → CHECKIN_EXPIRED fires immediately
+                // on every subsequent ride start, sending a false SOS to contacts
+                // within seconds. 10 min is the documented practical minimum;
+                // 24 h is the practical maximum. Same rationale for speedDropMinutes
+                // (which gates a 5-min zero-speed window → 1 min minimum useful).
+                speedDropMinutes        = (speedDropMinutes.toIntOrNull() ?: 5).coerceIn(1, 60),
                 checkinEnabled          = checkinEnabled,
-                checkinIntervalMinutes  = checkinInterval.toIntOrNull() ?: 120,
+                checkinIntervalMinutes  = (checkinInterval.toIntOrNull() ?: 120).coerceIn(10, 1440),
                 sosFieldColor           = sosFieldColor,
                 timerFieldColor         = timerFieldColor,
             )

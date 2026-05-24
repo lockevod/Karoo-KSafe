@@ -64,3 +64,50 @@ Crash detection thresholds (impact magnitudes, silence durations, speed gates) n
 - Tune the `SILENCE_CHECK` duration and deviation thresholds to real post-crash physics
 
 This data is processed by the developer and never shared with third parties.
+
+## Event catalogue
+
+Every CSV row is tagged with a short event identifier. The current catalogue:
+
+### Crash detection pipeline
+| Tag | Meaning |
+|---|---|
+| `IMPACT_IN` / `IMPACT_TMO` | Entered IMPACT phase / IMPACT timed out without confirming |
+| `SIL_IN` / `SIL_TMO` / `SIL_BRK` | Entered SILENCE_CHECK / timed out / broken by motion |
+| `CRASH_OK` | Crash CONFIRMED — alert dispatched |
+| `CRASH_NO` | Crash CANCELLED by rider during countdown — labelled false positive |
+| `CRASH_GATE_SUPPRESSED` | Confirm landed inside the cooldown window of a previous confirm |
+| `CAD_GATE` | Cadence-active exit from SILENCE_CHECK (rider still pedalling) |
+| `GYRO_BLK` | IMPACT→SILENCE_CHECK blocked because gyro is still high |
+| `RST_SNAP` | Post-reset snapshot — see `docs/crash-detection-algorithm.md` |
+| `HIGH_MAG` | Sample crossed the peak threshold but didn't enter IMPACT |
+| `SPD_REJECT` | Speed-gate rejection (sample below minSpeedForCrashKmh) |
+| `TERRAIN_CLUST` | ≥3 IMPACT_TMOs within the rough-terrain window — cluster detected |
+| `GPS_STALE` | Detected GPS-stale entry / exit |
+| `POST_TMO_BOOST` | Peak-threshold boost active after recent IMPACT_TMO |
+
+### Speed-drop watchdog (L1)
+| Tag | Meaning |
+|---|---|
+| `SPDRP_EVAL` | Per-30 s evaluation while window is open (only emitted when timer is active) |
+| `SPDRP_WSTART` | Zero-speed window opened. Payload: `trigger_speed_kmh`, `gps_stale`, `threshold_kmh` |
+| `SPDRP_WCLOSE` | Zero-speed window closed. Payload: `reason` ∈ `{speed_recovered, paused, stopped, confirmed}`, `elapsed_ms`, `trigger_speed_kmh`, `max_speed_kmh`, `gps_stale`, `recovered_at_kmh` (only on `speed_recovered`) |
+
+### Medical / wellness / fueling
+| Tag | Meaning |
+|---|---|
+| `HR_FLAT` / `HR_COLLAPSE` | Medical detector fired |
+| `MED_NO` | Medical countdown CANCELLED by rider |
+| `WLNS_HR` | Wellness tier fired (critical / sustained / decoupling) |
+| `WARN` / `SILENT` | Generic incident dispatched at WARNING / SILENT level |
+| `INC_SUPP` | An incident arrived while another emergency was in progress and was dropped (audit trail for co-occurring detectors) |
+| `HR_STALE` / `HR_PERIODIC` | HR signal staleness transition / 2-min periodic snapshot |
+| `CARB_START` / `CARB_LOG` / `CARB_UNDO` / `CARB_DEFICIT` / `CARB_TIME` | Carbs tracker events |
+| `HYD_START` / `HYD_LOG` / `HYD_UNDO` / `HYD_DEFICIT` / `HYD_TIME` | Hydration tracker events |
+
+### Emergency dispatch
+| Tag | Meaning |
+|---|---|
+| `EMERG_TRIG` | `triggerEmergency` fired (countdown started) |
+| `ALERT_FAIL` | Outbound alert delivery FAILED across every retry cycle. Payload: `provider`, `reason`, `superseded` (true = this alert was overridden by a newer emergency; the rider-facing fallback notification was suppressed but the audit row is always logged) |
+| `LOGGER_START` / `LOG_END` | CSV session boundaries |

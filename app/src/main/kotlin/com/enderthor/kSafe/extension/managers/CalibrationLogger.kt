@@ -99,6 +99,16 @@ class CalibrationLogger(
         POST_RESET_SNAP("RST_SNAP"),
         /** Speed-drop monitor evaluated (every 30 s, only when timer is active). */
         SPEEDDROP_EVAL("SPDRP_EVAL"),
+        /** Speed-drop watchdog opened a zero-speed window. Payload includes the trigger
+         *  speed and whether GPS was stale — used to tune SPEED_DROP_WINDOW_KMH from
+         *  real-world telemetry once we have a body of logs. */
+        SPEEDDROP_WIN_START("SPDRP_WSTART"),
+        /** Speed-drop watchdog closed its zero-speed window. `reason` distinguishes
+         *  speed_recovered (FP avoided — rider sped back up) from confirmed (fire) and
+         *  paused (manual / auto pause). `max_speed_kmh` is the peak seen inside the
+         *  window — critical for telling "near-threshold GPS jitter" apart from
+         *  "real hike-a-bike at 3+ km/h". */
+        SPEEDDROP_WIN_CLOSE("SPDRP_WCLOSE"),
         /** GPS stale condition detected (informational marker). */
         GPS_STALE("GPS_STALE"),
         /**
@@ -136,6 +146,15 @@ class CalibrationLogger(
         INCIDENT_WARNING("WARN"),
         /** Generic SILENT-level incident dispatched by EmergencyManager.handleIncident. */
         INCIDENT_SILENT("SILENT"),
+        /** Incident from medical/wellness/SOS arrived while another emergency was already
+         *  in progress and was dropped. Captures the lost event in the calibration trail so
+         *  post-incident audit can correlate co-occurring detectors. */
+        INCIDENT_SUPPRESSED("INC_SUPP"),
+        /** Outbound emergency alert delivery failed across every retry cycle (no coverage,
+         *  blank/expired credentials, provider down). The rider-facing fallback InRideAlert
+         *  fires alongside this row. Critical for post-incident audit when contacts report
+         *  they never received an alert. */
+        ALERT_DELIVERY_FAILED("ALERT_FAIL"),
         // ─── Fueling tracker (added 2026-05) ─────────────────────────────────
         /**
          * Snapshot of the carb tracker config at session start. Lets a reader of the CSV
@@ -302,6 +321,15 @@ class CalibrationLogger(
      * sensor thread genuinely blocked here.
      */
     private val buffer = ArrayDeque<String>()
+
+    /**
+     * L1 — separate lock for FILE mutations (appendText, writeText) so a concurrent
+     * [flush] and [truncateAfterSuccessfulSend] cannot race on the CSV file. The
+     * [buffer] lock is held briefly for in-memory state; this one is held across the
+     * disk I/O. They protect distinct resources so combining them would unnecessarily
+     * stall log entries while a flush writes.
+     */
+    private val fileLock = Any()
 
     /** Wall-clock ms of the most recent successful disk flush. Used by [isHealthy] so
      *  KSafeExtension's health-check coroutine can detect a dead flush job and restart
@@ -606,8 +634,14 @@ class CalibrationLogger(
             val dir = context.getExternalFilesDir(null) ?: return
             dir.mkdirs()
             val file = File(dir, FILE_NAME)
-            // Append mode — the header was written on enable(), we just add rows.
-            file.appendText(lines.joinToString("\n", postfix = "\n"))
+            // L1 — fileLock serialises append against [truncateAfterSuccessfulSend]'s
+            // read-and-rewrite. Without it, a flush running mid-truncate could append
+            // rows AFTER the truncate's readLines snapshot, then truncate's writeText
+            // would clobber the appended rows.
+            synchronized(fileLock) {
+                // Append mode — the header was written on enable(), we just add rows.
+                file.appendText(lines.joinToString("\n", postfix = "\n"))
+            }
             lastFlushAtMs = System.currentTimeMillis()
             Timber.d("CalibrationLogger: appended ${lines.size} entries to $FILE_NAME")
         } catch (e: Exception) {
@@ -664,24 +698,56 @@ class CalibrationLogger(
     }
 
     /**
-     * After a successful periodic upload, drop the on-disk file contents (re-writing
-     * the header) so the next 20-minute window starts fresh. The in-memory buffer
-     * is preserved so any entries written between the upload-prepare moment and the
-     * truncate moment are kept and flushed normally on the next tick. Returns the
-     * number of lines that were truncated (so the caller can log progress).
+     * After a successful periodic upload, drop the rows that were uploaded so the next
+     * 20-minute window starts fresh — but PRESERVE any rows that the flush coroutine
+     * wrote to disk during the upload window (which can take up to ~60 s for Telegram).
+     *
+     * Pass [uploadedLineCount] = the line count of the content that was actually sent.
+     * Anything beyond that count is a flush-write that happened DURING the upload and
+     * must survive to the next periodic window — otherwise that ~60 s of telemetry is
+     * silently lost from the developer's tuning dataset on every periodic send.
+     *
+     * L1 — previous version did `writeText(HEADER)` unconditionally, racing the flush
+     * coroutine: any rows flushed between `getFileContent()` (upload-prepare moment)
+     * and this call were wiped. Caller didn't know how many lines to keep, so it
+     * couldn't compensate. The race window is the entire HTTP upload duration.
+     *
+     * Returns the number of lines uploaded that were dropped (so the caller can log
+     * progress). The fileLock serialises against [flush]'s `file.appendText` so a
+     * concurrent flush can't tear the read-and-rewrite below.
      */
-    fun truncateAfterSuccessfulSend(): Int {
+    fun truncateAfterSuccessfulSend(uploadedLineCount: Int): Int {
         return try {
             val dir = context.getExternalFilesDir(null) ?: return 0
             val file = File(dir, FILE_NAME)
             if (!file.exists()) return 0
-            val before = file.bufferedReader().use { it.lineSequence().count() }
-            file.writeText("$HEADER\n")
+            val dropped: Int
+            synchronized(fileLock) {
+                val allLines = file.readLines()
+                val before = allLines.size
+                // Drop the first [uploadedLineCount] lines — those were just sent.
+                // Anything after that is a flush-write that arrived during the upload
+                // and must persist to the next window. The header is re-prepended so
+                // a downstream reader still sees a well-formed CSV.
+                val keptTail = allLines.drop(uploadedLineCount)
+                val newContent = buildString {
+                    append(HEADER).append('\n')
+                    if (keptTail.isNotEmpty()) {
+                        append(keptTail.joinToString(separator = "\n", postfix = "\n"))
+                    }
+                }
+                file.writeText(newContent)
+                dropped = (uploadedLineCount - 1).coerceAtLeast(0) // exclude the HEADER row
+                Timber.i(
+                    "CalibrationLogger: truncated after successful periodic send " +
+                        "(uploaded=$uploadedLineCount lines, file_was=$before, kept_tail=${keptTail.size})"
+                )
+            }
             // Log a marker row so the next chunk's CSV self-identifies as a continuation.
+            // Done OUTSIDE the fileLock — addEntryDirect only touches the in-memory buffer.
             addEntryDirect(Event.LOGGER_START,
-                "logging_resumed_after_periodic_send,install_id=$installId,session=$sessionId,prev_lines=$before")
-            Timber.i("CalibrationLogger: truncated after successful periodic send ($before lines uploaded)")
-            (before - 1).coerceAtLeast(0)
+                "logging_resumed_after_periodic_send,install_id=$installId,session=$sessionId,uploaded_lines=$uploadedLineCount")
+            dropped
         } catch (e: Exception) {
             Timber.w(e, "CalibrationLogger: truncate after send failed")
             0

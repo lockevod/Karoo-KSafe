@@ -133,11 +133,15 @@ class MedicalEpisodeDetector(
     //
     // `prevCadenceRpm` uses `Double.NaN` as the "never seen" marker so the first emission
     // does not count as a change (a single reading at 60 RPM should not be treated as
-    // fluctuation against a non-existent prior value). `prevPowerW` uses `-1` analogously.
+    // fluctuation against a non-existent prior value). `prevPowerW` uses `Int.MIN_VALUE`
+    // (out-of-domain — power readings are bounded to roughly [-200, +2500] W on every
+    // known power meter) so a real first reading of -1 W (signed/regenerative power,
+    // strain-gauge zero-offset artefact on Rally / Wahoo / P2M) is correctly treated
+    // as a value change rather than aliasing with the sentinel.
     @Volatile private var cadenceLastChangeMs: Long = 0L
     @Volatile private var prevCadenceRpm: Double = Double.NaN
     @Volatile private var powerLastChangeMs: Long = 0L
-    @Volatile private var prevPowerW: Int = -1
+    @Volatile private var prevPowerW: Int = Int.MIN_VALUE
 
     /**
      * Rolling HR history used by [computeAverageHrInWindow] for the COLLAPSE baseline
@@ -180,7 +184,21 @@ class MedicalEpisodeDetector(
         monitorJob = scope.launch {
             while (true) {
                 delay(MONITOR_TICK_MS)
-                tick()
+                // H3 — defensive try/catch around tick(). The medical detector is
+                // safety-critical (FLATLINE / COLLAPSE → outbound EMERGENCY SOS).
+                // A single uncaught throw — e.g. an IllegalStateException from
+                // onIncident's nested `scope.launch` losing the race against a
+                // master-switch OFF teardown, or a numeric edge in
+                // computeAverageHrInWindow — would terminate the polling
+                // coroutine, silently disabling medical detection for the
+                // rest of the ride. SupervisorJob doesn't auto-restart this loop.
+                try {
+                    tick()
+                } catch (e: kotlinx.coroutines.CancellationException) {
+                    throw e
+                } catch (e: Exception) {
+                    Timber.e(e, "MedicalEpisodeDetector.tick threw — continuing monitor loop")
+                }
             }
         }
         Timber.d("MedicalEpisodeDetector started")
@@ -218,7 +236,7 @@ class MedicalEpisodeDetector(
         cadenceLastChangeMs = 0L
         prevCadenceRpm = Double.NaN
         powerLastChangeMs = 0L
-        prevPowerW = -1
+        prevPowerW = Int.MIN_VALUE
         Timber.d("MedicalEpisodeDetector stopped")
     }
 
@@ -238,7 +256,11 @@ class MedicalEpisodeDetector(
      * allowed; the monitor coroutine derives state from timestamps.
      */
     fun updateHr(bpm: Int) {
-        val now = clock.nowMs()
+        // D2 — monotonic for all in-memory time math (windows, cooldowns, freshness).
+        // Detector holds no persisted timestamps, so monotonicMs is safe everywhere
+        // and protects FLATLINE / COLLAPSE / staleness gates against NTP / wall-clock
+        // jumps that could otherwise fire a false EMERGENCY-level outbound SOS.
+        val now = clock.monotonicMs()
         if (!hrDataReceived) {
             hrDataReceived = true
             Timber.d("MedicalEpisodeDetector: first HR reading $bpm bpm")
@@ -252,13 +274,23 @@ class MedicalEpisodeDetector(
     }
 
     fun updateSpeed(kmh: Double) {
-        val now = clock.nowMs()
+        // D2 — monotonic for all in-memory time math (windows, cooldowns, freshness).
+        // Detector holds no persisted timestamps, so monotonicMs is safe everywhere
+        // and protects FLATLINE / COLLAPSE / staleness gates against NTP / wall-clock
+        // jumps that could otherwise fire a false EMERGENCY-level outbound SOS.
+        val now = clock.monotonicMs()
         // H2 fix — stamp [speedLastChangeMs] on real value changes, on explicit-zero
         // emissions (rider stopped at a light: GPS still alive even though the value is
         // bit-exact 0.0 across emissions), and on the very first emission (bootstrap).
         // A stuck non-zero value across emissions is the SDK's GPS-lost behaviour, so
         // leaving the timestamp untouched is what trips [isSpeedSignalStale] after
         // SPEED_STALE_MS. Same shape as CrashDetectionManager.updateSpeed.
+        //
+        // D6/G2 fix — drop NaN AND Infinity samples. NaN taints value-change
+        // staleness detection permanently (`NaN != x` is always true). Infinity
+        // passes the NaN guard but latches lastSpeedKmh=Infinity, which the
+        // COLLAPSE concurrent-speed gate evaluates as "rider moving" indefinitely.
+        if (!kmh.isFinite()) return
         val changed = kmh != lastSpeedKmh
         if (changed || kmh == 0.0 || speedLastChangeMs == 0L) speedLastChangeMs = now
         lastSpeedKmh = kmh
@@ -282,7 +314,19 @@ class MedicalEpisodeDetector(
      * window and the cross-check correctly treats it as inactive.
      */
     fun updateCadence(rpm: Double) {
-        val now = clock.nowMs()
+        // J5 — drop NaN / Infinity. Without the guard, a single NaN from an ANT+/BLE
+        // dropout would latch currentCadenceRpm=NaN forever (NaN bypasses the prev-
+        // change comparison too). The FLATLINE cross-check's `currentCadenceRpm >
+        // CADENCE_ACTIVE_RPM` then evaluates NaN > 10.0 = false → cadenceSaysActive
+        // = false → the H3 cross-check that suppresses FLATLINE on a still-pedalling
+        // rider is silently disabled. A loose HR strap reading <30 bpm could then
+        // fire MEDICAL_FLATLINE → EMERGENCY-level outbound SOS.
+        if (!rpm.isFinite()) return
+        // D2 — monotonic for all in-memory time math (windows, cooldowns, freshness).
+        // Detector holds no persisted timestamps, so monotonicMs is safe everywhere
+        // and protects FLATLINE / COLLAPSE / staleness gates against NTP / wall-clock
+        // jumps that could otherwise fire a false EMERGENCY-level outbound SOS.
+        val now = clock.monotonicMs()
         if (!cadenceDataReceived) {
             cadenceDataReceived = true
             Timber.d("MedicalEpisodeDetector: first cadence reading $rpm RPM")
@@ -308,12 +352,16 @@ class MedicalEpisodeDetector(
      * for a value change.
      */
     fun updatePower(w: Int) {
-        val now = clock.nowMs()
+        // D2 — monotonic for all in-memory time math (windows, cooldowns, freshness).
+        // Detector holds no persisted timestamps, so monotonicMs is safe everywhere
+        // and protects FLATLINE / COLLAPSE / staleness gates against NTP / wall-clock
+        // jumps that could otherwise fire a false EMERGENCY-level outbound SOS.
+        val now = clock.monotonicMs()
         if (!powerDataReceived) {
             powerDataReceived = true
             Timber.d("MedicalEpisodeDetector: first power reading $w W")
         }
-        if (prevPowerW != -1 && w != prevPowerW) {
+        if (prevPowerW != Int.MIN_VALUE && w != prevPowerW) {
             powerLastChangeMs = now
         }
         prevPowerW = w
@@ -340,7 +388,11 @@ class MedicalEpisodeDetector(
      * Production still drives this from [start]'s `monitorJob`.
      */
     internal fun tick() {
-        val now = clock.nowMs()
+        // D2 — monotonic for all in-memory time math (windows, cooldowns, freshness).
+        // Detector holds no persisted timestamps, so monotonicMs is safe everywhere
+        // and protects FLATLINE / COLLAPSE / staleness gates against NTP / wall-clock
+        // jumps that could otherwise fire a false EMERGENCY-level outbound SOS.
+        val now = clock.monotonicMs()
 
         // ── HR stale transition logging (once per change) ─────────────────────
         val isStale = hrDataReceived && (now - lastHrUpdateMs > HR_STALE_MS)
@@ -378,7 +430,14 @@ class MedicalEpisodeDetector(
             flatlineSinceMs = 0L
             return
         }
-        if (now - lastSpeedAboveActiveMs > ACTIVE_RECENT_MS) {
+        // H2 fix extended to FLATLINE — when the SDK is replaying a stuck non-zero
+        // speed (GPS lost in tunnel/forest), lastSpeedAboveActiveMs keeps refreshing
+        // every emission, the "active recently" gate stays true, and a sweaty HR
+        // strap dropping under 30 bpm fires FLATLINE → EMERGENCY for a healthy
+        // rider sitting still. Treat a stale speed signal as "not active": if GPS
+        // isn't producing fresh evidence the rider is moving, don't claim they are.
+        val speedSignalFresh = !isSpeedSignalStale(now)
+        if (!speedSignalFresh || (now - lastSpeedAboveActiveMs > ACTIVE_RECENT_MS)) {
             flatlineSinceMs = 0L
             return
         }

@@ -451,17 +451,16 @@ class WellnessMonitorTest {
             )
         )
 
-        // Spend 11 min establishing a stable baseline at HR=140 / power=200 → ratio 0.70.
-        // Push enough power samples (>= POWER_STABILITY_MIN_SAMPLES = 30) so the
-        // stability guard sees ample data.
-        repeat(60) { mon.updatePower(200) }
-        clock.nowMs += 11L * 60_000L
-
-        // Drive ~12 ticks of steady ratio → establishes the baseline.
-        repeat(12) {
-            clock.nowMs += 30_000L
+        // Spend ~11 min establishing a stable baseline at HR=140 / power=200 → ratio 0.70.
+        // Feed power at ~1 Hz throughout so the rolling [POWER_BUFFER_WINDOW_MS] (2 min)
+        // window always holds >= POWER_STABILITY_MIN_SAMPLES (30) samples when the HE1
+        // stability guard checks. Tick every 30 s (with 30 power emissions per tick).
+        repeat(22) { tickIdx ->
+            repeat(30) {
+                clock.nowMs += 1_000L
+                mon.updatePower(200)
+            }
             mon.updateHr(140)
-            mon.updatePower(200)
             mon.tick()
         }
         assertEquals(

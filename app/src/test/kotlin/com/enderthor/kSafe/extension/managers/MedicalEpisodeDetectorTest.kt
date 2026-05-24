@@ -70,9 +70,14 @@ class MedicalEpisodeDetectorTest {
         // Mark rider as active.
         f.speed(20.0)
         // Push HR samples consistently below 30 over a 35 s span at 1 Hz, ticking every 5 s.
+        // Keep speed emissions alive (with explicit 0.0 — rider crashed, no movement) so
+        // the H2-extended FLATLINE staleness guard sees a fresh speed signal. In production
+        // the Karoo SDK emits speed at ~1 Hz regardless of motion; without these calls the
+        // test simulates "GPS dead" which the guard correctly treats as inactive.
         for (sec in 0..35) {
             f.clock.nowMs += 1_000L
             f.hr(20)
+            f.speed(0.0)
             if (sec % 5 == 0) f.detector.tick()
         }
         assertTrue("flatline should have fired: ${f.captured}", f.captured != null)
@@ -104,6 +109,27 @@ class MedicalEpisodeDetectorTest {
         f.clock.nowMs += 20_000L            // 20 s — past HR_STALE_MS (15 s)
         f.detector.tick()
         assertNull("HR stale → no fire", f.captured)
+    }
+
+    @Test
+    fun `flatline does NOT fire when speed signal is stale (GPS-lost replay)`() {
+        // H2-extended FLATLINE guard: GPS lost in a tunnel/forest, SDK keeps emitting
+        // the last-known non-zero speed bit-exact. lastSpeedAboveActiveMs keeps getting
+        // refreshed (kmh >= ACTIVE_SPEED_KMH) but speedLastChangeMs goes stale because
+        // the value never changes. Without the guard, sweat dropping HR strap under
+        // 30 bpm fires a false MEDICAL_FLATLINE EMERGENCY for a healthy seated rider.
+        val f = Fixture()
+        f.speed(18.0)
+        for (sec in 0..35) {
+            f.clock.nowMs += 1_000L
+            f.hr(20)
+            f.speed(18.0)               // stuck non-zero replay — never changes
+            if (sec % 5 == 0) f.detector.tick()
+        }
+        assertNull(
+            "stuck-speed GPS replay must suppress FLATLINE: ${f.captured}",
+            f.captured,
+        )
     }
 
     @Test
@@ -347,6 +373,7 @@ class MedicalEpisodeDetectorTest {
         for (sec in 0..35) {
             f.clock.nowMs += 1_000L
             f.hr(20)
+            f.speed(0.0)            // keep speed signal fresh — see fluent SDK emission rationale above
             f.detector.updateCadence(0.0)
             f.detector.updatePower(0)
             if (sec % 5 == 0) f.detector.tick()
@@ -369,6 +396,7 @@ class MedicalEpisodeDetectorTest {
         for (sec in 0..35) {
             f.clock.nowMs += 1_000L
             f.hr(20)
+            f.speed(0.0)            // keep speed signal fresh — see fluent SDK emission rationale above
             if (sec % 5 == 0) f.detector.tick()
         }
         assertTrue(

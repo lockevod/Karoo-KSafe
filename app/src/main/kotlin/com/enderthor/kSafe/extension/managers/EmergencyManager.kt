@@ -84,6 +84,16 @@ class EmergencyManager(
 
         /** Duration of the mini-confirm shown when resuming after a missed deadline. */
         private const val MINI_CONFIRM_SECONDS = 10
+
+        /**
+         * How long the field UI / persisted state stays in ALERTING before reverting
+         * to IDLE. The sender's retry loop continues running in the background past
+         * this window — the rollback only governs what the rider sees and whether
+         * a follow-up incident (check-in expiry, medical event) can re-trigger
+         * (`triggerEmergency` gates on `currentStatus != IDLE`). Without this the
+         * field is locked in ALERTING for the full multi-cycle retry (~30 min).
+         */
+        private const val ALERTING_VISIBLE_MS = 5_000L
     }
 
     private val sosOverlay = SosOverlayManager(context)
@@ -118,9 +128,20 @@ class EmergencyManager(
 
     // ─── Public API ───────────────────────────────────────────────────────────
 
+    /**
+     * Exposes whether an outbound alert retry job is still running after the visible
+     * ALERTING window collapsed back to IDLE. Used by the SOS field tap handler to
+     * route taps during the background retry to cancelEmergency() instead of arming
+     * a fresh emergency. See `handleSOSTap`'s IDLE branch.
+     */
+    fun alertJobActive(): Boolean = alertJob?.isActive == true
+
     fun triggerEmergency(reason: EmergencyReason, config: KSafeConfig) {
         if (currentStatus != EmergencyStatus.IDLE) {
             Timber.d("Emergency already in progress, ignoring new trigger")
+            calibLogger?.log(CalibrationLogger.Event.INCIDENT_SUPPRESSED) {
+                "reason=${reason.label},level=EMERGENCY,blocked_by=$currentStatus"
+            }
             return
         }
         Timber.d("Emergency triggered: $reason")
@@ -133,11 +154,15 @@ class EmergencyManager(
     suspend fun cancelEmergency(config: KSafeConfig? = null) {
         // Allow cancelling from COUNTDOWN (normal case) OR from ALERTING (rider
         // realises they're fine right after the countdown hits 0 and the sender
-        // has just kicked off). Without the ALERTING branch a Cancel tap during
-        // the ~5 s post-countdown window or any later retry cycle is ignored,
-        // and the sender keeps retrying for up to half an hour.
+        // has just kicked off). After [ALERTING_VISIBLE_MS] the visible state has
+        // rolled to IDLE but the alertJob may still be retrying in the background
+        // for up to ~30 min — in that case currentStatus is IDLE but alertJob is
+        // alive, and the rider must still be able to abort. Treat a live alertJob
+        // as an implicit ALERTING for cancellation purposes.
+        val alertJobAlive = alertJob?.isActive == true
         if (currentStatus != EmergencyStatus.COUNTDOWN &&
-            currentStatus != EmergencyStatus.ALERTING) return
+            currentStatus != EmergencyStatus.ALERTING &&
+            !alertJobAlive) return
 
         // Capture reason before clearing — needed for CRASH_NO calibration log.
         val cancelledReason = currentReason
@@ -177,7 +202,18 @@ class EmergencyManager(
         _uiState.value = EmergencyState()
 
         // Persist to DataStore (async is fine here — UI already updated above).
-        configManager.saveEmergencyState(EmergencyState())
+        // J2 — wrapped: a disk-full IOException from the cancel persist must NOT
+        // propagate out of cancelEmergency (that would leave the in-memory state
+        // IDLE but the persisted state COUNTDOWN/ALERTING, and the next process
+        // boot would call resumeCountdown / resumeAfterDeadline → re-fire the
+        // alert the rider just cancelled). Log and proceed — in-memory state is
+        // canonical for the current session; the persisted divergence will heal
+        // on the next successful saveEmergencyState.
+        try {
+            configManager.saveEmergencyState(EmergencyState())
+        } catch (e: Exception) {
+            Timber.e(e, "Failed to persist IDLE state after cancel; in-memory state already cleared")
+        }
         if (config?.checkinEnabled == true) {
             startCheckinJobs(config)
         }
@@ -199,7 +235,13 @@ class EmergencyManager(
         checkinJob?.cancel()
         checkinWarningJob?.cancel()
 
-        val intervalMs = config.checkinIntervalMinutes * 60_000L
+        // J4 — defense-in-depth clamp. The Settings UI clamps on commit but a
+        // corrupted DataStore (file edited externally, backup with bad value,
+        // migration bug) could surface 0 here. `delay(0)` fires CHECKIN_EXPIRED
+        // immediately → false SOS to contacts seconds after the ride starts.
+        // 10 min matches the UI minimum.
+        val safeIntervalMinutes = config.checkinIntervalMinutes.coerceAtLeast(10)
+        val intervalMs = safeIntervalMinutes * 60_000L
 
         // Update UI state synchronously so TimerDataType sees the checkin state immediately.
         _uiState.value = EmergencyState(
@@ -314,6 +356,13 @@ class EmergencyManager(
     ) {
         if (currentStatus != EmergencyStatus.IDLE) {
             Timber.d("Incident $reason ignored — emergency already in progress (status=$currentStatus)")
+            // Record the drop in the calibration trail so post-incident audit can see
+            // that a medical / wellness / SOS event coincided with another emergency.
+            // Without this row, the exported CSV shows only the winning emergency and
+            // the co-occurring detector vanishes from history.
+            calibLogger?.log(CalibrationLogger.Event.INCIDENT_SUPPRESSED) {
+                "reason=${reason.label},level=$level,blocked_by=$currentStatus"
+            }
             return
         }
         when (level) {
@@ -408,11 +457,27 @@ class EmergencyManager(
         _uiState.value = countdownState
 
         countdownJob = scope.launch {
-            configManager.saveEmergencyState(countdownState)
+            // H1 — saveEmergencyState wrapped: a disk-full / DataStore IOException
+            // must NOT kill the entire countdown coroutine. In-memory state
+            // (_uiState, currentStatus, currentReason) is the canonical source for
+            // detection/UX; the persisted copy is only for cross-process recovery,
+            // so a write failure should degrade gracefully rather than silently
+            // dropping the beeps, overlay, and outbound alert.
+            try {
+                configManager.saveEmergencyState(countdownState)
+            } catch (e: Exception) {
+                Timber.e(e, "Failed to persist COUNTDOWN state; continuing with in-memory state only")
+            }
             karooSystem.dispatch(TurnScreenOn)
             karooSystem.dispatch(BEEP_LONG)
 
-            val totalSeconds = config.countdownSeconds
+            // Defense-in-depth clamp — the Settings UI clamps to [5, 120] on commit,
+            // but a corrupted DataStore (file edited externally, restore from old
+            // backup with bad value, future migration bug) could still surface 0
+            // here. `for (n in 0 downTo 1)` is an EMPTY range, which would skip the
+            // entire overlay/beep/cancel-window loop and fire sendAlerts immediately
+            // with no rider abort opportunity. Lower bound 5 matches the UI minimum.
+            val totalSeconds = config.countdownSeconds.coerceIn(5, 300)
 
             for (remaining in totalSeconds downTo 1) {
                 // Show/update the overlay every second — injected directly into the
@@ -462,7 +527,15 @@ class EmergencyManager(
             karooSystem.dispatch(TurnScreenOn)
             karooSystem.dispatch(BEEP_LONG)
 
-            val totalRemainingSeconds = (remainingMs / 1_000L).toInt().coerceAtLeast(1)
+            // H4 — clamp before .toInt() so a corrupted persisted deadline (e.g.
+            // milliseconds accidentally stored where seconds were expected by a
+            // future migration) cannot overflow Int via the cast and produce a
+            // tiny / negative loop count that collapses the rider's cancel window
+            // to a single tick. Upper bound 24 h is far above any legitimate
+            // countdownSeconds (max ~120 s) — anything larger is a corrupted save.
+            val totalRemainingSeconds = (remainingMs / 1_000L)
+                .coerceIn(1L, 24 * 60 * 60L)
+                .toInt()
             for (remaining in totalRemainingSeconds downTo 1) {
                 sosOverlay.showOrUpdate(reason, remaining) {
                     scope.launch { cancelEmergency(config) }
@@ -574,15 +647,60 @@ class EmergencyManager(
         sosOverlay.removeOverlay()
         val alertingState = EmergencyState(status = EmergencyStatus.ALERTING, reason = reason.label)
         _uiState.value = alertingState
-        configManager.saveEmergencyState(alertingState)
+        // H1 — see startCountdown for rationale: disk-full IOException from
+        // saveEmergencyState must NOT abort the entire sendAlerts coroutine before
+        // the alertJob is launched. The persisted state is recovery metadata; the
+        // outbound alert is the safety-critical work and must always be attempted.
+        try {
+            configManager.saveEmergencyState(alertingState)
+        } catch (e: Exception) {
+            Timber.e(e, "Failed to persist ALERTING state; continuing with in-memory state only")
+        }
 
         val message = buildMessage(config, reason)
 
         Timber.d("Sending emergency alert via ${config.activeProvider}")
 
-        alertJob = scope.launch {
+        // Capture the local Job reference for identity-guarded cleanup in finally.
+        // Without this, when sendAlerts is called twice in a row (emergency 1 still
+        // retrying when emergency 2 fires), emergency 1's finally would run later
+        // and find currentStatus==ALERTING (set by emergency 2), clobbering emergency
+        // 2's state AND nulling out the alertJob field that now points at job 2 —
+        // orphaning the live retry job so cancelEmergency can no longer abort it.
+        lateinit var myJob: kotlinx.coroutines.Job
+        myJob = scope.launch {
             try {
-                sender.sendAlert(message, config.activeProvider)
+                val delivered = sender.sendAlert(message, config.activeProvider)
+                if (!delivered) {
+                    // H7 — ALWAYS log the delivery failure to the calibration trail.
+                    // Even when this emergency has been superseded by a newer one (so
+                    // the rider-facing notification is suppressed to avoid wrong-
+                    // attribution UI), post-incident audit must still be able to see
+                    // that the original emergency was never delivered. Tag with a
+                    // `superseded` marker so analysers can distinguish the two paths.
+                    val supersededByNewer = alertJob !== myJob
+                    calibLogger?.log(CalibrationLogger.Event.ALERT_DELIVERY_FAILED) {
+                        "provider=${config.activeProvider},reason=${reason.label},superseded=$supersededByNewer"
+                    }
+                    // G6 — only fire the rider-facing failure notification when WE
+                    // are still the registered alertJob. A previous emergency that
+                    // finished its ~30-min retry loop LONG after a newer emergency
+                    // took over alertJob would otherwise dispatch a beep + red
+                    // InRideAlert labelled with the OLD emergency's reason —
+                    // interrupting or overlaying the newer emergency's UI with the
+                    // wrong attribution.
+                    if (!supersededByNewer) {
+                        // Outbound delivery FAILED across all retry cycles (no
+                        // coverage, blank/expired credentials, provider down).
+                        // Without an explicit rider-facing signal the on-device
+                        // sequence looks identical to a successful delivery
+                        // (5 s ALERTING then SAFE), so a rider whose crash alert
+                        // never reached contacts would have no way to know.
+                        notifyDeliveryFailure(config.activeProvider, reason)
+                    } else {
+                        Timber.d("Delivery failure for $reason notification suppressed — alertJob superseded by newer emergency")
+                    }
+                }
             } catch (e: kotlinx.coroutines.CancellationException) {
                 // Cancelled via cancelEmergency / stopAll — propagate so the
                 // structured concurrency contract is honoured.
@@ -590,25 +708,90 @@ class EmergencyManager(
             } catch (e: Exception) {
                 Timber.e(e, "Error sending emergency alert")
             } finally {
-                // Roll back to IDLE only when WE are still the live ALERTING source.
-                // If cancelEmergency / stopAll cancelled us, those callers already
-                // set currentStatus to IDLE *and* may have started a new check-in
-                // timer via [startCheckinJobs] (which writes the new check-in state
-                // into _uiState + DataStore). Without the guard the cancelled job's
-                // finally runs after the new state has been published and silently
-                // clobbers it back to a blank EmergencyState — wiping the check-in
-                // restart the rider just earned by tapping Cancel.
-                if (currentStatus == EmergencyStatus.ALERTING) {
-                    currentStatus = EmergencyStatus.IDLE
-                    currentReason = null
-                    _uiState.value = EmergencyState()
-                    configManager.saveEmergencyState(EmergencyState())
+                // Identity guard — only act on shared state if WE are still the
+                // registered alertJob. A newer sendAlerts call overwrites alertJob
+                // before our finally runs; that newer emergency owns the state.
+                if (alertJob === myJob) {
+                    // Secondary rollback — only fires if the timed rollback below
+                    // didn't run first (e.g. sender returned before
+                    // ALERTING_VISIBLE_MS). Same guard as the timed rollback: don't
+                    // clobber state if cancelEmergency / stopAll already moved us
+                    // out of ALERTING.
+                    if (currentStatus == EmergencyStatus.ALERTING) {
+                        currentStatus = EmergencyStatus.IDLE
+                        currentReason = null
+                        _uiState.value = EmergencyState()
+                        configManager.saveEmergencyState(EmergencyState())
+                    }
+                    alertJob = null
                 }
-                alertJob = null
             }
         }
+        alertJob = myJob
 
         karooSystem.dispatch(TurnScreenOn)
         karooSystem.dispatch(BEEP_LONG)
+
+        // Roll back the visible ALERTING state after a short fixed window so the
+        // rider's field UI doesn't stay locked for the full ~30-min sender retry
+        // cycle and a follow-up incident (check-in expiry, medical event) can
+        // re-trigger triggerEmergency. The alertJob continues retrying in the
+        // background — the finally above is a secondary catch-all for the path
+        // where the sender wraps up before this delay completes.
+        delay(ALERTING_VISIBLE_MS)
+        if (currentStatus == EmergencyStatus.ALERTING) {
+            currentStatus = EmergencyStatus.IDLE
+            // G3 — DO NOT null currentReason here. The alertJob may still be retrying
+            // in the background; if the rider later cancels during that window,
+            // cancelEmergency captures `cancelledReason = currentReason` and the
+            // `when (cancelledReason)` switch routes to onCrashEmergencyCancelled
+            // (which clears the crash cooldown). Nulling currentReason on rollback
+            // would silently disable that path — the crash cooldown would stay armed
+            // for ~countdown+30 s, suppressing a real follow-up crash. The alertJob's
+            // finally clears currentReason when the job actually completes.
+            _uiState.value = EmergencyState()
+            configManager.saveEmergencyState(EmergencyState())
+        }
+    }
+
+    /**
+     * Fires when [Sender.sendAlert] returns false after exhausting every retry cycle.
+     * Without this the rider has no on-device way to distinguish "alert delivered to
+     * contacts" from "alert silently dropped on every attempt" — the visible field
+     * sequence (5 s ALERTING then SAFE) is identical for both cases. The notification
+     * combines a distinct beep with a 20-s persistent InRideAlert so a rider in a
+     * tunnel / coverage gap learns immediately that they cannot rely on the alert.
+     */
+    private fun notifyDeliveryFailure(provider: com.enderthor.kSafe.data.ProviderType, reason: EmergencyReason) {
+        // Distinct beep pattern — two short low pulses then a longer descending tone.
+        // Audibly different from BEEP_LONG (alert fired) so a rider can tell the two
+        // states apart without looking at the screen.
+        karooSystem.dispatch(PlayBeepPattern(listOf(
+            PlayBeepPattern.Tone(frequency = 600, durationMs = 300),
+            PlayBeepPattern.Tone(frequency = null, durationMs = 150),
+            PlayBeepPattern.Tone(frequency = 500, durationMs = 300),
+            PlayBeepPattern.Tone(frequency = null, durationMs = 150),
+            PlayBeepPattern.Tone(frequency = 400, durationMs = 600),
+        )))
+        karooSystem.dispatch(InRideAlert(
+            id = "ksafe-alert-delivery-failed-${reason.name.lowercase()}",
+            icon = com.enderthor.kSafe.R.drawable.ic_ksafe,
+            title = context.getString(R.string.alert_delivery_failed_title),
+            detail = context.getString(R.string.alert_delivery_failed_detail, provider.name),
+            autoDismissMs = 20_000L,
+            backgroundColor = com.enderthor.kSafe.R.color.alert_red,
+            textColor = com.enderthor.kSafe.R.color.alert_text_white,
+        ))
+        // SystemNotification fallback — InRideAlert only renders inside the Karoo
+        // ride app. The sender's retry loop runs up to ~30 min, so the failure
+        // notification can fire LONG after the rider has ended the ride and the
+        // device is on the launcher / Settings / off. Without the system-tray
+        // fallback, a rider in a tunnel whose ride ends before the sender gives
+        // up would just hear an unfamiliar beep with no on-screen explanation.
+        karooSystem.dispatch(SystemNotification(
+            id = "ksafe-alert-delivery-failed-sys-${reason.name.lowercase()}",
+            message = context.getString(R.string.alert_delivery_failed_detail, provider.name),
+            header = context.getString(R.string.alert_delivery_failed_title),
+        ))
     }
 }

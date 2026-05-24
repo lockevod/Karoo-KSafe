@@ -307,9 +307,21 @@ The speed-drop monitor reads `now - accelStillSinceMs` to know how long the devi
 
 ### Triggering and reset
 
-- `updateSpeed()` starts the `speedDropStartTime` timer when `speedKmh < SPEED_THRESHOLD_KMH (5 km/h)`.
-- Timer resets when speed rises above 5 km/h again.
-- `resetSpeedDropOnPause()` clears the timer when the Karoo ride is paused — prevents alarms at cafés, red lights, mechanical stops.
+- `onSpeedUpdate()` starts the zero-speed window when `effective speed < SPEED_DROP_WINDOW_KMH (3.5 km/h)`. The threshold sits in the valley between consumer-GPS jitter on a stationary bike (typically <2 km/h, worst-case multipath ~3 km/h) and slow hike-a-bike (median ~4 km/h). With `gpsStale=true` (SDK replaying the last known speed because GPS lock is lost in a tunnel/dense forest), the effective speed is forced to 0 so the window opens regardless of the replayed value.
+- The window closes when speed rises back above the threshold.
+- Time accounting uses `Clock.monotonicMs()` (Android `SystemClock.elapsedRealtime`) so an NTP step or user-driven date change can't shift the 5-minute deadline.
+- `onPause()` clears the window when the Karoo ride is paused — prevents alarms at cafés, red lights, mechanical stops.
+
+#### Calibration telemetry
+
+Two events let post-ride analysis tune the threshold from real-world data:
+
+| Event tag | When | Fields |
+|---|---|---|
+| `SPDRP_WSTART` | Window opens (speed crosses below 3.5 km/h) | `trigger_speed_kmh`, `gps_stale`, `threshold_kmh` |
+| `SPDRP_WCLOSE` | Window closes (speed recovers / paused / stopped / confirmed) | `reason` (`speed_recovered` \| `paused` \| `stopped` \| `confirmed`), `elapsed_ms`, `trigger_speed_kmh`, `max_speed_kmh`, `gps_stale`, `recovered_at_kmh` (only on `speed_recovered`) |
+
+`max_speed_kmh` is the peak speed observed inside the window. A histogram across many rides separates "GPS-jitter while at rest" (`max_speed_kmh < 1`) from "near-threshold hike-a-bike" (`max_speed_kmh > 3`) so the threshold can be moved down to 3.0 km/h if telemetry justifies it.
 
 ### Use case
 

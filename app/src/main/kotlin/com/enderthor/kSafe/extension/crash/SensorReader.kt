@@ -315,6 +315,12 @@ class SensorReader(
         val x = event.values[0]
         val y = event.values[1]
         val z = event.values[2]
+        // G1 — drop NaN / Infinity axis values. A single non-finite component would
+        // make lastGyroMag = NaN, and the SILENCE_CHECK gate (`gyroMag < gyroMovingMax`)
+        // evaluates `NaN < 2.0` as false forever, blocking IMPACT→SILENCE_CHECK until
+        // a fresh finite sample arrives. If the gyro driver then suspends or crashes,
+        // a real impact stays stuck in IMPACT and times out — missed real emergency.
+        if (!x.isFinite() || !y.isFinite() || !z.isFinite()) return
         lastGyroMag = sqrt((x * x + y * y + z * z).toDouble())
     }
 
@@ -328,6 +334,15 @@ class SensorReader(
         val x = event.values[0]
         val y = event.values[1]
         val z = event.values[2]
+        // G1 — drop NaN / Infinity axis values. A single non-finite component would
+        // poison the smoothed-magnitude / variance ring buffers permanently: the
+        // running-sum eviction `runningSum += value - evicted` evaluates `Inf - Inf`
+        // = NaN within 3 samples, after which smoothedMagnitude stays NaN forever
+        // and the smoothed-path impact detector (`> smoothedImpactThreshold`) is
+        // dead for the rest of the ride. A later real impact would only confirm if
+        // the raw-peak path tripped — materially raising the floor for sustained-
+        // but-not-spiky impacts on LOW-sensitivity presets.
+        if (!x.isFinite() || !y.isFinite() || !z.isFinite()) return
         val rawMagnitude = sqrt((x * x + y * y + z * z).toDouble())
 
         val deviation = abs(rawMagnitude - GRAVITY)

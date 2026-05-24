@@ -327,12 +327,25 @@ class KSafeExtension : KarooExtension("ksafe", BuildConfig.VERSION_NAME), Corout
             if (connected) {
                 Timber.d("Connected to Karoo system")
                 locationManager.start()
-                initializeSystem()
+                // Idempotent — the SDK may re-fire `connected=true` on transient
+                // reconnects within the same service lifecycle. Without this guard,
+                // every reconnect would spawn an additional copy of every collector
+                // and `while(true)` loop launched inside initializeSystem, doubling
+                // emission handlers + battery cost per reconnect (only onDestroy's
+                // job.cancel() ever releases them).
+                if (systemInitialized) {
+                    Timber.d("Karoo reconnect — initializeSystem already running, skipping respawn")
+                } else {
+                    systemInitialized = true
+                    initializeSystem()
+                }
             } else {
                 Timber.w("Disconnected from Karoo system")
             }
         }
     }
+
+    @Volatile private var systemInitialized = false
 
     private fun initializeSystem() {
         launch {
@@ -425,6 +438,14 @@ class KSafeExtension : KarooExtension("ksafe", BuildConfig.VERSION_NAME), Corout
                     Timber.w("Discarding stale countdown, age=${decision.ageMs}ms")
                     configManager.saveEmergencyState(EmergencyState())
                 }
+                EmergencyResume.DiscardAlerting -> {
+                    // H9 — persisted ALERTING means a previous process was killed
+                    // mid-dispatch. The in-flight alertJob died with the process;
+                    // there's no retry to resume. Clear the phantom state so the
+                    // next ride starts clean.
+                    Timber.w("Discarding orphan ALERTING state — previous process was killed mid-dispatch")
+                    configManager.saveEmergencyState(EmergencyState())
+                }
             }
         }
 
@@ -504,7 +525,11 @@ class KSafeExtension : KarooExtension("ksafe", BuildConfig.VERSION_NAME), Corout
                         karooSystem = karooSystem,
                     )
                     if (result.ok) {
-                        calibLogger.truncateAfterSuccessfulSend()
+                        // L1 — pass the uploaded line count so truncate preserves any
+                        // rows the flush coroutine wrote DURING the ~60 s upload window.
+                        // Without the count truncate would `writeText(HEADER)` and wipe
+                        // those rows, silently losing ~1 minute of telemetry per send.
+                        calibLogger.truncateAfterSuccessfulSend(lineCount)
                     } else {
                         // Quiet failure — likely no coverage. Will retry in 20 min with the
                         // grown payload; if it still fails the end-of-ride upload eventually
@@ -618,7 +643,28 @@ class KSafeExtension : KarooExtension("ksafe", BuildConfig.VERSION_NAME), Corout
      */
     private fun startRecordingCollectors() {
         if (recordingCollectorsJob?.isActive == true) return
+        // K8 — CoroutineExceptionHandler so a failing inner collector under
+        // supervisorScope produces a Timber.e line instead of dying into the
+        // default JVM uncaught-exception handler (logcat-only, no Timber tree).
+        // Without this, J7's supervisorScope correctly isolates sibling launches
+        // but the cause of the failure is invisible to anyone reading the
+        // calibration logs / production diagnostics.
+        val collectorHandler = kotlinx.coroutines.CoroutineExceptionHandler { _, throwable ->
+            Timber.e(throwable, "Recording collector failed (sibling collectors continue under supervisorScope)")
+        }
         recordingCollectorsJob = launch {
+            // J7 — supervisorScope so a thrown exception from ANY inner collector
+            // (a corrupted Headwind payload, an SDK rebind mid-collect, an
+            // unexpected provider-side cast failure) doesn't cancel the parent
+            // and tear down the OTHER sibling collectors. Without supervisorScope,
+            // a one-off bad emission on temperature could silently kill HR /
+            // power / user-profile collection for the rest of the ride,
+            // disabling FLATLINE / COLLAPSE / WELLNESS / carbs / hydration
+            // detection. supervisorScope still propagates external cancellation
+            // (recordingCollectorsJob.cancel() on master-switch OFF / onDestroy)
+            // down to its children correctly.
+            kotlinx.coroutines.withContext(collectorHandler) {
+            kotlinx.coroutines.supervisorScope {
             // Power meter stream — optional. carbsTracker uses it for the zone multiplier; the
             // wellnessMonitor's cardiac-decoupling tier uses it for the HR/W ratio; the
             // hydrationTracker uses it as the preferred metabolic-rate input for the sweat
@@ -703,6 +749,8 @@ class KSafeExtension : KarooExtension("ksafe", BuildConfig.VERSION_NAME), Corout
                         hydrationTracker.updateHumidity(rh.toInt().coerceIn(0, 100))
                     }
             }
+            }  // end supervisorScope (J7)
+            }  // end withContext(collectorHandler) (K8)
         }
     }
 
@@ -862,7 +910,13 @@ class KSafeExtension : KarooExtension("ksafe", BuildConfig.VERSION_NAME), Corout
             // No consumer for POWER/HR/TEMPERATURE while the master switch is off,
             // so cancel those collectors too. They restart on the ON branch below.
             stopRecordingCollectors()
-            emergencyManager.stopCheckinTimer()
+            // stopAll() (NOT stopCheckinTimer) — a crash/medical countdown actively
+            // ticking down when the rider flips the master switch OFF must be aborted
+            // along with everything else. The previous stopCheckinTimer-only call
+            // cancelled the check-in jobs but left countdownJob ticking, so the
+            // sendAlerts dispatch fired despite the rider's explicit "disable all
+            // safety alerts" intent. stopAll() also cancels any in-flight alertJob.
+            emergencyManager.stopAll()
         } else {
             Timber.d("Master switch ON mid-ride — resuming monitoring (preserving session totals)")
             // Re-arm the Recording-only collectors (idempotent if they were never
@@ -925,7 +979,18 @@ class KSafeExtension : KarooExtension("ksafe", BuildConfig.VERSION_NAME), Corout
         when (actionId) {
             "send-custom-message" -> {
                 Timber.d("BonusAction: send-custom-message triggered")
-                launch { sendCustomMessage() }
+                launch {
+                    // H6 — same SENDING-stuck guard as handleCustomMessageTap.
+                    try {
+                        sendCustomMessage()
+                    } catch (e: kotlinx.coroutines.CancellationException) {
+                        throw e
+                    } catch (e: Exception) {
+                        Timber.e(e, "BonusAction sendCustomMessage threw — reverting slot 1 to ERROR")
+                        CustomMessageState.update(1, CustomMessageState.ERROR)
+                        scheduleCustomRevert(1, 4_000L)
+                    }
+                }
             }
             "trigger-webhook-1" -> {
                 Timber.d("BonusAction: trigger-webhook-1 triggered")
@@ -1138,11 +1203,30 @@ class KSafeExtension : KarooExtension("ksafe", BuildConfig.VERSION_NAME), Corout
         }
     }
 
-    /** Called from CustomMessageActionCallback / BonusAction (slot 1 only). */
-    fun handleCustomMessageTap() {
+    /**
+     * Called from CustomMessageActionCallback / BonusAction / FieldTapReceiver for
+     * any slot 1..3. Wraps sendCustomMessage in the try/catch the bare suspend
+     * call needs — sendCustomMessage sets CustomMessageState.SENDING synchronously
+     * BEFORE the first suspend, so an unhandled throw from substituteTokens or
+     * the Sender HTTP layer would otherwise leave the field stuck in SENDING with
+     * no revert until extension restart.
+     */
+    fun handleCustomMessageTap(slot: Int = 1) {
+        if (slot !in 1..3) {
+            Timber.w("handleCustomMessageTap: invalid slot $slot")
+            return
+        }
         launch {
-            val result = sendCustomMessage(1)
-            Timber.d("handleCustomMessageTap result: $result")
+            try {
+                val result = sendCustomMessage(slot)
+                Timber.d("handleCustomMessageTap(slot=$slot) result: $result")
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                Timber.e(e, "handleCustomMessageTap(slot=$slot) threw — reverting slot $slot to ERROR")
+                CustomMessageState.update(slot, CustomMessageState.ERROR)
+                scheduleCustomRevert(slot, 4_000L)
+            }
         }
     }
 
@@ -1397,10 +1481,14 @@ class KSafeExtension : KarooExtension("ksafe", BuildConfig.VERSION_NAME), Corout
                 val targetLat = if (slot == 1) config.webhook1GeoLat else config.webhook2GeoLat
                 val targetLon = if (slot == 1) config.webhook1GeoLon else config.webhook2GeoLon
                 val radiusM   = if (slot == 1) config.webhook1GeoRadiusM else config.webhook2GeoRadiusM
+                // G8 — gate on nullability rather than coordinate-equality with (0,0).
+                // Aliasing 'no fix' with 'fix at Null Island' permanently locks riders
+                // physically near (0,0) Gulf of Guinea out of geo-fenced webhooks, AND
+                // during the brief GPS cold-start window where some MTK/Broadcom
+                // chipsets report (0,0) before locking, a legitimate fix at any other
+                // location would still be misclassified.
                 val curFix = locationManager.currentFix()
-                val curLat = curFix?.lat ?: 0.0
-                val curLon = curFix?.lng ?: 0.0
-                if (curLat == 0.0 && curLon == 0.0) {
+                if (curFix == null) {
                     WebhookState.update(slot, WebhookState.ERROR, "no GPS")
                     scheduleWebhookRevert(slot, 4_000L)
                     dispatchWebhookFeedback(
@@ -1411,6 +1499,8 @@ class KSafeExtension : KarooExtension("ksafe", BuildConfig.VERSION_NAME), Corout
                     )
                     return
                 }
+                val curLat = curFix.lat
+                val curLon = curFix.lng
                 if (targetLat == 0.0 && targetLon == 0.0) {
                     WebhookState.update(slot, WebhookState.ERROR, "no target")
                     scheduleWebhookRevert(slot, 4_000L)
@@ -1602,9 +1692,33 @@ class KSafeExtension : KarooExtension("ksafe", BuildConfig.VERSION_NAME), Corout
                         Timber.d("SOS cancel ignored — within $SOS_RETAP_DEBOUNCE_MS ms of arm (phantom retap)")
                         return@launch
                     }
+                    // K3 — stamp BEFORE cancel so a duplicate-broadcast Tap 2 arriving
+                    // shortly after this cancel sees `now - lastSosTriggerMs < 750ms`
+                    // in the IDLE branch's debounce guard. Without this stamp, the
+                    // ORIGINAL lastSosTriggerMs (set at arm time, possibly seconds ago)
+                    // would let Tap 2 bypass the debounce and trigger a brand-new
+                    // emergency right after the rider cancelled.
+                    lastSosTriggerMs = now
                     emergencyManager.cancelEmergency(activeConfig)
                 }
                 EmergencyStatus.IDLE -> {
+                    // The 5 s ALERTING_VISIBLE_MS rollback flips status to IDLE while
+                    // the sender's retry loop keeps running in the background for up to
+                    // ~30 min. A rider tap during that window expresses "abort the
+                    // alert I just sent", NOT "send a new emergency". Without this
+                    // branch, handleSOSTap would silently arm a SECOND emergency and
+                    // both messages would reach contacts.
+                    if (emergencyManager.alertJobActive()) {
+                        Timber.d("SOS field tap during background retry — cancelling in-flight alertJob")
+                        // Stamp the trigger-time so a phantom retap (the second of
+                        // a queued double-broadcast) lands inside SOS_RETAP_DEBOUNCE_MS
+                        // and is suppressed by the gate below — without this, the
+                        // second broadcast would arm a brand-new emergency seconds
+                        // after the cancel because alertJobActive() is now false.
+                        lastSosTriggerMs = System.currentTimeMillis()
+                        emergencyManager.cancelEmergency(activeConfig)
+                        return@launch
+                    }
                     // IDLE→trigger debounce — see KDoc on lastSosTriggerMs for the
                     // double-tap broadcast scenario. Stamping the timestamp here is
                     // what gates the COUNTDOWN branch above on subsequent taps.
@@ -1617,7 +1731,18 @@ class KSafeExtension : KarooExtension("ksafe", BuildConfig.VERSION_NAME), Corout
                     lastSosTriggerMs = now
                     emergencyManager.triggerEmergency(EmergencyReason.MANUAL_SOS, activeConfig)
                 }
-                EmergencyStatus.ALERTING -> { /* ignore tap while alerting */ }
+                EmergencyStatus.ALERTING -> {
+                    // Allow cancel from the field while the sender is retrying.
+                    // EmergencyManager.cancelEmergency accepts ALERTING and aborts
+                    // the in-flight retry loop. Without this branch the only
+                    // Cancel surfaces during the (up to ~30 min) retry window are
+                    // the hardware BonusAction button (if mapped) and the SOS
+                    // overlay (which already dismissed itself when the countdown
+                    // ended) — a rider who realises they're fine has no way to
+                    // stop the alert from the field they triggered it on.
+                    Timber.d("Emergency cancelled via SOS field tap during ALERTING")
+                    emergencyManager.cancelEmergency(activeConfig)
+                }
             }
         }
     }
@@ -1627,11 +1752,33 @@ class KSafeExtension : KarooExtension("ksafe", BuildConfig.VERSION_NAME), Corout
             when (emergencyManager.currentStatus) {
                 EmergencyStatus.COUNTDOWN -> {
                     // Cancel path always allowed — see handleSOSTap rationale.
+                    // K4 — stamp lastSosTriggerMs before cancel so a duplicate-
+                    // broadcast Tap 2 falls within the post-cancel debounce. Without
+                    // it, the second broadcast lands in the IDLE branch and (if
+                    // checkin is enabled) silently resets the check-in timer; the
+                    // rider's "cancel" gesture is then re-interpreted as a check-in.
+                    lastSosTriggerMs = System.currentTimeMillis()
                     Timber.d("Emergency cancelled via Timer field tap")
                     emergencyManager.cancelEmergency(activeConfig)
                 }
-                EmergencyStatus.ALERTING -> { /* ignore tap while alerting */ }
+                EmergencyStatus.ALERTING -> {
+                    // Same rationale as handleSOSTap ALERTING — let the rider
+                    // cancel a still-retrying alert from the Timer field.
+                    Timber.d("Emergency cancelled via Timer field tap during ALERTING")
+                    emergencyManager.cancelEmergency(activeConfig)
+                }
                 EmergencyStatus.IDLE -> {
+                    // Same background-retry-cancel branch as handleSOSTap: a tap during
+                    // the post-rollback window is an abort, not a check-in.
+                    if (emergencyManager.alertJobActive()) {
+                        Timber.d("Timer field tap during background retry — cancelling in-flight alertJob")
+                        // Stamp so a phantom retap (queued double-broadcast) lands
+                        // within SOS_RETAP_DEBOUNCE_MS and is suppressed — without
+                        // this, the second broadcast would arm a brand-new emergency.
+                        lastSosTriggerMs = System.currentTimeMillis()
+                        emergencyManager.cancelEmergency(activeConfig)
+                        return@launch
+                    }
                     if (!activeConfig.isActive) return@launch
                     if (activeConfig.checkinEnabled) {
                         emergencyManager.resetCheckinTimer(activeConfig)

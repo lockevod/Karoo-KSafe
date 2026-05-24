@@ -48,21 +48,41 @@ object IntensityZoneCalculator {
             val zones = profile.powerZones
             val idx = zones.indexOfFirst { currentPowerW in it.min..it.max }
             if (idx >= 0) return snapshot(ZoneSource.POWER, idx, zones.size)
-            // Out-of-range — clamp to nearest zone edge so a rider coasting below zone 1
-            // gets MIN_MULT (recovery) rather than the same neutral 1.0 we give to "no sensor".
-            // Source stays POWER so calibration analysis can distinguish "below range" from NONE.
-            val clamped = if (currentPowerW < zones[0].min) 0 else zones.size - 1
-            return snapshot(ZoneSource.POWER, clamped, zones.size)
+            // Out-of-range — clamp to NEAREST zone. Below the lowest zone → Z1 (recovery).
+            // Above the topmost zone → top zone (neuromuscular). In the GAP between two
+            // adjacent zones (common when zones come from rounded FTP percentages — e.g.
+            // Z3.max=250W and Z4.min=300W leave a 50W hole), pick the closer side rather
+            // than defaulting to the top zone. Without this fix, an in-gap reading of
+            // 275W was treated as Z7 (multiplier 1.5×) and pushed CarbsTracker to the
+            // 90 g/h absorption cap, over-targeting carbs by ~50%.
+            val clampedIdx = clampToNearestZone(currentPowerW, zones)
+            return snapshot(ZoneSource.POWER, clampedIdx, zones.size)
         }
         if (profile != null && currentHr != null && profile.heartRateZones.isNotEmpty()) {
             val zones = profile.heartRateZones
             val idx = zones.indexOfFirst { currentHr in it.min..it.max }
             if (idx >= 0) return snapshot(ZoneSource.HR, idx, zones.size)
-            val clamped = if (currentHr < zones[0].min) 0 else zones.size - 1
-            return snapshot(ZoneSource.HR, clamped, zones.size)
+            val clampedIdx = clampToNearestZone(currentHr, zones)
+            return snapshot(ZoneSource.HR, clampedIdx, zones.size)
         }
         return ZoneSnapshot(ZoneSource.NONE, -1, 0, 1.0f)
     }
+
+    /**
+     * Picks the zone whose configured range is closest to [value] when [value] doesn't
+     * sit inside any zone. Handles below-Z1, above-top-zone, AND in-gap-between-zones.
+     * For a value sitting in the gap between two adjacent zones, picks the closer side
+     * (distance to the nearer of zone.min / zone.max).
+     */
+    private fun clampToNearestZone(value: Int, zones: List<UserProfile.Zone>): Int =
+        zones.indices.minBy { i ->
+            val z = zones[i]
+            when {
+                value < z.min -> z.min - value
+                value > z.max -> value - z.max
+                else -> 0
+            }
+        }
 
     private fun snapshot(source: ZoneSource, idx: Int, total: Int): ZoneSnapshot {
         val ratio = idx.toFloat() / (total - 1).coerceAtLeast(1)

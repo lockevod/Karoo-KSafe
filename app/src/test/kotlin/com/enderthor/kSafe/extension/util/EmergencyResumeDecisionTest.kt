@@ -52,9 +52,16 @@ class EmergencyResumeDecisionTest {
     }
 
     @Test
-    fun `countdown without reasonEnum returns Nothing (legacy state)`() {
+    fun `countdown without reasonEnum returns DiscardStale so KSafeExtension clears phantom legacy state`() {
+        // K7 — pre-v8 persisted COUNTDOWN with no reasonEnum is unsafe to resume
+        // (we don't know what kind of emergency the rider was in). Previously this
+        // returned Nothing and the no-op branch left the stale record in DataStore
+        // forever — observable in any backup/inspector and a potential time-bomb
+        // if a future decideResume branch depended on cleaned state. Route to
+        // DiscardStale so the caller wipes the record.
         val s = countdown(startMs = 1_000_000L, reasonEnum = null)
-        assertEquals(EmergencyResume.Nothing, decideResume(s, nowMs = 1_010_000L))
+        val r = decideResume(s, nowMs = 1_010_000L)
+        assertTrue("expected DiscardStale, got $r", r is EmergencyResume.DiscardStale)
     }
 
     @Test
@@ -87,5 +94,50 @@ class EmergencyResumeDecisionTest {
         val r = decideResume(s, nowMs = nowMs)
         assertTrue("expected Active near boundary, got $r", r is EmergencyResume.Active)
         assertEquals(1L, (r as EmergencyResume.Active).remainingMs)
+    }
+
+    @Test
+    fun `persisted ALERTING state returns DiscardAlerting so KSafeExtension clears the orphan`() {
+        // H9 regression guard. A previous process was killed (low-memory killer, force-stop,
+        // OS crash) while in the post-countdown ALERTING window — sendAlerts had moved
+        // currentStatus to ALERTING and persisted that state, but the alertJob died with
+        // the process and no longer exists. decideResume must surface this distinctly so
+        // the caller can clear the orphan state, NOT try to resume a non-existent retry.
+        val s = EmergencyState(
+            status = EmergencyStatus.ALERTING,
+            reason = EmergencyReason.CRASH_DETECTED.label,
+            reasonEnum = EmergencyReason.CRASH_DETECTED,
+            countdownStartTime =1_000_000L,
+            countdownDurationSeconds = 30,
+        )
+        assertEquals(
+            EmergencyResume.DiscardAlerting,
+            decideResume(s, nowMs = 1_000_000L + 60_000L),
+        )
+    }
+
+    @Test
+    fun `ALERTING branch wins over COUNTDOWN timestamps so reordering when-chain is detectable`() {
+        // The H9 fix places the ALERTING check FIRST in the when-chain. A future
+        // refactor that reorders the chain (e.g. COUNTDOWN/Active before ALERTING)
+        // would silently change behaviour for any persisted ALERTING state that
+        // happens to also have a valid countdownStartTime — this test forces the
+        // discriminator to be `status == ALERTING`, not the deadline math.
+        val startMs = 1_000_000L
+        val s = EmergencyState(
+            status = EmergencyStatus.ALERTING,
+            reason = EmergencyReason.MANUAL_SOS.label,
+            reasonEnum = EmergencyReason.MANUAL_SOS,
+            // Timestamps that WOULD route to Active if the status check were skipped:
+            countdownStartTime =startMs,
+            countdownDurationSeconds = 60,
+        )
+        // 30 s into the would-be countdown — Active branch would say "30 s left".
+        val r = decideResume(s, nowMs = startMs + 30_000L)
+        assertEquals(
+            "ALERTING must short-circuit before the COUNTDOWN/Active branch",
+            EmergencyResume.DiscardAlerting,
+            r,
+        )
     }
 }

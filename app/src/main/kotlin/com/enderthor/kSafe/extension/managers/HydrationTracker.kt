@@ -166,7 +166,14 @@ class HydrationTracker(
         }
         monitorJob = scope.launch {
             oldJob?.cancelAndJoin()
-            while (true) { delay(MONITOR_TICK_MS); tick() }
+            // H3 — defensive try/catch around tick() so a single throw doesn't
+            // disable hydration integration and alerts for the rest of the ride.
+            while (true) {
+                delay(MONITOR_TICK_MS)
+                try { tick() }
+                catch (e: kotlinx.coroutines.CancellationException) { throw e }
+                catch (e: Exception) { Timber.e(e, "HydrationTracker.tick threw — continuing") }
+            }
         }
         calibLogger?.log(CalibrationLogger.Event.FUELING_HYDRATION_START) {
             "base_ml_h=${config.hydrationTargetMlPerHour}," +
@@ -217,7 +224,14 @@ class HydrationTracker(
         lastTickMs = 0L
         monitorJob = scope.launch {
             oldJob?.cancelAndJoin()
-            while (true) { delay(MONITOR_TICK_MS); tick() }
+            // H3 — defensive try/catch around tick() so a single throw doesn't
+            // disable hydration integration and alerts for the rest of the ride.
+            while (true) {
+                delay(MONITOR_TICK_MS)
+                try { tick() }
+                catch (e: kotlinx.coroutines.CancellationException) { throw e }
+                catch (e: Exception) { Timber.e(e, "HydrationTracker.tick threw — continuing") }
+            }
         }
         Timber.d("HydrationTracker resumed (cumTargetMl=${cumTargetMl.toInt()}, cumLoggedMl=$cumLoggedMl)")
         publishStatus()
@@ -247,6 +261,9 @@ class HydrationTracker(
     fun updateHr(bpm: Int)            { lastHrBpm = bpm }
     fun updatePower(w: Int)           { lastPowerW = w }
     fun updateSpeed(kmh: Double) {
+        // D6/G2 fix — drop NaN AND Infinity samples; see MedicalEpisodeDetector
+        // for the IEEE-754 taint mechanism this guards against.
+        if (!kmh.isFinite()) return
         val prev = lastSpeedKmh
         // See CarbsTracker.updateSpeed — stamp on value change OR explicit zero OR
         // bootstrap so a stopped rider isn't misclassified as GPS-stale.
@@ -262,7 +279,16 @@ class HydrationTracker(
     fun updateUserProfile(p: UserProfile) {
         if (p.weight > 0) lastWeightKg = p.weight.toDouble()
     }
-    fun updateAmbientTemp(c: Double)  { lastAmbientTempC = c }
+    fun updateAmbientTemp(c: Double)  {
+        // K5 — drop NaN / Infinity. A bad TYPE_EXT::karoo-headwind::temperature
+        // emission or onboard sensor glitch can deliver NaN. Without the guard
+        // lastAmbientTempC is latched NaN, every downstream sweat-estimate
+        // computation (heatFactor, mlPerHour) propagates NaN, and the
+        // HydrationStatusDataType shows "NaN ml" forever — alerts never re-fire
+        // because NaN comparisons against thresholds always return false.
+        if (!c.isFinite()) return
+        lastAmbientTempC = c
+    }
     fun updateHumidity(pct: Int)      { lastHumidityPct = pct }
 
     /**
@@ -301,8 +327,15 @@ class HydrationTracker(
         val ml = lastLoggedMlBySlot[slot]
         if (ml <= 0) return 0
         cumLoggedMl = (cumLoggedMl - ml).coerceAtLeast(0)
-        lastLogMs = lastLogMsBeforeBySlot[slot]
-        lastRealLogMs = lastRealLogMsBeforeBySlot[slot]
+        // E8 fix — only roll [lastLogMs] / [lastRealLogMs] back to the pre-slot snapshot
+        // when no OTHER slot has logged since this slot did. See
+        // [CarbsTracker.undoLastForSlot] for the rationale and the interleave check.
+        val snapLog = lastLogMsBeforeBySlot[slot]
+        val snapReal = lastRealLogMsBeforeBySlot[slot]
+        if (snapLog > 0L && lastLogMs >= snapLog && !hasInterleavedLogAfter(slot, snapLog)) {
+            lastLogMs = snapLog
+            lastRealLogMs = snapReal
+        }
         lastLoggedMlBySlot[slot] = 0
         lastLogMsBeforeBySlot[slot] = 0L
         lastRealLogMsBeforeBySlot[slot] = 0L
@@ -311,6 +344,16 @@ class HydrationTracker(
         }
         publishStatus()
         return ml
+    }
+
+    /** Mirrors [CarbsTracker.hasInterleavedLogAfter] — returns true if any slot OTHER
+     *  than [excludeSlot] logged after [thresholdMs]. */
+    private fun hasInterleavedLogAfter(excludeSlot: Int, thresholdMs: Long): Boolean {
+        for (i in 1..2) {
+            if (i == excludeSlot) continue
+            if (lastLoggedMlBySlot[i] > 0 && lastLogMsBeforeBySlot[i] >= thresholdMs) return true
+        }
+        return false
     }
 
     /**

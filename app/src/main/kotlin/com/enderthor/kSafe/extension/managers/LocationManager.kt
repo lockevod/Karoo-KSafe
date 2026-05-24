@@ -58,24 +58,47 @@ class LocationManager(
         // overwritten by the new `locationJob =` below so stop() can't reach it).
         locationJob?.cancel()
         locationJob = scope.launch {
-            // `.sample(LOCATION_SAMPLE_MS)` caps the downstream wake-rate at one per
-            // interval regardless of how fast the upstream GPS stream emits (~1 Hz).
-            // Previous code used a per-emission `if` check, which still woke the
-            // collector 3600 times/h just to discard most. With sample() the coroutine
-            // wakes ~30 times per hour (once per 2 min) — same end state, ~99 % fewer
-            // resumptions.
-            //
-            // Trade-off: the FIRST emission is delayed up to LOCATION_SAMPLE_MS after
-            // the first GPS fix. `getFreshLocationLink` already has a one-shot
-            // `streamLocation().first()` fallback that covers the pre-cached-fix
-            // window, so an emergency in the first 2 min still produces a real
-            // location — it just opens an ad-hoc consumer instead of using the cache.
-            karooSystem.streamLocation()
-                .sample(LOCATION_SAMPLE_MS)
-                .collect { event ->
-                    lastFix = GpsFix(event.lat, event.lng, System.currentTimeMillis())
-                    if (BuildConfig.DEBUG) Timber.d("Location sampled: ${event.lat}, ${event.lng}")
+            // K6 — retry-on-throw wrapper. Without this, an upstream exception
+            // (RemoteException during a Karoo Companion rebind, IllegalStateException
+            // from a service-binder hiccup, NoSuchElementException on an empty flow,
+            // etc.) would terminate the collector coroutine permanently. The connect
+            // callback only re-runs start() on a connected=true transition — a
+            // companion-side throw with no disconnect callback never re-fires it,
+            // so currentFix() would return a stale GpsFix for the rest of the ride
+            // and any webhook geo-fence would compute distances against obsolete
+            // coordinates. Emergency dispatch isn't affected (getFreshLocationLink
+            // opens its own one-shot consumer with H5's broad catch), but webhook
+            // geo-fence and the rider's last-known-position calibration log entries
+            // would silently degrade.
+            while (true) {
+                try {
+                    // `.sample(LOCATION_SAMPLE_MS)` caps the downstream wake-rate at
+                    // one per interval regardless of how fast the upstream GPS stream
+                    // emits (~1 Hz). With sample() the coroutine wakes ~30 times per
+                    // hour instead of 3600 — same end state, ~99 % fewer resumptions.
+                    karooSystem.streamLocation()
+                        .sample(LOCATION_SAMPLE_MS)
+                        .collect { event ->
+                            // H8 — drop non-finite coordinates from the SDK.
+                            if (!event.lat.isFinite() || !event.lng.isFinite()) {
+                                Timber.w("Location sample dropped — non-finite coords (lat=${event.lat}, lng=${event.lng})")
+                                return@collect
+                            }
+                            lastFix = GpsFix(event.lat, event.lng, System.currentTimeMillis())
+                            if (BuildConfig.DEBUG) Timber.d("Location sampled: ${event.lat}, ${event.lng}")
+                        }
+                    // collect() returned cleanly (upstream completed) — extremely rare
+                    // for an infinite SDK flow but possible after a Companion teardown
+                    // that doesn't fire the connected=false callback. Re-subscribe.
+                    Timber.w("Location stream completed unexpectedly — re-subscribing in 5 s")
+                    kotlinx.coroutines.delay(5_000L)
+                } catch (e: kotlinx.coroutines.CancellationException) {
+                    throw e
+                } catch (e: Exception) {
+                    Timber.e(e, "Location collector threw — re-subscribing in 5 s")
+                    kotlinx.coroutines.delay(5_000L)
                 }
+            }
         }
     }
 
@@ -113,12 +136,33 @@ class LocationManager(
             val event = withTimeout(timeoutMs) {
                 karooSystem.streamLocation().first()
             }
+            // H8 — drop non-finite GPS coordinates from the SDK so a corrupted
+            // event doesn't propagate NaN into the cached fix and downstream
+            // distanceMeters calls (which would return NaN, and NaN > radius is
+            // always false, bypassing the geo-fence). Fall back to cached on
+            // non-finite coordinates the same way we fall back on timeout.
+            if (!event.lat.isFinite() || !event.lng.isFinite()) {
+                Timber.w("Fresh location returned non-finite coords (lat=${event.lat}, lng=${event.lng}); falling back to cache")
+                return getLocationLink()
+            }
             // Update cache with the fresh fix
             lastFix = GpsFix(event.lat, event.lng, System.currentTimeMillis())
             if (BuildConfig.DEBUG) Timber.d("Fresh location obtained: ${event.lat}, ${event.lng}")
             "https://maps.google.com/?q=${event.lat},${event.lng}"
         } catch (_: TimeoutCancellationException) {
             Timber.w("Fresh location timed out after ${timeoutMs}ms, falling back to cached location")
+            getLocationLink()
+        } catch (e: kotlinx.coroutines.CancellationException) {
+            // Don't catch — let structured concurrency cancel propagate.
+            throw e
+        } catch (e: Exception) {
+            // H5 — broaden beyond TimeoutCancellationException. The Karoo SDK's
+            // streamLocation().first() can throw RemoteException / IllegalStateException
+            // during a transient Karoo Companion rebind, NoSuchElementException if the
+            // flow completes empty, or any provider-side glitch we can't enumerate.
+            // Fall back to the cached fix rather than propagating — the caller is
+            // emergency-message construction and must always return a usable string.
+            Timber.w(e, "Fresh location threw — falling back to cached location")
             getLocationLink()
         }
     }

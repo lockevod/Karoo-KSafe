@@ -24,7 +24,7 @@ Everything that decides **when** and **how** an emergency fires lives here.
   - `{location}` — GPS coordinates as a Google Maps link.
   - `{reason}` — reason for the alert (crash / check-in expired / manual SOS / speed drop).
   - `{livetrack}` — Karoo Live real-time tracking link (only if a key is configured in the Actions tab).
-- **Countdown seconds**: How long the cancellation countdown lasts before alerts are sent (default: **30 s**). The post-crash cooldown is derived as `countdown + 30 s`, so changing this also changes how long the impact detector ignores new spikes after a confirmed crash (15 s countdown → 45 s cooldown; 60 s countdown → 90 s cooldown). Shorter values (15–20 s) get the alert out faster after a real crash but leave less time to cancel a false positive; longer values (45–60 s) tolerate rough terrain better but delay real alerts. The default 30 s matches Garmin / Wahoo conventions and is the recommended starting point.
+- **Countdown seconds**: How long the cancellation countdown lasts before alerts are sent (default: **30 s**, clamped to **[5, 120]**). The post-crash cooldown is derived as `countdown + 30 s`, so changing this also changes how long the impact detector ignores new spikes after a confirmed crash (15 s countdown → 45 s cooldown; 60 s countdown → 90 s cooldown). Shorter values (15–20 s) get the alert out faster after a real crash but leave less time to cancel a false positive; longer values (45–60 s) tolerate rough terrain better but delay real alerts. The default 30 s matches Garmin / Wahoo conventions and is the recommended starting point. Values outside the clamp are coerced on save (a typed "0" is treated as the lower bound 5 — without the clamp, 0 would skip the entire cancel UI and fire immediately).
 
 ### Crash detection
 
@@ -37,11 +37,11 @@ Everything that decides **when** and **how** an emergency fires lives here.
   Higher values trade a small extra false-positive rate (a rider who hits a bump and brakes hard *might* dip below 8 km/h for the 4.5 s silence window without crashing) against fewer missed alerts on sliding crashes. Lower values do the opposite trade-off.
 - **Monitor crash when not riding**: Keeps crash detection active even when no ride is recording. Useful for warm-ups or quick spins without starting a recording.
 - **Monitor crash when not riding — any speed**: Same as above but ignores the minimum speed threshold (detects crashes even while stationary). ⚠ More false positives — use with caution.
-- **Speed drop detection**: Enable/disable detection of prolonged speed drops. Configure the time window (minutes) with no movement before triggering.
+- **Speed drop detection**: Enable/disable detection of prolonged speed drops. Configure the time window (minutes, clamped to **[1, 60]**, default 5) with no movement before triggering. The detector opens its zero-speed window when effective speed falls below **3.5 km/h** (the threshold sits in the valley between consumer-GPS jitter on a stationary bike and slow hike-a-bike — see `crash-detection-algorithm.md`).
 
 ### Check-in timer
 
-- **Check-in timer**: Enable/disable periodic check-ins. Configure the interval in minutes (default: 120 min). A warning beep fires 10 minutes before expiry. **The timer pauses automatically when the ride is paused** (coffee stop, traffic light, etc.) and resets to the full interval when you resume. Any active check-in countdown is also cancelled on pause.
+- **Check-in timer**: Enable/disable periodic check-ins. Configure the interval in minutes (default: 120 min, clamped to **[10, 1440]**). A warning beep fires 10 minutes before expiry. **The timer pauses automatically when the ride is paused** (coffee stop, traffic light, etc.) and resets to the full interval when you resume. Any active check-in countdown is also cancelled on pause. Values outside the clamp are coerced on save (a typed "0" would otherwise schedule `delay(0)` and fire CHECKIN_EXPIRED immediately on every ride start).
 
 ---
 

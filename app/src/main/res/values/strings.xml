@@ -346,4 +346,8 @@
     <string name="field_color_label">Field colour</string>
     <string name="sos_field_color_label">SOS field colour</string>
     <string name="timer_field_color_label">Timer field colour</string>
+
+    <!-- Outbound alert delivery failure — fires after Sender exhausts every retry cycle. -->
+    <string name="alert_delivery_failed_title">Alert NOT delivered</string>
+    <string name="alert_delivery_failed_detail">%1$s could not send. Check coverage / credentials.</string>
 </resources>

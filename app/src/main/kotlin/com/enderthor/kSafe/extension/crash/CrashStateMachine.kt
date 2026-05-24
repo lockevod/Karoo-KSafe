@@ -338,6 +338,12 @@ class CrashStateMachine(
     }
 
     fun onCadenceUpdate(cadenceRpm: Double) {
+        // J5 — drop NaN / Infinity from the SDK. The Double.NaN sentinel below is
+        // SUPPOSED to mean "no prior reading". An incoming NaN would be stored as
+        // lastCadenceRpm via line 356, conflating it with the "never seen" state
+        // and disabling the freshness-by-change cross-check for the rest of the
+        // ride. Infinity would similarly never match a comparison (IEEE 754).
+        if (!cadenceRpm.isFinite()) return
         // Record a change only when the value actually moved AND we already have a real
         // prior value ([lastCadenceRpm] is NOT [Double.NaN]). The NaN sentinel prevents
         // the very first cadence reading (which always differs from NaN) from counting

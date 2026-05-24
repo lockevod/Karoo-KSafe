@@ -110,6 +110,13 @@ class WellnessMonitor(
     // at ~1 Hz (the rate of the SDK power stream). [lastBaselineAttemptMs] gates the
     // re-attempt cadence so we only re-evaluate stability every BASELINE_RETRY_INTERVAL_MS,
     // not on every tick.
+    //
+    // [powerSamples] is touched from three different threads — the SDK power-callback
+    // thread (updatePower), the scope coroutine (tick → shouldDeferBaseline), and Main
+    // (start/resume's clear()). Every access goes through [powerSamplesLock] so the
+    // tick-side iteration cannot ConcurrentModificationException-kill the monitor loop
+    // and cannot read a torn snapshot when computing baseline statistics.
+    private val powerSamplesLock = Any()
     private val powerSamples = ArrayDeque<Pair<Long, Int>>()
     @Volatile private var lastBaselineAttemptMs = 0L
 
@@ -147,7 +154,7 @@ class WellnessMonitor(
         lastDecouplingTriggerMs = 0L
         ratioSamples.clear()
         ratioRunningSum = 0.0
-        powerSamples.clear()
+        synchronized(powerSamplesLock) { powerSamples.clear() }
         lastBaselineAttemptMs = 0L
         // Reset session accumulators — fresh ride, fresh totals.
         sessionMaxHr = 0
@@ -160,7 +167,14 @@ class WellnessMonitor(
         decouplingFires = 0
         monitorJob = scope.launch {
             oldJob?.cancelAndJoin()
-            while (true) { delay(MONITOR_TICK_MS); tick() }
+            // H3 — defensive try/catch: a single uncaught throw from tick() would
+            // terminate the loop silently and disable wellness detection for the ride.
+            while (true) {
+                delay(MONITOR_TICK_MS)
+                try { tick() }
+                catch (e: kotlinx.coroutines.CancellationException) { throw e }
+                catch (e: Exception) { Timber.e(e, "WellnessMonitor.tick threw — continuing") }
+            }
         }
         Timber.d("WellnessMonitor started — tiers: critical=${config.wellnessCriticalEnabled}, sustained=${config.wellnessSustainedEnabled}, decoupling=${config.wellnessDecouplingEnabled}")
     }
@@ -189,11 +203,24 @@ class WellnessMonitor(
         decouplingBaselineHrPerW = 0f
         // Same continuity argument as the streak timers: the OFF period invalidates the
         // power stability window, so the guard re-evaluates from scratch on resume.
-        powerSamples.clear()
+        synchronized(powerSamplesLock) { powerSamples.clear() }
+        // Clear the HR/W ratio rolling window too — without this, the re-established
+        // baseline averages pre-OFF samples (potentially a high-effort interval) with
+        // post-ON samples (fresh steady state), anchoring the baseline on a contaminated
+        // window and producing false WELLNESS_DECOUPLING WARNING fires later in the ride.
+        ratioSamples.clear()
+        ratioRunningSum = 0.0
         lastBaselineAttemptMs = 0L
         monitorJob = scope.launch {
             oldJob?.cancelAndJoin()
-            while (true) { delay(MONITOR_TICK_MS); tick() }
+            // H3 — defensive try/catch: a single uncaught throw from tick() would
+            // terminate the loop silently and disable wellness detection for the ride.
+            while (true) {
+                delay(MONITOR_TICK_MS)
+                try { tick() }
+                catch (e: kotlinx.coroutines.CancellationException) { throw e }
+                catch (e: Exception) { Timber.e(e, "WellnessMonitor.tick threw — continuing") }
+            }
         }
         Timber.d("WellnessMonitor resumed (sessionMaxHr=$sessionMaxHr, criticalFires=$criticalFires, sustainedFires=$sustainedFires)")
     }
@@ -223,12 +250,14 @@ class WellnessMonitor(
         // by time (POWER_BUFFER_WINDOW_MS) and by absolute count (POWER_BUFFER_MAX_SIZE)
         // so a pathological high-frequency stream cannot grow it without bound.
         val now = clock.nowMs()
-        powerSamples.addLast(now to w)
-        while (powerSamples.isNotEmpty() &&
-            (now - powerSamples.first().first > POWER_BUFFER_WINDOW_MS ||
-                powerSamples.size > POWER_BUFFER_MAX_SIZE)
-        ) {
-            powerSamples.removeFirst()
+        synchronized(powerSamplesLock) {
+            powerSamples.addLast(now to w)
+            while (powerSamples.isNotEmpty() &&
+                (now - powerSamples.first().first > POWER_BUFFER_WINDOW_MS ||
+                    powerSamples.size > POWER_BUFFER_MAX_SIZE)
+            ) {
+                powerSamples.removeFirst()
+            }
         }
     }
     fun updateUserProfile(p: UserProfile) { lastUserProfile = p }
@@ -419,14 +448,27 @@ class WellnessMonitor(
         if (lastBaselineAttemptMs != 0L && now - lastBaselineAttemptMs < BASELINE_RETRY_INTERVAL_MS) {
             return true
         }
-        val n = powerSamples.size
-        if (n < POWER_STABILITY_MIN_SAMPLES) return false
+        // Snapshot the buffer under the lock so the iteration below cannot tear when
+        // updatePower fires concurrently from the SDK power-callback thread.
+        val snapshot = synchronized(powerSamplesLock) { powerSamples.toList() }
+        val n = snapshot.size
+        // E5 fix — when we have fewer than POWER_STABILITY_MIN_SAMPLES, DEFER (return
+        // true) rather than establish the baseline from a thin warmup window. Without
+        // this, a power meter that wakes up mid-warmup (~8 min into the ride) accumulated
+        // only ~10 samples by the 10-min DECOUPLING_BASELINE_WAIT_MS — the original
+        // `return false` anchored the baseline on the warmup ramp's HR/W (low HR,
+        // decent power), so 20 min later at steady tempo the drift evaluation fired
+        // a false WELLNESS_DECOUPLING warning. The hard cap at BASELINE_MAX_DEFER_MS
+        // above guarantees we will eventually establish even on a permanently-thin
+        // buffer, so the rider with a late-paired power meter just gets a slightly
+        // later (but trustworthy) baseline.
+        if (n < POWER_STABILITY_MIN_SAMPLES) return true
         // Single-pass mean + variance using the running-sum / sum-of-squares form. Cheap and
         // good enough for n ≈ 120 with all-positive integer watts; we don't need a
         // numerically-stable Welford pass for this magnitude range.
         var sum = 0.0
         var sumSq = 0.0
-        for ((_, w) in powerSamples) {
+        for ((_, w) in snapshot) {
             val wd = w.toDouble()
             sum += wd
             sumSq += wd * wd

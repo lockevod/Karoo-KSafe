@@ -13,7 +13,6 @@ const val DEFAULT_COUNTDOWN_SECONDS = 30
 const val DEFAULT_CHECKIN_INTERVAL_MINUTES = 120
 const val DEFAULT_SPEED_DROP_MINUTES = 5
 const val CHECKIN_WARNING_THRESHOLD_MINUTES = 10
-const val SPEED_THRESHOLD_KMH = 5.0   // km/h — below this is considered "stopped"
 const val KAROO_LIVE_BASE_URL = "https://dashboard.hammerhead.io/live/"
 
 // ─── Schema versioning ────────────────────────────────────────────────────────
@@ -1039,21 +1038,27 @@ fun KSafeConfig.migrateToLatest(): KSafeConfig {
 
     if (c.configVersion < 15) {
         // v14 → v15: default wellnessCriticalThresholdBpm raised 175 → 185 so the critical
-        // tier sits ABOVE the sustained tier (180). Riders who never touched the value got
-        // the broken default 175 (critical BELOW sustained — the tier inversion this fixes).
+        // tier sits ABOVE the sustained tier. Riders who never touched the value got the
+        // broken default 175 (critical BELOW sustained 180 — the tier inversion this fixes).
         //
-        // Only nudge riders who are still on BOTH old defaults (critical 175 AND sustained
-        // 180). If the rider customised either field they keep their choice — even if their
-        // critical happens to equal 175 deliberately, we can't tell intent apart from default,
-        // but the customised sustained signals "I'm tuning this tier, don't touch". New
-        // installs naturally start at the new 185 default.
+        // The fix repairs any tier inversion left by v14, not just the exact (175, 180) pair:
+        // a rider who left critical at the default 175 but raised their sustained to e.g. 190
+        // still has critical < sustained, and the original `sustained == 180` guard missed
+        // them. We treat "critical at the broken default (175) AND critical <= sustained"
+        // as the migration trigger and bump critical to max(185, sustained + 5) so the
+        // post-migration value always sits strictly above sustained. Riders who explicitly
+        // changed critical away from 175 keep their choice (the customised value signals
+        // "I'm tuning this tier, don't touch") even if it leaves critical ≤ sustained — at
+        // that point it's an intentional setup we shouldn't second-guess.
         val newCritical =
-            if (c.wellnessCriticalThresholdBpm == 175 && c.wellnessHighHrThreshold == 180) 185
-            else c.wellnessCriticalThresholdBpm
+            if (c.wellnessCriticalThresholdBpm == 175 &&
+                c.wellnessCriticalThresholdBpm < c.wellnessHighHrThreshold) {
+                maxOf(185, c.wellnessHighHrThreshold + 5)
+            } else c.wellnessCriticalThresholdBpm
         c = c.copy(wellnessCriticalThresholdBpm = newCritical, configVersion = 15)
         Timber.i(
-            "KSafeConfig migrated v%d→v15 (wellness critical default; critical %d→%d)",
-            originalVersion, 175, newCritical,
+            "KSafeConfig migrated v%d→v15 (wellness critical default; critical 175→%d, sustained=%d)",
+            originalVersion, newCritical, c.wellnessHighHrThreshold,
         )
     }
 
