@@ -41,10 +41,16 @@ object LogReporter {
      * Pass an empty string to send without a caption.
      *
      * The body is encoded as `multipart/form-data` and built entirely from the in-memory
-     * [content] string — no temporary files are created. Returns `true` on success.
+     * [content] string — no temporary files are created.
      *
-     * This function is a no-op (returns `false`) when credentials are empty or still the
-     * default placeholders, so a misconfigured build fails silently rather than crashing.
+     * Returns a [SendResult] — `SendResult.Success(message)` on a successful HTTP 2xx with
+     * Telegram's confirmation payload, otherwise `SendResult.Failure(message)` with a
+     * human-readable cause (no coverage, expired bot token, file > 50 MB, etc.). Callers
+     * branch on `result is SendResult.Success` (the `result.ok` shorthand below); the
+     * `message` field is what to surface in the rider-facing UI.
+     *
+     * This function returns `SendResult.Failure` when credentials are empty or still the
+     * default placeholders, so a misconfigured build fails gracefully rather than crashing.
      */
     /**
      * Result of a [sendLogFile] attempt. Carrying a human-readable [message] on failure

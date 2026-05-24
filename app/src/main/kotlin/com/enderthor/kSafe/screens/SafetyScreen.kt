@@ -93,14 +93,20 @@ fun SafetyScreen(vm: MainViewModel) {
                 crashMonitorOutsideRide = crashOutsideRide,
                 crashMonitorOutsideRideAnySpeed = crashOutsideRideAny,
                 speedDropDetectionEnabled = speedDropEnabled,
-                // J4 — clamp on commit. A literal "0" would persist 0 and cause
-                // delay(0) in startCheckinJobs → CHECKIN_EXPIRED fires immediately
-                // on every subsequent ride start, sending a false SOS to contacts
-                // within seconds. 10 min is the documented practical minimum;
-                // 24 h is the practical maximum. Same rationale for speedDropMinutes
-                // (which gates a 5-min zero-speed window → 1 min minimum useful).
+                // J4 — clamp speedDropMinutes on commit. The watchdog gates a
+                // 5-min zero-speed window plus a 60-s accel-stillness gate, so
+                // 1 minute is the practical minimum that produces a useful alert;
+                // 60 minutes is well above any realistic rider preference. A
+                // literal "0" would have the timer fire immediately on every
+                // sub-3.5 km/h speed sample.
                 speedDropMinutes        = (speedDropMinutes.toIntOrNull() ?: 5).coerceIn(1, 60),
                 checkinEnabled          = checkinEnabled,
+                // J4 — clamp checkinIntervalMinutes on commit. A literal "0"
+                // would persist 0 and cause delay(0) in startCheckinJobs →
+                // CHECKIN_EXPIRED fires immediately on every subsequent ride
+                // start, sending a false SOS to contacts within seconds. 10 min
+                // is the documented practical minimum; 24 h is the practical
+                // maximum.
                 checkinIntervalMinutes  = (checkinInterval.toIntOrNull() ?: 120).coerceIn(10, 1440),
                 sosFieldColor           = sosFieldColor,
                 timerFieldColor         = timerFieldColor,

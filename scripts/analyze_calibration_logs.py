@@ -2,16 +2,44 @@
 """
 KSafe calibration log aggregator.
 
-Reads every CSV under logs/ (recursively), parses the PERIODIC / HIGH_MAG /
-IMPACT_IN / IMPACT_TMO / CRASH_CONFIRMED / RST_SNAP / SPEEDDROP_EVAL events
-and prints both a per-file mini-summary and a global aggregated summary
-broken down by (device, profile, preset, app_version).
+Reads every CSV under logs/ (recursively) and surfaces both the per-file
+incident audit trail and a global aggregated summary by
+(device, profile, preset, app_version).
+
+Event catalogue understood by this script:
+
+  Crash pipeline:
+    PERIODIC, HIGH_MAG, IMPACT_IN, IMPACT_TMO, CRASH_OK (CRASH_CONFIRMED),
+    CRASH_NO (CRASH_CANCELLED), RST_SNAP, CAD_GATE, GYRO_BLK, GPS_STALE,
+    TERRAIN_CLUST, SIL_IN, SIL_TMO, SIL_BRK, SPD_REJECT, POST_TMO_BOOST,
+    CRASH_GATE_SUPPRESSED
+
+  Speed-drop watchdog (added 2026-05):
+    SPEEDDROP_EVAL, SPEEDDROP_WIN_START (SPDRP_WSTART),
+    SPEEDDROP_WIN_CLOSE (SPDRP_WCLOSE)
+
+  Medical / wellness / fueling:
+    HR_FLAT, HR_COLLAPSE, MED_NO, HR_STALE, HR_PERIODIC, WLNS_HR,
+    WARN (INCIDENT_WARNING), SILENT (INCIDENT_SILENT),
+    INC_SUPP (INCIDENT_SUPPRESSED — new co-occurring incident drop)
+    CARB_START / CARB_LOG / CARB_UNDO / CARB_DEFICIT / CARB_TIME
+    HYD_START / HYD_LOG / HYD_UNDO / HYD_DEFICIT / HYD_TIME
+
+  Emergency dispatch:
+    EMERG_TRIG (EMERGENCY_TRIGGERED), ALERT_FAIL (ALERT_DELIVERY_FAILED),
+    LOGGER_START, LOG_END
+
+The per-file report surfaces the rows a post-incident dev cares about
+FIRST (CRASH_OK, CRASH_NO, ALERT_FAIL, EMERG_TRIG, INC_SUPP, MED_NO)
+before falling back to aggregate statistics.
 
 Robustness:
   - Handles both decimal-point ('27.7') and decimal-comma ('27,7') payloads
     so v1.2.0 logs from es/fr/de locales (pre-formatUs fix) parse cleanly.
   - Tolerates tiny logs (4-5 rows) — does not crash on missing sections.
   - Skips malformed lines silently and reports the count at the end.
+  - Unknown event tags are counted but not interpreted (forward-compatible
+    with future event additions).
 
 Usage:
     python3 scripts/analyze_calibration_logs.py
@@ -157,6 +185,31 @@ class FileSummary:
         # an `elapsed_min` field so post-hoc analysis can see when in the ride
         # it fired (real crash, drop test, false positive — all useful).
         self.crash_confirmed_payloads: list[dict[str, str | float]] = []
+
+        # ─── Post-incident audit rows (added 2026-05) ────────────────────────
+        # The dev's first-resort fields when triaging a "what happened" report.
+        # Each list stores the full payload + elapsed_min for verbatim printing.
+        self.crash_cancelled_payloads: list[dict[str, str | float]] = []
+        self.medical_cancelled_payloads: list[dict[str, str | float]] = []
+        self.alert_delivery_failed_payloads: list[dict[str, str | float]] = []
+        self.emergency_triggered_payloads: list[dict[str, str | float]] = []
+        self.incident_suppressed_payloads: list[dict[str, str | float]] = []
+        self.medical_fired_payloads: list[dict[str, str | float]] = []
+        self.wellness_fired_payloads: list[dict[str, str | float]] = []
+
+        # ─── Speed-drop watchdog telemetry (added 2026-05) ───────────────────
+        # SPDRP_WSTART / SPDRP_WCLOSE pairs. The W_CLOSE payload's max_speed_kmh
+        # is the key field for tuning the 3.5 km/h threshold — see
+        # docs/crash-detection-algorithm.md.
+        self.speeddrop_win_start_count = 0
+        self.speeddrop_win_close_count = 0
+        self.speeddrop_win_close_reasons: Counter[str] = Counter()
+        # max_speed_kmh seen inside each closed window. Distribution separates
+        # "GPS jitter at rest" (most < 1 km/h) from "near-threshold hike-a-bike"
+        # (mass > 3 km/h) — drives the threshold-tuning histogram.
+        self.speeddrop_win_max_speeds: list[float] = []
+        self.speeddrop_win_elapsed_ms: list[float] = []
+
         self.rows_total = 0
         self.malformed = 0
 
@@ -223,7 +276,7 @@ class FileSummary:
                 self.impact_tmo_reasons[reason] += 1
                 if reason == "SPEED":
                     self._push(self.impact_tmo_speed_min_spd, p.get("min_spd"))
-            elif ev == "CRASH_CONFIRMED":
+            elif ev == "CRASH_CONFIRMED" or ev == "CRASH_OK":
                 self.crash_confirmed_count += 1
                 # Snapshot the full payload so a real crash (or drop-test) is
                 # printed verbatim downstream. This is the canonical "true
@@ -234,6 +287,54 @@ class FileSummary:
                     "elapsed_min": el_s / 60.0,
                     **p,
                 })
+            # ─── Post-incident audit events (added 2026-05) ──────────────────
+            elif ev == "CRASH_CANCELLED" or ev == "CRASH_NO":
+                # Rider tapped Cancel during the countdown — confirmed false
+                # positive. The how_long_ms payload field tells if it was an
+                # immediate-cancel (obvious FP) or a hesitation cancel.
+                self.crash_cancelled_payloads.append({"elapsed_min": el_s / 60.0, **p})
+            elif ev == "MED_NO" or ev == "MEDICAL_CANCELLED":
+                # Rider cancelled a medical-event countdown — FLATLINE or COLLAPSE
+                # was a false positive. Subkind field separates the two.
+                self.medical_cancelled_payloads.append({"elapsed_min": el_s / 60.0, **p})
+            elif ev == "ALERT_FAIL" or ev == "ALERT_DELIVERY_FAILED":
+                # Outbound alert exhausted every retry cycle. The `superseded`
+                # field distinguishes "this emergency was orphaned by a newer
+                # one" from "the rider's contacts truly were never reached".
+                # CRITICAL for "my contacts didn't get the alert" support
+                # tickets — this is the smoking gun.
+                self.alert_delivery_failed_payloads.append({"elapsed_min": el_s / 60.0, **p})
+            elif ev == "EMERG_TRIG" or ev == "EMERGENCY_TRIGGERED":
+                # Captures what KIND of event triggered the countdown (crash,
+                # manual SOS, medical, check-in expiry). Useful timeline anchor.
+                self.emergency_triggered_payloads.append({"elapsed_min": el_s / 60.0, **p})
+            elif ev == "INC_SUPP" or ev == "INCIDENT_SUPPRESSED":
+                # A medical / wellness / SOS incident arrived while another
+                # emergency was already in progress and was dropped. The
+                # `reason` and `blocked_by` fields tell what got eaten.
+                # Surfaces co-occurring detectors that the timeline would
+                # otherwise hide.
+                self.incident_suppressed_payloads.append({"elapsed_min": el_s / 60.0, **p})
+            elif ev == "HR_FLAT" or ev == "HR_COLLAPSE":
+                # Medical detector fired. May or may not have reached the
+                # alert path depending on response-level config.
+                self.medical_fired_payloads.append({
+                    "elapsed_min": el_s / 60.0,
+                    "subkind": ev,
+                    **p,
+                })
+            elif ev == "WLNS_HR":
+                # Wellness tier (critical / sustained / decoupling) fired.
+                # WARNING-level only — InRideAlert, not outbound SOS.
+                self.wellness_fired_payloads.append({"elapsed_min": el_s / 60.0, **p})
+            # ─── Speed-drop watchdog window telemetry (added 2026-05) ────────
+            elif ev == "SPDRP_WSTART" or ev == "SPEEDDROP_WIN_START":
+                self.speeddrop_win_start_count += 1
+            elif ev == "SPDRP_WCLOSE" or ev == "SPEEDDROP_WIN_CLOSE":
+                self.speeddrop_win_close_count += 1
+                self.speeddrop_win_close_reasons[p.get("reason", "?")] += 1
+                self._push(self.speeddrop_win_max_speeds, p.get("max_speed_kmh"))
+                self._push(self.speeddrop_win_elapsed_ms, p.get("elapsed_ms"))
 
     @staticmethod
     def _push(target: list[float], v: str | None):
@@ -351,6 +452,84 @@ def _print_per_file(summaries: list[FileSummary]):
         if fs.impact_tmo_reasons:
             reasons = ", ".join(f"{k}={v}" for k, v in fs.impact_tmo_reasons.most_common())
             print(f"  IMPACT_TMO reasons: {reasons}")
+
+        # ─── Incident audit (added 2026-05) ──────────────────────────────────
+        # Surface the rows a "what happened" support ticket needs FIRST. Each
+        # block is silent when the count is zero so clean rides stay terse.
+        _print_payload_block(
+            "EMERGENCY TRIGGERED", fs.emergency_triggered_payloads,
+            fields=("reason", "countdown_s"),
+        )
+        _print_payload_block(
+            "ALERT DELIVERY FAILED", fs.alert_delivery_failed_payloads,
+            fields=("provider", "reason", "superseded"),
+            highlight=True,
+        )
+        _print_payload_block(
+            "INCIDENT SUPPRESSED (co-occurring detector dropped)",
+            fs.incident_suppressed_payloads,
+            fields=("reason", "level", "blocked_by"),
+        )
+        _print_payload_block(
+            "CRASH CANCELLED by rider", fs.crash_cancelled_payloads,
+            fields=("how_long_ms", "reason"),
+        )
+        _print_payload_block(
+            "MEDICAL CANCELLED by rider", fs.medical_cancelled_payloads,
+            fields=("how_long_ms", "subkind"),
+        )
+        _print_payload_block(
+            "MEDICAL FIRED (HR_FLAT / HR_COLLAPSE)", fs.medical_fired_payloads,
+            fields=("subkind", "bpm", "since_ms"),
+        )
+        _print_payload_block(
+            "WELLNESS FIRED", fs.wellness_fired_payloads,
+            fields=("subkind", "bpm", "threshold", "drift_pct", "sustained_min"),
+        )
+
+        # Speed-drop watchdog telemetry — surfaced compactly when active.
+        if fs.speeddrop_win_start_count > 0 or fs.speeddrop_win_close_count > 0:
+            print(f"  SPEED-DROP windows: opened={fs.speeddrop_win_start_count}  closed={fs.speeddrop_win_close_count}")
+            if fs.speeddrop_win_close_reasons:
+                reasons = ", ".join(f"{k}={v}" for k, v in fs.speeddrop_win_close_reasons.most_common())
+                print(f"    close reasons: {reasons}")
+            if fs.speeddrop_win_max_speeds:
+                ms_stats = _stats(fs.speeddrop_win_max_speeds)
+                print(f"    max_speed_kmh inside window: n={ms_stats['n']}  p50={ms_stats['p50']:.2f}  mean={ms_stats['mean']:.2f}  p95={ms_stats['p95']:.2f}  max={ms_stats['max']:.2f}")
+
+
+def _print_payload_block(
+    title: str,
+    payloads: list[dict[str, str | float]],
+    fields: tuple[str, ...] = (),
+    highlight: bool = False,
+):
+    """
+    Compact per-event payload printer for the incident-audit section.
+    Silently skips when the payload list is empty so clean rides stay terse.
+    `highlight=True` adds a leading "⚠ " marker for the smoking-gun events
+    (currently ALERT_FAIL) so they jump off the page in a support triage.
+    """
+    if not payloads:
+        return
+    marker = "⚠ " if highlight else ""
+    print(f"  {marker}{title} ({len(payloads)}):")
+    for p in payloads:
+        elapsed = p.get("elapsed_min", 0.0)
+        try:
+            elapsed_str = f"{float(elapsed):6.1f}m"
+        except (TypeError, ValueError):
+            elapsed_str = str(elapsed)
+        if fields:
+            kvs = []
+            for k in fields:
+                v = p.get(k)
+                if v is not None and v != "":
+                    kvs.append(f"{k}={v}")
+            tail = "  ".join(kvs) if kvs else "(no payload fields)"
+        else:
+            tail = ", ".join(f"{k}={v}" for k, v in p.items() if k != "elapsed_min")
+        print(f"    @{elapsed_str}  {tail}")
 
 
 def _print_bucket(key: tuple[str, str, str, str], group: list[FileSummary]):

@@ -51,7 +51,14 @@ fun decideReadiness(history: WellnessHistory, nowMs: Long): ReadinessAdvice? {
     val newest = history.records.firstOrNull() ?: return null
 
     val ageMs = nowMs - newest.endedAtMs
-    val ridesWithin72h = history.records.count { nowMs - it.endedAtMs <= 72L * 3_600_000L }
+    // Guard against negative ages (wall-clock jumped backwards, e.g. NTP correction
+    // after device boot or user changing the date). Without `>= 0` the predicate
+    // would count records whose endedAtMs is in the FUTURE as "within last 72h"
+    // and could spuriously trigger the 3-rides-in-72h CAUTION rule.
+    val ridesWithin72h = history.records.count {
+        val age = nowMs - it.endedAtMs
+        age in 0..72L * 3_600_000L
+    }
 
     val recent = ageMs in 0..24L * 3_600_000L
 
