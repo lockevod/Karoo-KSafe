@@ -64,7 +64,7 @@ When a countdown is active you have three ways to cancel:
 2. **Data field** — tap the **SOS** or **Safety Timer** field. Requires that field to be visible on the current screen.
 3. **Hardware button** — assign **KSafe: Cancel Emergency** to a SRAM AXS shifter via *Sensors → AXS → Configure Controls*. Works from any screen.
 
-If the countdown completes, KSafe obtains a GPS fix and sends the configured emergency message via the active provider, then returns to idle monitoring.
+If the countdown completes, KSafe obtains a GPS fix and sends the configured emergency message via the active provider, then returns to idle monitoring. **You can still cancel for up to ~30 minutes** after the countdown ends — the visible UI returns to SAFE after 5 s but the sender keeps retrying in the background, and tapping SOS / Safety Timer / the hardware Cancel button aborts the in-flight retry. If delivery fails on every retry (no coverage, expired credentials, provider down) you hear a **distinct descending beep** and a red "Alert NOT delivered" message appears — so you always know whether your contacts were reached.
 
 ## Data fields
 
@@ -184,7 +184,7 @@ Export and Import buttons (Settings tab) write/read `ksafe_export.json` / `ksafe
 ## Known issues
 
 - **The Karoo has a buzzer, not a speaker.** Alerts beep through that buzzer using the only audio API the Karoo SDK exposes (`PlayBeepPattern`). If you mute the device, every KSafe sound — emergency countdown, fueling reminders, wellness alerts — goes silent. The Karoo SDK does not expose the mute state to extensions, so KSafe cannot detect or override it. **Keep the Karoo unmuted if you want to hear emergency alerts.**
-- No phone connection for the whole retry window → no alert. Emergency alerts retry automatically: 3 cycles of 3 attempts each (60 / 120 / 180 s between attempts inside a cycle, 5 min and 10 min between cycles — up to ~30 min total). If your phone reconnects within that window the alert still goes out; only a sustained disconnect across all 9 attempts fails completely.
+- No phone connection for the whole retry window → no alert. Emergency alerts retry automatically: 3 cycles of 3 attempts each (60 / 120 / 180 s between attempts inside a cycle, 5 min and 10 min between cycles — up to ~30 min total). If your phone reconnects within that window the alert still goes out; only a sustained disconnect across all 9 attempts fails completely. **When that happens you get a distinct descending beep + a red "Alert NOT delivered" message on the Karoo** so you know to find another way to call for help.
 - A large pothole or expansion joint followed by a complete stop for several seconds *can* trigger a false positive. The countdown is your safety net — tap CANCEL.
 - Without GPS fix (tunnel, dense tree cover) the speed gate degrades; gyroscope + accelerometer remain the only guard.
 - Each provider has its own rate limits and free-tier rules.
