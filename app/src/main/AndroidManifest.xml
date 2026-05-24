@@ -5,6 +5,13 @@
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW" />
 
+    <!-- Android 11+ package visibility: required so BuzzerClient can resolve and bind the
+         private HAL service (io.hammerhead.hal/.HIDLTranslationService) for emergency-only
+         beeper bypass. Without this, bindService() returns false silently. -->
+    <queries>
+        <package android:name="io.hammerhead.hal" />
+    </queries>
+
     <application
         android:name=".KSafeApplication"
         android:allowBackup="true"

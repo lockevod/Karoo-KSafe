@@ -58,6 +58,7 @@ fun SettingsScreen(vm: MainViewModel) {
     var isActive          by remember(config.isActive)                  { mutableStateOf(config.isActive) }
     var fitExportEnabled  by remember(config.fuelingFitExportEnabled)   { mutableStateOf(config.fuelingFitExportEnabled) }
     var calibrationLogging by remember(config.calibrationLoggingEnabled) { mutableStateOf(config.calibrationLoggingEnabled) }
+    var buzzerOnEmergency by remember(config.buzzerOnEmergencyEnabled)  { mutableStateOf(config.buzzerOnEmergencyEnabled) }
     var calibLogInfo       by remember { mutableStateOf("") }
     var calibLogNote       by remember { mutableStateOf("") }
     var calibLogNoteIsError by remember { mutableStateOf(false) }
@@ -65,12 +66,13 @@ fun SettingsScreen(vm: MainViewModel) {
     val exportFile = java.io.File(context.getExternalFilesDir(null), "ksafe_export.json")
     val importFile = java.io.File(context.getExternalFilesDir(null), "ksafe_import.json")
 
-    LaunchedEffect(isActive, fitExportEnabled) {
+    LaunchedEffect(isActive, fitExportEnabled, buzzerOnEmergency) {
         delay(600)
         vm.saveConfig(
             config.copy(
-                isActive                = isActive,
-                fuelingFitExportEnabled = fitExportEnabled,
+                isActive                  = isActive,
+                fuelingFitExportEnabled   = fitExportEnabled,
+                buzzerOnEmergencyEnabled  = buzzerOnEmergency,
             )
         )
     }
@@ -141,6 +143,62 @@ fun SettingsScreen(vm: MainViewModel) {
                 val ext = KSafeExtension.getInstance()
                     ?: return@TestActionButton "Extension not connected — wait a moment and try again."
                 ext.simulateCrash()
+            }
+        )
+
+        // ── Buzzer-on-emergency (HAL bypass) ──────────────────────────────
+        // Toggle + test button for the private-API path that routes emergency-class beeps
+        // (countdown last 5s, ALERTING entry) directly to the Karoo's physical buzzer,
+        // bypassing the rider's audio-alerts mute. ON by default — a safety extension
+        // should be heard in a crash; riders who deliberately mute can opt out here.
+        SettingRow(label = "Buzzer on emergency (overrides mute)") {
+            Switch(checked = buzzerOnEmergency, onCheckedChange = { buzzerOnEmergency = it })
+        }
+        Text(
+            text = "Plays the Karoo buzzer on crash countdown and SOS firing, even if your " +
+                   "Karoo is muted. Non-emergency beeps (ride start, check-in, wellness " +
+                   "warnings) still respect mute as usual.",
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant
+        )
+
+        // Diagnostic button — binds the HAL service and plays a short test tone. Useful
+        // for confirming the bypass works after a Karoo OTA (Hammerhead can gate the
+        // service in any future update).
+        TestActionButton(
+            label = "Test buzzer (HAL probe)",
+            runningLabel = "Binding…",
+            isSuccess = { it.startsWith("Beep") },
+            onAction = {
+                val client = com.enderthor.kSafe.extension.managers.BuzzerClient(context)
+                try {
+                    val bindDiag = client.connect()
+                    // Bind is async; wait briefly for onServiceConnected. Bail out after 2s.
+                    val deadline = System.currentTimeMillis() + 2_000L
+                    while (!client.isReady() && System.currentTimeMillis() < deadline) {
+                        delay(50)
+                    }
+                    if (!client.isReady()) {
+                        // Failure A: bind itself was refused. Most likely cause if it
+                        // worked before: a Karoo OTA changed the service exports.
+                        "Bind failed: $bindDiag — KSafe will fall back to SDK beep on emergencies."
+                    } else {
+                        val ok = client.beep(com.enderthor.kSafe.extension.managers.BuzzerClient.TEST_PATTERN)
+                        when {
+                            ok -> "Beep dispatched — did you hear it? Bypass is working."
+                            client.lastResult == com.enderthor.kSafe.extension.managers.BuzzerClient.BeepResult.GATED_BY_SECURITY ->
+                                "Bypass GATED by Karoo OTA (SecurityException). KSafe will fall back to SDK beep on emergencies — same as pre-bypass behaviour."
+                            client.lastResult == com.enderthor.kSafe.extension.managers.BuzzerClient.BeepResult.TRANSACT_THREW ->
+                                "Bypass FAILED (transact threw — descriptor/transaction-ID drift in a Karoo OTA?). KSafe will fall back to SDK beep on emergencies."
+                            else ->
+                                "Bypass FAILED (${client.lastResult}). KSafe will fall back to SDK beep on emergencies. Check logcat."
+                        }
+                    }
+                } finally {
+                    // Give the HAL a moment to actually emit before tearing the bind down.
+                    delay(800)
+                    client.disconnect()
+                }
             }
         )
 

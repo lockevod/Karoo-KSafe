@@ -69,6 +69,15 @@ class EmergencyManager(
     private val scope: CoroutineScope,
     private val calibLogger: CalibrationLogger? = null,
     /**
+     * Optional bridge to the Karoo's physical buzzer via the private HAL service. When
+     * non-null AND the rider has [KSafeConfig.buzzerOnEmergencyEnabled] turned on, the
+     * emergency-class beeps (last 5 s of countdown + ALERTING entry) are duplicated through
+     * this channel so the device is heard even when audio alerts are muted. Null-safe —
+     * if the bind has failed or the rider has opted out, the SDK [PlayBeepPattern] path
+     * continues to operate as the only audio channel.
+     */
+    private val buzzerClient: BuzzerClient? = null,
+    /**
      * Invoked when a CRASH-triggered emergency is cancelled by the rider. Wired by
      * KSafeExtension to clear the crash cooldown — a cancelled countdown sent no
      * alert, so crash detection must be fully re-armed.
@@ -488,13 +497,52 @@ class EmergencyManager(
 
                 if (remaining % 5 == 0 || remaining <= 10) {
                     if (remaining <= 10) karooSystem.dispatch(TurnScreenOn)
-                    if (remaining <= 5) karooSystem.dispatch(BEEP_URGENT)
+                    if (remaining <= 5) {
+                        // Single channel per tick — playEmergencyBeep picks HAL when the
+                        // rider opted into bypass, SDK otherwise. COUNTDOWN_TICK is a short
+                        // ~200 ms tone so successive ticks don't step on each other.
+                        playEmergencyBeep(config, BEEP_URGENT, BuzzerClient.COUNTDOWN_TICK)
+                    }
                 }
                 delay(1_000L)
             }
 
             sendAlerts(config, reason)
         }
+    }
+
+    /**
+     * Play an emergency-class beep, with automatic SDK fallback if the HAL bypass fails.
+     * The Karoo's buzzer is a single piezo — letting both channels fire produces a chaotic
+     * overlap — so the happy path is exactly ONE channel:
+     *
+     *  - [KSafeConfig.buzzerOnEmergencyEnabled] **on** (default) AND the HAL bind is live →
+     *    fire the HAL bypass [halPattern]. Mute-immune. Predictable timing.
+     *  - **off**, or HAL bind unavailable → fire the SDK [sdkPattern] via
+     *    [KarooSystemService.dispatch]. Respects the rider's mute toggle (so if the rider
+     *    muted the Karoo deliberately, no sound — same as pre-buzzer KSafe behaviour).
+     *
+     * Plus the OTA safety net: if Hammerhead later gates the HAL service so [BuzzerClient.beep]
+     * starts returning false ([BuzzerClient.BeepResult.GATED_BY_SECURITY],
+     * [BuzzerClient.BeepResult.TRANSACT_THREW], etc.), this method automatically falls back
+     * to the SDK pattern so the rider still hears SOMETHING — pre-bypass behaviour. The
+     * worst case in practice is a brief overlap of the failed HAL attempt (silent because
+     * gated) with the SDK pattern: acceptable trade for the fallback guarantee.
+     */
+    private fun playEmergencyBeep(
+        config: KSafeConfig,
+        sdkPattern: PlayBeepPattern,
+        halPattern: List<BuzzerClient.Tone>,
+    ) {
+        val client = buzzerClient
+        val tryBypass = config.buzzerOnEmergencyEnabled && client != null && client.isReady()
+        if (tryBypass && client!!.beep(halPattern)) {
+            return                            // HAL bypass dispatched successfully
+        }
+        // Fallback: rider opted out, bind not ready, OR transact failed (likely an OTA
+        // gating the bypass). Use SDK PlayBeepPattern — subject to the rider's mute toggle
+        // exactly like pre-buzzer KSafe, so at minimum a non-muted Karoo still beeps.
+        karooSystem.dispatch(sdkPattern)
     }
 
     /**
@@ -730,7 +778,10 @@ class EmergencyManager(
         alertJob = myJob
 
         karooSystem.dispatch(TurnScreenOn)
-        karooSystem.dispatch(BEEP_LONG)
+        // Single channel — playEmergencyBeep picks HAL bypass (rising-urgency) when the
+        // rider opted in, SDK BEEP_LONG otherwise. Never both, so the buzzer doesn't
+        // serialise two patterns into a muddled overlap.
+        playEmergencyBeep(config, BEEP_LONG, BuzzerClient.EMERGENCY_PATTERN)
 
         // Roll back the visible ALERTING state after a short fixed window so the
         // rider's field UI doesn't stay locked for the full ~30-min sender retry

@@ -68,8 +68,11 @@ const val KAROO_LIVE_BASE_URL = "https://dashboard.hammerhead.io/live/"
  *             carried forward into BOTH new fields so a rider who had customised the message
  *             keeps the previous "same text for time and deficit" behaviour. A blank legacy
  *             field leaves the new fields blank → the source-specific default strings apply.
+ *  v15 → v16: buzzerOnEmergencyEnabled added. Default true so existing safety-conscious
+ *             users get the audible-even-when-muted behaviour automatically after update;
+ *             riders who deliberately mute their Karoo can opt out from Settings.
  */
-const val CONFIG_VERSION = 15
+const val CONFIG_VERSION = 16
 
 /**
  * Canonical minSpeedForCrashKmh value per preset.
@@ -366,6 +369,14 @@ data class KSafeConfig(
      *  (crash / medical-collapse on EMERGENCY) stay on the urgent BEEP_LONG + BEEP_URGENT
      *  countdown sequence — those grab attention by design and aren't user-mutable. */
     val wellnessBeepPattern: BeepPattern = BeepPattern.SINGLE_LONG,
+    /** Force-sound the Karoo's physical buzzer on emergency-class events (last 5 s of crash
+     *  countdown and ALERTING entry), bypassing the rider's audio-alerts mute. Uses a private
+     *  AIDL path into io.hammerhead.hal/.HIDLTranslationService — see BuzzerClient. Default ON
+     *  so a safety extension is actually heard in a crash even when the Karoo is muted; riders
+     *  who intentionally silence the device (night/group rides, etc.) can opt out here. Does
+     *  NOT affect non-emergency beeps (ride start, check-in, wellness warnings) — those keep
+     *  going through karoo-ext's PlayBeepPattern and continue to respect mute. */
+    val buzzerOnEmergencyEnabled: Boolean = true,
     // Calibration logging — writes detailed sensor events to CSV for threshold tuning
     val calibrationLoggingEnabled: Boolean = false,
     // Field colours — idle/ready background for each ride-screen widget
@@ -1060,6 +1071,15 @@ fun KSafeConfig.migrateToLatest(): KSafeConfig {
             "KSafeConfig migrated v%d→v15 (wellness critical default; critical 175→%d, sustained=%d)",
             originalVersion, newCritical, c.wellnessHighHrThreshold,
         )
+    }
+
+    if (c.configVersion < 16) {
+        // v15 → v16: buzzerOnEmergencyEnabled added. Pure version stamp — the Kotlin default
+        // (true) is the desired post-migration value for every existing rider, because the
+        // whole point of installing a safety extension is being heard in a crash. Riders who
+        // want to suppress the buzzer can flip it off in Settings.
+        c = c.copy(configVersion = 16)
+        Timber.i("KSafeConfig migrated v%d→v16 (HAL buzzer on emergency, default on)", originalVersion)
     }
 
     return c

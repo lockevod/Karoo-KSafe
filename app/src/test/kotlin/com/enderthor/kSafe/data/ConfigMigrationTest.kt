@@ -96,15 +96,30 @@ class ConfigMigrationTest {
     }
 
     @Test
-    fun `v15 config is left unchanged by the migration`() {
+    fun `v15 config is bumped to v16 with all other fields preserved`() {
         val current = KSafeConfig(
             configVersion = 15,
             wellnessCriticalThresholdBpm = 175,
             wellnessHighHrThreshold = 180,
         )
         val migrated = current.migrateToLatest()
-        assertEquals(15, migrated.configVersion)
+        assertEquals(16, migrated.configVersion)
         assertEquals(175, migrated.wellnessCriticalThresholdBpm)
         assertEquals(180, migrated.wellnessHighHrThreshold)
+        // v15→v16 is a pure version stamp; the new buzzerOnEmergencyEnabled default (true)
+        // applies to every existing rider so the audible-on-mute bypass is on out of the box.
+        assertEquals(true, migrated.buzzerOnEmergencyEnabled)
+    }
+
+    @Test
+    fun `v16 config is left unchanged by the migration`() {
+        val current = KSafeConfig(
+            configVersion = 16,
+            buzzerOnEmergencyEnabled = false,
+        )
+        val migrated = current.migrateToLatest()
+        assertEquals(16, migrated.configVersion)
+        // Migration must not flip the rider's explicit opt-out back to the default.
+        assertEquals(false, migrated.buzzerOnEmergencyEnabled)
     }
 }

@@ -84,6 +84,10 @@ class KSafeExtension : KarooExtension("ksafe", BuildConfig.VERSION_NAME), Corout
     private lateinit var sender: Sender
     private lateinit var calibLogger: CalibrationLogger
     private lateinit var webhookManager: WebhookManager
+    /** Persistent bind to the Karoo's HAL beeper service for emergency mute-bypass.
+     *  See [BuzzerClient]. Bind is fire-and-forget — if the HAL package isn't visible
+     *  or the bind fails, every call site degrades to a no-op. */
+    private lateinit var buzzerClient: com.enderthor.kSafe.extension.managers.BuzzerClient
     private lateinit var medicalDetector: MedicalEpisodeDetector
     private lateinit var wellnessMonitor: WellnessMonitor
     private lateinit var carbsTracker: com.enderthor.kSafe.extension.managers.CarbsTracker
@@ -265,9 +269,17 @@ class KSafeExtension : KarooExtension("ksafe", BuildConfig.VERSION_NAME), Corout
         sender = Sender(karooSystem, configManager)
         calibLogger = CalibrationLogger(applicationContext, this, configManager)
         webhookManager = WebhookManager(karooSystem)
+        // Bind the HAL buzzer up-front so the binder is ready when the first emergency
+        // fires. The bind is async; connect() returns immediately and onServiceConnected
+        // populates the binder in the background. If the HAL package isn't visible or
+        // refuses the bind, every later beep() call no-ops silently.
+        buzzerClient = com.enderthor.kSafe.extension.managers.BuzzerClient(applicationContext)
+        val buzzerDiag = buzzerClient.connect()
+        Timber.d("BuzzerClient connect: %s", buzzerDiag)
         emergencyManager = EmergencyManager(
             applicationContext, karooSystem, configManager, locationManager, sender, this,
             calibLogger,
+            buzzerClient = buzzerClient,
             onCrashEmergencyCancelled = { crashManager.clearCrashCooldown() },
         )
         crashManager = CrashDetectionManager(applicationContext, this, {
@@ -1990,6 +2002,10 @@ class KSafeExtension : KarooExtension("ksafe", BuildConfig.VERSION_NAME), Corout
         locationManager.stop()
         emergencyManager.stopAll()
         calibLogger.disable()
+        // Unbind the HAL service before the karooSystem disconnect so we don't leak a
+        // ServiceConnection across extension restarts. Safe to call even if connect()
+        // failed — disconnect() is a no-op when not bound.
+        if (::buzzerClient.isInitialized) buzzerClient.disconnect()
         karooSystem.disconnect()
         job.cancel()
         // Null out the published tracker references so any DataType that re-enters
