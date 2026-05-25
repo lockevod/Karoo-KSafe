@@ -174,8 +174,11 @@ fun SettingsScreen(vm: MainViewModel) {
                 try {
                     val bindDiag = client.connect()
                     // Bind is async; wait briefly for onServiceConnected. Bail out after 2s.
-                    val deadline = System.currentTimeMillis() + 2_000L
-                    while (!client.isReady() && System.currentTimeMillis() < deadline) {
+                    // Use the monotonic clock (`elapsedRealtime`) instead of wall-clock so an
+                    // NTP step / user date change during the bind window can't make the loop
+                    // exit early (negative remaining time) or spin past the intended budget.
+                    val deadline = android.os.SystemClock.elapsedRealtime() + 2_000L
+                    while (!client.isReady() && android.os.SystemClock.elapsedRealtime() < deadline) {
                         delay(50)
                     }
                     if (!client.isReady()) {
