@@ -132,6 +132,15 @@ class CrashDetectionManager(
         /** Angle (deg) above which the SILENCE_CHECK speed-rise relaxation engages. */
         const val ON_SIDE_RELAXATION_ANGLE_DEG = 60.0
 
+        /** Speed (km/h) ceiling above which the IMPACT-phase on-side relaxation does
+         *  NOT fire — see [Thresholds.onSideRelaxationMaxSpeedKmh] for the full
+         *  motivation. Briefly: the relaxation is meant for "bike rolled after the
+         *  rider went down", which is incompatible with sustained 25+ km/h. The FP
+         *  at elapsed 14141.2 s on the 2026-05-25 ride sat at 34.7 km/h sustained
+         *  through 7+ s of "silence" — clear separation from the four real falls in
+         *  the same ride, all under 15 km/h. GPS-stale bypasses the ceiling. */
+        const val ON_SIDE_RELAXATION_MAX_SPEED_KMH = 25.0
+
         // ── CrashStateMachine "sample timestamp" base ────────────────────────
         // The state machine treats `sample.timestampMs` as the authoritative time
         // for IMPACT/SILENCE windows. We pass wall-clock so production semantics
@@ -527,6 +536,26 @@ class CrashDetectionManager(
 
         val decision = stateMachine.onSample(sampleForSm)
 
+        // ─── Diagnostic: CAD_GATE suppression (FN fix, 2026-05-25) ──────────
+        // The state machine reports per-sample whether CAD_GATE was about to fire
+        // but was suppressed by the on-side orientation evidence. Log this once
+        // per occurrence so calibration data shows the suppression context (the
+        // decision and the values at the moment of suppression).
+        if (stateMachine.lastCadenceGateSuppressed) {
+            calibLogger?.log(CalibrationLogger.Event.CADENCE_GATE_SUPPRESSED) {
+                // Use the LIVE angle the state machine captured at suppression
+                // time (set just before `lastCadenceGateSuppressed = true`).
+                // `lastOrientationAngleDeg` is the latched silence-window value,
+                // which is still -1.0 on the very first suppression sample
+                // because `computeEffectiveSilenceMs` (which writes the latch)
+                // runs AFTER the cadence-gate branch in `handleSilenceCheck`.
+                val angle = stateMachine.lastCadenceGateSuppressedAngleDeg
+                val dev = abs(sample.rawMagnitude - GRAVITY)
+                "cadence=%.0f,speed=%.1f,deviation=%.2f,grade=%.1f,angle=%.1f,upright_thr=${stateMachine.thresholds.uprightAngleThresholdDegrees}".formatUs(
+                    currentCadence, currentSpeedKmh, dev, currentGrade, angle)
+            }
+        }
+
         // ─── Window-progress accumulators ───────────────────────────────────
         if (stateMachine.state == CrashStateMachine.State.IMPACT) {
             val deviation = abs(sample.rawMagnitude - GRAVITY)
@@ -869,6 +898,7 @@ class CrashDetectionManager(
             silenceDurationUprightMs = SILENCE_DURATION_UPRIGHT_MS,
             uprightAngleThresholdDegrees = UPRIGHT_ANGLE_THRESHOLD_DEGREES,
             onSideRelaxationAngleDeg = ON_SIDE_RELAXATION_ANGLE_DEG,
+            onSideRelaxationMaxSpeedKmh = ON_SIDE_RELAXATION_MAX_SPEED_KMH,
         )
     }
 

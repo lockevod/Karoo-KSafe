@@ -78,6 +78,7 @@ Every CSV row is tagged with a short event identifier. The current catalogue:
 | `CRASH_NO` | Crash CANCELLED by rider during countdown — labelled false positive |
 | `CRASH_GATE_SUPPRESSED` | Confirm landed inside the cooldown window of a previous confirm |
 | `CAD_GATE` | Cadence-active exit from SILENCE_CHECK (rider still pedalling) |
+| `CAD_GATE_SUPPRESSED` | Cadence-active gate WOULD have fired but was suppressed because the live orientation evidence shows the device decisively non-upright (angle ≥ uprightAngleThresholdDegrees). A bike on its side cannot be pedalled; the "fresh" cadence is therefore phantom/stale. Payload: `cadence`, `speed`, `deviation`, `grade`, `angle`, `upright_thr` |
 | `GYRO_BLK` | IMPACT→SILENCE_CHECK blocked because gyro is still high |
 | `RST_SNAP` | Post-reset snapshot — see `docs/crash-detection-algorithm.md` |
 | `HIGH_MAG` | Sample crossed the peak threshold but didn't enter IMPACT |

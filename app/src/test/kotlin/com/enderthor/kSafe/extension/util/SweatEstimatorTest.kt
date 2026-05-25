@@ -32,16 +32,21 @@ class SweatEstimatorTest {
     }
 
     @Test
-    fun `high intensity hot humid conditions reaches 1200-2000 ml per hour`() {
-        // 70 kg, 170 bpm, 30 °C, 70 % RH — threshold work in summer.
-        // Baker 2017 / Cheuvront 2014: ~1.5–2.0 L/hr in hot conditions at high intensity.
+    fun `high intensity hot humid conditions land near literature median`() {
+        // 70 kg, 170 bpm, 30 °C, 70 % RH — threshold work in summer (WBGT ≈ 27).
+        // Post-v18.2 anchors target the literature median (Baker 2017) for trained
+        // cyclists rather than the upper bound — ~1.0–1.3 L/hr at this WBGT band.
+        // Pre-v18.2 the same inputs returned ~1.35 L/hr; the new anchors take that
+        // to ~0.99 L/hr (~26 % lower) so the displayed target tracks Garmin/Firstbeat
+        // territory and doesn't over-target on warm-summer rides. See [heatFactor]
+        // KDoc for the history + rationale.
         val out = estimateSweatRate(SweatEstimateInputs(
             hrBpm = 170,
             weightKg = 70.0,
             ambientTempC = 30.0,
             humidityPct = 70,
         ))
-        assertInRange("hot threshold", out.mlPerHour, 1200.0, 2000.0)
+        assertInRange("hot threshold (median-targeting band)", out.mlPerHour, 850.0, 1300.0)
     }
 
     @Test

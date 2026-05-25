@@ -3,43 +3,49 @@ package com.enderthor.kSafe.extension.util
 import io.hammerhead.karooext.models.UserProfile
 
 /**
- * Pure helper. Given the rider's Karoo profile (5 HR zones, 7 power zones — both lists are
- * configured by the rider in the Karoo's settings), the current HR (bpm) and the current
- * power (W), returns a [ZoneSnapshot] that the [CarbsTracker] uses to modulate the carb
- * target rate.
+ * Pure helper. Given the rider's Karoo profile (5 HR zones, 7 power zones — both lists
+ * are configured by the rider in the Karoo's settings), the current HR (bpm) and the
+ * current power (W), returns a [ZoneSnapshot] identifying the rider's current intensity
+ * zone (source / index / total).
  *
- * Source preference: POWER (more accurate intensity proxy) > HR > NONE. The multiplier scales
- * linearly across the rider's configured zones from [MIN_MULT] (recovery) to [MAX_MULT] (top zone).
+ * Source preference: POWER (more accurate intensity proxy) > HR > NONE.
+ *
+ * **v18 note**: the [ZoneSnapshot.multiplier] field is **vestigial** and no longer
+ * read by the integrator. In v17 and earlier it scaled the rider-configured
+ * `carbTargetGperHour` to track intensity changes; v18 replaced that with the
+ * physiological [com.enderthor.kSafe.extension.util.CarbBurnEstimator] which derives
+ * burn directly from power or HR. The classifier itself (zone source / index / total)
+ * is still used by the estimator to pick a CHO fraction from the
+ * Romijn / Jeukendrup table. The multiplier is kept on the data class so existing
+ * calibration logs that reference the field continue to compile; it can be removed
+ * in a future cleanup.
  *
  * Stateless and side-effect-free — safe to call on every tick.
  */
 
-/** Gut absorption ceiling (g/h). The integrator clamps `base × multiplier` to this
- *  value so the cumulative target never advances faster than a typical recreational
- *  rider can actually consume. 90 g/h is the established ceiling for a glucose+fructose
- *  mix with an un-trained gut (Jeukendrup 2014, ISSN 2017). Race-trained riders push
- *  120-150 g/h but only after months of gut adaptation — they can manually raise the
- *  base target to compensate. Top-level so [CarbsTracker] can reference it directly. */
+/** Gut absorption ceiling (g/h). The v18 [CarbsTracker.tick] integrator clamps the
+ *  physiological burn estimate to this value so the cumulative-burn curve never
+ *  advances faster than a typical recreational rider can actually consume. 90 g/h
+ *  is the established ceiling for a glucose+fructose mix with an un-trained gut
+ *  (Jeukendrup 2014, ISSN 2017). Race-trained riders push 120-150 g/h but only after
+ *  months of gut adaptation. Top-level so [CarbsTracker] can reference it directly. */
 const val ABSORPTION_CAP_GPH = 90f
 
 object IntensityZoneCalculator {
 
-    // Multiplier range — tracks actual carb burn rate across the rider's intensity
-    // zones. Real cycling carb burn (Brooks 2018, Romijn 1993, Coyle 1997):
+    // Multiplier range — vestigial in v18 (kept for backwards compat on the
+    // ZoneSnapshot data class). v17 used the multiplier to scale the
+    // rider-configured `carbTargetGperHour` between recovery and top zone:
     //
-    //   Z1 (~50% VO2max) ≈ 20-25 g/h  (mostly fat oxidation)  → ratio ≈ 0.4 of Z3
-    //   Z3 (~70%)        ≈ 50-60 g/h                          → 1.00 (reference)
-    //   Z5 (~90%)        ≈ 80-90 g/h (~80% carb, gut-limited) → 1.50
+    //   Z1 (~50% VO2max) ≈ 20-25 g/h carb burn → ratio 0.4 of Z3
+    //   Z3 (~70%)        ≈ 50-60 g/h           → 1.00 (reference)
+    //   Z5 (~90%)        ≈ 80-90 g/h           → 1.50
     //
-    // MIN_MULT 0.4 mirrors actual Z1 burn at a 50 g/h base target (= 20 g/h, real Z1).
-    // MAX_MULT 1.5 mirrors actual Z5 burn at the same base (= 75 g/h, close to real Z5).
-    // The gut-absorption ceiling (≈ 90 g/h single-transportable, see ISSN 2017) is
-    // enforced as a hard absolute cap in `CarbsTracker.tick()` so a Race-preset base
-    // (75 g/h) × top-zone multiplier (1.5) still integrates at 90 g/h, not 112 g/h.
-    //
-    // Earlier 0.7-1.3 band over-fueled recovery periods by ~70 %. This change moves
-    // KSafe from "anti-bonk safety buffer" to "burn-rate tracker", which is what the
-    // user research and recent ISSN/IOC consensus recommends for recreational riders.
+    // v18 derives burn from physiology instead; CHO fraction by zone replaces the
+    // multiplier on the carb-tracker side. The numeric range here is preserved so
+    // any external tool that reads the calibration CSV's historical `multiplier=`
+    // column (now removed from v18 fire / periodic rows) can still cross-reference
+    // older data without redefinition.
     private const val MIN_MULT = 0.4f
     private const val MAX_MULT = 1.5f
 
@@ -96,7 +102,13 @@ object IntensityZoneCalculator {
  *  - [source]: which sensor stream the snapshot was derived from, or NONE when no zones could be matched.
  *  - [index]: 0-based zone index; -1 when source = NONE.
  *  - [total]: number of configured zones for the source (typically 5 for HR, 7 for power); 0 when NONE.
- *  - [multiplier]: [MIN_MULT]..[MAX_MULT] within configured zones, 1.0 when NONE (neutral fallback).
+ *  - [multiplier]: **vestigial in v18** — 1.0..1.5 (from MIN_MULT..MAX_MULT) within
+ *    configured zones, 1.0 when NONE. No longer read by `CarbsTracker` (the
+ *    physiological burn estimator replaced the multiplier-scaling model in v18);
+ *    kept on the data class only so any external tool still reading the field's
+ *    historical CSV column shape parses correctly. Future cleanup: remove the
+ *    field and the `MIN_MULT`/`MAX_MULT` constants once we are confident no
+ *    downstream calibration analysis depends on the column.
  */
 data class ZoneSnapshot(
     val source: ZoneSource,

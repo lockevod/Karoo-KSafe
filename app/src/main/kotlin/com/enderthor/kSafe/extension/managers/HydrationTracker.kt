@@ -7,6 +7,8 @@ import com.enderthor.kSafe.data.KSafeConfig
 import com.enderthor.kSafe.data.fuelingAlertColorRes
 import com.enderthor.kSafe.extension.util.ALERT_DETAIL_MAX_CHARS
 import com.enderthor.kSafe.extension.util.ALERT_TITLE_MAX_CHARS
+import com.enderthor.kSafe.extension.util.CarbIntegrator
+import com.enderthor.kSafe.extension.util.FuelingAlertScheduler
 import com.enderthor.kSafe.extension.util.SweatConfidence
 import com.enderthor.kSafe.extension.util.SweatEstimateInputs
 import com.enderthor.kSafe.extension.util.estimateSweatRate
@@ -48,12 +50,11 @@ class HydrationTracker(
     // both have minute-level granularity downstream, so 15 s polling is fine.
     private val MONITOR_TICK_MS         = 15_000L
 
-    /** See [CarbsTracker.MOVING_GATE_KMH] — same rationale and value for symmetry. */
-    private val MOVING_GATE_KMH = 2.0
-
-    /** See [CarbsTracker.SPEED_STALE_MS]. */
-    private val SPEED_STALE_MS = 10_000L
-    private val ALERT_COOLDOWN_MS       = 5L * 60_000L
+    /** Movement gate + GPS-stale window read from [CarbIntegrator] — the canonical
+     *  home for these constants post-v18.1. Keeps both trackers (and
+     *  [MedicalEpisodeDetector]) in lockstep so a future tune touches one place. */
+    private val MOVING_GATE_KMH = CarbIntegrator.MOVING_GATE_KMH
+    private val SPEED_STALE_MS  = CarbIntegrator.SPEED_STALE_MS
     private val PERIODIC_LOG_INTERVAL_MS = 120_000L
 
     // InRideAlert color contract: SDK expects @ColorRes IDs, NOT packed ARGB ints —
@@ -81,7 +82,23 @@ class HydrationTracker(
     /** See [CarbsTracker.lastRealLogMs] — same field, hydration side. Tracks the last
      *  REAL log (not time-alert fire) so `{elapsed}` reflects time-since-real-log. */
     @Volatile private var lastRealLogMs = 0L
-    @Volatile private var lastAlertMs = 0L
+    // v18 L1: `lastAlertMs` removed — see CarbsTracker comment for rationale.
+    /**
+     * Wall-clock ms when a TIME-source alert last fired in this session. Drives the
+     * pure-interval gate in [evaluateTimeAlert]:
+     * `now - lastTimeAlertFireMs >= intervalMs`. **Critically not updated by rider
+     * logs** — the v17 user-facing semantics is "remind me every N minutes",
+     * independent of when the rider last drank. 0 = no time alert has fired yet
+     * this session; the first-fire gate then uses the initial-delay logic.
+     */
+    @Volatile private var lastTimeAlertFireMs = 0L
+    /**
+     * Wall-clock ms when a DEFICIT-source alert last fired in this session. Drives
+     * the configurable reminder cooldown (`config.hydrationDeficitReminderIntervalMin
+     * * 60_000`). Independent of [lastTimeAlertFireMs] — each source has its own
+     * cooldown clock so the two alert kinds don't throttle each other.
+     */
+    @Volatile private var lastDeficitAlertFireMs = 0L
     @Volatile private var lastPeriodicLogMs = 0L
 
     // ─── Dynamic-estimate inputs (push from KSafeExtension, all optional) ────
@@ -148,14 +165,18 @@ class HydrationTracker(
             // the legacy lastLogMs (which under v14 / pre-F1 meant "last real log") is the
             // best available proxy.
             lastRealLogMs = restoreFrom.lastRealLogMs.takeIf { it > 0 } ?: lastLogMs
-            lastAlertMs = restoreFrom.lastAlertMs
+            // v17 new fields. Old snapshots have 0 → treat as "never fired this session"
+            // and let the first-fire initial-delay gate run normally on resume.
+            lastTimeAlertFireMs = restoreFrom.lastTimeAlertFireMs
+            lastDeficitAlertFireMs = restoreFrom.lastDeficitAlertFireMs
         } else {
             cumTargetMl = 0f
             cumLoggedMl = 0
             sessionStartMs = now
             lastLogMs = now
             lastRealLogMs = now
-            lastAlertMs = 0L
+            lastTimeAlertFireMs = 0L
+            lastDeficitAlertFireMs = 0L
         }
         lastTickMs = 0L
         lastPeriodicLogMs = 0L
@@ -197,8 +218,9 @@ class HydrationTracker(
         cumLoggedMl = cumLoggedMl,
         sessionStartMs = sessionStartMs,
         lastLogMs = lastLogMs,
-        lastAlertMs = lastAlertMs,
         lastRealLogMs = lastRealLogMs,
+        lastTimeAlertFireMs = lastTimeAlertFireMs,
+        lastDeficitAlertFireMs = lastDeficitAlertFireMs,
     )
 
     fun stop() {
@@ -428,56 +450,102 @@ class HydrationTracker(
         }
         lastTickMs = now
 
-        evaluateDeficitAlert(now)
-        evaluateTimeAlert(now)
+        // v17 coincidence resolution: when a deficit alert and a time-grid tick are
+        // both due in the same physical tick, the deficit alert wins (it carries the
+        // more actionable info — a numeric deficit beats "X min since last drink").
+        // The time-grid tick is "consumed" silently so the next tick doesn't re-fire
+        // the time alert back-to-back. Without this, both `evaluateXxxAlert` calls
+        // would dispatch their own `InRideAlert`: the Karoo SDK would overlay them
+        // (the time alert visually replacing the deficit one) and the rider would
+        // hear two beeps but read only the less informative message — worst of both
+        // worlds. Same shape in `CarbsTracker.tick`.
+        val deficitFired = evaluateDeficitAlert(now)
+        if (deficitFired) {
+            if (currentDueTimeTick(now) != 0L) {
+                // Mark the time tick as consumed. Setting `lastTimeAlertFireMs = now`
+                // is sufficient because `currentDueTimeTick` requires
+                // `lastTimeAlertFireMs < currentTickAt` to consider a tick due, and
+                // `now >= currentTickAt` is the entry condition of `currentDueTimeTick`
+                // returning non-zero. The next time tick (at sessionStartMs + (N+1) *
+                // interval) is unaffected because `lastTimeAlertFireMs` will then be
+                // strictly less than that newer `currentTickAt`.
+                lastTimeAlertFireMs = now
+            }
+        } else {
+            evaluateTimeAlert(now)
+        }
         maybePeriodicLog(now)
         // See CarbsTracker.tick — re-publish to drive the status data fields off
         // a push channel (15-s cadence) instead of the old 1-Hz polling loops.
         publishStatus()
     }
 
-    private fun evaluateDeficitAlert(now: Long) {
-        if (!config.hydrationDeficitAlertEnabled) return
-        // See CarbsTracker.evaluateDeficitAlert — same initial-delay grace rationale.
-        val isFirstAlert = lastAlertMs == 0L && cumLoggedMl == 0
-        if (isFirstAlert && config.hydrationDeficitInitialDelayMin > 0) {
+    /** Returns true when an alert was actually dispatched in this call. The caller
+     *  in [tick] uses the return value to coordinate coincidence resolution with
+     *  the time-alert path (deficit wins; if a time tick was due in the same
+     *  tick it gets consumed silently). */
+    private fun evaluateDeficitAlert(now: Long): Boolean {
+        if (!config.hydrationDeficitAlertEnabled) return false
+        // Initial-delay grace period — only applies to the FIRST deficit alert of
+        // the session AND only while the rider hasn't logged anything yet. Once
+        // any deficit alert has fired OR the rider has logged water, normal
+        // cooldown logic takes over (see CarbsTracker.evaluateDeficitAlert).
+        val isFirstDeficitAlert = lastDeficitAlertFireMs == 0L && cumLoggedMl == 0
+        if (isFirstDeficitAlert && config.hydrationDeficitInitialDelayMin > 0) {
             val initialDelayMs = config.hydrationDeficitInitialDelayMin * 60_000L
-            if (now - sessionStartMs < initialDelayMs) return
+            if (now - sessionStartMs < initialDelayMs) return false
         }
         val deficit = (cumTargetMl - cumLoggedMl).toInt()
-        if (deficit < config.hydrationDeficitThresholdMl) return
-        if (now - lastAlertMs < ALERT_COOLDOWN_MS) return
+        if (deficit < config.hydrationDeficitThresholdMl) return false
+        // v17: configurable reminder cooldown. Previously hard-coded at 5 min,
+        // which riders found too frequent on long endurance rides where the
+        // deficit can sit unresolved for an hour. The cooldown is gated by the
+        // PER-SOURCE clock so an unrelated time-alert fire doesn't throttle the
+        // deficit reminder cadence and vice versa.
+        val reminderIntervalMs = config.hydrationDeficitReminderIntervalMin * 60_000L
+        if (now - lastDeficitAlertFireMs < reminderIntervalMs) return false
         fireAlert("deficit", deficit, (now - lastRealLogMs) / 60_000)
+        lastDeficitAlertFireMs = now
+        return true
     }
 
-    private fun evaluateTimeAlert(now: Long) {
-        if (!config.hydrationTimeAlertEnabled) return
-        // Initial-delay grace period — same semantics as CarbsTracker.evaluateTimeAlert.
-        val isFirstAlert = lastAlertMs == 0L && cumLoggedMl == 0
-        if (isFirstAlert && config.hydrationTimeInitialDelayMin > 0) {
-            val initialDelayMs = config.hydrationTimeInitialDelayMin * 60_000L
-            if (now - sessionStartMs < initialDelayMs) return
-        }
-        val intervalMs = config.hydrationTimeIntervalMin * 60_000L
-        if (now - lastLogMs < intervalMs) return
-        // Defensive cooldown — the post-fire `lastLogMs = now` below makes the gate above
-        // re-arm correctly, so the cooldown is reached only on the first fire of a session
-        // or after a manual log. With a 1-min interval the cooldown collapses to 1 min, so
-        // tests that drive 1-min intervals still see one alert per minute.
-        if (now - lastAlertMs < minOf(ALERT_COOLDOWN_MS, intervalMs)) return
+    /**
+     * Returns the grid-tick timestamp that would fire in this call, or `0L` when
+     * no tick is currently due (alert disabled, before the first tick, already
+     * fired this tick, or filtered by the initial-delay window). Pure read —
+     * mutates nothing. Used by both [evaluateTimeAlert] (to gate firing) and by
+     * [tick]'s coincidence resolution (to detect that a time tick is being
+     * silently consumed in favour of a same-tick deficit alert).
+     *
+     * Grid-aligned: ticks are at `sessionStartMs + N * intervalMs` for
+     * N = 1, 2, 3, …; rider logs do NOT shift the grid. Initial-delay FILTERS
+     * ticks whose timestamp is earlier than `sessionStartMs + initialDelay`
+     * (grid stays anchored to session start — interval=20 + initialDelay=30
+     * fires at 40, 60, 80, …, not 30, 50, 70).
+     */
+    private fun currentDueTimeTick(now: Long): Long = FuelingAlertScheduler.currentDueTimeTick(
+        enabled = config.hydrationTimeAlertEnabled,
+        intervalMs = config.hydrationTimeIntervalMin * 60_000L,
+        sessionStartMs = sessionStartMs,
+        lastTimeAlertFireMs = lastTimeAlertFireMs,
+        initialDelayMs = config.hydrationTimeInitialDelayMin * 60_000L,
+        cumLogged = cumLoggedMl,
+        now = now,
+    )
+
+    /** See [evaluateDeficitAlert] return-value note — same contract on the time side. */
+    private fun evaluateTimeAlert(now: Long): Boolean {
+        if (currentDueTimeTick(now) == 0L) return false
         fireAlert("time", (cumTargetMl - cumLoggedMl).toInt(), (now - lastRealLogMs) / 60_000)
-        // F1 fix — treat a time-alert fire as a soft "time mark" so the configured interval
-        // is respected even when the rider misses logs. Without this, `lastLogMs` stays
-        // frozen, the interval gate latches open, and the only throttle becomes the 5-min
-        // cooldown — turning "alert me every 20 min" into "alert me every 5 min".
-        //
-        // I8 — do NOT touch `lastRealLogMs` here; it tracks the rider's last actual log so
-        // that `{elapsed}` in a later deficit alert reflects time-since-real-log.
-        lastLogMs = now
+        lastTimeAlertFireMs = now
+        // I8 — `lastRealLogMs` stays untouched on alert fires; it tracks the
+        // rider's last actual log so `{elapsed}` reports time-since-real-log.
+        return true
     }
 
     private fun fireAlert(source: String, deficitMl: Int, elapsedMin: Long) {
-        lastAlertMs = System.currentTimeMillis()
+        // v18 L1 — see CarbsTracker.fireAlert for rationale.
+        val dispatchedAtMs = System.currentTimeMillis()
         // In dynamic-estimate mode the {target} placeholder must report the live
         // estimator output, not the fixed config value — a rider on a 30 °C ride
         // configured for 750 ml/h but estimating 1300 ml/h would otherwise see the
@@ -506,7 +574,7 @@ class HydrationTracker(
         config.hydBeepPattern.toPlayBeepPattern()?.let { karooSystem.dispatch(it) }
         karooSystem.dispatch(InRideAlert(
             // Unique-per-fire ID — see CarbsTracker.fireAlert for the rationale.
-            id = "ksafe-hyd-alert-$source-${lastAlertMs}",
+            id = "ksafe-hyd-alert-$source-$dispatchedAtMs",
             icon = R.drawable.ic_ksafe,
             title = title,
             detail = detail,

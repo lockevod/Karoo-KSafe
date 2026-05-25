@@ -33,27 +33,31 @@ import kotlin.math.sqrt
  *     Temperature. Without a globe sensor the formula degenerates to `0.7 * wet_bulb + 0.3 * temp`.
  *     Wet bulb is computed from temperature + relative humidity via Stull 2011 (valid 5–99 % RH,
  *     0–50 °C). Without humidity from a meteo source we assume 50 % RH (moderate continental
- *     summer). Anchor points: < 18 °C = 1.0 ×, 23 °C = 1.40 ×, 28 °C = 2.10 ×, 32 °C = 2.74 ×.
+ *     summer). Anchor points: < 18 °C = 1.0 ×, 23 °C = 1.20 ×, 28 °C = 1.50 ×, 32 °C = 1.80 ×.
  *
- *     These anchors sit at the **upper end** of the Sawka 2007 / Baker 2017 published ranges —
- *     about +140 % sweat at WBGT 30 vs. WBGT 18, against a literature median closer to +80 %.
- *     The bias toward over-estimation is deliberate. The output drives a hydration *target*,
- *     not a measurement: an under-shooting target risks dehydration (heat illness, cramps,
- *     performance collapse), an over-shooting target costs at most a few extra sips. The
- *     slope effectively assumes an unacclimated trained cyclist at threshold intensity in
- *     direct sun, which is also the worst case riders are likely to encounter.
+ *     These anchors track the literature **median** (Sawka 2007 / Baker 2017 / ACSM Position
+ *     Stand) with a small (~5–10 %) residual safety bias on the conservative side. About
+ *     +65 % sweat at WBGT 30 vs. WBGT 18 (= heat factor 1.65× vs 1.0×) — same band as
+ *     Garmin's Firstbeat HeatStress algorithm targets. Pre-v18.2 the anchors sat at the **upper bound** of the literature
+ *     range (+140 % at WBGT 30) on the theory that "over-targeting costs nothing"; field
+ *     re-evaluation found that bias caused alert fatigue at WBGT 25 (typical warm ride) and
+ *     pushed low-weight riders close to hyponatremia territory on long efforts at WBGT 32.
+ *     The new anchors stay slightly above the median so unacclimated cyclists at threshold
+ *     in direct sun aren't under-targeted, without compounding into either of those failure
+ *     modes for the typical case. See [heatFactor] for the full rationale.
  *
  * ## Accuracy expectations
  *
- * Compared to direct sweat-loss measurement, this estimator systematically biases high
- * in hot conditions by ~30–60 % vs. the literature median (Baker 2017; Cheuvront & Sawka
- * 2014). Riders matching the conservative end (unacclimated, hot ride, threshold intensity)
- * see the displayed target track their actual loss within ±15–25 %. Riders matching the
- * literature median see a target sitting 30–60 % above their actual loss — the safety bias.
+ * Compared to direct sweat-loss measurement, this estimator targets the literature median
+ * with a small (~5–10 %) conservative bias. Riders matching the literature median see a
+ * displayed target sitting roughly ±15–20 % around their actual loss — comparable to
+ * Garmin Connect (Firstbeat algorithm) without an external temperature sensor. Riders at
+ * the conservative end (unacclimated, hot ride, threshold intensity) may see the target
+ * track within ±25 % but biased slightly low — that subgroup still benefits from the
+ * residual safety bias.
  *
- * For comparison, Garmin Connect (Firstbeat algorithm) targets the literature median and
- * reports ±15–20 % error with Tempe external temperature, ±25 % without — i.e. closer to
- * the actual loss but with a non-trivial probability of under-target on hot days.
+ * For comparison, Garmin Connect (Firstbeat algorithm) reports ±15–20 % error with Tempe
+ * external temperature, ±25 % without — KSafe sits in the same band post-v18.2.
  *
  * ## Not modelled
  *
@@ -164,21 +168,36 @@ private fun wetBulbStull(tempC: Double, humidityPct: Double): Double {
 }
 
 /** Heat multiplier on the base sweat rate. Piecewise-linear over WBGT.
- *  Anchors are intentionally at the upper bound of Sawka 2007 / ACSM heat-strain curves
- *  for unacclimated trained cyclists — roughly +140 % sweat at WBGT 30 vs. WBGT 18, vs.
- *  a literature median closer to +80 %. The over-estimation is a safety bias for the
- *  hydration *target* the rider sees: under-targeting risks dehydration, over-targeting
- *  costs nothing. The earlier 3 %/°C linear (Garmin-style, median-tracking) was discarded
- *  because it under-targeted on the hot rides that actually need a correct number.
+ *  Anchors track the **literature median** (Sawka 2007 / ACSM Position Stand /
+ *  Baker 2017) for trained cyclists with a small (~5-10 %) residual safety bias
+ *  toward the conservative side. About +65 % sweat at WBGT 30 vs. WBGT 18
+ *  (heat factor 1.65× vs 1.0×) — same band as Garmin's Firstbeat HeatStress.
+ *
+ *  History: pre-v18.2 these anchors sat at the upper bound of the literature
+ *  range (+140 % at WBGT 30, +180 % at WBGT 32). That bias was deliberately
+ *  conservative on the theory that "over-targeting hydration costs nothing,
+ *  under-targeting risks dehydration". Field thinking re-evaluated this:
+ *    1. At WBGT 25 (typical warm summer ride) the old anchors over-estimated
+ *       by 30-40 % vs. the rider's actual loss → **alert fatigue** when the
+ *       deficit alert fires sooner than the rider's body signals thirst.
+ *    2. Sustained 1.5-2 L/hr of pure water intake by a 60 kg rider over a 4 h
+ *       ride is non-trivially close to **hyponatremia** risk territory.
+ *    3. Garmin/Firstbeat reports ±15-20 % accuracy at literature-median
+ *       targeting with external temperature, suggesting the median already
+ *       covers most riders.
+ *  The new anchors stay slightly above the median (e.g. WBGT 32 = 1.80 vs.
+ *  literature median ~1.7) so the unacclimated-trained-cyclist case still
+ *  isn't under-targeted, without compounding into alert fatigue or over-
+ *  drinking in the typical case.
  */
 private fun heatFactor(tempC: Double, humidityPct: Double): Double {
     if (tempC < 18.0) return 1.0
     val wbgt = 0.7 * wetBulbStull(tempC, humidityPct) + 0.3 * tempC
     return when {
         wbgt < 18.0 -> 1.0
-        wbgt < 23.0 -> 1.0 + (wbgt - 18.0) * 0.08   // up to 1.40 at WBGT 23
-        wbgt < 28.0 -> 1.40 + (wbgt - 23.0) * 0.14  // up to 2.10 at WBGT 28
-        wbgt < 32.0 -> 2.10 + (wbgt - 28.0) * 0.16  // up to 2.74 at WBGT 32
-        else        -> 2.74 + (wbgt - 32.0) * 0.18
-    }.coerceIn(1.0, 3.5)  // safety clamp — extreme heat WBGT 35+ can push beyond 3x
+        wbgt < 23.0 -> 1.0  + (wbgt - 18.0) * 0.040  // up to 1.20 at WBGT 23
+        wbgt < 28.0 -> 1.20 + (wbgt - 23.0) * 0.060  // up to 1.50 at WBGT 28
+        wbgt < 32.0 -> 1.50 + (wbgt - 28.0) * 0.075  // up to 1.80 at WBGT 32
+        else        -> 1.80 + (wbgt - 32.0) * 0.080
+    }.coerceIn(1.0, 2.5)  // safety clamp — extreme heat WBGT 40+ can push beyond ~2.5x
 }

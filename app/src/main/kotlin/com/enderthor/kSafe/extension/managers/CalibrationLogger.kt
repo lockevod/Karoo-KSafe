@@ -125,6 +125,25 @@ class CalibrationLogger(
          * Key for calibration: if this fires it was definitely not a crash.
          */
         CADENCE_GATE("CAD_GATE"),
+        /**
+         * Cadence gate WOULD have fired (rider's cadence value passed every freshness
+         * check including the freshness-by-change cross-check) BUT was suppressed
+         * because the live SILENCE_CHECK orientation evidence shows the device is
+         * decisively non-upright (angle ≥ uprightAngleThresholdDegrees). A bike on
+         * its side cannot be pedalled at any RPM — the "fresh" cadence is therefore
+         * phantom (SDK echoing pre-crash value, or impact-induced spurious rev).
+         *
+         * Diagnostic only; the state machine stays in SILENCE_CHECK and lets the
+         * accel/orientation gates decide. Frequency in the wild: rare — fires only
+         * after an IMPACT_IN that went via the onSideRelaxed path (≥25 IMPACT-phase
+         * samples on-side at ≥60°) or after enough SILENCE_CHECK samples to latch
+         * the angle. If this fires AND the same event later confirms via CRASH_OK,
+         * the suppression saved a real crash from a stale-cadence FN. If it fires
+         * AND the event later cancels (CRASH_NO), the suppression converted a
+         * borderline CAD_GATE FP into an angle-classified FP — same outcome, more
+         * cycles burned. Net expected value strongly positive.
+         */
+        CADENCE_GATE_SUPPRESSED("CAD_GATE_SUPPRESSED"),
         /** Periodic ride-context snapshot — speed, accel deviation, gyro, state (every 2 min). */
         PERIODIC("PERIODIC"),
         /** Marker written when logging is enabled — anchor for elapsed_s calculations. */
@@ -535,6 +554,67 @@ class CalibrationLogger(
     }
 
     /**
+     * Result of [getFileContentChunked]: a prefix of the pending log that fits in a
+     * single Karoo-SDK `httpRequest` body, plus a flag indicating whether more
+     * pending data was left for subsequent chunks. Pair with [truncateAfterSuccessfulSend]
+     * on success — the `linesIncluded` value is exactly what that function expects.
+     */
+    data class Chunk(
+        val content: String,
+        /** Total lines in [content] including the HEADER. Pass to [truncateAfterSuccessfulSend]. */
+        val linesIncluded: Int,
+        /** True when the file still has data beyond this chunk after a successful truncate. */
+        val hasMore: Boolean,
+    )
+
+    /**
+     * Returns the next chunk of pending log content, capped at [maxBytes] so a single
+     * `httpRequest` body stays under the Android Binder transaction limit that the
+     * Karoo SDK marshals through.
+     *
+     * **Why chunking exists** (2026-05-25 incident): on the long ride captured in
+     * `calibration.csv` the 20-minute periodic send succeeded for the first three
+     * windows (38 KB, 64 KB, 77 KB CSV bodies — confirmed by the four
+     * `Telegram Desktop/ksafe_v2.0.0_1308ea_58ee00_k24*.csv` files received) and then
+     * silently failed every subsequent window. The file grew unbounded to 262 KB and
+     * the failure surfaced to the rider as a `IllegalArgumentException: Request too
+     * large` from the Karoo SDK's `addConsumer<OnHttpResponse>` Parcel marshal — not
+     * Telegram's own 50 MB limit but the much-stricter ~1 MB Binder transaction limit
+     * (shared system-wide, practical safe size ≤ ~100 KB). Once the body exceeded that
+     * limit, every retry grew the file further (the old loop was `if (result.ok)
+     * truncate() else "retry with grown payload"`), guaranteeing the failure was
+     * permanent for the rest of the ride.
+     *
+     * Cap evidence: 77 KB worked reliably, 262 KB failed. We set [maxBytes] callers
+     * to use ~72 KB (round, comfortably below 77 KB) so each chunk has clear safety
+     * margin against transaction-size jitter (caption length, header padding,
+     * environmental Binder buffer pressure).
+     *
+     * **Buffer semantics**: this function calls [flush] first, so any in-memory log
+     * entries written since the last flush land on disk before the chunk is computed.
+     * The chunk therefore reflects ALL pending data up to entry time, not just what
+     * the prior 60 s flush coroutine has persisted.
+     *
+     * **HEADER always included**: each chunk is a self-contained CSV — receivers
+     * (Telegram bot, dev analysis pipeline) see a header row at the top. The line
+     * count returned (`linesIncluded`) includes that header so the caller can pass
+     * it directly to [truncateAfterSuccessfulSend], which already understands the
+     * "first line is HEADER, drop N total lines" contract.
+     *
+     * Returns null when there is no data to send (file missing, only-HEADER file,
+     * or read error).
+     */
+    fun getFileContentChunked(maxBytes: Int): Chunk? {
+        // Drain the in-memory buffer to disk first so the chunk reflects every
+        // entry written so far. Without this, samples written in the last 60 s
+        // would be invisible to the chunker (they live in `buffer`, not in the
+        // file) and would be missed by the periodic send.
+        flush()
+        val dir = context.getExternalFilesDir(null) ?: return null
+        return readChunkStreaming(File(dir, FILE_NAME), maxBytes)
+    }
+
+    /**
      * Returns the current in-memory buffer as a CSV string (only entries not yet flushed to disk).
      * Useful for quick checks; for complete data use [getFileContent].
      */
@@ -569,7 +649,11 @@ class CalibrationLogger(
     /** Returns the content of the previous-session file (preserved across [enable] when
      *  a previous logging session ended without sending), or `null` if no such file
      *  exists. Used by `KSafeExtension.sendCalibrationLog` to recover data from a ride
-     *  whose extension was killed before the auto-send fired. */
+     *  whose extension was killed before the auto-send fired.
+     *
+     *  **Prefer [getPreviousFileContentChunked]** when sending over the Karoo SDK —
+     *  a long crashed ride can leave a >100 KB recovered file that hits the same
+     *  Binder transaction limit the current-session chunked send was built for. */
     fun getPreviousFileContent(): String? = try {
         val dir = context.getExternalFilesDir(null)
         if (dir == null) null else {
@@ -580,6 +664,129 @@ class CalibrationLogger(
     } catch (e: Exception) {
         Timber.w(e, "CalibrationLogger: failed to read previous session file")
         null
+    }
+
+    /**
+     * Returns the next chunk of the preserved previous-session file capped at
+     * [maxBytes], with the same semantics as [getFileContentChunked] (HEADER
+     * always present, byte cap enforced). Pair with
+     * [truncatePreviousAfterSuccessfulSend] on success. Returns null when the
+     * preserved file does not exist or is HEADER-only.
+     *
+     * Why this exists: the v18 chunked-send fix addressed the live current
+     * session but the `sendCalibrationLog` manual path was still reading the
+     * previous-session file whole and shipping it in a single `httpRequest`
+     * — a long ride that ended in an extension crash can leave a 200 KB+
+     * recovered file, which is exactly the case that motivated chunking in
+     * the first place.
+     */
+    fun getPreviousFileContentChunked(maxBytes: Int): Chunk? {
+        val dir = context.getExternalFilesDir(null) ?: return null
+        return readChunkStreaming(File(dir, PREVIOUS_FILE_NAME), maxBytes)
+    }
+
+    /**
+     * Shared streaming reader for [getFileContentChunked] and
+     * [getPreviousFileContentChunked]. Reads the file LINE BY LINE under
+     * [fileLock] and stops as soon as the byte budget is exhausted, so a 300 KB
+     * file never materialises in RAM all at once (the previous
+     * `file.readLines()` call did exactly that — fine in production today but
+     * brittle if a future periodic-send failure mode accumulates a multi-MB
+     * file).
+     *
+     * Determining `hasMore` requires peeking at the file beyond the included
+     * lines. The reader keeps a single boolean ("did we see another non-empty
+     * line after the byte budget?") rather than holding the tail in memory.
+     */
+    private fun readChunkStreaming(file: File, maxBytes: Int): Chunk? {
+        return try {
+            if (!file.exists()) return null
+            synchronized(fileLock) {
+                file.bufferedReader().use { reader ->
+                    val header = reader.readLine() ?: return null
+                    // Treat anything else as "no usable data" — the file is
+                    // either empty or its first line isn't the canonical
+                    // HEADER (rare; could happen if the file was hand-edited
+                    // or the HEADER constant changed without migration).
+                    if (header != HEADER) return null
+
+                    val builder = StringBuilder()
+                    builder.append(HEADER).append('\n')
+                    var included = 0
+                    var hasMore = false
+                    while (true) {
+                        val line = reader.readLine() ?: break
+                        val projected = builder.length + line.length + 1
+                        // Stop before adding this line if the chunk would
+                        // exceed the byte cap — but ALWAYS include at least
+                        // one data line, even if a single line is pathologically
+                        // larger than maxBytes (would otherwise stall forever).
+                        if (projected > maxBytes && included > 0) {
+                            hasMore = true
+                            break
+                        }
+                        builder.append(line).append('\n')
+                        included++
+                        if (projected > maxBytes) {
+                            // The huge single-line case: emit this line and
+                            // peek one more to set hasMore correctly.
+                            hasMore = reader.readLine() != null
+                            break
+                        }
+                    }
+                    if (included == 0) return null
+                    Chunk(
+                        content = builder.toString(),
+                        linesIncluded = 1 + included,  // HEADER + data
+                        hasMore = hasMore,
+                    )
+                }
+            }
+        } catch (e: Exception) {
+            Timber.w(e, "CalibrationLogger: streaming chunk read failed for ${file.name}")
+            null
+        }
+    }
+
+    /**
+     * After a successful chunked send of the previous-session file, drop the
+     * sent lines from disk so the next chunk picks up from where this one
+     * stopped. Mirrors [truncateAfterSuccessfulSend] for the current file but
+     * targets [PREVIOUS_FILE_NAME]. If the truncation leaves the previous
+     * file as HEADER-only (everything sent), the file is deleted entirely so
+     * the rider doesn't see "previous: ✓" again on the next manual send.
+     *
+     * Returns the number of data lines dropped from disk (excluding the
+     * preserved HEADER).
+     */
+    fun truncatePreviousAfterSuccessfulSend(uploadedLineCount: Int): Int {
+        return try {
+            val dir = context.getExternalFilesDir(null) ?: return 0
+            val prev = File(dir, PREVIOUS_FILE_NAME)
+            if (!prev.exists()) return 0
+            val dropped: Int
+            synchronized(fileLock) {
+                val allLines = prev.readLines()
+                val keptTail = allLines.drop(uploadedLineCount)
+                if (keptTail.isEmpty()) {
+                    prev.delete()
+                    dropped = (uploadedLineCount - 1).coerceAtLeast(0)
+                    Timber.i("CalibrationLogger: previous session fully drained — file deleted")
+                } else {
+                    val newContent = buildString {
+                        append(HEADER).append('\n')
+                        append(keptTail.joinToString(separator = "\n", postfix = "\n"))
+                    }
+                    prev.writeText(newContent)
+                    dropped = (uploadedLineCount - 1).coerceAtLeast(0)
+                    Timber.i("CalibrationLogger: truncated previous session (sent=$uploadedLineCount, kept_tail=${keptTail.size})")
+                }
+            }
+            dropped
+        } catch (e: Exception) {
+            Timber.w(e, "CalibrationLogger: truncatePreviousAfterSuccessfulSend failed")
+            0
+        }
     }
 
     /**

@@ -2,6 +2,7 @@ package com.enderthor.kSafe.data
 
 import android.content.Context
 import com.enderthor.kSafe.R
+import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
@@ -71,8 +72,32 @@ const val KAROO_LIVE_BASE_URL = "https://dashboard.hammerhead.io/live/"
  *  v15 → v16: buzzerOnEmergencyEnabled added. Default true so existing safety-conscious
  *             users get the audible-even-when-muted behaviour automatically after update;
  *             riders who deliberately mute their Karoo can opt out from Settings.
+ *  v16 → v17: carbDeficitReminderIntervalMin / hydrationDeficitReminderIntervalMin added
+ *             (default 10 min — deliberately less aggressive than the historical
+ *             hard-coded 5 min cooldown, which riders found too frequent on long
+ *             endurance rides). The trackers' internal `evaluateTimeAlert` semantics also
+ *             change to a grid-aligned pure-interval timer: ticks at
+ *             `sessionStartMs + N * intervalMs`. The initial-delay configuration
+ *             FILTERS ticks whose timestamp would be earlier than
+ *             `sessionStartMs + initialDelay` (the grid stays anchored to session
+ *             start). Rider logs no longer shift the grid. State classes gain
+ *             `lastTimeAlertFireMs` and `lastDeficitAlertFireMs` for the new clocks;
+ *             old snapshots deserialise with both at 0 and the trackers fall back to
+ *             the initial-delay filter for the first fire. Pure version stamp on the
+ *             config side.
+ *  v17 → v18: carbTargetGperHour REMOVED — the carbs tracker now computes real
+ *             physiological carb burn from power (Tier 1: W × 3.6 kcal/h),
+ *             HR + age + sex + weight (Tier 2: Keytel 2005) or HR + maxHr +
+ *             restingHr + weight (Tier 3: Swain HRR METs), modulated by the CHO
+ *             fraction at the current intensity zone (Romijn / Jeukendrup table).
+ *             Two new rider-physiology fields added: `riderAge` and `riderSex`
+ *             — required for Keytel. Old saved configs deserialise with
+ *             `riderAge = 0` and `riderSex = NOT_SET`, which makes the tracker
+ *             fall back to the Swain tier until the rider fills them in via
+ *             Settings. The removed `carbTargetGperHour` is silently dropped by
+ *             kotlinx-serialization's `ignoreUnknownKeys = true`.
  */
-const val CONFIG_VERSION = 16
+const val CONFIG_VERSION = 18
 
 /**
  * Canonical minSpeedForCrashKmh value per preset.
@@ -421,17 +446,27 @@ data class KSafeConfig(
     val webhook1AlertText: String = "",
     val webhook2AlertEnabled: Boolean = false,
     val webhook2AlertText: String = "",
-    // ─── Carbs tracker (HR/power-aware nutrition) ───────────────────────────
+    // ─── Carbs tracker (real carb burn from physiology) ─────────────────────
     /** Master toggle. Opt-in feature, off by default. */
     val carbsTrackerEnabled: Boolean = false,
-    /** Base carb intake target (g/h). Modulated at runtime by the IntensityZoneCalculator
-     *  (0.4× to 1.5×, clamped to a 90 g/h absorption ceiling). Default 50 corresponds to
-     *  the [CarbRidePreset.ENDURANCE] preset and matches modern recreational-cyclist
-     *  recommendations (ISSN 2017 / IOC 2019 consensus: 30-60 g/h for sub-2h endurance,
-     *  60+ g/h only with trained gut on longer efforts). Race-trained riders raise this
-     *  to 75-90 via the Race preset or manual edit. */
-    val carbTargetGperHour: Int = 50,
-    /** When true, alert when (cumulative target − cumulative logged) exceeds threshold. */
+    // ─── Rider physiology (v18) — drives the carb-burn estimator ──────────
+    /** Rider age in years. Used by the Keytel (2005) HR-based energy-expenditure
+     *  formula for the Tier-2 fallback when no power meter is paired.
+     *  0 = not set → Keytel is unavailable, falls through to Tier 3 (Swain HRR
+     *  METs) which is less accurate (~25 % error vs ~12 % for Keytel). */
+    val riderAge: Int = 0,
+    /** Rider biological sex. Used by Keytel (separate male/female regressions).
+     *  NOT_SET = Keytel unavailable, falls back to Swain. */
+    val riderSex: RiderSex = RiderSex.NOT_SET,
+
+    // ─── Carb tracker (v18: target removed; burn computed from physiology) ─
+    /** When true, alert when (cumulative real burn − cumulative logged) exceeds
+     *  [carbDeficitThresholdG]. v18 dropped [carbTargetGperHour]: the integrator
+     *  no longer scales a rider-configured rate by an intensity multiplier; it
+     *  computes actual carb burn from power (Tier 1: W × 3.6) or HR + age + sex
+     *  (Tier 2: Keytel) or HR + weight + maxHr + restingHr (Tier 3: Swain),
+     *  multiplied by the CHO fraction at the current zone (Romijn / Jeukendrup
+     *  table). See [com.enderthor.kSafe.extension.util.CarbBurnEstimator]. */
     val carbDeficitAlertEnabled: Boolean = true,
     val carbDeficitThresholdG: Int = 25,
     /** Initial grace period (minutes) before the deficit alert can fire for the first time
@@ -440,6 +475,15 @@ data class KSafeConfig(
      *  ride even though the rider has not "fallen behind" in any meaningful sense. 0 = off
      *  (alert can fire as soon as deficit crosses threshold, original behaviour). */
     val carbDeficitInitialDelayMin: Int = 30,
+    /** Minutes between successive deficit-alert reminders while the rider stays
+     *  behind the threshold. Was a hard-coded 5 min until v17 — riders found that
+     *  too frequent on long endurance rides where the deficit can sit unresolved
+     *  for an hour. Configurable 1-60 min; typical values 5/10/15/20/30. The
+     *  first deficit alert in a session is still gated by
+     *  [carbDeficitInitialDelayMin] independently of this. Default 10 min — a
+     *  middle ground that's noticeably less aggressive than the historical 5 min
+     *  default but still timely for a sustained deficit. */
+    val carbDeficitReminderIntervalMin: Int = 10,
     /** When true, alert when too much time has passed since the last log. Combinable with deficit alert. */
     val carbTimeAlertEnabled: Boolean = false,
     val carbTimeIntervalMin: Int = 25,
@@ -491,6 +535,8 @@ data class KSafeConfig(
     val hydrationDeficitThresholdMl: Int = 300,
     /** Same semantics as [carbDeficitInitialDelayMin]. 0 = disabled. */
     val hydrationDeficitInitialDelayMin: Int = 30,
+    /** See [carbDeficitReminderIntervalMin] — same semantics, hydration side. */
+    val hydrationDeficitReminderIntervalMin: Int = 10,
     val hydrationTimeAlertEnabled: Boolean = false,
     val hydrationTimeIntervalMin: Int = 20,
     /** Same semantics as `carbTimeInitialDelayMin`. 0 = disabled. */
@@ -546,29 +592,22 @@ data class SenderConfig(
     val phoneNumber3: String = "",  // CallMeBot: third recipient WhatsApp number (optional)
 )
 
-// ─── Carb ride-type presets ───────────────────────────────────────────────────
+// ─── Rider biological sex (v18) ─────────────────────────────────────────────
 
 /**
- * Quick presets for [KSafeConfig.carbTargetGperHour] aligned with ISSN 2017 / IOC 2019
- * consensus carb-intake recommendations for different ride intents. Tapping a preset
- * in the Fueling UI sets the target g/h to its associated value; subsequent manual
- * edits leave the target wherever the rider moved it (presets are one-shot apply
- * actions, not a stored "current preset" state).
+ * Rider biological sex — used solely by the Keytel (2005) HR-based carb-burn
+ * energy-expenditure formula, which has separate regressions for men and women
+ * (the female form is roughly 30 % lower kcal/h at the same HR for matched
+ * weight + age). Stored in [KSafeConfig.riderSex]; rider sets it once in
+ * Settings.
  *
- * Values chosen so a typical recreational rider (untrained gut) is well-covered:
- *  - **Casual**: short rides / recovery — fueling matters less, hydration matters more.
- *  - **Endurance** (default): typical 2-3h training ride.
- *  - **Race**: long-event pacing, expects partially-trained gut.
- *
- * The intensity-zone multiplier (0.4 - 1.5, see IntensityZoneCalculator) scales each
- * preset across the rider's effort. The integrator clamps to ABSORPTION_CAP_GPH (90)
- * so Race × top-zone still produces a physiologically-realistic target.
+ * `NOT_SET` = rider has not entered their data → the Keytel tier is unavailable
+ * and the tracker falls back to Tier 3 (Swain HRR METs, ~25 % error vs ~12 %
+ * for Keytel). Privacy-friendly default: nothing is sent or stored on a
+ * server, the value lives only in DataStore on the rider's Karoo.
  */
-enum class CarbRidePreset(val gPerHour: Int, val displayName: String) {
-    CASUAL(30, "Casual / Recovery"),
-    ENDURANCE(50, "Endurance"),
-    RACE(75, "Race / Long ride"),
-}
+@kotlinx.serialization.Serializable
+enum class RiderSex { NOT_SET, MALE, FEMALE }
 
 // ─── Fueling alert background colour palette ─────────────────────────────────
 
@@ -648,11 +687,24 @@ data class FuelingState(
 
 @Serializable
 data class CarbFuelingState(
-    val cumTargetG: Float = 0f,
+    /**
+     * Cumulative carb BURN estimate for this session (g). v18 renamed the field
+     * from `cumTargetG` (which used to mean "cumulative intake target = base ×
+     * intensity multiplier"). The legacy JSON name is preserved via
+     * [SerialName] so v17 snapshots saved on disk during the upgrade window
+     * deserialise into the new field without losing the rider's accumulator.
+     * Semantics in v18: real physiological burn from [CarbBurnEstimator]
+     * (power tier 1, Keytel tier 2, Swain tier 3, or 0 when no inputs).
+     */
+    @SerialName("cumTargetG")
+    val cumBurnedG: Float = 0f,
     val cumLoggedG: Int = 0,
     val sessionStartMs: Long = 0L,
     val lastLogMs: Long = 0L,
-    val lastAlertMs: Long = 0L,
+    // v18 L1: `lastAlertMs` removed from persistence. It was used only to build
+    // the `InRideAlert.id` and tracked the most recent dispatch wall-clock —
+    // never read across a restart for correctness. Old v17 snapshots have the
+    // field; `ignoreUnknownKeys = true` silently drops it on deserialisation.
     /**
      * Wall-clock ms of the last REAL rider log (independent of time-alert fires).
      * The F1 fix repurposed `lastLogMs` as a soft "time mark" updated on every time-alert
@@ -666,6 +718,35 @@ data class CarbFuelingState(
      * (which under pre-F1 semantics meant "last real log").
      */
     val lastRealLogMs: Long = 0L,
+    /**
+     * Wall-clock ms when the TIME-source alert last fired in this session. Replaces
+     * the old "F1 fix" semantics where `lastLogMs` doubled as the time-alert anchor.
+     * Drives the pure-interval time-alert gate: `now - lastTimeAlertFireMs >= intervalMs`.
+     * Critically NOT updated by `logEntry` — rider logs no longer reset the time
+     * alert cadence, matching v17 semantics. 0 = no time alert has fired yet this
+     * session. Additive: old snapshots deserialise with 0, falling back to the
+     * initial-delay guard for the first fire.
+     */
+    val lastTimeAlertFireMs: Long = 0L,
+    /**
+     * Wall-clock ms when the DEFICIT-source alert last fired in this session. Drives
+     * the configurable reminder cooldown (`now - lastDeficitAlertFireMs >=
+     * carbDeficitReminderIntervalMin * 60_000`). Independent of `lastTimeAlertFireMs`:
+     * each source has its own cooldown clock so the rider's "remind me every 5 min
+     * when behind" doesn't get throttled by an unrelated time-alert fire (and vice
+     * versa). 0 = no deficit alert has fired yet this session.
+     */
+    val lastDeficitAlertFireMs: Long = 0L,
+    /**
+     * Cumulative milliseconds spent actively integrating carb burn this session
+     * (i.e. ticks where the movement gate passed AND a non-zero burn rate was
+     * computed). Drives the session-average burn-rate field — avg over only the
+     * active portion is more representative than avg over total elapsed time
+     * (which would include traffic-light / café stops as "zero burn" zeros and
+     * dilute the average). Additive: old snapshots deserialise with 0, which
+     * makes the average start fresh on the next tick after restart.
+     */
+    val activeIntegrationMs: Long = 0L,
 )
 
 @Serializable
@@ -674,9 +755,13 @@ data class HydFuelingState(
     val cumLoggedMl: Int = 0,
     val sessionStartMs: Long = 0L,
     val lastLogMs: Long = 0L,
-    val lastAlertMs: Long = 0L,
+    // v18 L1 — see [CarbFuelingState] for the `lastAlertMs` removal rationale.
     /** See [CarbFuelingState.lastRealLogMs] — same field, hydration side. */
     val lastRealLogMs: Long = 0L,
+    /** See [CarbFuelingState.lastTimeAlertFireMs] — same field, hydration side. */
+    val lastTimeAlertFireMs: Long = 0L,
+    /** See [CarbFuelingState.lastDeficitAlertFireMs] — same field, hydration side. */
+    val lastDeficitAlertFireMs: Long = 0L,
 )
 
 /**
@@ -1012,19 +1097,15 @@ fun KSafeConfig.migrateToLatest(): KSafeConfig {
     }
 
     if (c.configVersion < 13) {
-        // v12 → v13: default carbTargetGperHour 60 → 50, multiplier range widened to
-        // 0.4-1.5 (burn-rate tracking), absorption ceiling added.
+        // v12 → v13: default carbTargetGperHour 60 → 50, multiplier range widened.
         //
-        // For the target: only nudge riders who were still on the OLD default (60). Riders
-        // who manually customised the target keep their value — even if they had picked 60
-        // deliberately, the migration leaves it alone because we can't tell intent apart
-        // from default. New installs naturally start at the new 50 default.
-        val newTarget = if (c.carbTargetGperHour == 60) 50 else c.carbTargetGperHour
-        c = c.copy(carbTargetGperHour = newTarget, configVersion = 13)
-        Timber.i(
-            "KSafeConfig migrated v%d→v13 (carb burn-rate tracking; target %d→%d)",
-            originalVersion, 60, newTarget,
-        )
+        // v18 dropped the carbTargetGperHour field entirely (replaced by physiological
+        // carb-burn estimation — see [CarbBurnEstimator]). The previous v12→v13 migration
+        // mutated that field; with the field gone, this step is now a pure version stamp
+        // — any leftover carbTargetGperHour in older snapshots is silently dropped by
+        // kotlinx.serialization's `ignoreUnknownKeys = true`.
+        c = c.copy(configVersion = 13)
+        Timber.i("KSafeConfig migrated v%d→v13 (carb burn-rate tracking)", originalVersion)
     }
 
     if (c.configVersion < 14) {
@@ -1080,6 +1161,35 @@ fun KSafeConfig.migrateToLatest(): KSafeConfig {
         // want to suppress the buzzer can flip it off in Settings.
         c = c.copy(configVersion = 16)
         Timber.i("KSafeConfig migrated v%d→v16 (HAL buzzer on emergency, default on)", originalVersion)
+    }
+
+    if (c.configVersion < 17) {
+        // v16 → v17: carbDeficitReminderIntervalMin / hydrationDeficitReminderIntervalMin
+        // added. The Kotlin default of 10 min is deliberately LESS aggressive than the
+        // historical 5-min hardcoded cooldown — existing rides on first load will
+        // therefore see one less reminder per 10 min behind threshold, which is the
+        // intentional UX change of this release. Riders who liked the old 5-min cadence
+        // can dial it back to 5 in Settings.
+        //
+        // The tracker-internal semantics change (grid-aligned pure-interval time alerts,
+        // initial delay filters ticks instead of shifting the grid, rider logs no longer
+        // affect timing) needs no migration: the new state fields `lastTimeAlertFireMs` /
+        // `lastDeficitAlertFireMs` default to 0 on old snapshots, which the trackers
+        // treat as "never fired this session" and gate normally.
+        c = c.copy(configVersion = 17)
+        Timber.i("KSafeConfig migrated v%d→v17 (configurable deficit reminder, default 10)", originalVersion)
+    }
+
+    if (c.configVersion < 18) {
+        // v17 → v18: rider physiology fields (riderAge, riderSex) added. carbTargetGperHour
+        // removed (replaced by [CarbBurnEstimator]). Pure version stamp on this side —
+        // the dropped field is filtered by `ignoreUnknownKeys`, and the new physiology
+        // fields default to "not set" so the tracker falls back to Swain HRR (less accurate
+        // but functional) until the rider opens Settings and fills age + sex. Existing rides
+        // in progress at the moment of upgrade are unaffected — the tracker re-reads config
+        // every tick, so the next tick after the upgrade switches paths transparently.
+        c = c.copy(configVersion = 18)
+        Timber.i("KSafeConfig migrated v%d→v18 (physiology-based carb burn estimator)", originalVersion)
     }
 
     return c

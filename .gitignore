@@ -15,3 +15,11 @@ local.properties
 **/.DS_Store
 /logs/
 /logs/logs_sergi/
+
+# Pulled Karoo system APKs + decompiled output used to explore the private
+# AIDL surface (HAL buzzer bypass, sensorservice / activityservice). Kept
+# locally for re-verification after Karoo OTAs; not redistributed.
+/system_apks/
+/decompiled/
+/hal_dump.txt
+/launcherapp.apk

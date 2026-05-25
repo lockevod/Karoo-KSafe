@@ -64,17 +64,33 @@
     <string name="fueling_info_banner">Carbs use HR/power zones if available for intensity-aware targeting; without sensors the target is time-proportional. Hydration is always time-proportional — adjust target manually for hot days.</string>
     <string name="fueling_carb_section">Carbs</string>
     <string name="fueling_hyd_section">Hydration</string>
-    <string name="fueling_target_carb_label">Target (g/h)</string>
-    <string name="fueling_target_carb_hint">Typical: 60–90 g/h easy rides, 90–120 g/h hard or long rides. Beginners: 40–60 g/h.</string>
+    <!-- v18: target field removed; carb burn now computed from physiology. The
+         former strings are kept as comments above so any in-flight translations
+         have a reference point if they need to be retired downstream. -->
+    <string name="fueling_physiology_hint">Carb burn is estimated from your power meter (most accurate) or HR + age + sex (Keytel) or HR + max/resting HR (Swain).</string>
+    <string name="fueling_rider_age_label">Age (years)</string>
+    <string name="fueling_rider_sex_label">Sex (for Keytel HR-only fallback)</string>
+    <string name="fueling_rider_sex_male">Male</string>
+    <string name="fueling_rider_sex_female">Female</string>
+    <string name="fueling_rider_sex_unset">Not set</string>
     <string name="fueling_target_hyd_label">Target (ml/h)</string>
     <string name="fueling_target_hyd_hint">Typical: 500–750 ml/h. Hot, humid or long rides: 1000+ ml/h.</string>
     <string name="fueling_alert_deficit_label">Alert by deficit</string>
     <string name="fueling_alert_time_label">Alert by time</string>
     <string name="fueling_deficit_threshold_g_label">Threshold (g)</string>
     <string name="fueling_deficit_threshold_ml_label">Threshold (ml)</string>
-    <string name="fueling_time_interval_label">Interval (min)</string>
-    <string name="fueling_initial_delay_label">Initial delay (min, 0 = off)</string>
-    <string name="fueling_deficit_initial_delay_label">Deficit initial delay (min, 0 = off)</string>
+    <!-- Timer labels: v17 — grid-aligned pure-interval reminders. The "Remind every"
+         cadence is anchored to the session start (ticks at t = N × interval). "Skip
+         first" is a filter — reminders whose scheduled tick falls earlier than the
+         configured minute are silently dropped, the grid is NOT shifted forward. -->
+    <string name="fueling_time_interval_label">Remind every (min)</string>
+    <string name="fueling_initial_delay_label">Skip first (min, 0 = off)</string>
+    <!-- Deficit labels: v17 — "Skip first" suppresses the FIRST deficit alert during the
+         first N minutes (so a fresh-ride deficit doesn't nag at minute ~25). "Repeat every"
+         is the cadence of subsequent reminders while the deficit stays above threshold —
+         typical values 5 / 10 / 15 / 20 / 30 min. Default 10. -->
+    <string name="fueling_deficit_initial_delay_label">Skip first (min, 0 = off)</string>
+    <string name="fueling_deficit_reminder_interval_label">Repeat every (min)</string>
     <string name="fueling_alert_bg_color_label">Alert background colour</string>
     <string name="fueling_custom_title_label">Custom alert title (optional)</string>
     <string name="fueling_custom_title_carb_placeholder">Default: Eat something</string>
@@ -137,9 +153,15 @@
     <string name="carb_status_datatype_name">KSafe Carb Status</string>
     <string name="carb_status_datatype_desc">Shows current carb deficit relative to target. Color-coded by urgency.</string>
     <string name="carb_burn_rate_datatype_name">KSafe Carb Burn Rate</string>
-    <string name="carb_burn_rate_datatype_desc">Current carb burn rate in g/h, modulated by your HR/power intensity zone. Falls back to the configured base target when no sensor data is available.</string>
+    <string name="carb_burn_rate_datatype_desc">Current carb burn rate in g/h, computed from power (Tier 1), HR + age + sex (Tier 2 Keytel) or HR + maxHr + restingHr (Tier 3 Swain). Shows "Pair HR/Pwr" when no sensor is paired.</string>
+    <string name="carb_avg_burn_rate_datatype_name">KSafe Carb Avg Burn</string>
+    <string name="carb_avg_burn_rate_datatype_desc">Session-average carb burn rate (g/h), averaged across only the time you were actively riding (stops excluded). Same sensor requirements as the instantaneous rate.</string>
     <string name="carbs_burned_datatype_name">KSafe Carbs Burned</string>
-    <string name="carbs_burned_datatype_desc">Cumulative carbs burned this session in grams (zone-aware integrated target). Companion field to Carb Status (deficit).</string>
+    <string name="carbs_burned_datatype_desc">Cumulative carbs burned this session in grams, from the physiological burn estimator. Companion field to Carb Status (deficit).</string>
+    <!-- Label shown by the burn-rate / burned / avg fields when no HR or power
+         sensor is paired (CarbBurnEstimator.Confidence == NONE). Short enough to
+         fit the Karoo's narrow data field column. -->
+    <string name="carb_no_sensor_label">Pair HR/Pwr</string>
     <string name="hyd_log_1_datatype_name">KSafe Drink 1</string>
     <string name="hyd_log_2_datatype_name">KSafe Drink 2</string>
     <string name="hyd_log_datatype_desc">Tap to log a configured drink item (e.g. sip, bottle). Counts toward your hourly target.</string>

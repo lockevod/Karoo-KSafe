@@ -96,30 +96,73 @@ class ConfigMigrationTest {
     }
 
     @Test
-    fun `v15 config is bumped to v16 with all other fields preserved`() {
+    fun `v15 config is bumped to CONFIG_VERSION with all other fields preserved`() {
         val current = KSafeConfig(
             configVersion = 15,
             wellnessCriticalThresholdBpm = 175,
             wellnessHighHrThreshold = 180,
         )
         val migrated = current.migrateToLatest()
-        assertEquals(16, migrated.configVersion)
+        assertEquals(CONFIG_VERSION, migrated.configVersion)
         assertEquals(175, migrated.wellnessCriticalThresholdBpm)
         assertEquals(180, migrated.wellnessHighHrThreshold)
         // v15→v16 is a pure version stamp; the new buzzerOnEmergencyEnabled default (true)
         // applies to every existing rider so the audible-on-mute bypass is on out of the box.
         assertEquals(true, migrated.buzzerOnEmergencyEnabled)
+        // v16→v17 default for the new reminder interval is 10 min — deliberately
+        // less aggressive than the historical hard-coded 5-min cooldown.
+        assertEquals(10, migrated.carbDeficitReminderIntervalMin)
+        assertEquals(10, migrated.hydrationDeficitReminderIntervalMin)
     }
 
     @Test
-    fun `v16 config is left unchanged by the migration`() {
+    fun `v16 config is bumped to CONFIG_VERSION preserving rider opt-out and reminder defaults`() {
         val current = KSafeConfig(
             configVersion = 16,
             buzzerOnEmergencyEnabled = false,
         )
         val migrated = current.migrateToLatest()
-        assertEquals(16, migrated.configVersion)
+        assertEquals(CONFIG_VERSION, migrated.configVersion)
         // Migration must not flip the rider's explicit opt-out back to the default.
         assertEquals(false, migrated.buzzerOnEmergencyEnabled)
+        // v16→v17 stamps the new reminder fields at the conservative 10-min default.
+        assertEquals(10, migrated.carbDeficitReminderIntervalMin)
+        assertEquals(10, migrated.hydrationDeficitReminderIntervalMin)
+    }
+
+    @Test
+    fun `v17 config is bumped to CONFIG_VERSION preserving fields and stamping physiology defaults`() {
+        val current = KSafeConfig(
+            configVersion = 17,
+            buzzerOnEmergencyEnabled = false,
+            carbDeficitReminderIntervalMin = 15,
+            hydrationDeficitReminderIntervalMin = 10,
+        )
+        val migrated = current.migrateToLatest()
+        assertEquals(CONFIG_VERSION, migrated.configVersion)
+        assertEquals(false, migrated.buzzerOnEmergencyEnabled)
+        assertEquals(15, migrated.carbDeficitReminderIntervalMin)
+        assertEquals(10, migrated.hydrationDeficitReminderIntervalMin)
+        // v17→v18 stamps the new rider-physiology fields at their "not set"
+        // defaults so the tracker falls back to Swain HRR until the rider opens
+        // Settings.
+        assertEquals(0, migrated.riderAge)
+        assertEquals(com.enderthor.kSafe.data.RiderSex.NOT_SET, migrated.riderSex)
+    }
+
+    @Test
+    fun `v18 config is left unchanged by the migration`() {
+        // Pins that the latest CONFIG_VERSION is a no-op — any post-v18 fields
+        // added later must extend the migration chain, not retroactively edit
+        // v18-stamped configs.
+        val current = KSafeConfig(
+            configVersion = 18,
+            riderAge = 40,
+            riderSex = com.enderthor.kSafe.data.RiderSex.MALE,
+        )
+        val migrated = current.migrateToLatest()
+        assertEquals(18, migrated.configVersion)
+        assertEquals(40, migrated.riderAge)
+        assertEquals(com.enderthor.kSafe.data.RiderSex.MALE, migrated.riderSex)
     }
 }

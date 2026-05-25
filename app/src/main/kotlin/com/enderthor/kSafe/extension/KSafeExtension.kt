@@ -70,6 +70,49 @@ private const val CALIBRATION_PERIODIC_SEND_INTERVAL_MS: Long = 20L * 60_000L
  *  flush coroutine if it has stopped writing. Cheap (one atomic read + age compare). */
 private const val CALIBRATION_HEALTH_CHECK_INTERVAL_MS: Long = 60_000L
 
+/** Maximum CSV-content size for a single calibration-log chunk sent through
+ *  `KarooSystemService.httpRequest`. The SDK marshals the request body across the
+ *  Android Binder transaction buffer; the kernel limit is ~1 MB shared system-wide
+ *  but the practical safe size per call is much lower because the buffer is
+ *  contended. Empirical 2026-05-25 data: 77 KB succeeded reliably (file
+ *  `(7)` of session 58ee00), 262 KB failed with `IllegalArgumentException:
+ *  Request too large` and never recovered for the remaining 2 hours of the
+ *  ride. 72 KB sits comfortably below the known-working ceiling and leaves
+ *  margin for multipart overhead (boundary + Content-Disposition headers +
+ *  caption ≈ 500 bytes) plus Binder buffer pressure from other apps. */
+private const val CALIBRATION_MAX_CHUNK_BYTES: Int = 72_000
+
+/** Per-cycle ceiling on the number of chunks the periodic loop will send back-to-back
+ *  when catching up after one or more failed windows. Without a cap a rider whose
+ *  Karoo accumulated 10 windows of data while offline would block the periodic
+ *  coroutine through 10 sequential HTTP round-trips (~5 minutes total). The cap
+ *  drains the backlog gradually across several cycles instead of starving the
+ *  coroutine on one cycle. The end-of-ride / manual-send / disable-logging paths
+ *  pass `Int.MAX_VALUE` because they want to drain fully before returning. */
+private const val CALIBRATION_PERIODIC_MAX_CHUNKS_PER_CYCLE: Int = 6
+
+/** Deadband on `cumBurnedG` for FIT session-message writes. The session message
+ *  is "last write wins" — only the value at FIT close becomes the activity
+ *  header in Strava et al., so intra-ride session writes only matter for
+ *  resilience to a sudden FIT-close. A 5 g threshold means the header is at
+ *  most 5 g behind the true total (sub-2 % error on a typical 300 g ride) and
+ *  the session-write rate drops ~5× vs writing on every gram increment. */
+private const val SESSION_BURN_DEADBAND_G: Double = 5.0
+
+/** Deadband on `CarbFuelingState.cumBurnedG` for the fueling-persistence loop.
+ *  Persisted state is restored after a process kill (FUELING_RESTORE_MAX_AGE_MS).
+ *  A 1 g resolution means worst-case loss on an unexpected process kill is the
+ *  burn accumulated between writes (~1 minute at moderate intensity), well under
+ *  one tracker tick of meaningful data. Eliminates ~80 % of redundant persists
+ *  while the rider is in moderate steady-state effort — the existing
+ *  data-class-equals check handles the stationary case but doesn't help the
+ *  most common scenario (continuous moving). */
+private const val PERSIST_CARB_BURN_DEADBAND_G: Float = 1.0f
+
+/** Same as [PERSIST_CARB_BURN_DEADBAND_G] for the hydration target accumulator.
+ *  10 ml ≈ 50 s at the default 750 ml/h target — same order as the carb side. */
+private const val PERSIST_HYD_TARGET_DEADBAND_ML: Float = 10.0f
+
 class KSafeExtension : KarooExtension("ksafe", BuildConfig.VERSION_NAME), CoroutineScope {
 
     private val job = SupervisorJob()
@@ -111,6 +154,22 @@ class KSafeExtension : KarooExtension("ksafe", BuildConfig.VERSION_NAME), Corout
      *  Idempotent — extra calls to [startRecordingCollectors] while already active
      *  are no-ops. */
     @Volatile private var recordingCollectorsJob: kotlinx.coroutines.Job? = null
+    /** Tracks the in-flight calibration-log periodic-send drain. The 20-min cycle
+     *  skips re-launching when this job is still active so two parallel drains
+     *  can't read the same first chunk before the first finishes truncating
+     *  (would duplicate an upload under slow-LTE conditions). `fileLock` already
+     *  prevents on-disk corruption; this is the duplicate-upload guard. */
+    @Volatile private var periodicSendJob: kotlinx.coroutines.Job? = null
+    /** SPEED / CADENCE / ELEVATION_GRADE / ride-profile collector group. These
+     *  feed [crashManager], [medicalDetector] and the fueling trackers. They
+     *  run whenever the rider is on the bike (Recording / Paused) OR the rider
+     *  has [KSafeConfig.crashMonitorOutsideRide] enabled in Idle. When the
+     *  Karoo sits on the dock between rides without the outside-ride toggle,
+     *  these are cancelled — drops 4 IPC consumers + their per-emission
+     *  collector wakeups for as long as the device is idle. Mirrors
+     *  [recordingCollectorsJob] (POWER / HR / TEMPERATURE / Headwind /
+     *  UserProfile), which already had this lifecycle. */
+    @Volatile private var crashSensorCollectorsJob: kotlinx.coroutines.Job? = null
     /** True if there was an active ride (Recording or Paused) — used to detect ride end. */
     private var rideWasActive = false
 
@@ -251,6 +310,7 @@ class KSafeExtension : KarooExtension("ksafe", BuildConfig.VERSION_NAME), Corout
             com.enderthor.kSafe.datatype.CarbLogDataType("carb-log-3", applicationContext, karooSystem, slot = 3),
             com.enderthor.kSafe.datatype.CarbStatusDataType("carb-status", applicationContext, karooSystem),
             com.enderthor.kSafe.datatype.CarbBurnRateDataType("carb-burn-rate", applicationContext),
+            com.enderthor.kSafe.datatype.CarbAvgBurnRateDataType("carb-avg-burn-rate", applicationContext),
             com.enderthor.kSafe.datatype.CarbsBurnedDataType("carbs-burned", applicationContext),
             com.enderthor.kSafe.datatype.HydrationLogDataType("hyd-log-1", applicationContext, karooSystem, slot = 1),
             com.enderthor.kSafe.datatype.HydrationLogDataType("hyd-log-2", applicationContext, karooSystem, slot = 2),
@@ -384,20 +444,13 @@ class KSafeExtension : KarooExtension("ksafe", BuildConfig.VERSION_NAME), Corout
                     // the final buffer flush to Dispatchers.IO so this Main-thread collector
                     // is not blocked by eMMC writes (up to ~500 lines / tens of ms on Karoo).
                     calibLogger.disableAsync()
-                    // Read the full CSV on IO and send via Telegram (fire-and-forget).
-                    // Wait for the flush job first — the file may not have all entries yet
-                    // at this point. The read is inside withContext(Dispatchers.IO) so it
-                    // never touches Main.
+                    // Drain the file in size-capped chunks on IO so each `httpRequest`
+                    // body fits in the Karoo SDK Binder transaction. Logging was just
+                    // turned off, so we want to flush everything — no per-cycle cap.
+                    // Fire-and-forget: a partial drain leaves the unsent tail on disk
+                    // for the next manual send / the start-of-ride previous-file pick-up.
                     launch(Dispatchers.IO) {
-                        val logContent = calibLogger.getFileContent()
-                        if (logContent.isNotBlank()) {
-                            LogReporter.sendLogFile(
-                                content  = logContent,
-                                fileName = calibLogger.fileNameForSession,
-                                caption  = calibLogger.captionForSession(logContent.count { it == '\n' }),
-                                karooSystem = karooSystem,
-                            )
-                        }
+                        sendCalibrationLogInChunks(captionPrefix = "Logging disabled")
                     }
                 }
                 // Re-evaluate monitoring based on current ride state.
@@ -472,7 +525,7 @@ class KSafeExtension : KarooExtension("ksafe", BuildConfig.VERSION_NAME), Corout
             pendingFuelingRestore = if (persisted.savedAtMs > 0 &&
                 age in 0..com.enderthor.kSafe.data.FUELING_RESTORE_MAX_AGE_MS) {
                 Timber.i("FuelingState eligible for restore: age=${age / 1000}s, " +
-                    "carb_target=${persisted.carb.cumTargetG.toInt()}g, " +
+                    "carb_burned=${persisted.carb.cumBurnedG.toInt()}g, " +
                     "hyd_target=${persisted.hyd.cumTargetMl.toInt()}ml")
                 persisted
             } else {
@@ -486,9 +539,31 @@ class KSafeExtension : KarooExtension("ksafe", BuildConfig.VERSION_NAME), Corout
 
         launch {
             // Periodic persistence loop. Runs forever; the inner check gates writes on
-            // "tracker actively integrating" so we don't burn DataStore writes when no
-            // ride is in progress. 30 s window means a worst-case extension crash loses
-            // at most ~30 s of integrated target — well under one carb tick.
+            // "tracker actively integrating AND something changed since last write" so
+            // we don't burn DataStore writes when no ride is in progress and we don't
+            // re-encode the same JSON every 30 s when the rider is stopped at a long
+            // traffic light. 30 s window means a worst-case extension crash loses at
+            // most ~30 s of integrated target — well under one tracker tick.
+            //
+            // Two-tier throttle on the persistence loop:
+            //  1. Strict skip when the tracker slices are bit-identical to the last
+            //     persisted snapshot (rider stationary, no events).
+            //  2. Deadband skip when the only difference between this cycle and the
+            //     last persist is a small accumulator delta in cumBurnedG / cumTargetMl
+            //     (< PERSIST_*_DEADBAND_*). Pre-v18.2 the loop wrote ~480 times per 5 h
+            //     ride because the Float integrators advance by ~0.21 g and ~3 ml per
+            //     30 s cycle while moving — strict equality always failed. The deadband
+            //     widens that to ~1 g (or ~10 ml) before considering it "worth writing",
+            //     which drops the write rate ~10× in steady-state.
+            //
+            // Worst-case loss on process kill is bounded by the deadband: ≤ 1 g of carb
+            // burn and ≤ 10 ml of hydration target, plus the 30 s loop interval. Well
+            // under one tracker tick of meaningful data — alerts and rider logs trigger
+            // outside the deadband immediately (cumLoggedG / lastLogMs / lastRealLogMs /
+            // lastTimeAlertFireMs / lastDeficitAlertFireMs all break the deadband path
+            // because they're not the deadband-protected field).
+            var lastPersistedCarb: com.enderthor.kSafe.data.CarbFuelingState? = null
+            var lastPersistedHyd:  com.enderthor.kSafe.data.HydFuelingState?  = null
             while (true) {
                 kotlinx.coroutines.delay(FUELING_PERSIST_INTERVAL_MS)
                 if (currentRideState !is RideState.Recording) continue
@@ -497,8 +572,30 @@ class KSafeExtension : KarooExtension("ksafe", BuildConfig.VERSION_NAME), Corout
                 val hydState  = hydrationTracker.getPersistableState()
                 // Skip the write if both trackers are at zero — no accumulation worth
                 // persisting yet (e.g. rider just pressed Start, hasn't moved).
-                if (carbState.cumTargetG <= 0f && carbState.cumLoggedG == 0 &&
+                if (carbState.cumBurnedG <= 0f && carbState.cumLoggedG == 0 &&
                     hydState.cumTargetMl <= 0f && hydState.cumLoggedMl == 0) continue
+                // Skip if neither tracker has changed since the last successful write.
+                // Note: we deliberately compare the trackers' state slices, NOT the
+                // wrapper FuelingState, because `savedAtMs` would otherwise force a
+                // write on every cycle.
+                if (carbState == lastPersistedCarb && hydState == lastPersistedHyd) continue
+                // Deadband: if the ONLY thing that changed is a small accumulator
+                // delta, defer the write. Compare a normalised copy where the
+                // protected field is forced equal to the prior value — if that
+                // copy matches the prior snapshot exactly, the real diff is the
+                // accumulator alone, and it's within the deadband.
+                val prevCarb = lastPersistedCarb
+                val prevHyd  = lastPersistedHyd
+                if (prevCarb != null && prevHyd != null) {
+                    val burnDelta   = carbState.cumBurnedG - prevCarb.cumBurnedG
+                    val targetDelta = hydState.cumTargetMl - prevHyd.cumTargetMl
+                    val carbOtherUnchanged = carbState.copy(cumBurnedG = prevCarb.cumBurnedG) == prevCarb
+                    val hydOtherUnchanged  = hydState.copy(cumTargetMl = prevHyd.cumTargetMl) == prevHyd
+                    val withinDeadband = carbOtherUnchanged && hydOtherUnchanged &&
+                        burnDelta   in 0f..PERSIST_CARB_BURN_DEADBAND_G &&
+                        targetDelta in 0f..PERSIST_HYD_TARGET_DEADBAND_ML
+                    if (withinDeadband) continue
+                }
                 configManager.saveFuelingState(
                     com.enderthor.kSafe.data.FuelingState(
                         carb = carbState,
@@ -506,47 +603,58 @@ class KSafeExtension : KarooExtension("ksafe", BuildConfig.VERSION_NAME), Corout
                         savedAtMs = System.currentTimeMillis(),
                     )
                 )
+                lastPersistedCarb = carbState
+                lastPersistedHyd  = hydState
             }
         }
 
         launch {
             // Calibration log periodic auto-send. Fires every 20 min while a ride is
-            // Recording AND logging is enabled. On success the file is truncated and
-            // the next window accumulates fresh — if the upload fails (no coverage,
-            // Telegram down, timeout) the file is kept and the next tick retries the
-            // larger payload. Idle/Paused are skipped because there's no fresh data
-            // accumulating that we'd lose by waiting for the end-of-ride upload.
+            // Recording AND logging is enabled. Drains the on-disk log in chunks
+            // capped at CALIBRATION_MAX_CHUNK_BYTES so each `httpRequest` body fits
+            // in the Karoo SDK Binder transaction (see [CALIBRATION_MAX_CHUNK_BYTES]
+            // — the 2026-05-25 ride's 262 KB file failed permanently because each
+            // retry grew further past the ~80 KB practical limit). On a failure the
+            // unsent tail stays on disk and the next window retries from there.
+            // Per-cycle chunk cap (CALIBRATION_PERIODIC_MAX_CHUNKS_PER_CYCLE) bounds
+            // how long the loop spends catching up after a backlog so the coroutine
+            // doesn't stall N sequential HTTP round-trips. Idle/Paused are skipped
+            // because there's no fresh data accumulating that we'd lose by waiting
+            // for the end-of-ride upload.
+            //
+            // [periodicSendJob] tracks the in-flight drain so a 20-min cycle that
+            // finds the previous drain still running (slow LTE, transient HTTP
+            // errors stretching one chunk past the window) skips this cycle rather
+            // than launching a second parallel drain. Without this, two drains
+            // could read the same first chunk from disk before the first finishes
+            // truncating, leading to a duplicate upload. `fileLock` already
+            // prevents corruption — this guard avoids the duplicate.
             while (true) {
                 kotlinx.coroutines.delay(CALIBRATION_PERIODIC_SEND_INTERVAL_MS)
                 if (currentRideState !is RideState.Recording) continue
                 if (!this@KSafeExtension::calibLogger.isInitialized) continue
                 if (!calibLogger.isEnabled) continue
-                // Read the full CSV file on IO — avoids blocking Main on a potentially
-                // multi-MB file read from slow eMMC storage. The Idle-state auto-send
-                // path already does this inside withContext(Dispatchers.IO); apply the
-                // same pattern here for consistency.
-                val content = withContext(Dispatchers.IO) { calibLogger.getFileContent() }
-                if (content.isBlank()) continue
-                val lineCount = content.count { it == '\n' }
-                Timber.d("Calibration periodic send: ${lineCount} lines")
-                launch(Dispatchers.IO) {
-                    val result = LogReporter.sendLogFile(
-                        content = content,
-                        fileName = calibLogger.fileNameForSession,
-                        caption = "Periodic — ${calibLogger.captionForSession(lineCount)}",
-                        karooSystem = karooSystem,
+                if (periodicSendJob?.isActive == true) {
+                    Timber.i("Calibration periodic send: previous drain still active, skipping this cycle")
+                    continue
+                }
+                periodicSendJob = launch(Dispatchers.IO) {
+                    val result = sendCalibrationLogInChunks(
+                        captionPrefix = "Periodic",
+                        maxChunks = CALIBRATION_PERIODIC_MAX_CHUNKS_PER_CYCLE,
                     )
-                    if (result.ok) {
-                        // L1 — pass the uploaded line count so truncate preserves any
-                        // rows the flush coroutine wrote DURING the ~60 s upload window.
-                        // Without the count truncate would `writeText(HEADER)` and wipe
-                        // those rows, silently losing ~1 minute of telemetry per send.
-                        calibLogger.truncateAfterSuccessfulSend(lineCount)
-                    } else {
-                        // Quiet failure — likely no coverage. Will retry in 20 min with the
-                        // grown payload; if it still fails the end-of-ride upload eventually
-                        // catches everything.
-                        Timber.w("Calibration periodic send failed (will retry next window): ${result.message}")
+                    when {
+                        result.anySent && result.fullyDrained ->
+                            Timber.d("Calibration periodic send: ${result.chunksSent} chunk(s), " +
+                                    "${result.totalLinesSent} lines, ${result.totalBytesSent / 1024} KB")
+                        result.anySent && result.hasMore ->
+                            Timber.i("Calibration periodic send: ${result.chunksSent} chunk(s) sent, " +
+                                    "more pending for next window" +
+                                    (result.lastError?.let { " (last: $it)" } ?: ""))
+                        result.lastError != null ->
+                            Timber.w("Calibration periodic send failed without progress: ${result.lastError}")
+                        // result.anySent == false && lastError == null → file was already empty,
+                        // nothing to log.
                     }
                 }
             }
@@ -578,65 +686,14 @@ class KSafeExtension : KarooExtension("ksafe", BuildConfig.VERSION_NAME), Corout
                 }
         }
 
-        launch {
-            // Stream speed to crash detector + fueling trackers. The fueling trackers
-            // gate integration on speed (no accumulation when stationary), so they need
-            // every emission too — fan out here rather than duplicating the stream.
-            //
-            // NOTE: do NOT apply `distinctUntilChanged` upstream. The downstream
-            // GPS-stale detection in CrashDetectionManager + SpeedDropMonitor + fueling
-            // trackers relies on the *absence* of value changes to detect that the SDK
-            // is repeating its last known value (the canonical GPS-lost signature).
-            // Filtering identical emissions upstream would defeat that — the consumers
-            // would never see the repeats and the gpsStale signal would never propagate.
-            karooSystem.streamDataFlow(io.hammerhead.karooext.models.DataType.Type.SPEED)
-                .collect { streamState ->
-                    val speedKmh = streamState.speedKmh() ?: return@collect
-                    crashManager.updateSpeed(speedKmh)
-                    medicalDetector.updateSpeed(speedKmh)
-                    if (this@KSafeExtension::carbsTracker.isInitialized) carbsTracker.updateSpeed(speedKmh)
-                    if (this@KSafeExtension::hydrationTracker.isInitialized) hydrationTracker.updateSpeed(speedKmh)
-                }
-        }
-
-        launch {
-            // Stream cadence to crash detector.
-            // Cadence > 20 RPM during SILENCE_CHECK = rider is still pedalling → instant false-alarm exit.
-            // This stream is optional: if no cadence sensor is paired the flow emits nothing and
-            // cadenceDataReceived stays false, so the gate never blocks a real crash.
-            karooSystem.streamDataFlow(io.hammerhead.karooext.models.DataType.Type.CADENCE)
-                .collect { streamState ->
-                    val cadenceRpm = streamState.cadenceRpm() ?: return@collect
-                    crashManager.updateCadence(cadenceRpm)
-                    // H3 fix — fan out to the medical detector's FLATLINE cross-check.
-                    // Optional sensor: if no cadence is paired the flow emits nothing and
-                    // the detector falls through to the original FLATLINE path. See
-                    // MedicalEpisodeDetector.updateCadence for graceful-degradation notes.
-                    medicalDetector.updateCadence(cadenceRpm)
-                }
-        }
-
-        launch {
-            // Stream road grade (%) to crash detector.
-            // Used for a proactive peak-threshold boost on descents to reduce terrain-noise false alarms
-            // before the reactive TERRAIN_CLUSTER mechanism can engage.
-            karooSystem.streamDataFlow(io.hammerhead.karooext.models.DataType.Type.ELEVATION_GRADE)
-                .collect { streamState ->
-                    val grade = streamState.gradePercent() ?: return@collect
-                    crashManager.updateGrade(grade)
-                }
-        }
-
-        launch {
-            // Stream the active Karoo ride profile to the crash detector.
-            // routingPreference (ROAD/GRAVEL/MTB) is logged in PERIODIC and IMPACT_ENTER rows
-            // for post-ride calibration analysis. It is not used as a gate or threshold modifier
-            // at runtime — the reactive cluster boost and grade-aware boost handle that.
-            karooSystem.streamRideProfile()
-                .collect { profile ->
-                    crashManager.updateRideProfile(profile.routingPreference)
-                }
-        }
+        // The SPEED / CADENCE / ELEVATION_GRADE / ride-profile collectors live
+        // in [startCrashSensorCollectors] now so they can be cancelled when the
+        // Karoo is sitting idle on the dock without `crashMonitorOutsideRide`
+        // enabled. The first launch happens here so an initial Idle state with
+        // outside-ride monitoring active already has streams flowing; subsequent
+        // ride-state transitions and master-switch flips re-evaluate the gate
+        // via [applyIdleMonitoring] / [handleRideState] / [applyMasterSwitchTransition].
+        startCrashSensorCollectors()
 
         // The POWER, HR, TEMPERATURE, Headwind temp/humidity and UserProfile streams
         // are gated by RideState — their consumers (fueling trackers, WellnessMonitor,
@@ -775,6 +832,90 @@ class KSafeExtension : KarooExtension("ksafe", BuildConfig.VERSION_NAME), Corout
         hasHeadwindTemp = false
     }
 
+    /**
+     * Launches the SPEED / CADENCE / ELEVATION_GRADE / ride-profile collectors
+     * that feed crash detection, the medical detector and the fueling trackers.
+     * Lifecycle is "alive whenever a downstream consumer is doing real work":
+     *
+     *  - Recording / Paused: trackers + crash + medical all want updates.
+     *  - Idle with `crashMonitorOutsideRide` (or `crashMonitorOutsideRideAnySpeed`):
+     *    crash detection keeps running so it needs SPEED / CADENCE / GRADE /
+     *    ride-profile too.
+     *  - Idle without the outside-ride toggle: every consumer is stopped, so
+     *    the upstream SDK subscriptions are wasted — cancel them.
+     *
+     * Idempotent — calls while the job is already active are no-ops.
+     */
+    private fun startCrashSensorCollectors() {
+        if (crashSensorCollectorsJob?.isActive == true) return
+        crashSensorCollectorsJob = launch {
+            launch {
+                // Stream speed to crash detector + fueling trackers. The fueling trackers
+                // gate integration on speed (no accumulation when stationary), so they need
+                // every emission too — fan out here rather than duplicating the stream.
+                //
+                // NOTE: do NOT apply `distinctUntilChanged` upstream. The downstream
+                // GPS-stale detection in CrashDetectionManager + SpeedDropMonitor + fueling
+                // trackers relies on the *absence* of value changes to detect that the SDK
+                // is repeating its last known value (the canonical GPS-lost signature).
+                // Filtering identical emissions upstream would defeat that — the consumers
+                // would never see the repeats and the gpsStale signal would never propagate.
+                karooSystem.streamDataFlow(io.hammerhead.karooext.models.DataType.Type.SPEED)
+                    .collect { streamState ->
+                        val speedKmh = streamState.speedKmh() ?: return@collect
+                        crashManager.updateSpeed(speedKmh)
+                        medicalDetector.updateSpeed(speedKmh)
+                        if (this@KSafeExtension::carbsTracker.isInitialized) carbsTracker.updateSpeed(speedKmh)
+                        if (this@KSafeExtension::hydrationTracker.isInitialized) hydrationTracker.updateSpeed(speedKmh)
+                    }
+            }
+
+            launch {
+                // Stream cadence to crash detector.
+                // Cadence > 20 RPM during SILENCE_CHECK = rider is still pedalling → instant false-alarm exit.
+                // This stream is optional: if no cadence sensor is paired the flow emits nothing and
+                // cadenceDataReceived stays false, so the gate never blocks a real crash.
+                karooSystem.streamDataFlow(io.hammerhead.karooext.models.DataType.Type.CADENCE)
+                    .collect { streamState ->
+                        val cadenceRpm = streamState.cadenceRpm() ?: return@collect
+                        crashManager.updateCadence(cadenceRpm)
+                        // H3 fix — fan out to the medical detector's FLATLINE cross-check.
+                        // Optional sensor: if no cadence is paired the flow emits nothing and
+                        // the detector falls through to the original FLATLINE path. See
+                        // MedicalEpisodeDetector.updateCadence for graceful-degradation notes.
+                        medicalDetector.updateCadence(cadenceRpm)
+                    }
+            }
+
+            launch {
+                // Stream road grade (%) to crash detector.
+                // Used for a proactive peak-threshold boost on descents to reduce terrain-noise false alarms
+                // before the reactive TERRAIN_CLUSTER mechanism can engage.
+                karooSystem.streamDataFlow(io.hammerhead.karooext.models.DataType.Type.ELEVATION_GRADE)
+                    .collect { streamState ->
+                        val grade = streamState.gradePercent() ?: return@collect
+                        crashManager.updateGrade(grade)
+                    }
+            }
+
+            launch {
+                // Stream the active Karoo ride profile to the crash detector.
+                // routingPreference (ROAD/GRAVEL/MTB) is logged in PERIODIC and IMPACT_ENTER rows
+                // for post-ride calibration analysis. It is not used as a gate or threshold modifier
+                // at runtime — the reactive cluster boost and grade-aware boost handle that.
+                karooSystem.streamRideProfile()
+                    .collect { profile ->
+                        crashManager.updateRideProfile(profile.routingPreference)
+                    }
+            }
+        }
+    }
+
+    private fun stopCrashSensorCollectors() {
+        crashSensorCollectorsJob?.cancel()
+        crashSensorCollectorsJob = null
+    }
+
     private fun handleRideState(state: RideState) {
         currentRideState = state
         Timber.d("Ride state: $state")
@@ -785,6 +926,10 @@ class KSafeExtension : KarooExtension("ksafe", BuildConfig.VERSION_NAME), Corout
                     // Headwind, UserProfile). Idempotent — a Paused→Recording resume hits
                     // this same branch and the call is a no-op if collectors are still alive.
                     startRecordingCollectors()
+                    // Ensure SPEED / CADENCE / GRADE / ride-profile collectors are alive.
+                    // Idempotent — already running if the rider had `crashMonitorOutsideRide`
+                    // enabled while Idle, or if we're transitioning from Paused.
+                    startCrashSensorCollectors()
                     // Distinguish the very first Recording event of a session (where the
                     // accumulating trackers must do a clean start() and reset cum* state)
                     // from a Paused→Recording resume (where resume() preserves the rider's
@@ -882,17 +1027,12 @@ class KSafeExtension : KarooExtension("ksafe", BuildConfig.VERSION_NAME), Corout
                 // Auto-send calibration log if it was active during the ride
                 // (only if the user hasn't already turned off logging — that path sends its own copy)
                 if (wasActive && wasLogging && calibLogger.isEnabled) {
-                    // Move the file-read to IO so we don't block the Main dispatcher
+                    // Drain in size-capped chunks on IO so each body fits the SDK
+                    // Binder transaction. Ride just ended — drain everything (no
+                    // per-cycle cap). A partial drain leaves the tail on disk for
+                    // the next manual send.
                     launch(Dispatchers.IO) {
-                        val logContent = calibLogger.getFileContent()
-                        if (logContent.isNotBlank()) {
-                            LogReporter.sendLogFile(
-                                content  = logContent,
-                                fileName = calibLogger.fileNameForSession,
-                                caption  = calibLogger.captionForSession(logContent.count { it == '\n' }),
-                                karooSystem = karooSystem,
-                            )
-                        }
+                        sendCalibrationLogInChunks(captionPrefix = "Ride end")
                     }
                 }
             }
@@ -922,6 +1062,10 @@ class KSafeExtension : KarooExtension("ksafe", BuildConfig.VERSION_NAME), Corout
             // No consumer for POWER/HR/TEMPERATURE while the master switch is off,
             // so cancel those collectors too. They restart on the ON branch below.
             stopRecordingCollectors()
+            // SPEED / CADENCE / GRADE / ride-profile have no consumers either while
+            // master is off — crashManager.stop() above already drops the main one.
+            // Cancel until master flips back ON.
+            stopCrashSensorCollectors()
             // stopAll() (NOT stopCheckinTimer) — a crash/medical countdown actively
             // ticking down when the rider flips the master switch OFF must be aborted
             // along with everything else. The previous stopCheckinTimer-only call
@@ -934,6 +1078,9 @@ class KSafeExtension : KarooExtension("ksafe", BuildConfig.VERSION_NAME), Corout
             // Re-arm the Recording-only collectors (idempotent if they were never
             // cancelled, e.g. brief flicker before the OFF branch reached this).
             startRecordingCollectors()
+            // Re-arm SPEED / CADENCE / GRADE / ride-profile too — crashManager
+            // and the trackers about to resume all need them.
+            startCrashSensorCollectors()
             // Master-switch ON inside an already-Recording ride is semantically
             // a resume — preserve the baseline.
             if (currentRideState is RideState.Recording) crashManager.resume(activeConfig)
@@ -956,18 +1103,27 @@ class KSafeExtension : KarooExtension("ksafe", BuildConfig.VERSION_NAME), Corout
                 config.crashMonitorOutsideRideAnySpeed -> {
                     // Override speed threshold to 0 — detect at any speed (more false positives)
                     crashManager.start(config.copy(minSpeedForCrashKmh = 0))
+                    // crashManager needs SPEED / CADENCE / GRADE / ride-profile while
+                    // it's active. Idempotent if the collectors were already running.
+                    startCrashSensorCollectors()
                     Timber.d("Idle crash monitoring STARTED (any speed)")
                 }
                 config.crashMonitorOutsideRide -> {
                     crashManager.start(config)
+                    startCrashSensorCollectors()
                     Timber.d("Idle crash monitoring STARTED (min speed=${config.minSpeedForCrashKmh} km/h)")
                 }
                 else -> {
                     crashManager.stop()
+                    // No consumer needs SPEED / CADENCE / GRADE / ride-profile while
+                    // the device sits idle — cancel the IPC subscriptions until the
+                    // next Recording transition or outside-ride toggle re-enables them.
+                    stopCrashSensorCollectors()
                 }
             }
         } else {
             crashManager.stop()
+            stopCrashSensorCollectors()
         }
     }
 
@@ -1243,46 +1399,188 @@ class KSafeExtension : KarooExtension("ksafe", BuildConfig.VERSION_NAME), Corout
     }
 
     /**
+     * Aggregate result of one drain call from [sendCalibrationLogInChunks]: how many
+     * chunks landed, how many bytes total, whether anything is still on disk, and the
+     * last error string (null on full success). Callers decide what to surface — the
+     * periodic loop just logs `lastError`, the manual-send path returns a user-facing
+     * string built from `fullyDrained` and `lastError`.
+     */
+    private data class CalibrationSendResult(
+        val chunksSent: Int,
+        val totalLinesSent: Int,
+        val totalBytesSent: Long,
+        val hasMore: Boolean,
+        val lastError: String?,
+    ) {
+        val anySent: Boolean get() = chunksSent > 0
+        val fullyDrained: Boolean get() = !hasMore && lastError == null
+    }
+
+    /**
+     * Drains the calibration log in size-capped chunks via Telegram. Stops on (a)
+     * the first failed chunk, (b) an empty file, or (c) [maxChunks] chunks sent —
+     * whichever comes first. Each chunk is a self-contained CSV (HEADER + N rows)
+     * sized to fit a single Karoo-SDK `httpRequest` Binder transaction, bypassing
+     * the 2026-05-25 "Request too large" failure that occurred once the unchunked
+     * file crossed ~80 KB (see [CALIBRATION_MAX_CHUNK_BYTES] for the empirical
+     * cap derivation).
+     *
+     * Failure semantics: a chunk that fails to send leaves the unsent tail on disk
+     * (no [CalibrationLogger.truncateAfterSuccessfulSend] call), so the next periodic
+     * / end-of-ride / manual invocation resumes from exactly the same point. The
+     * file's `LOGGER_START "logging_resumed_after_periodic_send"` markers thread
+     * the chunks together so the developer can stitch a full ride's data back from
+     * the sequence of received files.
+     *
+     * MUST be called from a coroutine on [Dispatchers.IO] — file IO and the
+     * `truncateAfterSuccessfulSend` rewrite are blocking eMMC operations that
+     * would stall Main.
+     */
+    private suspend fun sendCalibrationLogInChunks(
+        captionPrefix: String,
+        maxChunks: Int = Int.MAX_VALUE,
+    ): CalibrationSendResult {
+        var chunksSent = 0
+        var totalLines = 0
+        var totalBytes = 0L
+        var hasMore = false
+        var lastError: String? = null
+
+        while (chunksSent < maxChunks) {
+            val chunk = calibLogger.getFileContentChunked(CALIBRATION_MAX_CHUNK_BYTES)
+                ?: break  // file is empty / unreadable — done
+            val caption = buildString {
+                append(captionPrefix)
+                append(" — ")
+                append(calibLogger.captionForSession(chunk.linesIncluded))
+                if (chunk.hasMore) append(" (chunk ${chunksSent + 1}, more pending)")
+                else if (chunksSent > 0) append(" (chunk ${chunksSent + 1}, final)")
+            }
+            val result = LogReporter.sendLogFile(
+                content = chunk.content,
+                fileName = calibLogger.fileNameForSession,
+                caption = caption,
+                karooSystem = karooSystem,
+            )
+            if (!result.ok) {
+                lastError = result.message
+                hasMore = true  // file still has the unsent tail (and likely more)
+                Timber.w("Calibration chunk send failed (chunk ${chunksSent + 1}, " +
+                        "${chunk.content.length} bytes): ${result.message}")
+                break
+            }
+            calibLogger.truncateAfterSuccessfulSend(chunk.linesIncluded)
+            chunksSent++
+            totalLines += chunk.linesIncluded
+            totalBytes += chunk.content.length
+            if (!chunk.hasMore) {
+                hasMore = false
+                break
+            }
+            hasMore = true
+        }
+        return CalibrationSendResult(chunksSent, totalLines, totalBytes, hasMore, lastError)
+    }
+
+    /**
      * Sends the complete CSV calibration log to the developer via Telegram.
      * Called from the Settings UI "Send now" button for manual trigger.
      * The file is sent regardless of whether logging is currently active.
      */
     suspend fun sendCalibrationLog(): String {
         // 1) Previous-session file (preserved by enable() when the rider had logging on
-        //    during a previous ride that crashed before sending). Send it first so the
-        //    rider's data isn't lost; success deletes it, failure keeps it around for
-        //    the next attempt.
-        val previousResult = calibLogger.getPreviousFileContent()?.let { prev ->
-            Timber.d("Sending previous-session calibration log")
-            val result = LogReporter.sendLogFile(
-                content  = prev,
-                fileName = calibLogger.previousFileNameForSession(),
-                caption  = "Recovered previous session (${prev.count { it == '\n' }} lines)",
-                karooSystem = karooSystem,
-            )
-            if (result.ok) calibLogger.deletePreviousFile()
-            result
+        //    during a previous ride that crashed before sending). Drained in
+        //    size-capped chunks for the same reason the current-session path is
+        //    chunked — a long crashed ride can leave a 200 KB+ recovered file
+        //    that would otherwise hit the Binder transaction limit and fail
+        //    permanently. The final chunk's truncate clears the on-disk file
+        //    so the rider doesn't see "previous: ✓" repeatedly.
+        val previousDrain = withContext(Dispatchers.IO) {
+            sendPreviousCalibrationLogInChunks()
         }
 
-        // 2) Current session
-        val logContent = calibLogger.getFileContent()
-        if (logContent.isBlank()) {
-            // No current data — surface the previous-result if it ran.
-            return previousResult?.message ?: "No calibration data on disk yet."
+        // 2) Current session — drained in size-capped chunks on IO so each body
+        //    fits the Karoo SDK Binder transaction. The drain runs to completion
+        //    (no per-cycle cap) since this is a user-initiated manual send and we
+        //    want the rider to see everything land in one go.
+        Timber.d("Sending calibration log manually via Telegram (chunked)")
+        val drain = withContext(Dispatchers.IO) {
+            sendCalibrationLogInChunks(captionPrefix = "Manual")
         }
-        Timber.d("Sending calibration log manually via Telegram")
-        val result = LogReporter.sendLogFile(
-            content  = logContent,
-            fileName = calibLogger.fileNameForSession,
-            caption  = calibLogger.captionForSession(logContent.count { it == '\n' }),
-            karooSystem = karooSystem,
-        )
-        // Combine messages when previous-send happened
+        // Surface a useful message based on the drain outcome and the optional
+        // previous-session attempt. Cases (in priority order):
+        //   - Nothing on disk + no previous-send → "No data".
+        //   - Fully drained + previous OK → "Sent ✓".
+        //   - Fully drained, no previous → "Sent ✓".
+        //   - Some chunks sent but a later one failed → "Sent N chunks, then …".
+        //   - Zero chunks sent but data exists → first error from drain.
+        val anyCurrent = drain.chunksSent > 0
+        val anyPrevious = previousDrain.chunksSent > 0
+        val previousStatus = when {
+            !anyPrevious && previousDrain.lastError == null -> null  // no previous on disk
+            previousDrain.fullyDrained -> "previous: ✓"
+            else -> "previous: failed"
+        }
         return when {
-            previousResult != null && result.ok ->
-                "Calibration log sent ✓ (previous: ${if (previousResult.ok) "✓" else "failed"})"
-            else -> if (result.ok) "Calibration log sent ✓" else result.message
+            !anyCurrent && !anyPrevious && drain.lastError == null && previousDrain.lastError == null ->
+                "No calibration data on disk yet."
+            !anyCurrent && drain.lastError != null ->
+                drain.lastError
+            drain.fullyDrained && previousStatus != null ->
+                "Calibration log sent ✓ (${drain.chunksSent} chunk(s); $previousStatus)"
+            drain.fullyDrained ->
+                "Calibration log sent ✓ (${drain.chunksSent} chunk(s), " +
+                    "${drain.totalBytesSent / 1024} KB)"
+            // Partial success: at least one chunk landed but a later one failed
+            else -> "Sent ${drain.chunksSent} chunk(s) (${drain.totalBytesSent / 1024} KB); " +
+                "remaining tail kept on disk. Last error: ${drain.lastError ?: "unknown"}"
         }
+    }
+
+    /**
+     * Drain the preserved previous-session file in size-capped chunks, mirroring
+     * [sendCalibrationLogInChunks]. Same failure semantics: a failed chunk leaves
+     * the unsent tail on disk for the next manual send. On success the previous
+     * file is deleted (see [CalibrationLogger.truncatePreviousAfterSuccessfulSend]).
+     * MUST run on Dispatchers.IO.
+     */
+    private suspend fun sendPreviousCalibrationLogInChunks(): CalibrationSendResult {
+        var chunksSent = 0
+        var totalLines = 0
+        var totalBytes = 0L
+        var hasMore = false
+        var lastError: String? = null
+
+        while (true) {
+            val chunk = calibLogger.getPreviousFileContentChunked(CALIBRATION_MAX_CHUNK_BYTES)
+                ?: break
+            val caption = buildString {
+                append("Recovered previous session — ")
+                append("${chunk.linesIncluded} lines")
+                if (chunk.hasMore) append(" (chunk ${chunksSent + 1}, more pending)")
+                else if (chunksSent > 0) append(" (chunk ${chunksSent + 1}, final)")
+            }
+            val result = LogReporter.sendLogFile(
+                content = chunk.content,
+                fileName = calibLogger.previousFileNameForSession(),
+                caption = caption,
+                karooSystem = karooSystem,
+            )
+            if (!result.ok) {
+                lastError = result.message
+                hasMore = true
+                Timber.w("Previous-session chunk send failed (chunk ${chunksSent + 1}, " +
+                        "${chunk.content.length} bytes): ${result.message}")
+                break
+            }
+            calibLogger.truncatePreviousAfterSuccessfulSend(chunk.linesIncluded)
+            chunksSent++
+            totalLines += chunk.linesIncluded
+            totalBytes += chunk.content.length
+            if (!chunk.hasMore) { hasMore = false; break }
+            hasMore = true
+        }
+        return CalibrationSendResult(chunksSent, totalLines, totalBytes, hasMore, lastError)
     }
 
     /**
@@ -1393,9 +1691,16 @@ class KSafeExtension : KarooExtension("ksafe", BuildConfig.VERSION_NAME), Corout
         // (drawer-only) and the rider thought the action had failed.
         val onRideScreen = currentRideState is RideState.Recording ||
                            currentRideState is RideState.Paused
+        // Unique-per-fire suffix on the id: callers pass stable ids like
+        // "ksafe-webhook-1-ok" so the field state-flow can correlate the
+        // tap with the resulting feedback, but the same id re-dispatched
+        // while the host still tracks a prior overlay/notification crashes
+        // the Karoo ride app. Each callsite (webhook taps, custom-message
+        // feedback) can fire rapidly when a rider re-taps a slot.
+        val uniqueId = "$id-${System.currentTimeMillis()}"
         if (onRideScreen) {
             karooSystem.dispatch(InRideAlert(
-                id = id,
+                id = uniqueId,
                 icon = R.drawable.ic_ksafe,
                 title = header,
                 detail = message,
@@ -1410,7 +1715,7 @@ class KSafeExtension : KarooExtension("ksafe", BuildConfig.VERSION_NAME), Corout
             // it. Keep SystemNotification as the Idle fallback for now — the design-guide
             // "no system notifications mid-ride" rule (see KDoc above) only forbids the
             // Recording / Paused branch, which already routes to InRideAlert.
-            karooSystem.dispatch(SystemNotification(id = id, header = header, message = message))
+            karooSystem.dispatch(SystemNotification(id = uniqueId, header = header, message = message))
         }
     }
 
@@ -1633,13 +1938,15 @@ class KSafeExtension : KarooExtension("ksafe", BuildConfig.VERSION_NAME), Corout
         // should be able to re-log immediately (mis-tap recovery) without waiting for
         // the 1.5 s auto-reset to IDLE. Falls through to the regular log path below.
         val logged = carbsTracker.logEntry(slot)
-        // 8 s window: long enough that the rider can react after the confirmation flash
+        // 6 s window: long enough that the rider can react after the confirmation flash
         // even with gloves on rough terrain, short enough that a legitimate second log
-        // isn't an annoying wait. Extended from 5 s after field reports of rapid taps
-        // being missed during the IDLE→LOGGED state transition.
+        // isn't an annoying wait. History: 5 s → 8 s after field reports of rapid taps
+        // being missed; 8 s → 6 s after riders found the field "locked" too long when
+        // they wanted to log a second item back-to-back (e.g. a gel + a bar). 6 s lands
+        // between the two: still ample for glove-friendly undo, no longer feels stuck.
         com.enderthor.kSafe.datatype.CarbLogState.update(slot, com.enderthor.kSafe.datatype.CarbLogState.LOGGED(logged))
         carbTapRevertJobs[slot] = launch {
-            kotlinx.coroutines.delay(8_000L)
+            kotlinx.coroutines.delay(6_000L)
             com.enderthor.kSafe.datatype.CarbLogState.update(slot, com.enderthor.kSafe.datatype.CarbLogState.IDLE)
             carbTapRevertJobs[slot] = null
         }
@@ -1671,10 +1978,10 @@ class KSafeExtension : KarooExtension("ksafe", BuildConfig.VERSION_NAME), Corout
         }
         // UNDONE falls through to re-log — see handleCarbLogTap for the rationale.
         val logged = hydrationTracker.logEntry(slot)
-        // 8 s window — see handleCarbLogTap.
+        // 6 s window — see handleCarbLogTap for the history (5 → 8 → 6 s) and rationale.
         com.enderthor.kSafe.datatype.HydrationLogState.update(slot, com.enderthor.kSafe.datatype.HydrationLogState.LOGGED(logged))
         hydTapRevertJobs[slot] = launch {
-            kotlinx.coroutines.delay(8_000L)
+            kotlinx.coroutines.delay(6_000L)
             com.enderthor.kSafe.datatype.HydrationLogState.update(slot, com.enderthor.kSafe.datatype.HydrationLogState.IDLE)
             hydTapRevertJobs[slot] = null
         }
@@ -1932,6 +2239,13 @@ class KSafeExtension : KarooExtension("ksafe", BuildConfig.VERSION_NAME), Corout
             nativeFieldNum = null,
             developerDataIndex = 0,
         )
+        // Note: there is no `ksafe_carb_avg_burn_rate_gph` developer field. The
+        // session average is derivable from the per-record `ksafe_carb_burn_rate_gph`
+        // time series by any downstream analysis tool (Intervals.icu, fitparse,
+        // etc.) — writing it again would duplicate information for 4 bytes saved.
+        // The average is computed live by [CarbsTracker.computeAvgBurnRateGph]
+        // and shown on the Karoo via the `carb-avg-burn-rate` data field during
+        // the ride. fieldDefinitionNumber=7 is therefore reserved (not used).
 
         calibLogger.log(CalibrationLogger.Event.FIT_WRITER_START) {
             // Field-definition numbers are public-API once shipped; record them so the CSV
@@ -1939,49 +2253,149 @@ class KSafeExtension : KarooExtension("ksafe", BuildConfig.VERSION_NAME), Corout
             "fields=0,1,2,3,4,5,6"
         }
         val job: Job = launch {
+            // Per-ride caches of the last value written to each FIT field. The FIT
+            // record/session messages are throttled to **write-on-change** so a 5 h
+            // ride doesn't emit ~18 000 redundant record-writes for fields whose
+            // underlying source-of-truth only updates every 15-30 s (e.g.
+            // `ksafe_carb_burn_rate_gph` updates with the 15 s tracker tick;
+            // `ksafe_hr_drift_pct` updates with the 30 s WellnessMonitor tick).
+            //
+            // FIT consumer behaviour: Strava / Intervals.icu / TrainingPeaks plot
+            // developer-field time series at the emitted timestamps and interpolate
+            // between them. A sparse series therefore renders identically to a
+            // dense series that repeats values — but the dense series wastes the
+            // FIT file size and the host's per-record allocation budget on the
+            // Karoo (the audit at 2026-05-25 quantified ~50K allocations/hour
+            // from this writer alone, with ~95 % redundant).
+            //
+            // Sentinel: `Double.NaN`. `NaN != NaN` is true in IEEE 754, so the
+            // first comparison after `startFit` is always "changed" and the
+            // first tick always emits. Each subsequent tick compares the new
+            // value to the cached one and only re-emits if any field moved.
+            // Session-message uses the same idiom on its own cache because the
+            // session activity-header contract is "last write wins" — emitting
+            // identical values mid-ride doesn't change what Strava reads at the
+            // end, but it does churn allocations.
+            var lastRecCarbsG       = Double.NaN
+            var lastRecHydMl        = Double.NaN
+            var lastRecCarbsBurnedG = Double.NaN
+            var lastRecBurnRateGph  = Double.NaN
+            var lastRecDriftPct     = Double.NaN
+            var lastSesCarbsG       = Double.NaN
+            var lastSesHydMl        = Double.NaN
+            var lastSesCarbsBurnedG = Double.NaN
+            var lastSesMaxDriftPct  = Double.NaN
+            var lastSesFires        = Double.NaN
+
             karooSystem.streamDataFlow(DataType.Type.ELAPSED_TIME)
                 .mapNotNull { (it as? StreamState.Streaming)?.dataPoint?.singleValue }
                 .collect {
                     val carbStatus = carbsTrackerOrNull()?.getStatus()
                     val carbsG       = (carbStatus?.cumLoggedG ?: 0).toDouble()
-                    val carbsBurnedG = (carbStatus?.cumTargetG ?: 0).toDouble()
+                    val carbsBurnedG = (carbStatus?.cumBurnedG ?: 0).toDouble()
                     val burnRateGph  = (carbStatus?.burnRateGph ?: 0).toDouble()
                     val hydMl  = (hydrationTrackerOrNull()?.getStatus()?.cumLoggedMl ?: 0).toDouble()
                     val wellness = wellnessMonitorOrNull()?.getSummary()
                     val driftPct    = wellness?.currentDriftPct?.toDouble() ?: 0.0
                     val maxDriftPct = wellness?.maxDriftPct?.toDouble() ?: 0.0
                     val fires       = wellness?.totalFires?.toDouble() ?: 0.0
-                    // Allocates 7 FieldValues + a list per tick at 1 Hz. The audit
-                    // flagged this as ~29 k allocs/h. Reusing a mutable list between
-                    // WriteToRecordMesg/WriteToSessionMesg is unsafe unless the SDK
-                    // copies eagerly — without that guarantee, a retained reference
-                    // would let the SECOND mutation corrupt the FIRST message in
-                    // flight. FieldValue itself is an SDK data class we can't mutate
-                    // in place. The remaining allocations are young-gen short-lived
-                    // (each tick's list is dead before the next one), so on real
-                    // hardware the GC pressure is invisible. Decision: leave as-is
-                    // and revisit only if profiling exposes a problem.
-                    val values = listOf(
-                        FieldValue(carbField,         carbsG),
-                        FieldValue(hydField,          hydMl),
-                        FieldValue(hrDriftField,      driftPct),
-                        FieldValue(maxDriftField,     maxDriftPct),
-                        FieldValue(firesField,        fires),
-                        FieldValue(carbsBurnedField,  carbsBurnedG),
-                        FieldValue(burnRateField,     burnRateGph),
-                    )
                     when (currentRideState) {
                         is RideState.Recording -> {
-                            // Per-second record sample — lands on the same FIT timestamp as
-                            // the native HR / power / cadence sample for that tick.
-                            emitter.onNext(WriteToRecordMesg(values))
-                            // Session totals — every Recording tick overwrites the running
-                            // value; whatever is current when the ride ends becomes the
-                            // activity summary header in Strava etc. Must be written here
-                            // (not in the Paused branch as nomride does) because
-                            // ELAPSED_TIME stops emitting while the ride is paused, so a
-                            // Paused-only write would never actually fire.
-                            emitter.onNext(WriteToSessionMesg(values))
+                            // Records (per-second time series): only fields that have a
+                            // meaningful instantaneous reading or trace a useful curve over
+                            // the ride.
+                            //  - cumLoggedG / cumLoggedMl / cumBurnedG: step / accumulator
+                            //    curves — graphable in Strava et al. as a "fuel taken /
+                            //    target burned over time" line.
+                            //  - burnRateGph: instantaneous burn rate at this moment.
+                            //  - hrDriftPct: instantaneous cardiac-decoupling reading.
+                            //
+                            // Deliberately excluded from records: maxDriftPct (monotonic
+                            // running max — uninteresting as a per-second time series)
+                            // and totalFires (just a counter). Both belong in the session
+                            // summary only. See FIT-writer audit 2026-05-25.
+                            val recChanged =
+                                carbsG       != lastRecCarbsG       ||
+                                hydMl        != lastRecHydMl        ||
+                                carbsBurnedG != lastRecCarbsBurnedG ||
+                                burnRateGph  != lastRecBurnRateGph  ||
+                                driftPct     != lastRecDriftPct
+                            if (recChanged) {
+                                emitter.onNext(WriteToRecordMesg(listOf(
+                                    FieldValue(carbField,         carbsG),
+                                    FieldValue(hydField,          hydMl),
+                                    FieldValue(carbsBurnedField,  carbsBurnedG),
+                                    FieldValue(burnRateField,     burnRateGph),
+                                    FieldValue(hrDriftField,      driftPct),
+                                )))
+                                lastRecCarbsG       = carbsG
+                                lastRecHydMl        = hydMl
+                                lastRecCarbsBurnedG = carbsBurnedG
+                                lastRecBurnRateGph  = burnRateGph
+                                lastRecDriftPct     = driftPct
+                            }
+                            // Session (single-value activity-header summary): totals at
+                            // ride end + ride-max statistics. Each tick overwrites the
+                            // running value; whatever is current at FIT-close becomes the
+                            // Strava / Hammerhead / Intervals.icu activity header.
+                            //  - cumLoggedG / cumLoggedMl: total carbs / hyd taken.
+                            //  - cumBurnedG: total estimated burn for the whole ride.
+                            //  - maxDriftPct: peak cardiac-decoupling reached.
+                            //  - totalFires: number of wellness alerts that fired.
+                            //
+                            // Deliberately excluded from session: burnRateGph and
+                            // hrDriftPct — those are instantaneous; storing the LAST
+                            // tick's value as a "summary" is misleading. The session
+                            // average for burn rate is NOT written either: it's
+                            // derivable from the per-record `ksafe_carb_burn_rate_gph`
+                            // time series by any downstream analysis tool, so
+                            // duplicating it in the session record would just add
+                            // 4 bytes for the same information. The Karoo data
+                            // field `carb-avg-burn-rate` shows it live during the
+                            // ride.
+                            //
+                            // Must be written from the Recording branch (NOT a Paused
+                            // branch as nomride does) because ELAPSED_TIME stops emitting
+                            // while the ride is paused — a Paused-only write would never
+                            // fire. All 7 DeveloperField definitions are public API once
+                            // shipped: keep the declarations even though fewer of them
+                            // appear in each message now.
+                            // Session-message cadence is deliberately COARSER than the record
+                            // message. The session message contract is "last write wins" — the
+                            // value at FIT close becomes the activity header in Strava et al.
+                            // We don't need 15 s granularity on this end; we just need the
+                            // value to be approximately current at FIT close.
+                            //
+                            // Deadband on the cumulative burn driver: only emit when the burn
+                            // total has moved at least SESSION_BURN_DEADBAND_G (5 g) since the
+                            // last session write. Other event fields (rider taps via cumLoggedG /
+                            // cumLoggedMl, wellness peaks via maxDriftPct, alerts via fires) still
+                            // trigger immediately so the activity header reflects them on the
+                            // next FIT-close. Worst case: the final cumBurnedG in the header is
+                            // up to 5 g less than the true ride total — sub-2 % error on a
+                            // typical 300 g ride.
+                            val burnDelta = if (lastSesCarbsBurnedG.isNaN()) Double.POSITIVE_INFINITY
+                                            else carbsBurnedG - lastSesCarbsBurnedG
+                            val burnSignificant = burnDelta >= SESSION_BURN_DEADBAND_G
+                            val otherSesChanged =
+                                carbsG      != lastSesCarbsG      ||
+                                hydMl       != lastSesHydMl       ||
+                                maxDriftPct != lastSesMaxDriftPct ||
+                                fires       != lastSesFires
+                            if (burnSignificant || otherSesChanged) {
+                                emitter.onNext(WriteToSessionMesg(listOf(
+                                    FieldValue(carbField,         carbsG),
+                                    FieldValue(hydField,          hydMl),
+                                    FieldValue(carbsBurnedField,  carbsBurnedG),
+                                    FieldValue(maxDriftField,     maxDriftPct),
+                                    FieldValue(firesField,        fires),
+                                )))
+                                lastSesCarbsG       = carbsG
+                                lastSesHydMl        = hydMl
+                                lastSesCarbsBurnedG = carbsBurnedG
+                                lastSesMaxDriftPct  = maxDriftPct
+                                lastSesFires        = fires
+                            }
                         }
                         else -> { /* Paused / Idle / null: don't emit */ }
                     }

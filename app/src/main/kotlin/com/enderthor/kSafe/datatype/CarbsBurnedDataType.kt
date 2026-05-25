@@ -68,7 +68,21 @@ class CarbsBurnedDataType(
                 // Push-based — see CarbStatusDataType for the rationale.
                 val tracker = KSafeExtension.carbsTrackerFlow.filterNotNull().first()
                 tracker.statusFlow.collectLatest { status ->
-                    val main = if (status == null) "---" else "${status.cumTargetG}g"
+                    val main = when {
+                        status == null -> "---"
+                        // v18: show "Pair HR/Pwr" ONLY when the rider has never had
+                        // a sensor paired (cumBurnedG still at 0). If a sensor
+                        // disconnects mid-ride after some burn has been accumulated
+                        // (HR battery dies, BLE drops out), keep showing the running
+                        // total — flipping a 120g reading to "Pair HR/Pwr" looks
+                        // like data loss. Accept the rate halting (the rate field
+                        // will read 0 or its own "Pair HR/Pwr" depending on policy)
+                        // but the cumulative is real data the rider earned.
+                        status.burnConfidence == com.enderthor.kSafe.extension.util.CarbBurnEstimator.Confidence.NONE &&
+                            status.cumBurnedG == 0 ->
+                            context.getString(R.string.carb_no_sensor_label)
+                        else -> "${status.cumBurnedG}g"
+                    }
                     emitter.updateView(buildView(config, main, "burned"))
                 }
             } catch (_: CancellationException) {

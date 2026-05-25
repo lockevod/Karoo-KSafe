@@ -96,4 +96,43 @@ data class Thresholds(
      * these while excluding partial leans.
      */
     val onSideRelaxationAngleDeg: Double = 60.0,
+    /**
+     * Speed (km/h) ceiling above which the IMPACT-phase on-side speed-rise
+     * relaxation does NOT fire (GPS-stale bypasses this ceiling — when GPS is
+     * unreliable the rolling-bike speed reading isn't trustworthy and the
+     * orientation evidence is allowed to carry the decision alone).
+     *
+     * **Why this exists** (FP-2 from the 2026-05-25 ride log, elapsed 14141.2 s):
+     * the relaxation's stated purpose is "the bike has escaped the downed rider
+     * and is rolling" — a scenario that decelerates within seconds. Without a
+     * speed ceiling, a marginal SMOOTH-source impact at high sustained speed
+     * on a rough descent (rider leaning forward — pre-impact reference was
+     * upright at the moment the impact crossed the smoothed gate, but the
+     * 2.2 s IMPACT phase accumulated ≥25 samples at 75° vs that reference
+     * because of sustained forward lean) can engage the relaxation. The
+     * LEGACY 4.5 s window then collapses with CR2 on-side bump preservation
+     * absorbing all the descent bumps. CRASH_OK fires while the rider is
+     * still riding at 36 km/h.
+     *
+     * Empirically from the same ride: ALL real falls (4 events) had IMPACT
+     * speeds < 25 km/h (8.9 / 6.7 / 5.8 / 15.0). The FP sat at 34.7 km/h
+     * sustained — a 10 km/h gap of clean separation between real-crash speeds
+     * and false-alarm-prone speeds. 25 km/h is the chosen ceiling.
+     *
+     * **Why this doesn't cause FN**:
+     *   - A real fall at < 25 km/h IMPACT: relaxation still available.
+     *   - A real fall at ≥ 25 km/h where the bike stops promptly: `speedDropOk`
+     *     opens the gate via the legitimate speed-drop path (no relaxation
+     *     needed — the rider is on the ground next to a stationary bike).
+     *   - A real fall at ≥ 25 km/h with GPS stale (rider unconscious in
+     *     thick cover): bypass clause re-enables the relaxation.
+     *   - A real fall at ≥ 25 km/h with GPS fresh and the bike rolling at
+     *     ≥ 25 km/h alongside the downed rider: bike escapes very quickly,
+     *     speed drops below 25 within seconds → relaxation re-enables. The
+     *     residual gap is "bike rolling alongside rider at ≥ 25 km/h for
+     *     the entire impactWindowMs (20 s)" — physically implausible.
+     *   - The SpeedDropMonitor watchdog (independent backstop) catches
+     *     long-duration speed=0 windows regardless of this gate.
+     */
+    val onSideRelaxationMaxSpeedKmh: Double = 25.0,
 )

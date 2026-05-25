@@ -2,6 +2,7 @@ package com.enderthor.kSafe.extension.crash
 
 import com.enderthor.kSafe.extension.util.Clock
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -2527,6 +2528,510 @@ class CrashStateMachineTest {
         assertEquals(
             "26 fresh on-side samples post-reset must engage IMPACT-relax → SILENCE_CHECK",
             CrashStateMachine.State.SILENCE_CHECK, sm.state,
+        )
+    }
+
+    // ── 2026-05-25 calibration-log regressions (FN2 / FN3 / FP) ───────────────
+    //
+    // Source data: a 4 h 31 min ride that produced three FNs (one simulated, two
+    // real) and one FP. The two real-fall FNs (elapsed 7372.9 s and 15321.9 s)
+    // had the device decisively on side / upside down post-impact (ax = 73 m/s²
+    // and az = -81 m/s² in the IMPACT sample respectively), but a `fresh` cadence
+    // reading from the SDK still showed 65–88 RPM and CAD_GATE killed SILENCE_CHECK
+    // in < 1 s on the first SILENCE sample. The FP (elapsed 14141.2 s) fired on a
+    // rough-terrain bump barrage at 36 km/h, in part because the SILENCE_CHECK
+    // orientation accumulator absorbed deviation-26 / deviation-17 bumps that
+    // would never represent gravity-only readings.
+    //
+    // Both fixes live in CrashStateMachine.handleSilenceCheck. The tests below pin:
+    //   (a) FN-fix: CAD_GATE is suppressed when the live orientation angle vs the
+    //       pre-impact reference is ≥ uprightAngleThresholdDegrees. The flag
+    //       `lastCadenceGateSuppressed` is set so the facade can log a
+    //       CAD_GATE_SUPPRESSED diagnostic.
+    //   (b) FN-regression: an upright SILENCE_CHECK with active cadence still
+    //       returns to MONITORING (the gate is suppressed ONLY on decisive
+    //       on-side evidence).
+    //   (c) FP-fix: samples whose deviation > silenceDeviationMax do NOT contribute
+    //       to the SILENCE_CHECK orientation accumulator — only `accelOk` samples
+    //       count, matching the IMPACT-phase accumulator gating.
+
+    /** Helper: drive into SILENCE_CHECK via the onSideRelaxed (IMPACT-phase) path.
+     *
+     * - pre-impact reference along +Z (upright)
+     * - 30 on-side accumulated samples in IMPACT (gravity along +X, dev = 0, gyro = 0.1)
+     * - speed stays HIGH (20 km/h, > crashConfirmSpeedKmh = 5) → speedDropOk = false
+     * - the relax gate (≥ 25 samples at ≥ 60°) fires on sample 25+ → SILENCE_CHECK
+     *
+     * Returns (sm, lastSampleTime). Caller continues feeding from `t + 20L`.
+     */
+    private fun smInSilenceCheckViaOnSideRelax(
+        thresholds: Thresholds = Thresholds(),
+    ): Pair<CrashStateMachine, Long> {
+        val (sm, _) = newSm(thresholds = thresholds)
+        sm.onSpeedUpdate(20.0)
+        // Enter IMPACT with an off-axis spike (impact pushed the device on its side).
+        val t0 = 1_000_000L
+        sm.onSample(sample(time = t0, peak = 80.0, smoothed = 30.0, gyro = 1.0,
+            ax = 9.81, ay = 0.0, az = 0.0))
+        assertEquals(CrashStateMachine.State.IMPACT, sm.state)
+        sm.setPreImpactReference(PreImpactRef(0.0, 0.0, 9.81, valid = true))
+        // Speed stays HIGH so speedDropOk cannot open the gate — onSideRelaxed is
+        // the only way through. minTimeSinceImpactMs = 500 → start accumulating
+        // post-500 ms so the first accumulator sample also satisfies timeOk.
+        var t = t0 + 520L  // > 500 ms post-impact
+        // 30 on-side quiet samples; the relax gate fires once count ≥ 25.
+        var transitioned = false
+        repeat(30) {
+            sm.onSample(sample(time = t, raw = 9.81, smoothed = 9.81, gyro = 0.1,
+                ax = 9.81, ay = 0.0, az = 0.0))
+            if (sm.state == CrashStateMachine.State.SILENCE_CHECK) transitioned = true
+            t += 20L
+        }
+        assertTrue(
+            "helper precondition: SM must have transitioned via onSideRelaxed " +
+                "(speed held high so speedDropOk cannot open the gate)",
+            transitioned,
+        )
+        return sm to (t - 20L)
+    }
+
+    @Test
+    fun `FN2 fix - on-side IMPACT-relax + active cadence does NOT fire CAD_GATE`() {
+        // Reproduces FN2 (elapsed 7412.8 s): rider crashed, device upside-down,
+        // bike still rolling (speed > 5 km/h), but the cadence SDK kept reading
+        // 88 RPM. Without the fix, CAD_GATE fires on the first SILENCE_CHECK
+        // sample and the SM returns to MONITORING → silent FN.
+        val (sm, tEnter) = smInSilenceCheckViaOnSideRelax()
+        assertEquals(CrashStateMachine.State.SILENCE_CHECK, sm.state)
+
+        // Make cadence freshness pass all four guards:
+        //   - lastCadenceUpdateMs != 0  (set on the 2nd onCadenceUpdate)
+        //   - age <= cadenceStaleThresholdMs (10 s default)
+        //   - cadenceLastChangeMs != CADENCE_CHANGE_NEVER (set after a value change)
+        //   - sinceChange <= cadenceStaleThresholdMs
+        //   - lastCadenceRpm > cadenceQuietThresholdRpm (20)
+        sm.onCadenceUpdate(80.0)  // first value: stamps NaN → 80, no change recorded
+        sm.onCadenceUpdate(85.0)  // value changes → cadenceLastChangeMs = lastSampleMs
+        // Drive ONE more SILENCE_CHECK sample while cadence is active AND on-side.
+        // The on-side latch was carried forward from IMPACT — currentOrientationAngleDeg
+        // reads ~90° (impact accumulator was 30 samples along +X vs upright ref).
+        val t = tEnter + 20L
+        val d = sm.onSample(sample(time = t, raw = 9.81, smoothed = 9.81, gyro = 0.1,
+            ax = 9.81, ay = 0.0, az = 0.0))
+
+        assertEquals(
+            "CAD_GATE must be suppressed when orientation is decisively on-side — " +
+                "FN2/FN3 root cause from the 2026-05-25 ride log",
+            CrashStateMachine.State.SILENCE_CHECK, sm.state,
+        )
+        assertNotEquals(CrashStateMachine.Decision.ReturnToMonitoring, d)
+        assertTrue(
+            "lastCadenceGateSuppressed must be set so the facade can log the diagnostic",
+            sm.lastCadenceGateSuppressed,
+        )
+    }
+
+    @Test
+    fun `FN regression - upright SILENCE_CHECK + active cadence still fires CAD_GATE`() {
+        // Pins the OTHER side of the suppression: when orientation is upright (or
+        // not yet known), CAD_GATE must behave exactly as before. A rider stopped
+        // at a traffic light who resumes pedalling must still bail the SM out of
+        // SILENCE_CHECK promptly.
+        val sm = smInSilenceCheck(
+            thresholds = Thresholds(),
+            preRef = PreImpactRef(0.0, 0.0, 9.81, valid = true),
+        )
+        // Upright SILENCE samples — angle stays ~0° vs upright ref.
+        // smInSilenceCheck already fed one settling sample (az = 9.81); send a few
+        // more so the orientation accumulator is well-populated upright. None of
+        // these should latch ORIENT_ONSIDE.
+        var t = 2_020L
+        repeat(8) {
+            sm.onSample(sample(time = t, raw = 9.81, smoothed = 9.81, gyro = 0.1,
+                ax = 0.0, ay = 0.0, az = 9.81))
+            t += 20L
+        }
+        assertEquals(CrashStateMachine.State.SILENCE_CHECK, sm.state)
+
+        // Now activate cadence. lastSampleMs is non-zero (we've processed
+        // samples), so both onCadenceUpdate calls land in the live time domain.
+        sm.onCadenceUpdate(80.0)
+        sm.onCadenceUpdate(85.0)  // change → cadenceLastChangeMs stamped
+
+        val d = sm.onSample(sample(time = t, raw = 9.81, smoothed = 9.81, gyro = 0.1,
+            ax = 0.0, ay = 0.0, az = 9.81))
+
+        assertEquals(
+            "CAD_GATE must still fire on an upright SILENCE_CHECK — suppression " +
+                "must engage ONLY for decisively non-upright orientations",
+            CrashStateMachine.Decision.ReturnToMonitoring, d,
+        )
+        assertEquals(CrashStateMachine.State.MONITORING, sm.state)
+        assertFalse(
+            "lastCadenceGateSuppressed must remain false on the upright path",
+            sm.lastCadenceGateSuppressed,
+        )
+    }
+
+    @Test
+    fun `FN regression - CAD_GATE suppressed when carried-forward accumulator is on-side, even without latch yet`() {
+        // Edge case: the suppression check runs BEFORE any SILENCE_CHECK sample
+        // has fed the accumulator (it reads the carried-forward IMPACT-phase
+        // accumulator). With the onSideRelaxed transition, the accumulator
+        // arrives with ≥ 25 on-side samples and the live angle is ~90°. The
+        // suppression must engage on the VERY FIRST SILENCE_CHECK sample,
+        // before the latch is computed for the first time.
+        val (sm, tEnter) = smInSilenceCheckViaOnSideRelax()
+
+        sm.onCadenceUpdate(60.0)
+        sm.onCadenceUpdate(65.0)  // ensure freshness-by-change
+
+        // The very first onSample inside SILENCE_CHECK that runs after the
+        // cadence has been made active.
+        val d = sm.onSample(sample(time = tEnter + 20L, raw = 9.81, smoothed = 9.81,
+            gyro = 0.1, ax = 9.81, ay = 0.0, az = 0.0))
+
+        assertEquals(CrashStateMachine.State.SILENCE_CHECK, sm.state)
+        assertTrue(sm.lastCadenceGateSuppressed)
+        assertNotEquals(CrashStateMachine.Decision.ReturnToMonitoring, d)
+    }
+
+    @Test
+    fun `FN end-to-end - on-side IMPACT-relax + active cadence still confirms via Decision_Confirm`() {
+        // The hard regression: not only must CAD_GATE be suppressed, the SM must
+        // also reach a Decision.Confirm afterwards. Mirrors FN2 / FN3 where the
+        // device was decisively on-side AND the rider was unconscious — the
+        // crash must be confirmed despite the phantom cadence.
+        val (sm, tEnter) = smInSilenceCheckViaOnSideRelax()
+        sm.onCadenceUpdate(80.0)
+        sm.onCadenceUpdate(85.0)
+        // Sustained on-side stillness with cadence still reporting bogus 85 RPM.
+        // onSideRelaxed gate (lastOrientationAngleDeg ≥ 60°) bypasses speedDropOk,
+        // so a high speed never blocks confirmation here.
+        var t = tEnter + 20L
+        var confirmed = false
+        // Need ≥ 4500 ms (LEGACY) of cumulative stillness from silenceStartedMs.
+        // silenceStartedMs was set when the SM entered SILENCE_CHECK in the helper.
+        repeat(300) {  // 300 * 20 ms = 6 s of headroom
+            // Touch cadence each iteration so age stays fresh and the suppression
+            // is exercised on every sample.
+            sm.onCadenceUpdate(if (it % 2 == 0) 84.0 else 86.0)
+            val d = sm.onSample(sample(time = t, raw = 9.81, smoothed = 9.81,
+                gyro = 0.1, ax = 9.81, ay = 0.0, az = 0.0))
+            if (d is CrashStateMachine.Decision.Confirm) {
+                confirmed = true
+                return@repeat
+            }
+            t += 20L
+        }
+        assertTrue(
+            "Confirm must fire — CAD_GATE suppression unblocks the on-side LEGACY 4.5 s window",
+            confirmed,
+        )
+        assertEquals(4_500L, sm.lastConfirmedSilenceMs)
+    }
+
+    @Test
+    fun `FP fix - bump samples with deviation gt silenceDeviationMax do not enter the orientation accumulator`() {
+        // Behavioural pin for the FP fix: in SILENCE_CHECK, only `accelOk`
+        // samples should contribute to the orientation accumulator. Mirrors the
+        // IMPACT-phase accumulator gating (handleImpact line ~524).
+        //
+        // Set-up: enter SILENCE_CHECK upright via the speedDropOk path so the
+        // accumulator starts EMPTY (no IMPACT-phase carry-forward). Feed 4
+        // quiet upright samples — orientationSampleCount climbs to 4, still
+        // below MIN_ORIENTATION_SAMPLES (5). Then feed multiple bumps with the
+        // direction set along +X.
+        //
+        // WITHOUT the fix: bumps would accumulate; count would cross 5 with
+        // mixed direction; the latch could fire ORIENT_ONSIDE.
+        // WITH the fix: bumps are filtered; count stays at 4; the next quiet
+        // sample brings it to 5 with PURE upright direction → angle ~0° →
+        // latch picks the 20 s upright window.
+        val t = Thresholds(
+            silenceDurationMs = 4_500L,
+            silenceDurationUprightMs = 20_000L,
+            uprightAngleThresholdDegrees = 45.0,
+            silenceDeviationMax = 4.0,
+        )
+        val sm = smInSilenceCheck(t, preRef = PreImpactRef(0.0, 0.0, 9.81, valid = true))
+        // smInSilenceCheck already fed one quiet sample (count = 1). Feed 3
+        // more quiet upright samples → count = 4, still below MIN = 5.
+        var tNow = 2_020L
+        repeat(3) {
+            sm.onSample(sample(time = tNow, raw = 9.81, smoothed = 9.81, gyro = 0.1,
+                ax = 0.0, ay = 0.0, az = 9.81))
+            tNow += 20L
+        }
+        assertEquals(CrashStateMachine.State.SILENCE_CHECK, sm.state)
+        assertEquals(
+            "latch must not yet have engaged (count < MIN)",
+            -1.0, sm.lastOrientationAngleDeg, 0.0,
+        )
+
+        // Bumps with deviation = 16.0 - 9.81 = 6.19 m/s² (well above 4) and
+        // direction strongly along +X. Each bump triggers the within-budget
+        // !isStill reset path (no on-side latch yet, so resetSilenceWindow
+        // fires AND wipes the accumulator). After the reset, the next quiet
+        // sample arrives with count = 0 again. Without the FP-fix accelOk
+        // gate, the bump would have added a +X sample before the reset wiped
+        // it — but a wipe loses it anyway. So the failure mode this test pins
+        // is more subtle: after several bump/quiet cycles, the rebuilt
+        // accumulator must consist of upright Z-axis samples only.
+        repeat(3) {
+            sm.onSample(sample(time = tNow, raw = 16.0, smoothed = 16.0, gyro = 0.1,
+                ax = 9.81, ay = 0.0, az = 0.0))
+            tNow += 20L
+            // Refill with quiet upright between bumps so the SM stays in
+            // SILENCE_CHECK (within-budget retry path).
+            repeat(2) {
+                sm.onSample(sample(time = tNow, raw = 9.81, smoothed = 9.81, gyro = 0.1,
+                    ax = 0.0, ay = 0.0, az = 9.81))
+                tNow += 20L
+            }
+        }
+        // Feed enough quiet upright samples to cross MIN_ORIENTATION_SAMPLES
+        // post-rebuild. The latch must fire on UPRIGHT (angle ~ 0°), NOT
+        // ORIENT_ONSIDE.
+        repeat(8) {
+            sm.onSample(sample(time = tNow, raw = 9.81, smoothed = 9.81, gyro = 0.1,
+                ax = 0.0, ay = 0.0, az = 9.81))
+            tNow += 20L
+        }
+        assertEquals(CrashStateMachine.State.SILENCE_CHECK, sm.state)
+        assertTrue(
+            "latch must have engaged after enough quiet upright samples (got " +
+                "${sm.lastOrientationAngleDeg}°)",
+            sm.lastOrientationAngleDeg >= 0.0,
+        )
+        assertTrue(
+            "latched angle must be UPRIGHT (< 45°) after a bump-quiet cycle — " +
+                "bumps must not contaminate the accumulator post-reset (got " +
+                "${sm.lastOrientationAngleDeg}°)",
+            sm.lastOrientationAngleDeg < t.uprightAngleThresholdDegrees,
+        )
+    }
+
+    // ── 2026-05-25 FP-fix: speed ceiling on onSideRelaxed ─────────────────────
+    //
+    // The FP at elapsed 14141.2 s on the 2026-05-25 ride confirmed at 36 km/h
+    // sustained — well above any plausible "bike rolling after rider down"
+    // scenario. The on-side relaxation path now gates on a speed ceiling
+    // (default 25 km/h, GPS-stale bypasses).
+    //
+    // Three regression tests:
+    //   (a) FP block: sustained ≥ 25 km/h must NOT engage relaxation even with
+    //       25 on-side samples at ≥ 60°. Falls back to speedDropOk path —
+    //       which is `false` at 36 km/h → state stays in IMPACT until window
+    //       expires (IMPACT_TIMEOUT, no confirm).
+    //   (b) FN preservation: < 25 km/h still engages relaxation as before.
+    //   (c) GPS-stale bypass: high speed BUT gps_stale → relaxation re-enables.
+
+    /** Drive the SM through enough on-side IMPACT samples that the relaxation
+     *  WOULD fire if the speed gate allowed it. Returns the SM at the next
+     *  sample boundary (still in IMPACT phase; whether it transitions to
+     *  SILENCE_CHECK depends on the gate). Caller controls speed and gpsStale.
+     */
+    private fun driveImpactWithOnSideSamples(
+        thresholds: Thresholds,
+        sampleCount: Int = 30,
+    ): Triple<CrashStateMachine, ClockHandle, Long> {
+        val (sm, h) = newSm(thresholds = thresholds)
+        // Speed must be > minSpeedForCrashKmh on the impact-entry sample.
+        sm.onSpeedUpdate(40.0)
+        val t0 = 1_000_000L
+        sm.onSample(sample(time = t0, peak = 80.0, smoothed = 30.0, gyro = 1.0,
+            ax = 9.81, ay = 0.0, az = 0.0))
+        assertEquals(CrashStateMachine.State.IMPACT, sm.state)
+        sm.setPreImpactReference(PreImpactRef(0.0, 0.0, 9.81, valid = true))
+        var t = t0 + 520L
+        repeat(sampleCount) {
+            sm.onSample(sample(time = t, raw = 9.81, smoothed = 9.81, gyro = 0.1,
+                ax = 9.81, ay = 0.0, az = 0.0))
+            t += 20L
+        }
+        return Triple(sm, h, t)
+    }
+
+    @Test
+    fun `FP fix - onSideRelaxed does NOT fire when speed is at or above onSideRelaxationMaxSpeedKmh`() {
+        // Reproduces the FP signature: speed 36 km/h sustained, IMPACT-phase
+        // accumulator filled with 30 on-side samples (would otherwise fire
+        // relaxation). With the speed ceiling (25 km/h, default), the gate
+        // remains closed and the SM stays in IMPACT. Eventually IMPACT_TIMEOUT
+        // fires — no confirm, no FP.
+        val thresholds = Thresholds(
+            onSideRelaxationMaxSpeedKmh = 25.0,
+            crashConfirmSpeedKmh = 5,
+        )
+        val (sm, _) = newSm(thresholds = thresholds)
+        sm.onSpeedUpdate(40.0)
+        val t0 = 1_000_000L
+        sm.onSample(sample(time = t0, peak = 80.0, smoothed = 30.0, gyro = 1.0,
+            ax = 9.81, ay = 0.0, az = 0.0))
+        assertEquals(CrashStateMachine.State.IMPACT, sm.state)
+        sm.setPreImpactReference(PreImpactRef(0.0, 0.0, 9.81, valid = true))
+        // Speed STAYS HIGH — the FP signature. With the ceiling gate, all 30
+        // on-side samples should NOT fire the relaxation. State must remain
+        // IMPACT throughout.
+        sm.onSpeedUpdate(36.0)
+        var t = t0 + 520L
+        repeat(30) {
+            sm.onSample(sample(time = t, raw = 9.81, smoothed = 9.81, gyro = 0.1,
+                ax = 9.81, ay = 0.0, az = 0.0))
+            t += 20L
+        }
+        assertEquals(
+            "onSideRelaxed must NOT fire at sustained 36 km/h — the FP signature " +
+                "from elapsed 14141.2 s on the 2026-05-25 ride. State must stay in IMPACT.",
+            CrashStateMachine.State.IMPACT, sm.state,
+        )
+    }
+
+    @Test
+    fun `FN preservation - onSideRelaxed still fires below onSideRelaxationMaxSpeedKmh`() {
+        // Pins the OTHER side of the ceiling: a real fall at 20 km/h (below the
+        // 25 km/h ceiling) must still engage the relaxation — matching the
+        // existing helper-based on-side tests that this regression must not
+        // disturb. 20 km/h is the speed used by smInSilenceCheckViaOnSideRelax
+        // and by the CR2 on-side preservation tests.
+        val thresholds = Thresholds(
+            onSideRelaxationMaxSpeedKmh = 25.0,
+            crashConfirmSpeedKmh = 5,
+        )
+        val (sm, _) = newSm(thresholds = thresholds)
+        sm.onSpeedUpdate(20.0)  // below ceiling AND above minSpeedForCrashKmh
+        val t0 = 1_000_000L
+        sm.onSample(sample(time = t0, peak = 80.0, smoothed = 30.0, gyro = 1.0,
+            ax = 9.81, ay = 0.0, az = 0.0))
+        assertEquals(CrashStateMachine.State.IMPACT, sm.state)
+        sm.setPreImpactReference(PreImpactRef(0.0, 0.0, 9.81, valid = true))
+        // Speed stays at 20 (< 25 ceiling). 30 on-side samples must fire
+        // relaxation and transition to SILENCE_CHECK.
+        var t = t0 + 520L
+        var transitioned = false
+        repeat(30) {
+            sm.onSample(sample(time = t, raw = 9.81, smoothed = 9.81, gyro = 0.1,
+                ax = 9.81, ay = 0.0, az = 0.0))
+            if (sm.state == CrashStateMachine.State.SILENCE_CHECK) transitioned = true
+            t += 20L
+        }
+        assertTrue(
+            "onSideRelaxed must fire at 20 km/h (below 25 km/h ceiling) — real " +
+                "falls in the 2026-05-25 ride all had IMPACT speeds < 25 km/h",
+            transitioned,
+        )
+        assertEquals(CrashStateMachine.State.SILENCE_CHECK, sm.state)
+    }
+
+    @Test
+    fun `FN preservation - GPS-stale bypasses the speed ceiling on onSideRelaxed`() {
+        // FN3 from the 2026-05-25 ride had the stale-GPS trap: device pinned
+        // on its side reading 0.15 m/s² deviation, yet speed=15.1 km/h echoed
+        // from a pre-crash SDK reading (resolved 3 s later via SPDRP_WSTART
+        // trigger_speed=0.00). If FN3's IMPACT speed had instead been > 25,
+        // the literal ceiling would have blocked relaxation — but GPS-stale
+        // bypasses this. The orientation evidence alone carries the decision
+        // when the speed reading isn't trustworthy.
+        val thresholds = Thresholds(
+            onSideRelaxationMaxSpeedKmh = 25.0,
+            crashConfirmSpeedKmh = 5,
+        )
+        val (sm, _) = newSm(thresholds = thresholds)
+        sm.onSpeedUpdate(40.0)  // above ceiling — but we'll flag stale
+        val t0 = 1_000_000L
+        sm.onSample(sample(time = t0, peak = 80.0, smoothed = 30.0, gyro = 1.0,
+            ax = 9.81, ay = 0.0, az = 0.0))
+        assertEquals(CrashStateMachine.State.IMPACT, sm.state)
+        sm.setPreImpactReference(PreImpactRef(0.0, 0.0, 9.81, valid = true))
+        // Mark GPS stale BEFORE accumulating samples — the bypass clause is
+        // evaluated on every IMPACT sample.
+        sm.setSpeedGpsStale(true)
+        var t = t0 + 520L
+        var transitioned = false
+        repeat(30) {
+            sm.onSample(sample(time = t, raw = 9.81, smoothed = 9.81, gyro = 0.1,
+                ax = 9.81, ay = 0.0, az = 0.0))
+            if (sm.state == CrashStateMachine.State.SILENCE_CHECK) transitioned = true
+            t += 20L
+        }
+        assertTrue(
+            "GPS-stale bypass must re-enable onSideRelaxed even at 40 km/h " +
+                "indicated speed — FN3 stale-GPS scenario",
+            transitioned,
+        )
+        assertEquals(CrashStateMachine.State.SILENCE_CHECK, sm.state)
+    }
+
+    @Test
+    fun `FP fix - bump on first SILENCE_CHECK sample of onSideRelaxed transition does not contaminate the on-side latch`() {
+        // Strongest observable test of the accelOk gating in handleSilenceCheck.
+        //
+        // Scenario: rider crashes on a rough section. The IMPACT-relax path fires
+        // (≥ 25 on-side samples accumulated in IMPACT phase), and the very FIRST
+        // SILENCE_CHECK sample happens to be a terrain bump WITH a strong +Z
+        // component (e.g. the bike landed flat after a small drop, or a rebound
+        // of the rear wheel). Without the fix, this bump's +Z contribution
+        // pulls the accumulator's mean direction back toward upright — the
+        // first computeEffectiveSilenceMs of the SILENCE_CHECK phase computes a
+        // sub-45° angle and latches ORIENT_UPRIGHT (20 s window). The bump then
+        // !isStill-resets (no on-side latch any more — latch is 20 s upright)
+        // and the accumulator is wiped. silenceStartedMs is reset. With the
+        // bike still rolling (speedDropOk false), the SM never re-acquires the
+        // latch — Confirm never fires within the budget.
+        //
+        // With the fix: the bump is NOT accumulated. The first
+        // computeEffectiveSilenceMs sees the clean carried-forward
+        // 25-on-side-samples accumulator → angle ~90° → legacy 4.5 s window
+        // latched + ORIENT_ONSIDE. The bump's !isStill is then absorbed by the
+        // CR2 on-side preservation path (latch + accumulator survive). The
+        // next quiet on-side samples confirm within ~4.5 s of SILENCE_CHECK
+        // entry. The crash is detected.
+        val (sm, tEnter) = smInSilenceCheckViaOnSideRelax()
+        assertEquals(CrashStateMachine.State.SILENCE_CHECK, sm.state)
+
+        // Feed a non-still sample with a strong +Z direction so a leaked
+        // accumulator entry would notably shift the mean toward upright.
+        // raw = 300 → deviation = 290 ≫ silenceDeviationMax = 4.
+        var t = tEnter + 20L
+        sm.onSample(sample(time = t, raw = 300.0, smoothed = 300.0, gyro = 0.1,
+            ax = 0.0, ay = 0.0, az = 300.0))
+        t += 20L
+
+        // After the bump, the latch must reflect the clean on-side evidence.
+        // Without the fix, the bump's +Z contamination would have driven the
+        // latched angle below 45° and resetSilenceWindow would have wiped
+        // lastOrientationAngleDeg to -1.0 — failing the assertion either way.
+        assertTrue(
+            "latched orientation angle must remain on-side (>= 45°) after a +Z bump on " +
+                "the first SILENCE_CHECK sample — without the FP fix the bump would " +
+                "pollute the accumulator and either flip the latch to ORIENT_UPRIGHT or " +
+                "trigger the within-budget reset that clears the angle to -1. Got " +
+                "${sm.lastOrientationAngleDeg}",
+            sm.lastOrientationAngleDeg >= 45.0,
+        )
+
+        // Stronger pin: with the fix, the CR2 on-side preservation absorbed the
+        // bump. Continue feeding quiet on-side samples — Confirm must fire near
+        // the 4.5 s mark from SILENCE_CHECK entry, NOT push out to budget exit.
+        var confirmed = false
+        repeat(280) {  // 280 * 20 ms = 5.6 s — plenty of slack past 4.5 s
+            val d = sm.onSample(sample(time = t, raw = 9.81, smoothed = 9.81,
+                gyro = 0.1, ax = 9.81, ay = 0.0, az = 0.0))
+            if (d is CrashStateMachine.Decision.Confirm) {
+                confirmed = true
+                return@repeat
+            }
+            t += 20L
+        }
+        assertTrue(
+            "Confirm must fire — the on-side latch must have survived the bump so the " +
+                "rolling-bike scenario does not block confirmation",
+            confirmed,
+        )
+        assertEquals(
+            "Confirm must use the legacy 4.5 s window (on-side), not 20 s (upright)",
+            4_500L, sm.lastConfirmedSilenceMs,
         )
     }
 }

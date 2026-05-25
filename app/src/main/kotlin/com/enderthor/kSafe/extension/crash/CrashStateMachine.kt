@@ -294,6 +294,45 @@ class CrashStateMachine(
     @Volatile var lastOrientationAngleDeg: Double = -1.0
         private set
 
+    /**
+     * Set to `true` on the most recent [onSample] call when CAD_GATE would have
+     * fired ([isCadenceActive] returned `true`) but suppression engaged because
+     * the live orientation evidence shows the device is decisively non-upright
+     * (`currentOrientationAngleDeg() >= uprightAngleThresholdDegrees`).
+     *
+     * Rationale: a bike on its side or upside down **cannot** be pedalled at any
+     * RPM. When the SDK still reports a non-zero cadence post-impact, the most
+     * likely explanations are (a) the sensor was changing value before the crash
+     * and the SDK is echoing the last live reading, (b) crank/wheel rotation
+     * during the impact registered a few phantom revolutions, or (c) the value
+     * fluctuated within the sensor's noise floor — none of which represent an
+     * awake rider pedalling. Allowing CAD_GATE to fire in this state produced
+     * the FN2 / FN3 misses on the 2026-05-25 long ride (bike decisively on side
+     * post-fall, cadence sensor still reading 65–88 RPM, CAD_GATE killed the
+     * silence check in <1 s).
+     *
+     * Read by the facade once per [onSample] return to emit a diagnostic
+     * `CAD_GATE_SUPPRESSED` calibration row. The state machine clears the flag
+     * automatically on the next sample (it is a per-sample edge, not a
+     * latched state) — the facade must read it BEFORE the next [onSample] call.
+     */
+    @Volatile var lastCadenceGateSuppressed: Boolean = false
+        private set
+
+    /**
+     * Live angle that triggered the CAD_GATE suppression on the most recent
+     * [onSample] call (degrees vs pre-impact reference). Captured BEFORE the
+     * silence-window orientation latch updates `lastOrientationAngleDeg`,
+     * which is what made the original diagnostic log read -1.0 on the very
+     * first suppression sample (the suppression decision uses the live angle;
+     * the latch is set later by `computeEffectiveSilenceMs`).
+     *
+     * `-1.0` when no suppression fired this tick. Read by the facade only
+     * when [lastCadenceGateSuppressed] is `true`.
+     */
+    @Volatile var lastCadenceGateSuppressedAngleDeg: Double = -1.0
+        private set
+
     /** Snapshot of the current pre-impact reference. For calibration logging. */
     val preImpactReference: PreImpactRef get() = preImpactRef
 
@@ -306,6 +345,12 @@ class CrashStateMachine(
         // [setSpeedGpsStale] by the facade on transition. Keeps the 50 Hz hot path
         // allocation-free (avoids a sample.copy on every tick during GPS-stale stretches).
         if (startTimeMs == 0L) startTimeMs = clock.nowMs()
+        // Per-sample edge — diagnostic flags. Clear before any handler runs so the
+        // facade can read them after onSample returns and not see a stale value
+        // from a previous sample. Handlers set them to true when their condition
+        // triggers; if no handler sets them, they stay false for this tick.
+        lastCadenceGateSuppressed = false
+        lastCadenceGateSuppressedAngleDeg = -1.0
 
         return when (state) {
             State.MONITORING -> handleMonitoring(sample, now)
@@ -553,8 +598,30 @@ class CrashStateMachine(
         // can shift the running average enough to fall below the 60° gate
         // before the latch can read it.
         val angleNow = currentOrientationAngleDeg()
+        // FP-fix (2026-05-25, elapsed 14141.2 s): also gate the relaxation on
+        // current speed. The relaxation's stated purpose is "the bike rolled
+        // after the rider went down" — a scenario that decelerates within a
+        // few seconds. A bike maintaining ≥ 25 km/h sustained for the entire
+        // IMPACT window is incompatible with that scenario; what actually
+        // happens at that speed is a rider on a rough descent crossing the
+        // SMOOTH gate marginally, with the IMPACT-phase accumulator filling
+        // with on-side samples from sustained forward lean.
+        //
+        // GPS-stale bypasses the ceiling — when the SDK speed reading isn't
+        // trustworthy (tunnels, dense cover, post-crash GPS loss with a
+        // pinned device) the orientation evidence alone is allowed to carry
+        // the decision, matching `isSpeedDropConfirmed`'s own GPS-stale
+        // bypass.
+        //
+        // Empirical separation from the 2026-05-25 ride log: four real falls
+        // all had IMPACT speeds 5.8 / 6.7 / 8.9 / 15.0 km/h; the FP sat at
+        // 34.7 km/h sustained — clean 10 km/h gap. The 25 km/h ceiling is
+        // configurable via [Thresholds.onSideRelaxationMaxSpeedKmh].
+        val onSideRelaxedSpeedOk = lastSpeedGpsStale ||
+            lastSpeedKmh < thresholds.onSideRelaxationMaxSpeedKmh
         val onSideRelaxed = orientationSampleCount >= IMPACT_RELAXATION_MIN_SAMPLES &&
-                            angleNow >= thresholds.onSideRelaxationAngleDeg
+                            angleNow >= thresholds.onSideRelaxationAngleDeg &&
+                            onSideRelaxedSpeedOk
         val gateOk = accelOk && gyroOk && timeOk && (speedDropOk || onSideRelaxed)
         if (gateOk) {
             state = State.SILENCE_CHECK
@@ -661,38 +728,81 @@ class CrashStateMachine(
      */
     private fun handleSilenceCheck(sample: SensorSample, now: Long): Decision {
         // Cadence gate (instant false-alarm exit): only when cadence sensor present + active.
+        //
+        // FN-fix (2026-05-25): suppress CAD_GATE when the live orientation evidence
+        // shows the device is decisively non-upright (angle vs pre-impact reference
+        // ≥ uprightAngleThresholdDegrees, i.e. 45° by default). A bike on its side
+        // or upside down cannot be pedalled at any RPM, so any "fresh" cadence
+        // reading in that orientation must be phantom (sensor echoing pre-crash
+        // value via SDK last-known-value, or impact-induced spurious revolution).
+        //
+        // The angle is computed against the **carried-forward IMPACT-phase
+        // accumulator** on the onSideRelaxed path (already 25+ on-side samples at
+        // ≥60° by definition — see [handleImpact]'s gateOk branch and the CR3 angle
+        // stamp at line 612). On the speedDropOk path the accumulator is reset and
+        // [currentOrientationAngleDeg] returns -1.0 → suppression does NOT engage
+        // and CAD_GATE behaves exactly as before, preserving the existing
+        // "rider stopped at a light, pedalling resumed → bail" semantics for
+        // upright stops. The suppression therefore only fires when there is
+        // already strong evidence of a non-upright crash.
         if (isCadenceActive(now)) {
-            resetTimers()
-            resetSilenceWindow()
-            state = State.MONITORING
-            return Decision.ReturnToMonitoring
+            val orientationAngle = currentOrientationAngleDeg()
+            if (orientationAngle >= thresholds.uprightAngleThresholdDegrees) {
+                // Decisive on-side → CAD_GATE is unsafe. Stay in SILENCE_CHECK
+                // and let the accel/orientation gates decide. Capture the LIVE
+                // angle here (not `lastOrientationAngleDeg`, which is the
+                // latched value that the silence-window updates AFTER this
+                // gate) so the facade's CAD_GATE_SUPPRESSED row shows the
+                // angle that actually drove the suppression decision.
+                lastCadenceGateSuppressed = true
+                lastCadenceGateSuppressedAngleDeg = orientationAngle
+            } else {
+                resetTimers()
+                resetSilenceWindow()
+                state = State.MONITORING
+                return Decision.ReturnToMonitoring
+            }
         }
 
         val gpsStale = lastSpeedGpsStale
         val deviationMax = if (gpsStale) thresholds.gpsStaleSilenceDeviationMax
                            else thresholds.silenceDeviationMax
 
-        // Accumulate X/Y/Z for orientation classification (Revision 5).
-        // Unconditional here (no accelOk gate, unlike the IMPACT accumulation
-        // in handleImpact): a sample with deviation > silenceDeviationMax is
-        // !isStill below and the upright/gap/no-latch path triggers
-        // resetSilenceWindow(), which wipes the accumulator wholesale — so an
-        // extra per-sample gate is redundant for those paths. The CR2 on-side
-        // preservation path (see the !isStill branch below) keeps the
-        // accumulator across a within-budget bump; the bump sample itself
-        // contributes one X/Y/Z entry whose direction matches the surrounding
-        // on-side stillness (a small jolt at on-side orientation), so its
-        // contribution to the gravity-vector average is negligible and the
-        // latch's angle classification stays correct.
-        orientationSumX += sample.accelX
-        orientationSumY += sample.accelY
-        orientationSumZ += sample.accelZ
-        orientationSampleCount++
-
         // Use rawMagnitude — production CrashDetectionManager.processAccelerometer() uses
         // `abs(magnitude - GRAVITY)` (raw, not smoothed). Behavioural-equivalence requirement.
         val deviation = abs(sample.rawMagnitude - GRAVITY)
         val accelOk = deviation <= deviationMax
+
+        // Accumulate X/Y/Z for orientation classification (Revision 5), gated on
+        // accelOk — mirroring the IMPACT-phase accumulation in [handleImpact].
+        //
+        // FP-fix (2026-05-25): a previous comment block claimed unconditional
+        // accumulation was safe because "any !isStill sample triggers
+        // resetSilenceWindow", but that is wrong for the CR2 on-side preservation
+        // path (the within-budget bump branch below explicitly **does not** reset
+        // the accumulator when the latch was on-side). On a rough-terrain descent
+        // the FP-2 incident from 2026-05-25 (elapsed 14141.2 s) crossed the
+        // SMOOTH threshold by 2 m/s² above the floor, transitioned via
+        // onSideRelaxed (the IMPACT-phase accumulator was already polluted by
+        // sustained off-axis tilt during a 2.2 s impact→silence gap), then
+        // accumulated `deviation = 26.13`, `16.92`, `5.63` samples whose
+        // direction-of-impact reading skewed the running gravity-vector average
+        // to a 75.9° "on side" classification → 4.5 s LEGACY window confirmed at
+        // 36.6 km/h, cancelled by rider in 7.2 s.
+        //
+        // Gating accumulation by accelOk ensures only samples whose magnitude is
+        // close to gravity contribute to the direction average. Bumps whose
+        // magnitude is dominated by impact force (rather than gravity) no longer
+        // pollute the orientation latch. The accelOk threshold (4 m/s² default,
+        // 8 m/s² GPS-stale) is the same one used for `isStill` below, so the
+        // accumulation and decision criteria stay in lockstep.
+        if (accelOk) {
+            orientationSumX += sample.accelX
+            orientationSumY += sample.accelY
+            orientationSumZ += sample.accelZ
+            orientationSampleCount++
+        }
+
         val speedDropOk = isSpeedDropConfirmed()
         // Compute the silence-window duration first — this may also LATCH the
         // orientation regime (set lockedEffectiveSilenceMs and lastOrientationAngleDeg)

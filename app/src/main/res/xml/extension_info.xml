@@ -90,6 +90,12 @@
         icon="@drawable/ic_ksafe"
         typeId="carb-burn-rate" />
     <DataType
+        description="@string/carb_avg_burn_rate_datatype_desc"
+        displayName="@string/carb_avg_burn_rate_datatype_name"
+        graphical="true"
+        icon="@drawable/ic_ksafe"
+        typeId="carb-avg-burn-rate" />
+    <DataType
         description="@string/carbs_burned_datatype_desc"
         displayName="@string/carbs_burned_datatype_name"
         graphical="true"

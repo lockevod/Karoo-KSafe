@@ -2,6 +2,7 @@ package com.enderthor.kSafe.extension.managers
 
 import com.enderthor.kSafe.data.EmergencyReason
 import com.enderthor.kSafe.data.KSafeConfig
+import com.enderthor.kSafe.extension.util.CarbIntegrator
 import com.enderthor.kSafe.extension.util.Clock
 import com.enderthor.kSafe.extension.util.SystemClock
 import com.enderthor.kSafe.extension.util.formatUs
@@ -64,11 +65,11 @@ class MedicalEpisodeDetector(
     private val ACTIVE_SPEED_KMH           = 5.0
     private val PERIODIC_LOG_INTERVAL_MS   = 120_000L  // 2 min, matching CrashDetectionManager.PERIODIC
 
-    /** Matches [CrashDetectionManager.GPS_STALE_MS]: when speed-value bytes have not changed
-     *  for this long the Karoo SDK is replaying the last known value (GPS lock lost). For the
-     *  COLLAPSE concurrent-speed gate we treat a stale stream as "not moving" to bias toward
-     *  FP reduction — see H2 fix. */
-    private val SPEED_STALE_MS             = 10_000L
+    /** Speed-stale window read from [CarbIntegrator] — same value as
+     *  `CrashDetectionManager.GPS_STALE_MS`, just consolidated post-v18.1 so a future
+     *  tune touches one place. The COLLAPSE concurrent-speed gate treats a stale
+     *  stream as "not moving" to bias toward FP reduction — see H2 fix. */
+    private val SPEED_STALE_MS             = CarbIntegrator.SPEED_STALE_MS
 
     /** H3 fix — cross-check thresholds before FLATLINE. If cadence is above this OR power is
      *  above [POWER_ACTIVE_W] the rider is clearly still pedalling under load and the HR

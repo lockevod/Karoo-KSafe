@@ -268,7 +268,11 @@ class EmergencyManager(
                     karooSystem.dispatch(BEEP_LONG)
                     karooSystem.dispatch(
                         SystemNotification(
-                            id = "ksafe-checkin-warn",
+                            // Unique-per-fire suffix: a rider who restarts the check-in
+                            // countdown twice in quick succession (e.g. test mode) would
+                            // otherwise re-dispatch the same id and risk crashing the
+                            // host's notification tracker.
+                            id = "ksafe-checkin-warn-${System.currentTimeMillis()}",
                             message = "Check-in in 10 min",
                             header = context.getString(R.string.app_name),
                         )
@@ -387,7 +391,11 @@ class EmergencyManager(
                 // the hardcoded urgent BEEP_LONG + BEEP_URGENT sequence further down.
                 config.wellnessBeepPattern.toPlayBeepPattern()?.let { karooSystem.dispatch(it) }
                 karooSystem.dispatch(InRideAlert(
-                    id = "ksafe-warning-${reason.name.lowercase()}",
+                    // Unique-per-fire id: re-dispatching the same id while the host
+                    // still tracks the previous overlay can crash the Karoo ride app.
+                    // WARNING-level incidents have no per-reason cooldown so two
+                    // back-to-back fires of the same reason are reachable.
+                    id = "ksafe-warning-${reason.name.lowercase()}-${System.currentTimeMillis()}",
                     icon = com.enderthor.kSafe.R.drawable.ic_ksafe,
                     title = renderAlertText(titleTemplate, tokens, maxLength = ALERT_TITLE_MAX_CHARS),
                     detail = renderAlertText(detailTemplate, tokens, maxLength = ALERT_DETAIL_MAX_CHARS),
@@ -824,8 +832,14 @@ class EmergencyManager(
             PlayBeepPattern.Tone(frequency = null, durationMs = 150),
             PlayBeepPattern.Tone(frequency = 400, durationMs = 600),
         )))
+        // Unique-per-fire suffix on both ids (InRideAlert AND SystemNotification):
+        // the sender's retry loop can call notifyDeliveryFailure multiple times for
+        // the same provider+reason across its ~30 min retry window. Re-dispatching
+        // the same id has been observed to crash the Karoo ride app's overlay
+        // tracker.
+        val failureDispatchedAtMs = System.currentTimeMillis()
         karooSystem.dispatch(InRideAlert(
-            id = "ksafe-alert-delivery-failed-${reason.name.lowercase()}",
+            id = "ksafe-alert-delivery-failed-${reason.name.lowercase()}-$failureDispatchedAtMs",
             icon = com.enderthor.kSafe.R.drawable.ic_ksafe,
             title = context.getString(R.string.alert_delivery_failed_title),
             detail = context.getString(R.string.alert_delivery_failed_detail, provider.name),
@@ -840,7 +854,7 @@ class EmergencyManager(
         // fallback, a rider in a tunnel whose ride ends before the sender gives
         // up would just hear an unfamiliar beep with no on-screen explanation.
         karooSystem.dispatch(SystemNotification(
-            id = "ksafe-alert-delivery-failed-sys-${reason.name.lowercase()}",
+            id = "ksafe-alert-delivery-failed-sys-${reason.name.lowercase()}-$failureDispatchedAtMs",
             message = context.getString(R.string.alert_delivery_failed_detail, provider.name),
             header = context.getString(R.string.alert_delivery_failed_title),
         ))

@@ -8,7 +8,9 @@ import com.enderthor.kSafe.data.fuelingAlertColorRes
 import com.enderthor.kSafe.extension.util.ABSORPTION_CAP_GPH
 import com.enderthor.kSafe.extension.util.ALERT_DETAIL_MAX_CHARS
 import com.enderthor.kSafe.extension.util.ALERT_TITLE_MAX_CHARS
-import com.enderthor.kSafe.extension.util.IntensityZoneCalculator
+import com.enderthor.kSafe.extension.util.CarbBurnEstimator
+import com.enderthor.kSafe.extension.util.CarbIntegrator
+import com.enderthor.kSafe.extension.util.FuelingAlertScheduler
 import com.enderthor.kSafe.extension.util.ZoneSnapshot
 import com.enderthor.kSafe.extension.util.ZoneSource
 import com.enderthor.kSafe.extension.util.renderAlertText
@@ -48,24 +50,15 @@ class CarbsTracker(
     // deficit / time thresholds have minute granularity downstream, and the zone-aware
     // target rate changes slowly relative to a 15 s tick. Halves wakeups vs. 5 s.
     private val MONITOR_TICK_MS         = 15_000L
-    private val ALERT_COOLDOWN_MS       = 5L * 60_000L
     private val PERIODIC_LOG_INTERVAL_MS = 120_000L
 
-    /**
-     * Speed below which the rider is treated as stationary and carb integration
-     * pauses. 2 km/h sits below a slow walking pace, so any actual riding (even
-     * pushing the bike up a hill) keeps integrating. Bench tests and traffic-light
-     * stops correctly freeze the target. Same threshold used in [HydrationTracker].
-     */
-    private val MOVING_GATE_KMH = 2.0
-
-    /**
-     * If the SDK has been emitting the same bit-exact speed value for longer than
-     * this, treat as stale (probable GPS lock loss in a tunnel / forest) and stop
-     * integrating. Real GPS readings vary by ≥0.1 km/h between emissions even at
-     * cruise, so cruise control doesn't hit this. Matches [CrashDetectionManager.GPS_STALE_MS].
-     */
-    private val SPEED_STALE_MS = 10_000L
+    /** Speed gate + GPS-stale window are owned by [CarbIntegrator] now so the
+     *  pure integration logic can be tested without a tracker harness. The
+     *  per-tick math reads them from there; the legacy fields stayed in this
+     *  class only because [updateSpeed] needs the same gate for its
+     *  publishStatus transition logic. */
+    private val MOVING_GATE_KMH = CarbIntegrator.MOVING_GATE_KMH
+    private val SPEED_STALE_MS  = CarbIntegrator.SPEED_STALE_MS
 
     // See HydrationTracker — InRideAlert.backgroundColor / .textColor are @ColorRes,
     // not @ColorInt. Use R.color.* resources or the host's getColor() crashes.
@@ -87,7 +80,7 @@ class CarbsTracker(
     @Volatile private var lastSpeedChangeMs: Long = 0L
 
     // ─── Session state (reset by start()) ────────────────────────────────────
-    @Volatile private var cumTargetG = 0f
+    @Volatile private var cumBurnedG = 0f
     @Volatile private var cumLoggedG = 0
     @Volatile private var sessionStartMs = 0L
     @Volatile private var lastTickMs = 0L
@@ -123,7 +116,37 @@ class CarbsTracker(
      * [evaluateTimeAlert] / [logEntry] / [undoLastForSlot] together.
      */
     @Volatile private var lastRealLogMs = 0L
-    @Volatile private var lastAlertMs = 0L
+    // v18 L1: `lastAlertMs` removed — was used only to build the `InRideAlert.id`
+    // ("ksafe-carb-alert-$source-${lastAlertMs}") and tracked the most recent
+    // dispatch wall-clock. Replaced by a local `System.currentTimeMillis()` at
+    // dispatch time in [fireAlert] — the cooldown gates are now all per-source
+    // (`lastTimeAlertFireMs`, `lastDeficitAlertFireMs`), so the shared field
+    // had no remaining consumer. Removed from [CarbFuelingState] persistence
+    // too; old snapshots with the field are silently dropped by
+    // `ignoreUnknownKeys = true`.
+    /**
+     * Wall-clock ms when a TIME-source alert last fired in this session. Drives
+     * the pure-interval gate in [evaluateTimeAlert]:
+     * `now - lastTimeAlertFireMs >= intervalMs`. **Not updated by rider logs** —
+     * the v17 user-facing semantics is "remind me every N minutes", independent
+     * of when the rider last ate. 0 = no time alert has fired yet this session.
+     */
+    @Volatile private var lastTimeAlertFireMs = 0L
+    /**
+     * Wall-clock ms when a DEFICIT-source alert last fired in this session. Drives
+     * the configurable reminder cooldown (`config.carbDeficitReminderIntervalMin *
+     * 60_000`). Independent of [lastTimeAlertFireMs].
+     */
+    @Volatile private var lastDeficitAlertFireMs = 0L
+    /**
+     * Cumulative milliseconds the tracker spent actively integrating (movement
+     * gate passing + burn > 0). Drives [computeAvgBurnRateGph]: avg over only
+     * the active portion of the ride is much more representative than avg over
+     * total elapsed time (which would be diluted by traffic-light stops, café
+     * stops, etc.). Persisted in [CarbFuelingState] so the average survives an
+     * extension restart mid-ride.
+     */
+    @Volatile private var activeIntegrationMs: Long = 0L
     @Volatile private var lastZoneSnapshot = ZoneSnapshot(ZoneSource.NONE, -1, 0, 1f)
     @Volatile private var lastPeriodicLogMs = 0L
 
@@ -184,7 +207,7 @@ class CarbsTracker(
             // Keep accumulators + alert/log timestamps so the rider doesn't lose their
             // session totals; the next tick won't integrate (lastTickMs = 0L sentinel),
             // so the OFF window between the crash and now isn't double-counted.
-            cumTargetG = restoreFrom.cumTargetG
+            cumBurnedG = restoreFrom.cumBurnedG
             cumLoggedG = restoreFrom.cumLoggedG
             sessionStartMs = restoreFrom.sessionStartMs.takeIf { it > 0 } ?: now
             lastLogMs = restoreFrom.lastLogMs.takeIf { it > 0 } ?: now
@@ -193,14 +216,22 @@ class CarbsTracker(
             // the persisted lastRealLogMs is absent. New snapshots write both fields and the
             // takeIf below picks the saved value directly.
             lastRealLogMs = restoreFrom.lastRealLogMs.takeIf { it > 0 } ?: lastLogMs
-            lastAlertMs = restoreFrom.lastAlertMs
+            // v17 new fields. Old snapshots have 0 → "never fired this session";
+            // the first-fire initial-delay gate runs on resume.
+            lastTimeAlertFireMs = restoreFrom.lastTimeAlertFireMs
+            lastDeficitAlertFireMs = restoreFrom.lastDeficitAlertFireMs
+            // v18 — preserve active-integration time so the session-average
+            // burn rate doesn't get artificially inflated after a restart.
+            activeIntegrationMs = restoreFrom.activeIntegrationMs
         } else {
-            cumTargetG = 0f
+            cumBurnedG = 0f
             cumLoggedG = 0
             sessionStartMs = now
-            lastLogMs = now                  // first time-based alert counts from session start
+            lastLogMs = now                  // {elapsed} fallback when no real log yet
             lastRealLogMs = now              // {elapsed} measured from session start until first log
-            lastAlertMs = 0L
+            lastTimeAlertFireMs = 0L
+            lastDeficitAlertFireMs = 0L
+            activeIntegrationMs = 0L
         }
         lastTickMs = 0L                  // 0 = "no previous tick"; first tick won't accumulate
         lastPeriodicLogMs = 0L
@@ -221,8 +252,17 @@ class CarbsTracker(
                 catch (e: Exception) { Timber.e(e, "CarbsTracker.tick threw — continuing") }
             }
         }
+        // v18 M5: include the tier the burn estimator picked AT SESSION START so
+        // post-mortem analysis of the CSV can tell "no HR/Pwr at start → Swain"
+        // apart from "POWER from the start". The tier may change later in the ride
+        // (e.g. HR connects mid-ride, promoting Tier 3 → Tier 2) — every FIRE /
+        // PERIODIC row carries its own `confidence=` value for that.
+        val startTier = currentBurnEstimate().confidence
         calibLogger?.log(CalibrationLogger.Event.FUELING_CARB_START) {
-            "base_gph=${config.carbTargetGperHour}," +
+            "model=v18_physiology," +
+                "tier_at_start=$startTier," +
+                "age=${config.riderAge}," +
+                "sex=${config.riderSex}," +
                 "deficit_alert=${config.carbDeficitAlertEnabled}," +
                 "deficit_threshold_g=${config.carbDeficitThresholdG}," +
                 "deficit_initial_delay_min=${config.carbDeficitInitialDelayMin}," +
@@ -232,7 +272,7 @@ class CarbsTracker(
                 "beep=${config.carbBeepPattern}," +
                 "restored=${restoreFrom != null}"
         }
-        Timber.d("CarbsTracker started, target=${config.carbTargetGperHour} g/h, restored=${restoreFrom != null}")
+        Timber.d("CarbsTracker started, tier=$startTier, age=${config.riderAge}, sex=${config.riderSex}, restored=${restoreFrom != null}")
         publishStatus()
     }
 
@@ -244,12 +284,14 @@ class CarbsTracker(
      * that already fired before the crash.
      */
     fun getPersistableState(): CarbFuelingState = CarbFuelingState(
-        cumTargetG = cumTargetG,
+        cumBurnedG = cumBurnedG,
         cumLoggedG = cumLoggedG,
         sessionStartMs = sessionStartMs,
         lastLogMs = lastLogMs,
-        lastAlertMs = lastAlertMs,
         lastRealLogMs = lastRealLogMs,
+        lastTimeAlertFireMs = lastTimeAlertFireMs,
+        lastDeficitAlertFireMs = lastDeficitAlertFireMs,
+        activeIntegrationMs = activeIntegrationMs,
     )
 
     fun stop() {
@@ -284,7 +326,7 @@ class CarbsTracker(
                 catch (e: Exception) { Timber.e(e, "CarbsTracker.tick threw — continuing") }
             }
         }
-        Timber.d("CarbsTracker resumed (cumTargetG=${cumTargetG.toInt()}, cumLoggedG=$cumLoggedG)")
+        Timber.d("CarbsTracker resumed (cumBurnedG=${cumBurnedG.toInt()}, cumLoggedG=$cumLoggedG)")
         publishStatus()
     }
 
@@ -349,7 +391,7 @@ class CarbsTracker(
         lastLogMs = now
         lastRealLogMs = now
         calibLogger?.log(CalibrationLogger.Event.FUELING_CARB_LOGGED) {
-            "slot=$slot,grams=$grams,cum_logged=$cumLoggedG,cum_target=${cumTargetG.toInt()}"
+            "slot=$slot,grams=$grams,cum_logged=$cumLoggedG,cum_burned=${cumBurnedG.toInt()}"
         }
         publishStatus()
         return grams
@@ -395,7 +437,7 @@ class CarbsTracker(
         lastLogMsBeforeBySlot[slot] = 0L
         lastRealLogMsBeforeBySlot[slot] = 0L
         calibLogger?.log(CalibrationLogger.Event.FUELING_CARB_UNDONE) {
-            "slot=$slot,grams=-$grams,cum_logged=$cumLoggedG,cum_target=${cumTargetG.toInt()}"
+            "slot=$slot,grams=-$grams,cum_logged=$cumLoggedG,cum_burned=${cumBurnedG.toInt()}"
         }
         publishStatus()
         return grams
@@ -418,86 +460,137 @@ class CarbsTracker(
      * because the underlying fields are @Volatile, the snapshot is internally consistent
      * to within one tick's worth of integration (well under UX tolerance).
      */
-    fun getStatus(): CarbStatus = CarbStatus(
-        cumTargetG = cumTargetG.toInt(),
-        cumLoggedG = cumLoggedG,
-        deficitG = (cumTargetG - cumLoggedG).toInt(),
-        deficitThresholdG = config.carbDeficitThresholdG,
-        zoneSnapshot = lastZoneSnapshot,
-        burnRateGph = computeBurnRateGph(),
-        // Integration is happening iff the monitor loop is alive AND the movement
-        // gate is currently passing AND the speed reading is fresh (not stuck on a
-        // last-known value from a lost GPS fix). Mirrors the gate inside tick().
-        isIntegrating = monitorJob != null && run {
-            val speed = lastSpeedKmh ?: return@run false
-            val stale = lastSpeedChangeMs > 0 &&
-                (System.currentTimeMillis() - lastSpeedChangeMs) > SPEED_STALE_MS
-            !stale && speed >= MOVING_GATE_KMH
-        },
-    )
+    fun getStatus(): CarbStatus {
+        // v18 M1: read the burn estimator ONCE per status snapshot. Previously
+        // `burnRateGph = computeBurnRateGph()` (= one estimator call) plus
+        // `burnConfidence = currentBurnEstimate().confidence` (another call)
+        // ran the full Keytel/Swain/zone-classify pipeline twice for every
+        // poll. The data fields collect at 1 Hz from `statusFlow`, so the
+        // duplication cost was ~3600 redundant estimator calls per hour.
+        val burn = currentBurnEstimate()
+        val burnRateGph = burn.gph
+            .coerceAtMost(ABSORPTION_CAP_GPH.toDouble())
+            .toInt()
+        return CarbStatus(
+            cumBurnedG = cumBurnedG.toInt(),
+            cumLoggedG = cumLoggedG,
+            deficitG = (cumBurnedG - cumLoggedG).toInt(),
+            deficitThresholdG = config.carbDeficitThresholdG,
+            zoneSnapshot = lastZoneSnapshot,
+            burnRateGph = burnRateGph,
+            avgBurnRateGph = computeAvgBurnRateGph(),
+            burnConfidence = burn.confidence,
+            // Integration is happening iff the monitor loop is alive AND the movement
+            // gate is currently passing AND the speed reading is fresh (not stuck on a
+            // last-known value from a lost GPS fix). Mirrors the gate inside tick().
+            isIntegrating = monitorJob != null && run {
+                val speed = lastSpeedKmh ?: return@run false
+                val stale = lastSpeedChangeMs > 0 &&
+                    (System.currentTimeMillis() - lastSpeedChangeMs) > SPEED_STALE_MS
+                !stale && speed >= MOVING_GATE_KMH
+            },
+        )
+    }
 
     /**
-     * Instantaneous carb burn rate in g/h, equal to the configured base target modulated by
-     * the current zone multiplier. Single source of truth — the data field, the calibration
-     * log fire payload and the periodic log row all read through this helper so future
-     * tweaks to the formula stay in lock-step.
+     * Session-average carb burn rate in g/h, averaged across only the time the
+     * tracker was actively integrating (NOT total elapsed time — café stops and
+     * traffic-light idle periods are excluded so the number reflects the
+     * rider's average effort, not their stop-light luck). Returns 0 until at
+     * least one tick of integration has happened.
      */
-    private fun computeBurnRateGph(): Int =
-        // Mirror the same absorption clamp the integrator uses so the burn-rate field
-        // can never show a number higher than what the tick is actually integrating.
-        (config.carbTargetGperHour * lastZoneSnapshot.multiplier)
-            .coerceAtMost(ABSORPTION_CAP_GPH).toInt()
+    private fun computeAvgBurnRateGph(): Int {
+        if (activeIntegrationMs <= 0L) return 0
+        val hours = activeIntegrationMs / 3_600_000.0
+        return (cumBurnedG / hours).toInt()
+    }
+
+    /**
+     * Instantaneous carb burn rate in g/h. v18: comes from the physiological
+     * [CarbBurnEstimator] (power tier 1 / Keytel tier 2 / Swain tier 3) modulated
+     * by the CHO fraction at the current intensity zone, clamped to the gut
+     * absorption ceiling so the displayed value can never imply intake the
+     * rider cannot physically absorb. Single source of truth — the data field,
+     * the calibration log payload and the periodic log row all read through
+     * this helper so future tweaks stay in lock-step.
+     */
+    private fun computeBurnRateGph(): Int = currentBurnEstimate().gph
+        .coerceAtMost(ABSORPTION_CAP_GPH.toDouble())
+        .toInt()
+
+    /** Helper: shared CarbBurnEstimator call so [computeBurnRateGph] and [tick]'s
+     *  integrator agree exactly. Reads the latest live inputs — HR, power, profile,
+     *  and the rider's configured age + sex. Returns [CarbBurnEstimator.BurnEstimate.NONE]
+     *  when none of the three tiers can fire. */
+    private fun currentBurnEstimate(): CarbBurnEstimator.BurnEstimate =
+        CarbBurnEstimator.estimate(
+            hrBpm = lastHrBpm,
+            powerW = lastPowerW,
+            profile = lastUserProfile,
+            riderAge = config.riderAge,
+            riderSex = config.riderSex,
+        )
 
     fun getSummary(): CarbSummary = CarbSummary(
-        cumTargetG = cumTargetG.toInt(),
+        cumBurnedG = cumBurnedG.toInt(),
         cumLoggedG = cumLoggedG,
-        deficitG = (cumTargetG - cumLoggedG).toInt(),
-        percentageHit = if (cumTargetG > 0f) ((cumLoggedG / cumTargetG) * 100f).toInt() else 0,
+        deficitG = (cumBurnedG - cumLoggedG).toInt(),
+        percentageHit = if (cumBurnedG > 0f) ((cumLoggedG / cumBurnedG) * 100f).toInt() else 0,
     )
 
     // ─── Internals ───────────────────────────────────────────────────────────
 
     private fun tick() {
         val now = System.currentTimeMillis()
-        val zone = IntensityZoneCalculator.calculate(lastUserProfile, lastHrBpm, lastPowerW)
-        lastZoneSnapshot = zone
+        // M2: classify the zone ONCE per tick. The burn estimator computes the
+        // classification internally and exposes it via `BurnEstimate.zoneSnapshot`,
+        // so the tracker can reuse it for `lastZoneSnapshot` (surfaced to data
+        // fields) without a separate `IntensityZoneCalculator.calculate` call.
+        // Pre-M2 the classifier ran twice per tick: once here, once inside
+        // CarbBurnEstimator.estimate. Cost was small but the duplication was
+        // genuinely wasted work.
+        val burn = currentBurnEstimate()
+        lastZoneSnapshot = burn.zoneSnapshot
 
-        // Movement gate — no integration when stationary. Cycling: you only burn the
-        // carbs you need to replace when moving (pedalling OR coasting). Bench tests
-        // and traffic-light stops correctly freeze the cumulative target.
-        //
-        // Two ways to be "not moving":
-        //  1. SDK reading is below MOVING_GATE_KMH (stopped or never started).
-        //  2. SDK reading is stale — the value hasn't changed for SPEED_STALE_MS, which
-        //     means GPS lock is lost and the SDK is repeating the last known value.
-        //     If we trusted the stuck value we'd integrate during a long tunnel even
-        //     after the rider has stopped inside it. Pessimistic: stale ⇒ frozen.
-        //     Resumes automatically on the first emission with a new value.
-        val speed = lastSpeedKmh
+        // Delegate the movement gate + cap + active-time gate to the pure
+        // integrator helper. See [CarbIntegrator] for the contract and the
+        // physiological rationale behind each gate.
         val stale = lastSpeedChangeMs > 0 && (now - lastSpeedChangeMs) > SPEED_STALE_MS
-        val moving = !stale && speed != null && speed >= MOVING_GATE_KMH
-
-        if (lastTickMs != 0L && moving) {
-            // coerceAtLeast(0L): a wall-clock NTP correction can push `now` backwards by
-            // seconds — we never want cumTargetG to decrease, so clamp negative dt to 0.
-            val dtSec = (now - lastTickMs).coerceAtLeast(0L) / 1000f
-            // Effective g/h: base × intensity multiplier, then clamped to the gut
-            // absorption ceiling so the cumulative target never advances faster than
-            // a recreational rider can actually consume (see IntensityZoneCalculator).
-            // Without this clamp, a Race-preset base (75 g/h) × top zone multiplier
-            // (1.5) would integrate at 112 g/h, asking the rider for intake their
-            // gut cannot absorb.
-            val effectiveGph = (config.carbTargetGperHour * zone.multiplier)
-                .coerceAtMost(ABSORPTION_CAP_GPH)
-            val ratePerSec = effectiveGph / 3600f
-            cumTargetG += dtSec * ratePerSec
-        }
+        val dtMs = if (lastTickMs == 0L) 0L else (now - lastTickMs).coerceAtLeast(0L)
+        val step = CarbIntegrator.integrate(
+            burnGph = burn.gph,
+            dtMs = dtMs,
+            speedKmh = lastSpeedKmh,
+            speedStale = stale,
+        )
+        cumBurnedG += step.deltaG
+        activeIntegrationMs += step.deltaActiveMs
         // Update lastTickMs on every tick (moving or not) so a stationary→moving
         // transition doesn't claim the entire stationary period in one big dt.
         lastTickMs = now
 
-        evaluateDeficitAlert(now)
-        evaluateTimeAlert(now)
+        // v17 coincidence resolution: when a deficit alert AND a time-grid tick
+        // are both due in the same physical tick, the deficit alert wins (its
+        // numeric "behind N g" is more actionable than a "X min since last"
+        // reminder, and both ask for the same rider action). The time-grid tick
+        // is consumed silently — without that, the rider would hear two beeps
+        // in quick succession and see only the time alert (which visually
+        // overlays the deficit one in the Karoo SDK's alert area). Mirrors the
+        // same logic in `HydrationTracker.tick`.
+        val deficitFired = evaluateDeficitAlert(now)
+        if (deficitFired) {
+            if (currentDueTimeTick(now) != 0L) {
+                // Mark the time tick consumed: `now >= currentTickAt` (otherwise
+                // currentDueTimeTick would have returned 0L), so setting
+                // `lastTimeAlertFireMs = now` satisfies the "already fired this
+                // tick" guard on subsequent calls. The next grid point
+                // (sessionStartMs + (N+1)·interval) is unaffected because the
+                // stored value will then be strictly less than it.
+                lastTimeAlertFireMs = now
+            }
+        } else {
+            evaluateTimeAlert(now)
+        }
         maybePeriodicLog(now)
         // Re-publish at the end so subscribers see the updated deficit, burn rate,
         // and isIntegrating (covers staleness transitions that updateSpeed can't see
@@ -506,61 +599,75 @@ class CarbsTracker(
         publishStatus()
     }
 
-    private fun evaluateDeficitAlert(now: Long) {
-        if (!config.carbDeficitAlertEnabled) return
-        // Initial-delay grace period — mirrors the time-alert gate. The integrator runs
-        // from t=0, so on a fresh ride the deficit crosses the threshold purely from
-        // elapsed time (no rider misconduct). Without this gate the rider sees a "behind
-        // 25 g" nag at minute ~25 of a fresh ride, which reads as the app malfunctioning.
-        // The delay only applies to the FIRST alert in the session — once any alert has
-        // fired or the rider has logged something, normal logic takes over.
-        val isFirstAlert = lastAlertMs == 0L && cumLoggedG == 0
-        if (isFirstAlert && config.carbDeficitInitialDelayMin > 0) {
+    /** Returns true when an alert was actually dispatched in this call. The caller
+     *  in [tick] uses the return value to coordinate coincidence resolution with
+     *  the time-alert path (deficit wins; if a time tick was due in the same
+     *  tick it gets consumed silently). */
+    private fun evaluateDeficitAlert(now: Long): Boolean {
+        if (!config.carbDeficitAlertEnabled) return false
+        // Initial-delay grace period — only applies to the FIRST deficit alert of
+        // the session AND only while the rider hasn't logged anything yet. The
+        // integrator runs from t=0, so on a fresh ride the deficit crosses the
+        // threshold purely from elapsed time (no rider misconduct). Without this
+        // gate the rider sees a "behind 25 g" nag at minute ~25, which reads as
+        // the app malfunctioning. Once any deficit alert fires or the rider has
+        // logged something, normal cooldown logic takes over.
+        val isFirstDeficitAlert = lastDeficitAlertFireMs == 0L && cumLoggedG == 0
+        if (isFirstDeficitAlert && config.carbDeficitInitialDelayMin > 0) {
             val initialDelayMs = config.carbDeficitInitialDelayMin * 60_000L
-            if (now - sessionStartMs < initialDelayMs) return
+            if (now - sessionStartMs < initialDelayMs) return false
         }
-        val deficit = (cumTargetG - cumLoggedG).toInt()
-        if (deficit < config.carbDeficitThresholdG) return
-        if (now - lastAlertMs < ALERT_COOLDOWN_MS) return
+        val deficit = (cumBurnedG - cumLoggedG).toInt()
+        if (deficit < config.carbDeficitThresholdG) return false
+        // v17: configurable reminder cooldown. Previously hard-coded at 5 min;
+        // riders on long endurance rides found that too frequent when the deficit
+        // can sit unresolved for an hour. Gated by the PER-SOURCE clock so an
+        // unrelated time-alert fire doesn't throttle the deficit reminder cadence.
+        val reminderIntervalMs = config.carbDeficitReminderIntervalMin * 60_000L
+        if (now - lastDeficitAlertFireMs < reminderIntervalMs) return false
         fireAlert(source = "deficit", deficit = deficit, elapsedMin = (now - lastRealLogMs) / 60_000)
+        lastDeficitAlertFireMs = now
+        return true
     }
 
-    private fun evaluateTimeAlert(now: Long) {
-        if (!config.carbTimeAlertEnabled) return
-        // Initial-delay grace period — only applies to the FIRST alert in the session and only
-        // if the user hasn't logged anything yet. Once any alert fires or the user logs an item,
-        // the regular interval logic takes over.
-        val isFirstAlert = lastAlertMs == 0L && cumLoggedG == 0
-        if (isFirstAlert && config.carbTimeInitialDelayMin > 0) {
-            val initialDelayMs = config.carbTimeInitialDelayMin * 60_000L
-            if (now - sessionStartMs < initialDelayMs) return
-        }
-        val intervalMs = config.carbTimeIntervalMin * 60_000L
-        if (now - lastLogMs < intervalMs) return
-        // Defensive cooldown — see HydrationTracker.evaluateTimeAlert. In practice the
-        // post-fire `lastLogMs = now` below makes the gate above re-arm correctly, so this
-        // line is reached only on the first fire of a session.
-        if (now - lastAlertMs < minOf(ALERT_COOLDOWN_MS, intervalMs)) return
-        val deficit = (cumTargetG - cumLoggedG).toInt()
+    /** See [HydrationTracker.currentDueTimeTick] — same contract, carb side.
+     *  Pure read; never mutates state. */
+    private fun currentDueTimeTick(now: Long): Long = FuelingAlertScheduler.currentDueTimeTick(
+        enabled = config.carbTimeAlertEnabled,
+        intervalMs = config.carbTimeIntervalMin * 60_000L,
+        sessionStartMs = sessionStartMs,
+        lastTimeAlertFireMs = lastTimeAlertFireMs,
+        initialDelayMs = config.carbTimeInitialDelayMin * 60_000L,
+        cumLogged = cumLoggedG,
+        now = now,
+    )
+
+    /** See [evaluateDeficitAlert] return-value note — same contract on the time side. */
+    private fun evaluateTimeAlert(now: Long): Boolean {
+        if (currentDueTimeTick(now) == 0L) return false
+        val deficit = (cumBurnedG - cumLoggedG).toInt()
         fireAlert(source = "time", deficit = deficit, elapsedMin = (now - lastRealLogMs) / 60_000)
-        // F1 fix — treat a time-alert fire as a soft "time mark" so the configured interval
-        // is respected even when the rider misses logs. Without this, `lastLogMs` stays
-        // frozen at the previous log (or sessionStart), the interval gate latches open, and
-        // the only throttle becomes the 5-min cooldown — turning "alert me every 25 min"
-        // into "alert me every 5 min". See the branch-review notes for the full trace.
-        //
-        // Critically we do NOT touch `lastRealLogMs` here (I8 fix) — that field tracks the
-        // rider's last actual log so `{elapsed}` in any subsequent alert reports time-
-        // since-real-log, not time-since-last-alert.
-        lastLogMs = now
+        lastTimeAlertFireMs = now
+        // I8 — `lastRealLogMs` stays untouched on alert fires; it tracks the
+        // rider's last actual log so `{elapsed}` reports time-since-real-log.
+        return true
     }
 
     private fun fireAlert(source: String, deficit: Int, elapsedMin: Long) {
-        lastAlertMs = System.currentTimeMillis()
+        // v18 L1: dispatch timestamp inlined here (was a tracker-level `lastAlertMs`
+        // field that survived persistence for no reason — only the InRideAlert.id
+        // below ever read it, and that read is local to this function).
+        val dispatchedAtMs = System.currentTimeMillis()
+        // v18: `{target}` token now binds to the rider's CURRENT instantaneous
+        // burn rate (g/h) — the physiologically real "what your body is asking
+        // for right now". The legacy token name is kept so existing custom alert
+        // templates still substitute something useful instead of leaving a
+        // literal "{target}" in the message. Riders who want a different number
+        // can edit their template.
         val tokens = mapOf(
             "deficit" to deficit.toString(),
             "elapsed" to elapsedMin.toString(),
-            "target"  to config.carbTargetGperHour.toString(),
+            "target"  to computeBurnRateGph().toString(),
         )
         val customDetail = if (source == "deficit") config.carbAlertCustomDetailDeficit
                            else                     config.carbAlertCustomDetailTime
@@ -578,9 +685,9 @@ class CarbsTracker(
         karooSystem.dispatch(InRideAlert(
             // Unique-per-fire ID: re-dispatching an InRideAlert with the same id while
             // the host still has the previous overlay tracked has been observed to crash
-            // the Karoo ride app when the alert re-fires after ALERT_COOLDOWN_MS. Appending
+            // the Karoo ride app when the alert re-fires after the per-source cooldown. Appending
             // the wall-clock timestamp guarantees a fresh id per fire.
-            id = "ksafe-carb-alert-$source-${lastAlertMs}",
+            id = "ksafe-carb-alert-$source-$dispatchedAtMs",
             icon = R.drawable.ic_ksafe,
             title = title,
             detail = detail,
@@ -588,17 +695,25 @@ class CarbsTracker(
             backgroundColor = fuelingAlertColorRes(config.carbAlertBgColor),
             textColor = ALERT_TX_COLOR,
         ))
-        val burnRateGph = computeBurnRateGph()
+        val burn = currentBurnEstimate()
+        val burnRateGph = burn.gph.coerceAtMost(ABSORPTION_CAP_GPH.toDouble()).toInt()
         calibLogger?.log(CalibrationLogger.Event.FUELING_CARB_FIRED) {
             // Locale.US: the calibration CSV uses comma as field separator, so we must NOT
             // let the default Locale turn "1.15" into "1,15" on es/fr/de devices.
+            // v18: replaced legacy `multiplier=` (vestigial after the integrator switched
+            // to the physiological estimator) with the new load-bearing signals:
+            // `confidence` (which tier ran), `cho_fraction` (Romijn/Jeukendrup table
+            // value at this zone), and `kcal_h` (raw energy expenditure before the
+            // CHO split). Tuning workflows now see exactly what produced the burn rate.
             String.format(
                 java.util.Locale.US,
-                "source=%s,deficit_g=%d,since_log_min=%d,cum_target=%d,cum_logged=%d,burn_rate_gph=%d,zone=%s/%d/%d,multiplier=%.2f,beep=%s",
+                "source=%s,deficit_g=%d,since_log_min=%d,cum_burned=%d,cum_logged=%d,burn_rate_gph=%d," +
+                    "confidence=%s,kcal_h=%.0f,cho_fraction=%.2f,zone=%s/%d/%d,beep=%s",
                 source, deficit, elapsedMin,
-                cumTargetG.toInt(), cumLoggedG, burnRateGph,
+                cumBurnedG.toInt(), cumLoggedG, burnRateGph,
+                burn.confidence, burn.kcalPerHour, burn.choFraction,
                 lastZoneSnapshot.source, lastZoneSnapshot.index, lastZoneSnapshot.total,
-                lastZoneSnapshot.multiplier, config.carbBeepPattern,
+                config.carbBeepPattern,
             )
         }
         Timber.d(">>> Carb alert fired ($source): deficit=${deficit}g elapsed=${elapsedMin}min")
@@ -608,16 +723,19 @@ class CarbsTracker(
         if (calibLogger == null || !calibLogger.isEnabled) return
         if (now - lastPeriodicLogMs < PERIODIC_LOG_INTERVAL_MS) return
         lastPeriodicLogMs = now
-        val deficit = (cumTargetG - cumLoggedG).toInt()
-        val burnRateGph = computeBurnRateGph()
+        val deficit = (cumBurnedG - cumLoggedG).toInt()
+        val burn = currentBurnEstimate()
+        val burnRateGph = burn.gph.coerceAtMost(ABSORPTION_CAP_GPH.toDouble()).toInt()
         calibLogger.log(CalibrationLogger.Event.FUELING_CARB_PERIODIC) {
-            // Locale.US — see fireAlert above.
+            // Locale.US — see fireAlert above. v18 payload mirrors FUELING_CARB_FIRED:
+            // confidence + kcal_h + cho_fraction replace the vestigial `multiplier`.
             String.format(
                 java.util.Locale.US,
-                "cum_target=%d,cum_logged=%d,deficit=%d,burn_rate_gph=%d,zone_source=%s,zone_idx=%d,zone_total=%d,multiplier=%.2f,hr=%d,power=%d",
-                cumTargetG.toInt(), cumLoggedG, deficit, burnRateGph,
+                "cum_burned=%d,cum_logged=%d,deficit=%d,burn_rate_gph=%d," +
+                    "confidence=%s,kcal_h=%.0f,cho_fraction=%.2f,zone_source=%s,zone_idx=%d,zone_total=%d,hr=%d,power=%d",
+                cumBurnedG.toInt(), cumLoggedG, deficit, burnRateGph,
+                burn.confidence, burn.kcalPerHour, burn.choFraction,
                 lastZoneSnapshot.source, lastZoneSnapshot.index, lastZoneSnapshot.total,
-                lastZoneSnapshot.multiplier,
                 lastHrBpm ?: -1, lastPowerW ?: -1,
             )
         }
@@ -629,12 +747,20 @@ class CarbsTracker(
  * once per second; it is also safe to read on demand from any thread (Volatile field reads).
  */
 data class CarbStatus(
-    val cumTargetG: Int,
+    val cumBurnedG: Int,
     val cumLoggedG: Int,
     val deficitG: Int,
     val deficitThresholdG: Int,
     val zoneSnapshot: ZoneSnapshot,
     val burnRateGph: Int,
+    /** Session-average carb burn rate in g/h, computed over only the active
+     *  integration time (not total elapsed). 0 until any integration has
+     *  happened. Drives the new `CarbAvgBurnRateDataType` field. */
+    val avgBurnRateGph: Int,
+    /** Which tier of [CarbBurnEstimator] is currently producing the burn rate.
+     *  Used by data fields to surface "Pair HR/Pwr" when [Confidence.NONE]
+     *  rather than displaying a misleading 0. */
+    val burnConfidence: CarbBurnEstimator.Confidence,
     /** True when the tracker is actively integrating right now (movement gate
      *  passing + tracker running). Used by [CarbBurnRateDataType] to decide
      *  whether to display the live rate or `---`, keeping all three carb fields
@@ -645,7 +771,7 @@ data class CarbStatus(
 
 /** Totals captured at end-of-ride for the post-ride summary InRideAlert. */
 data class CarbSummary(
-    val cumTargetG: Int,
+    val cumBurnedG: Int,
     val cumLoggedG: Int,
     val deficitG: Int,
     val percentageHit: Int,

@@ -38,11 +38,12 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
+import androidx.compose.material3.Button
 import androidx.compose.material3.OutlinedButton
 import com.enderthor.kSafe.R
 import com.enderthor.kSafe.activity.MainViewModel
-import com.enderthor.kSafe.data.CarbRidePreset
 import com.enderthor.kSafe.data.FUELING_ALERT_COLORS
+import com.enderthor.kSafe.data.RiderSex
 import com.enderthor.kSafe.data.fuelingAlertColorRes
 import com.enderthor.kSafe.extension.util.ALERT_DETAIL_MAX_CHARS
 import com.enderthor.kSafe.extension.util.safeTake
@@ -51,13 +52,17 @@ import com.enderthor.kSafe.extension.util.safeTake
 fun FuelingScreen(vm: MainViewModel) {
     val config by vm.config.collectAsState()
 
+    // Rider physiology (v18) — drives the CarbBurnEstimator
+    var riderAge             by remember(config.riderAge)                   { mutableStateOf(if (config.riderAge > 0) config.riderAge.toString() else "") }
+    var riderSex             by remember(config.riderSex)                   { mutableStateOf(config.riderSex) }
+
     // Carbs state
     var carbsEnabled         by remember(config.carbsTrackerEnabled)        { mutableStateOf(config.carbsTrackerEnabled) }
-    var carbTarget           by remember(config.carbTargetGperHour)         { mutableStateOf(config.carbTargetGperHour.toString()) }
     var carbAlertBgColor     by remember(config.carbAlertBgColor)           { mutableStateOf(config.carbAlertBgColor) }
     var carbDeficitOn        by remember(config.carbDeficitAlertEnabled)    { mutableStateOf(config.carbDeficitAlertEnabled) }
     var carbDeficitThreshold by remember(config.carbDeficitThresholdG)      { mutableStateOf(config.carbDeficitThresholdG.toString()) }
     var carbDeficitInitialDelay by remember(config.carbDeficitInitialDelayMin) { mutableStateOf(config.carbDeficitInitialDelayMin.toString()) }
+    var carbDeficitReminder  by remember(config.carbDeficitReminderIntervalMin) { mutableStateOf(config.carbDeficitReminderIntervalMin.toString()) }
     var carbTimeOn           by remember(config.carbTimeAlertEnabled)       { mutableStateOf(config.carbTimeAlertEnabled) }
     var carbTimeInterval     by remember(config.carbTimeIntervalMin)        { mutableStateOf(config.carbTimeIntervalMin.toString()) }
     var carbTimeInitialDelay by remember(config.carbTimeInitialDelayMin)    { mutableStateOf(config.carbTimeInitialDelayMin.toString()) }
@@ -85,6 +90,7 @@ fun FuelingScreen(vm: MainViewModel) {
     var hydDeficitOn         by remember(config.hydrationDeficitAlertEnabled)   { mutableStateOf(config.hydrationDeficitAlertEnabled) }
     var hydDeficitThreshold  by remember(config.hydrationDeficitThresholdMl)    { mutableStateOf(config.hydrationDeficitThresholdMl.toString()) }
     var hydDeficitInitialDelay by remember(config.hydrationDeficitInitialDelayMin) { mutableStateOf(config.hydrationDeficitInitialDelayMin.toString()) }
+    var hydDeficitReminder   by remember(config.hydrationDeficitReminderIntervalMin) { mutableStateOf(config.hydrationDeficitReminderIntervalMin.toString()) }
     var hydTimeOn            by remember(config.hydrationTimeAlertEnabled)      { mutableStateOf(config.hydrationTimeAlertEnabled) }
     var hydTimeInterval      by remember(config.hydrationTimeIntervalMin)       { mutableStateOf(config.hydrationTimeIntervalMin.toString()) }
     var hydTimeInitialDelay  by remember(config.hydrationTimeInitialDelayMin)   { mutableStateOf(config.hydrationTimeInitialDelayMin.toString()) }
@@ -148,24 +154,24 @@ fun FuelingScreen(vm: MainViewModel) {
                     )
                 }
                 if (carbsEnabled) {
-                CarbPresetRow(
-                    currentTarget = carbTarget.toIntOrNull() ?: 0,
-                    onPresetSelected = { preset ->
-                        carbTarget = preset.gPerHour.toString()
-                        vm.saveConfig(config.copy(carbTargetGperHour = preset.gPerHour))
-                    },
-                )
-                IntField(
-                    label = stringResource(R.string.fueling_target_carb_label),
-                    text = carbTarget,
-                    range = 20..120,
-                    onCommit = { carbTarget = it; vm.saveConfig(config.copy(carbTargetGperHour = it.toInt())) },
-                    onTextChange = { carbTarget = it },
-                )
+                // v18: carbs target removed. Burn is now computed from physiology
+                // (power if paired, else Keytel with age+sex, else Swain). Surface
+                // the rider's age/sex here — Keytel needs both.
                 Text(
-                    text = stringResource(R.string.fueling_target_carb_hint),
+                    text = stringResource(R.string.fueling_physiology_hint),
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                IntField(
+                    label = stringResource(R.string.fueling_rider_age_label),
+                    text = riderAge,
+                    range = 12..99,
+                    onCommit = { riderAge = it; vm.saveConfig(config.copy(riderAge = it.toInt())) },
+                    onTextChange = { riderAge = it },
+                )
+                RiderSexRow(
+                    selected = riderSex,
+                    onSelected = { riderSex = it; vm.saveConfig(config.copy(riderSex = it)) },
                 )
                 HorizontalDivider()
                 FuelingRow(label = stringResource(R.string.fueling_alert_deficit_label)) {
@@ -190,6 +196,13 @@ fun FuelingScreen(vm: MainViewModel) {
                     range = 0..240,
                     onCommit = { carbDeficitInitialDelay = it; vm.saveConfig(config.copy(carbDeficitInitialDelayMin = it.toInt())) },
                     onTextChange = { carbDeficitInitialDelay = it },
+                )
+                IntField(
+                    label = stringResource(R.string.fueling_deficit_reminder_interval_label),
+                    text = carbDeficitReminder,
+                    range = 1..60,
+                    onCommit = { carbDeficitReminder = it; vm.saveConfig(config.copy(carbDeficitReminderIntervalMin = it.toInt())) },
+                    onTextChange = { carbDeficitReminder = it },
                 )
                 FuelingRow(label = stringResource(R.string.fueling_alert_time_label)) {
                     Switch(
@@ -365,6 +378,13 @@ fun FuelingScreen(vm: MainViewModel) {
                     range = 0..240,
                     onCommit = { hydDeficitInitialDelay = it; vm.saveConfig(config.copy(hydrationDeficitInitialDelayMin = it.toInt())) },
                     onTextChange = { hydDeficitInitialDelay = it },
+                )
+                IntField(
+                    label = stringResource(R.string.fueling_deficit_reminder_interval_label),
+                    text = hydDeficitReminder,
+                    range = 1..60,
+                    onCommit = { hydDeficitReminder = it; vm.saveConfig(config.copy(hydrationDeficitReminderIntervalMin = it.toInt())) },
+                    onTextChange = { hydDeficitReminder = it },
                 )
                 FuelingRow(label = stringResource(R.string.fueling_alert_time_label)) {
                     Switch(
@@ -588,20 +608,20 @@ private fun SlotRow(
 }
 
 /**
- * Carb intake quick-presets row. Tapping a preset chip writes its g/h value into the
- * config and updates the IntField below. The chip whose [CarbRidePreset.gPerHour] matches
- * the current target is rendered as selected. Manual edits in the IntField unselect all
- * chips ("Custom" state — no separate enum stored, the current target value is the only
- * source of truth).
+ * v18 — Rider biological sex selector. Three short OutlinedButtons (Male /
+ * Female / Not set) so the rider can toggle between them without opening a
+ * dialog. Sex is consumed by [CarbBurnEstimator]'s Keytel tier (separate
+ * male/female regressions); "Not set" disables Keytel and falls the tracker
+ * back to the Swain HRR METs tier. Stored in [KSafeConfig.riderSex].
  */
 @Composable
-private fun CarbPresetRow(
-    currentTarget: Int,
-    onPresetSelected: (CarbRidePreset) -> Unit,
+private fun RiderSexRow(
+    selected: RiderSex,
+    onSelected: (RiderSex) -> Unit,
 ) {
     Column(verticalArrangement = Arrangement.spacedBy(4.dp), modifier = Modifier.fillMaxWidth()) {
         Text(
-            text = "Quick preset — tap to fill the target below",
+            text = stringResource(R.string.fueling_rider_sex_label),
             style = MaterialTheme.typography.bodySmall,
             fontWeight = FontWeight.Bold,
         )
@@ -609,29 +629,30 @@ private fun CarbPresetRow(
             modifier = Modifier.fillMaxWidth(),
             horizontalArrangement = Arrangement.spacedBy(6.dp),
         ) {
-            // Plain OutlinedButtons — no selected/unselected state. The target IntField
-            // below is the single source of truth for the rider's actual value, so a chip
-            // with a "selected" highlight is confusing when the rider then types a custom
-            // value (none would highlight, looking broken). Buttons are unambiguously
-            // "tap-to-fill" actions; the IntField shows whatever the current value is.
-            //
-            // Short single-line labels are required by the Karoo's 480 px width — long
-            // labels wrap and push the row tall, leaving empty space below.
-            for (preset in CarbRidePreset.entries) {
-                val shortLabel = when (preset) {
-                    CarbRidePreset.CASUAL    -> "Casual"
-                    CarbRidePreset.ENDURANCE -> "Endur."
-                    CarbRidePreset.RACE      -> "Race"
+            // Three buttons fit in the 480 px Karoo screen comfortably. Short labels
+            // chosen so they don't wrap on the smaller K3 screen.
+            for (option in RiderSex.entries) {
+                val label = when (option) {
+                    RiderSex.MALE    -> stringResource(R.string.fueling_rider_sex_male)
+                    RiderSex.FEMALE  -> stringResource(R.string.fueling_rider_sex_female)
+                    RiderSex.NOT_SET -> stringResource(R.string.fueling_rider_sex_unset)
                 }
-                OutlinedButton(
-                    onClick = { onPresetSelected(preset) },
-                    modifier = Modifier.weight(1f),
-                    contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 4.dp, vertical = 6.dp),
-                ) {
-                    Text(
-                        text = "$shortLabel ${preset.gPerHour}",
-                        style = MaterialTheme.typography.labelSmall,
-                    )
+                if (option == selected) {
+                    Button(
+                        onClick = { onSelected(option) },
+                        modifier = Modifier.weight(1f),
+                        contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 4.dp, vertical = 6.dp),
+                    ) {
+                        Text(text = label, style = MaterialTheme.typography.labelSmall)
+                    }
+                } else {
+                    OutlinedButton(
+                        onClick = { onSelected(option) },
+                        modifier = Modifier.weight(1f),
+                        contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 4.dp, vertical = 6.dp),
+                    ) {
+                        Text(text = label, style = MaterialTheme.typography.labelSmall)
+                    }
                 }
             }
         }
