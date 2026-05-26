@@ -30,10 +30,16 @@
             </intent-filter>
         </activity>
 
-        <!-- Transparent activity used as fallback cancel mechanism (BonusAction, future deep links). -->
+        <!-- Transparent activity used as fallback cancel mechanism (BonusAction, future deep links).
+             B14 — exported=false. The activity has zero UI and zero permission check; it
+             immediately invokes cancelEmergency() on launch. Leaving it exported=true would
+             let any installed app on the Karoo silently abort an in-flight crash countdown
+             via explicit-class Intent. No external launcher exists today (the
+             "future deep links" comment is aspirational); when one is needed, internal
+             PendingIntents from KSafe's own process work fine without exported=true. -->
         <activity
             android:name=".activity.CancelEmergencyActivity"
-            android:exported="true"
+            android:exported="false"
             android:noHistory="true"
             android:theme="@android:style/Theme.NoDisplay" />
 

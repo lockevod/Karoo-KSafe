@@ -7,6 +7,7 @@ import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import org.mockito.ArgumentMatchers.any
 import org.mockito.ArgumentMatchers.eq
 import org.mockito.ArgumentMatchers.isNull
 import org.mockito.Mockito.`when`
@@ -34,6 +35,18 @@ class SensorReaderTest {
     private fun gyroSensor(): Sensor =
         mock(Sensor::class.java).also { `when`(it.type).thenReturn(Sensor.TYPE_GYROSCOPE) }
 
+    /** Mockito returns `false` from boolean methods by default. Post-B11
+     *  `SensorReader.start` checks `registerListener`'s return value and
+     *  early-returns on `false` (a real-world signal that the OS rejected
+     *  the registration). The lifecycle tests want the happy path, so stub
+     *  the boolean overload to `true`. */
+    private fun stubRegisterListenerOk(sm: SensorManager) {
+        `when`(sm.registerListener(
+            any<SensorReader>(), any<Sensor>(),
+            any<Int>(), any<Int>(), isNull<Handler>()
+        )).thenReturn(true)
+    }
+
     private fun newReader(sensorManager: SensorManager): SensorReader = SensorReader(
         sensorManager = sensorManager,
         clock = { 1_000L },
@@ -47,6 +60,7 @@ class SensorReaderTest {
         val gyro = gyroSensor()
         `when`(sm.getDefaultSensor(Sensor.TYPE_ACCELEROMETER)).thenReturn(accel)
         `when`(sm.getDefaultSensor(Sensor.TYPE_GYROSCOPE)).thenReturn(gyro)
+        stubRegisterListenerOk(sm)
 
         val reader = newReader(sm)
         reader.start()
@@ -72,6 +86,7 @@ class SensorReaderTest {
         val gyro = gyroSensor()
         `when`(sm.getDefaultSensor(Sensor.TYPE_ACCELEROMETER)).thenReturn(accel)
         `when`(sm.getDefaultSensor(Sensor.TYPE_GYROSCOPE)).thenReturn(gyro)
+        stubRegisterListenerOk(sm)
 
         val reader = newReader(sm)
         reader.start()
@@ -105,6 +120,7 @@ class SensorReaderTest {
         val accel = accelSensor()
         `when`(sm.getDefaultSensor(Sensor.TYPE_ACCELEROMETER)).thenReturn(accel)
         `when`(sm.getDefaultSensor(Sensor.TYPE_GYROSCOPE)).thenReturn(null)
+        stubRegisterListenerOk(sm)
 
         val reader = newReader(sm)
         reader.start()
@@ -132,6 +148,7 @@ class SensorReaderTest {
         val gyro = gyroSensor()
         `when`(sm.getDefaultSensor(Sensor.TYPE_ACCELEROMETER)).thenReturn(accel)
         `when`(sm.getDefaultSensor(Sensor.TYPE_GYROSCOPE)).thenReturn(gyro)
+        stubRegisterListenerOk(sm)
 
         val reader = newReader(sm)
         reader.start()
@@ -150,6 +167,7 @@ class SensorReaderTest {
         val gyro = gyroSensor()
         `when`(sm.getDefaultSensor(Sensor.TYPE_ACCELEROMETER)).thenReturn(accel)
         `when`(sm.getDefaultSensor(Sensor.TYPE_GYROSCOPE)).thenReturn(gyro)
+        stubRegisterListenerOk(sm)
 
         val reader = newReader(sm)
         reader.start()

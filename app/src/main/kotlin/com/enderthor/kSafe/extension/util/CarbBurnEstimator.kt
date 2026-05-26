@@ -207,9 +207,12 @@ object CarbBurnEstimator {
             RiderSex.FEMALE -> -20.4022 + 0.4472 * hr - 0.1263 * w + 0.0740 * a
             RiderSex.NOT_SET -> return null  // unreachable — guarded above
         }
-        // Keytel can return negative values at very low HR / atypical weight.
-        // Clamp to a small positive number so downstream math (deficit, alerts)
-        // doesn't get fooled by a "burning negative kcal" reading.
+        // Keytel can return negative or zero values at very low HR / atypical
+        // weight (the gender-specific regressions have non-positive intercepts).
+        // Return null so the tier-priority cascade falls through to Tier 3
+        // (Swain) — a negative kcal/h would silently corrupt the integrator,
+        // and substituting a "small positive" would be a misleading made-up
+        // value. Swain is the right fallback here.
         if (kjPerMin <= 0.0) return null
         return kjPerMin * 60.0 / 4.184
     }

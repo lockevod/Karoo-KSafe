@@ -50,6 +50,8 @@ import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.mapNotNull
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import timber.log.Timber
 import kotlin.coroutines.CoroutineContext
@@ -101,17 +103,26 @@ private const val SESSION_BURN_DEADBAND_G: Double = 5.0
 
 /** Deadband on `CarbFuelingState.cumBurnedG` for the fueling-persistence loop.
  *  Persisted state is restored after a process kill (FUELING_RESTORE_MAX_AGE_MS).
- *  A 1 g resolution means worst-case loss on an unexpected process kill is the
- *  burn accumulated between writes (~1 minute at moderate intensity), well under
- *  one tracker tick of meaningful data. Eliminates ~80 % of redundant persists
- *  while the rider is in moderate steady-state effort — the existing
- *  data-class-equals check handles the stationary case but doesn't help the
- *  most common scenario (continuous moving). */
-private const val PERSIST_CARB_BURN_DEADBAND_G: Float = 1.0f
+ *
+ *  Sizing: at 50 g/h moderate-intensity, the integrator advances ~0.42 g per
+ *  30 s persist cycle. The deadband must comfortably exceed the per-cycle delta
+ *  or it never fires while moving — that's the [B5] fix territory. 5 g is the
+ *  binding choice: it gives ~6 minutes of integration between writes at moderate
+ *  intensity, ~3.3 minutes at the 90 g/h absorption-cap. Worst-case loss on an
+ *  unexpected process kill is therefore ≤ 5 g of carb burn — well below the
+ *  10-15 % error band of the burn estimator itself (Keytel / Swain), so it's
+ *  rider-invisible noise. Pre-v18.2 this was 1 g, which over-targeted accuracy
+ *  vs DataStore writes — ~400 persists/5h ride instead of ~50. */
+private const val PERSIST_CARB_BURN_DEADBAND_G: Float = 5.0f
 
 /** Same as [PERSIST_CARB_BURN_DEADBAND_G] for the hydration target accumulator.
- *  10 ml ≈ 50 s at the default 750 ml/h target — same order as the carb side. */
-private const val PERSIST_HYD_TARGET_DEADBAND_ML: Float = 10.0f
+ *  At the default 750 ml/h, the integrator advances ~6.25 ml per 30 s cycle.
+ *  60 ml = ~4.8 minutes between writes at default rate, well above the
+ *  per-cycle delta. Pre-v18.2 this was 10 ml — too tight to be the binding
+ *  constraint (write fired every ~48 s, dominating the persist rate even after
+ *  the carb deadband was raised). Worst-case loss on process kill: ≤ 60 ml,
+ *  within the SweatEstimator's ±20 % accuracy on a 750 ml/h baseline. */
+private const val PERSIST_HYD_TARGET_DEADBAND_ML: Float = 60.0f
 
 class KSafeExtension : KarooExtension("ksafe", BuildConfig.VERSION_NAME), CoroutineScope {
 
@@ -155,11 +166,24 @@ class KSafeExtension : KarooExtension("ksafe", BuildConfig.VERSION_NAME), Corout
      *  are no-ops. */
     @Volatile private var recordingCollectorsJob: kotlinx.coroutines.Job? = null
     /** Tracks the in-flight calibration-log periodic-send drain. The 20-min cycle
-     *  skips re-launching when this job is still active so two parallel drains
-     *  can't read the same first chunk before the first finishes truncating
-     *  (would duplicate an upload under slow-LTE conditions). `fileLock` already
-     *  prevents on-disk corruption; this is the duplicate-upload guard. */
+     *  skips re-launching when this job is still active so two parallel periodic
+     *  drains can't read the same first chunk before the first finishes
+     *  truncating (would duplicate an upload under slow-LTE conditions).
+     *  See also [calibSendMutex] for the cross-callsite guard. */
     @Volatile private var periodicSendJob: kotlinx.coroutines.Job? = null
+    /** Serialises EVERY calibration-log drain across the four entry points
+     *  (periodic loop, ride-end, logging-disabled, manual). Without it, a
+     *  periodic drain in-flight when the rider stops the ride could race the
+     *  ride-end drain: both read the same chunk1 (no truncate had happened
+     *  yet), both ship chunk1 to Telegram, both then truncate `linesIncluded`
+     *  lines — the first truncate drops the real chunk1, the second drops
+     *  what is now chunk2. Net: chunk1 sent twice, chunk2 silently lost.
+     *  [periodicSendJob] only guards the periodic-vs-periodic case; this
+     *  mutex covers every other cross-pair. Held for the entire drain
+     *  loop (multi-chunk if catching up); other callsites await rather
+     *  than skip — manual / ride-end / logging-disabled all want to drain
+     *  the file completely, not silently no-op. */
+    private val calibSendMutex = Mutex()
     /** SPEED / CADENCE / ELEVATION_GRADE / ride-profile collector group. These
      *  feed [crashManager], [medicalDetector] and the fueling trackers. They
      *  run whenever the rider is on the bike (Recording / Paused) OR the rider
@@ -457,11 +481,19 @@ class KSafeExtension : KarooExtension("ksafe", BuildConfig.VERSION_NAME), Corout
                 // Idle: applyIdleMonitoring already honors isActive.
                 // Recording: enforce master switch transitions — stop everything if the
                 // master was just turned OFF, restart everything if it was just turned ON.
-                // An in-flight emergency countdown is left alone — cancel via SOS/cancel button.
+                // Paused: same OFF→stop semantics as Recording, but DON'T restart on
+                // OFF→ON until the next Recording resume (the rider is paused; nothing
+                // to resume into). Without this, master-OFF during autopause leaves
+                // crashManager / medicalDetector / wellnessMonitor / trackers running
+                // and any in-flight emergency countdown ticking — contradicting the
+                // rider's explicit "disable all safety alerts" intent.
+                // An in-flight emergency countdown is left alone for Recording-active
+                // transitions — cancel via SOS/cancel button.
                 when (currentRideState) {
                     is RideState.Idle -> applyIdleMonitoring(config)
                     is RideState.Recording -> applyMasterSwitchTransition(prevActive)
-                    else -> { /* Paused: leave as-is */ }
+                    is RideState.Paused -> applyMasterSwitchTransitionPaused(prevActive)
+                    else -> { /* null: not yet observed, leave as-is */ }
                 }
                 Timber.d("Config updated: active=${config.isActive}, crash=${config.crashDetectionEnabled}, outsideRide=${config.crashMonitorOutsideRide}, anySpeed=${config.crashMonitorOutsideRideAnySpeed}")
             }
@@ -553,15 +585,20 @@ class KSafeExtension : KarooExtension("ksafe", BuildConfig.VERSION_NAME), Corout
             //     (< PERSIST_*_DEADBAND_*). Pre-v18.2 the loop wrote ~480 times per 5 h
             //     ride because the Float integrators advance by ~0.21 g and ~3 ml per
             //     30 s cycle while moving — strict equality always failed. The deadband
-            //     widens that to ~1 g (or ~10 ml) before considering it "worth writing",
-            //     which drops the write rate ~10× in steady-state.
+            //     widens that to 5 g (or 60 ml) before considering it "worth writing",
+            //     which drops the write rate ~80% in steady-state. (Note: pre-B5 fix
+            //     the deadband was a no-op while moving because `activeIntegrationMs`
+            //     advanced every tick and broke the `==` check below; fixed by also
+            //     normalising that field in the `.copy()` call.)
             //
-            // Worst-case loss on process kill is bounded by the deadband: ≤ 1 g of carb
-            // burn and ≤ 10 ml of hydration target, plus the 30 s loop interval. Well
-            // under one tracker tick of meaningful data — alerts and rider logs trigger
-            // outside the deadband immediately (cumLoggedG / lastLogMs / lastRealLogMs /
-            // lastTimeAlertFireMs / lastDeficitAlertFireMs all break the deadband path
-            // because they're not the deadband-protected field).
+            // Worst-case loss on process kill is bounded by the deadband: ≤ 5 g of carb
+            // burn and ≤ 60 ml of hydration target, plus the 30 s loop interval. Well
+            // within the 10-15 % accuracy band of the burn estimator (Keytel / Swain) and
+            // the ±20 % band of the SweatEstimator at the 750 ml/h default — rider-
+            // invisible noise. Alerts and rider logs trigger outside the deadband
+            // immediately (cumLoggedG / lastLogMs / lastRealLogMs / lastTimeAlertFireMs /
+            // lastDeficitAlertFireMs all break the deadband path because they're not the
+            // deadband-protected fields).
             var lastPersistedCarb: com.enderthor.kSafe.data.CarbFuelingState? = null
             var lastPersistedHyd:  com.enderthor.kSafe.data.HydFuelingState?  = null
             while (true) {
@@ -581,15 +618,29 @@ class KSafeExtension : KarooExtension("ksafe", BuildConfig.VERSION_NAME), Corout
                 if (carbState == lastPersistedCarb && hydState == lastPersistedHyd) continue
                 // Deadband: if the ONLY thing that changed is a small accumulator
                 // delta, defer the write. Compare a normalised copy where the
-                // protected field is forced equal to the prior value — if that
+                // protected field(s) are forced equal to the prior value — if that
                 // copy matches the prior snapshot exactly, the real diff is the
                 // accumulator alone, and it's within the deadband.
+                //
+                // B5 fix (post-v18.2 audit): `CarbFuelingState.activeIntegrationMs`
+                // also advances every tick (one tick worth of ms when moving) and
+                // is NOT itself deadband-protected. Without normalising it, the
+                // data-class equality below would ALWAYS fail while moving and the
+                // deadband would silently never fire — exactly the case it's meant
+                // to optimise. Force it equal to the prior value alongside
+                // `cumBurnedG` so the comparison sees only the rider-visible /
+                // event-driven fields (cumLoggedG, lastTimeAlertFireMs, etc.).
+                // Worst case on process kill is now bounded by the deadband + the
+                // 30 s cycle: ≤ 5 g of burn AND ≤ 30 s of integration-time loss.
                 val prevCarb = lastPersistedCarb
                 val prevHyd  = lastPersistedHyd
                 if (prevCarb != null && prevHyd != null) {
                     val burnDelta   = carbState.cumBurnedG - prevCarb.cumBurnedG
                     val targetDelta = hydState.cumTargetMl - prevHyd.cumTargetMl
-                    val carbOtherUnchanged = carbState.copy(cumBurnedG = prevCarb.cumBurnedG) == prevCarb
+                    val carbOtherUnchanged = carbState.copy(
+                        cumBurnedG = prevCarb.cumBurnedG,
+                        activeIntegrationMs = prevCarb.activeIntegrationMs,
+                    ) == prevCarb
                     val hydOtherUnchanged  = hydState.copy(cumTargetMl = prevHyd.cumTargetMl) == prevHyd
                     val withinDeadband = carbOtherUnchanged && hydOtherUnchanged &&
                         burnDelta   in 0f..PERSIST_CARB_BURN_DEADBAND_G &&
@@ -848,7 +899,22 @@ class KSafeExtension : KarooExtension("ksafe", BuildConfig.VERSION_NAME), Corout
      */
     private fun startCrashSensorCollectors() {
         if (crashSensorCollectorsJob?.isActive == true) return
+        // B10 — supervisorScope + CoroutineExceptionHandler mirroring
+        // [startRecordingCollectors]. Without these, a single bad emission on any
+        // of the four inner streams (e.g. a Karoo OTA changes the ride-profile JSON
+        // shape and the SDK decoder throws) propagates up the parent `launch` and
+        // cancels the three sibling collectors. Net effect: crash detection silently
+        // loses SPEED / CADENCE / GRADE for the rest of the ride — the rider keeps
+        // riding without protection and the only trace is a JVM uncaught-exception
+        // line in logcat (no Timber tree, no calibration-log row). Asymmetric vs
+        // `startRecordingCollectors` which already had this guard; both arms of the
+        // ride-time sensor pipeline must survive a one-off bad emission identically.
+        val crashCollectorHandler = kotlinx.coroutines.CoroutineExceptionHandler { _, throwable ->
+            Timber.e(throwable, "Crash-sensor collector failed (siblings continue under supervisorScope)")
+        }
         crashSensorCollectorsJob = launch {
+            kotlinx.coroutines.withContext(crashCollectorHandler) {
+            kotlinx.coroutines.supervisorScope {
             launch {
                 // Stream speed to crash detector + fueling trackers. The fueling trackers
                 // gate integration on speed (no accumulation when stationary), so they need
@@ -908,6 +974,8 @@ class KSafeExtension : KarooExtension("ksafe", BuildConfig.VERSION_NAME), Corout
                         crashManager.updateRideProfile(profile.routingPreference)
                     }
             }
+            }  // end supervisorScope (B10)
+            }  // end withContext(crashCollectorHandler) (B10)
         }
     }
 
@@ -1090,6 +1158,44 @@ class KSafeExtension : KarooExtension("ksafe", BuildConfig.VERSION_NAME), Corout
             carbsTracker.resume(activeConfig)
             hydrationTracker.resume(activeConfig)
             emergencyManager.startCheckinTimer(activeConfig)
+        }
+    }
+
+    /**
+     * Same OFF semantics as [applyMasterSwitchTransition] but for Paused state:
+     * when the rider toggles the master switch OFF during an autopause (or any
+     * pause), every monitoring subsystem must stop so a stuck-in-Paused rider
+     * gets no further alerts. The ON branch is deliberately a no-op — there is
+     * no live ride to resume into; the next Recording transition will re-arm
+     * everything through `handleRideState.Recording`.
+     *
+     * Without this branch, master-OFF during autopause was a silent contract
+     * violation: crash + medical + wellness + trackers kept running, and any
+     * in-flight emergency countdown continued ticking despite the rider's
+     * explicit "disable all safety alerts" intent.
+     */
+    private fun applyMasterSwitchTransitionPaused(prevActive: Boolean) {
+        val nowActive = activeConfig.isActive
+        if (prevActive == nowActive) return
+        if (prevActive && !nowActive) {
+            Timber.d("Master switch OFF during Paused — stopping all monitoring")
+            crashManager.stop()
+            medicalDetector.stop()
+            wellnessMonitor.stop()
+            carbsTracker.stop()
+            hydrationTracker.stop()
+            stopRecordingCollectors()
+            stopCrashSensorCollectors()
+            // Mirrors the Recording path: stopAll() (NOT stopCheckinTimer) so a
+            // crash/medical countdown actively ticking inside the autopause is
+            // aborted along with everything else.
+            emergencyManager.stopAll()
+        } else {
+            // OFF→ON during Paused: leave as-is. The rider has no live monitoring
+            // session to re-attach to (`crashManager.resume` etc. would observe
+            // stale state). The next Recording transition takes the fresh-start
+            // path via `handleRideState.Recording` once the rider unpauses.
+            Timber.d("Master switch ON during Paused — deferring re-arm to next Recording")
         }
     }
 
@@ -1439,7 +1545,7 @@ class KSafeExtension : KarooExtension("ksafe", BuildConfig.VERSION_NAME), Corout
     private suspend fun sendCalibrationLogInChunks(
         captionPrefix: String,
         maxChunks: Int = Int.MAX_VALUE,
-    ): CalibrationSendResult {
+    ): CalibrationSendResult = calibSendMutex.withLock {
         var chunksSent = 0
         var totalLines = 0
         var totalBytes = 0L
@@ -1479,7 +1585,7 @@ class KSafeExtension : KarooExtension("ksafe", BuildConfig.VERSION_NAME), Corout
             }
             hasMore = true
         }
-        return CalibrationSendResult(chunksSent, totalLines, totalBytes, hasMore, lastError)
+        CalibrationSendResult(chunksSent, totalLines, totalBytes, hasMore, lastError)
     }
 
     /**
@@ -1544,7 +1650,7 @@ class KSafeExtension : KarooExtension("ksafe", BuildConfig.VERSION_NAME), Corout
      * file is deleted (see [CalibrationLogger.truncatePreviousAfterSuccessfulSend]).
      * MUST run on Dispatchers.IO.
      */
-    private suspend fun sendPreviousCalibrationLogInChunks(): CalibrationSendResult {
+    private suspend fun sendPreviousCalibrationLogInChunks(): CalibrationSendResult = calibSendMutex.withLock {
         var chunksSent = 0
         var totalLines = 0
         var totalBytes = 0L
@@ -1580,7 +1686,7 @@ class KSafeExtension : KarooExtension("ksafe", BuildConfig.VERSION_NAME), Corout
             if (!chunk.hasMore) { hasMore = false; break }
             hasMore = true
         }
-        return CalibrationSendResult(chunksSent, totalLines, totalBytes, hasMore, lastError)
+        CalibrationSendResult(chunksSent, totalLines, totalBytes, hasMore, lastError)
     }
 
     /**
@@ -2255,18 +2361,25 @@ class KSafeExtension : KarooExtension("ksafe", BuildConfig.VERSION_NAME), Corout
         val job: Job = launch {
             // Per-ride caches of the last value written to each FIT field. The FIT
             // record/session messages are throttled to **write-on-change** so a 5 h
-            // ride doesn't emit ~18 000 redundant record-writes for fields whose
-            // underlying source-of-truth only updates every 15-30 s (e.g.
-            // `ksafe_carb_burn_rate_gph` updates with the 15 s tracker tick;
-            // `ksafe_hr_drift_pct` updates with the 30 s WellnessMonitor tick).
+            // ride doesn't emit 18 000 record-writes per Recording-second on fields
+            // whose underlying source-of-truth changes far less often. Real cadence
+            // post-throttle (post-merge audit Nov 2026):
+            //   - Record-message writes per 5 h ride: ~4 000-8 000 (down from 18 000;
+            //     ~55-78 % saving). Driven mostly by `burnRateGph` and `driftPct`,
+            //     both of which carry per-second noise from live HR/power even at
+            //     "steady" intensity. NOT the ~1 200 originally claimed —
+            //     `burnRateGph.toInt()` rounds at every g/h step which is reached
+            //     several times per minute on a varied ride.
+            //   - Session-message writes per 5 h ride: ~75-100 (down from 18 000)
+            //     thanks to the 5 g deadband on cumBurnedG below.
             //
             // FIT consumer behaviour: Strava / Intervals.icu / TrainingPeaks plot
             // developer-field time series at the emitted timestamps and interpolate
             // between them. A sparse series therefore renders identically to a
             // dense series that repeats values — but the dense series wastes the
             // FIT file size and the host's per-record allocation budget on the
-            // Karoo (the audit at 2026-05-25 quantified ~50K allocations/hour
-            // from this writer alone, with ~95 % redundant).
+            // Karoo (the 2026-05-25 audit quantified ~50K allocations/hour from
+            // this writer pre-throttle, of which ~75 % are now skipped).
             //
             // Sentinel: `Double.NaN`. `NaN != NaN` is true in IEEE 754, so the
             // first comparison after `startFit` is always "changed" and the

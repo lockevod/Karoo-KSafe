@@ -92,9 +92,6 @@
     <string name="fueling_deficit_initial_delay_label">Skip first (min, 0 = off)</string>
     <string name="fueling_deficit_reminder_interval_label">Repeat every (min)</string>
     <string name="fueling_alert_bg_color_label">Alert background colour</string>
-    <string name="fueling_custom_title_label">Custom alert title (optional)</string>
-    <string name="fueling_custom_title_carb_placeholder">Default: Eat something</string>
-    <string name="fueling_custom_title_hyd_placeholder">Default: Drink something</string>
     <string name="fueling_enabled_label">Enabled</string>
     <string name="fueling_items_section">Items</string>
     <string name="fueling_beep_pattern_label">Sound</string>
@@ -142,8 +139,6 @@
     <string name="action_log_drink_2">KSafe: Log Drink 2</string>
     <!-- Legacy string IDs preserved for any external translation that still references them.
          The new per-slot string IDs above are what extension_info.xml uses now. -->
-    <string name="action_log_carb">KSafe: Log Carb</string>
-    <string name="action_log_drink">KSafe: Log Drink</string>
 
     <!-- Fueling DataType labels -->
     <string name="carb_log_1_datatype_name">KSafe Carb 1</string>
@@ -173,12 +168,8 @@
     <string name="health_no_hr_warning_title">Heart-rate sensor required</string>
     <string name="health_no_hr_warning_body">Pair a HR sensor to enable medical and wellness detection. Without HR data these detectors stay idle.</string>
     <string name="health_medical_section">Medical episode detection</string>
-    <string name="health_medical_hint">Detects sudden heart-rate flatline or collapse during a ride. Requires a paired HR sensor.</string>
     <string name="health_wellness_section">Wellness monitor</string>
-    <string name="health_wellness_hint">Warns when HR stays above the threshold for a sustained period. Sent on-screen only — never to emergency contacts unless you change the response level.</string>
     <string name="health_enabled_label">Enabled</string>
-    <string name="health_response_level_label">Response level</string>
-    <string name="health_response_silent">Silent</string>
     <string name="health_response_warning">Warning</string>
     <string name="health_response_emergency">Emergency</string>
     <string name="health_wellness_threshold_label">HR threshold (bpm)</string>
@@ -199,7 +190,6 @@
     <!-- Provider screen -->
     <string name="provider_title">Message Provider</string>
     <string name="provider_active_hint">Credentials are saved per provider. Only the selected provider will be used to send alerts.</string>
-    <string name="api_key_hint">API Key</string>
     <string name="callmebot_phone_hint">Recipient 1 phone (with country code, e.g. +34612345678)</string>
     <string name="callmebot_apikey_hint">Recipient 1 API Key</string>
     <string name="callmebot_phone2_hint">Recipient 2 phone — optional</string>
@@ -219,20 +209,16 @@
     <string name="telegram_chat_id2_hint">Chat ID — recipient 2 (optional)</string>
     <string name="telegram_chat_id3_hint">Chat ID — recipient 3 (optional)</string>
     <string name="telegram_description">Free Telegram messages via a bot. Create a bot with @BotFather, get the token, and enter your Chat ID.</string>
-    <string name="save">Save</string>
     <string name="section_safety">Safety configuration</string>
     <string name="backup_export">Export</string>
     <string name="backup_import">Import</string>
     <string name="test_send">Test Send</string>
-    <string name="test_send_ok">Test message sent!</string>
-    <string name="test_send_error">Error sending test message</string>
 
     <!-- Settings screen -->
     <string name="settings_title">Safety Settings</string>
     <string name="countdown_seconds_label">Countdown before alert (seconds)</string>
     <string name="emergency_message_label">Emergency message</string>
     <string name="emergency_message_hint">Use {location} for GPS link and {reason} for cause</string>
-    <string name="default_emergency_message">EMERGENCY: Possible incident detected. Location: {location} (Reason: {reason})</string>
     <string name="crash_detection_label">Automatic crash detection</string>
     <string name="safety_buzzer_mute_title">If your Karoo is muted, alerts make no sound</string>
     <string name="safety_buzzer_mute_hint">KSafe can\'t override the device mute. Everything else still works — alerts fire and messages are sent normally.</string>
@@ -273,7 +259,6 @@
     <string name="crash_outside_ride_any_speed_label">Monitor crash when not riding — any speed</string>
     <string name="crash_outside_ride_any_speed_desc">Same as above but detects crashes at any speed, even while stationary (minimum speed is ignored). ⚠ This can produce more false positives — picking up or dropping the device while still may trigger an alert.</string>
     <string name="crash_outside_ride_warning">⚠ Crash monitoring is active outside of a recorded ride. The device must be moving at the minimum speed configured above (%1$d km/h).</string>
-    <string name="crash_outside_ride_any_speed_warning">⚠ Crash monitoring is active outside of a recorded ride at ANY speed, including while stationary. This increases the risk of false positives.</string>
     <string name="speed_drop_label">Detect prolonged stop during ride</string>
     <string name="speed_drop_minutes_label">Minutes stopped before alert</string>
     <string name="checkin_timer_label">Check-in timer</string>
@@ -291,18 +276,48 @@
     <string name="test_ride_end_notification">Test ride end notification</string>
 
     <!-- Alerts and notifications -->
-    <string name="sos_countdown_alert">SOS in %1$ds — Tap field to cancel (%2$s)</string>
-    <string name="alert_sent">Emergency alert sent to your contacts!</string>
-    <string name="alert_cancelled">Emergency alert cancelled.</string>
-    <string name="checkin_warning">Check-in required in %1$d min — Tap timer field!</string>
     <string name="location_unavailable">Location unavailable</string>
 
-    <!-- SOS field states -->
+    <!-- SOS field states. Format strings match exactly what the SOSDataType renders on
+         the Karoo data field — `sos_countdown` is the main label during COUNTDOWN
+         (e.g. "SOS 25s"), `sos_alerting` is the main label during ALERTING (e.g.
+         "ALERT\nSENT"), `sos_tap_cancel` is the hint subtitle during COUNTDOWN. Kept
+         short so they fit the field at the smallest layout. B21 wired these up from
+         the prior hardcoded inline literals so future translators have a single home. -->
     <string name="sos_safe">SAFE</string>
-    <string name="sos_countdown">SOS\n%1$ds</string>
-    <string name="sos_alerting">ALERT!</string>
-    <string name="sos_tap_cancel">Tap to\ncancel</string>
-    <string name="sos_tap_sos">Tap for\nSOS</string>
+    <string name="sos_countdown">SOS %1$ds</string>
+    <string name="sos_alerting">ALERT\nSENT</string>
+    <string name="sos_tap_cancel">tap=cancel</string>
+
+    <!-- Shared field-state literals (carb-log / hyd-log / custom-message / SOS).
+         Pulled out for B17/B22 so future localisation has a single source of truth.
+         Format strings preserve the exact rendered text on the Karoo data field —
+         see SOSDataType / CustomMessageDataType / WebhookDataType / SafetyTimerDataType
+         where they are consumed. -->
+    <string name="field_state_off">OFF</string>
+    <string name="field_state_tap_undo">TAP UNDO</string>
+    <string name="sos_field_tap_sos">tap=SOS</string>
+
+    <!-- Custom Message DataType (slot 1/2/3) — state flashes + fallback titles. -->
+    <string name="msg_default_title_1">MSG</string>
+    <string name="msg_default_title_2">MSG2</string>
+    <string name="msg_default_title_3">MSG3</string>
+    <string name="field_state_msg_sending">Sending…</string>
+    <string name="field_state_msg_sent">SENT ✓</string>
+    <string name="field_state_msg_tap_send">tap=send</string>
+
+    <!-- Webhook DataType — state flashes + idle/disabled hints. -->
+    <string name="field_state_webhook_tap">tap</string>
+    <string name="field_state_webhook_disabled">off</string>
+    <string name="field_state_webhook_firing">firing…</string>
+    <string name="field_state_webhook_ok">OK ✓</string>
+
+    <!-- Shared "error, tap to retry" hint — used by both Custom Message and Webhook
+         after a failed dispatch. -->
+    <string name="field_state_err_retry">ERR retry</string>
+
+    <!-- SafetyTimer DataType — countdown / check-in / disabled. -->
+    <string name="timer_cancel_countdown">CANCEL\n%1$ds</string>
 
     <!-- Overlay permission warning -->
     <string name="overlay_permission_title">⚠ Overlay permission required</string>
@@ -310,9 +325,12 @@
     <string name="overlay_permission_button">Enable now</string>
 
     <!-- Timer field states -->
-    <string name="timer_off">Check-in\nOFF</string>
+    <!-- B22: text was previously orphan ("Check-in\nOFF" / "Tap to\ncheck in") and the
+         DataType hardcoded "Timer\nOFF" / "tap=ok" inline. Strings updated to match the
+         shipped UX so future translators have a single source of truth. -->
+    <string name="timer_off">Timer\nOFF</string>
     <string name="timer_checkin">CHECK\nIN!</string>
-    <string name="timer_ok">Tap to\ncheck in</string>
+    <string name="timer_ok">tap=ok</string>
 
     <string name="custom_message_section">Custom Messages</string>
     <string name="custom_message_label">Enable message 1</string>

@@ -369,9 +369,9 @@ The cooldown (= `wellnessHighHrDurationMinutes`) and the re-arm rule (`hrAboveTh
 Both detectors use the same model:
 
 - **Sensor input writes** (`updateHr`, `updateSpeed`, `updateUserProfile`) happen on Karoo SDK callback threads. They write only `@Volatile` fields — no allocation, no I/O, no lock contention.
-- **Tick coroutines** run on the extension's `Main + SupervisorJob` scope, every 5 s (medical) or 30 s (wellness). They read the same `@Volatile` fields and emit alerts via `karooSystem.dispatch(...)` and the `onIncident` callback.
+- **Tick coroutines** run on the extension's `Main + SupervisorJob` scope, every 10 s (medical, raised from 5 s in v18.2 — `MONITOR_TICK_MS = 10_000L`) or 30 s (wellness). They read the same `@Volatile` fields and emit alerts via `karooSystem.dispatch(...)` and the `onIncident` callback.
 - **`@Volatile` is required** for cross-thread visibility. JVM does NOT guarantee that `Long`/`Double` reads/writes are atomic without volatile, and even `Int`/`Boolean` reads can be served from a stale CPU cache indefinitely.
-- **No locks**. The algorithms tolerate slightly stale reads — at worst, an alert fires one tick later than ideal. Acceptable for non-time-critical (wellness) and acceptable for medical given the 5 s tick is small relative to the 30 s flatline / 15 s collapse window.
+- **No locks**. The algorithms tolerate slightly stale reads — at worst, an alert fires one tick later than ideal. Acceptable for non-time-critical (wellness) and acceptable for medical given the 10 s tick remains comfortably below the 30 s flatline / 15 s collapse windows (worst-case detection latency: 10 s, well under the 30 s cancel countdown).
 
 The `start()` pattern uses the **`cancelAndJoin` inside the new coroutine** trick (same as `CarbsTracker`) so that an old monitor coroutine is fully stopped before a new tick can run. This eliminates the race where a stale tick could observe partially-reset state during a config-change-driven restart.
 

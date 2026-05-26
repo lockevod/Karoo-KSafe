@@ -604,27 +604,24 @@ class CarbsTracker(
      *  the time-alert path (deficit wins; if a time tick was due in the same
      *  tick it gets consumed silently). */
     private fun evaluateDeficitAlert(now: Long): Boolean {
-        if (!config.carbDeficitAlertEnabled) return false
-        // Initial-delay grace period — only applies to the FIRST deficit alert of
-        // the session AND only while the rider hasn't logged anything yet. The
-        // integrator runs from t=0, so on a fresh ride the deficit crosses the
-        // threshold purely from elapsed time (no rider misconduct). Without this
-        // gate the rider sees a "behind 25 g" nag at minute ~25, which reads as
-        // the app malfunctioning. Once any deficit alert fires or the rider has
-        // logged something, normal cooldown logic takes over.
-        val isFirstDeficitAlert = lastDeficitAlertFireMs == 0L && cumLoggedG == 0
-        if (isFirstDeficitAlert && config.carbDeficitInitialDelayMin > 0) {
-            val initialDelayMs = config.carbDeficitInitialDelayMin * 60_000L
-            if (now - sessionStartMs < initialDelayMs) return false
-        }
+        // v18.2 B9 — gate delegated to [FuelingAlertScheduler.shouldFireDeficit]
+        // (pure helper) so the same shape is single-sourced with the hydration
+        // tracker and unit-tested in `FuelingAlertSchedulerTest`. The deficit is
+        // still computed here because the helper needs an Int and the conversion
+        // is type-bound to the tracker's `cumBurnedG: Float` accumulator.
         val deficit = (cumBurnedG - cumLoggedG).toInt()
-        if (deficit < config.carbDeficitThresholdG) return false
-        // v17: configurable reminder cooldown. Previously hard-coded at 5 min;
-        // riders on long endurance rides found that too frequent when the deficit
-        // can sit unresolved for an hour. Gated by the PER-SOURCE clock so an
-        // unrelated time-alert fire doesn't throttle the deficit reminder cadence.
-        val reminderIntervalMs = config.carbDeficitReminderIntervalMin * 60_000L
-        if (now - lastDeficitAlertFireMs < reminderIntervalMs) return false
+        val fire = FuelingAlertScheduler.shouldFireDeficit(
+            enabled                = config.carbDeficitAlertEnabled,
+            deficit                = deficit,
+            deficitThreshold       = config.carbDeficitThresholdG,
+            lastDeficitAlertFireMs = lastDeficitAlertFireMs,
+            reminderIntervalMs     = config.carbDeficitReminderIntervalMin * 60_000L,
+            initialDelayMs         = config.carbDeficitInitialDelayMin * 60_000L,
+            cumLogged              = cumLoggedG,
+            sessionStartMs         = sessionStartMs,
+            now                    = now,
+        )
+        if (!fire) return false
         fireAlert(source = "deficit", deficit = deficit, elapsedMin = (now - lastRealLogMs) / 60_000)
         lastDeficitAlertFireMs = now
         return true

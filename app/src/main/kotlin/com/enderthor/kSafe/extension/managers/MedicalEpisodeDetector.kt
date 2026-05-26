@@ -61,7 +61,15 @@ class MedicalEpisodeDetector(
     private val HR_COLLAPSE_MIN_HISTORY_SEC = 240   // 4 min — cold-start guard for the rolling baseline
     private val HR_STALE_MS                = 15_000L
     private val ACTIVE_RECENT_MS           = 60_000L
-    private val MONITOR_TICK_MS            = 5_000L
+    // B12 — bumped from 5 s to 10 s after the post-merge battery audit. The
+    // detector's two real windows (HR_FLATLINE_DURATION_SEC = 30 s, HR_COLLAPSE_
+    // WINDOW_SEC = 15 s) both have larger granularity than the tick, so a 10 s
+    // cadence adds up to 10 s detection latency in the worst case (one full tick
+    // between flatline onset and the next tick boundary) — well under the 30 s
+    // cancel countdown that follows any fire. Saves ~360 wakeups/h (~0.3 mA·h
+    // per 5 h ride) — the single highest-leverage tracker-tick optimisation per
+    // the wakeup census; no other tick was worth halving on a risk/reward basis.
+    private val MONITOR_TICK_MS            = 10_000L
     private val ACTIVE_SPEED_KMH           = 5.0
     private val PERIODIC_LOG_INTERVAL_MS   = 120_000L  // 2 min, matching CrashDetectionManager.PERIODIC
 

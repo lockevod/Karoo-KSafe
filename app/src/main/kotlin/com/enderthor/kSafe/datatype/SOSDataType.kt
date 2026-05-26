@@ -111,7 +111,11 @@ class SOSDataType(
                     when (state.status) {
                         EmergencyStatus.IDLE -> {
                             val renderedColor = colorFlow.value
-                            emitter.updateView(buildView(context, config, renderedColor, "SAFE", "tap=SOS"))
+                            emitter.updateView(buildView(
+                                context, config, renderedColor,
+                                context.getString(R.string.sos_safe),
+                                context.getString(R.string.sos_field_tap_sos),
+                            ))
                             // Suspend until EITHER the emergency state changes OR the
                             // configured idle colour changes — no timeout-based wakeups.
                             // `filter { it != snapshot }` makes the wait race-free: a state
@@ -128,11 +132,19 @@ class SOSDataType(
                         }
                         EmergencyStatus.COUNTDOWN -> {
                             val secs = state.countdownRemaining()
-                            emitter.updateView(buildView(context, config, COLOR_COUNTDOWN, "SOS ${secs}s", "tap=cancel"))
+                            emitter.updateView(buildView(
+                                context, config, COLOR_COUNTDOWN,
+                                context.getString(R.string.sos_countdown, secs),
+                                context.getString(R.string.sos_tap_cancel),
+                            ))
                             kotlinx.coroutines.delay(1_000L)
                         }
                         EmergencyStatus.ALERTING -> {
-                            emitter.updateView(buildView(context, config, COLOR_ALERTING, "ALERT\nSENT", clickable = false))
+                            emitter.updateView(buildView(
+                                context, config, COLOR_ALERTING,
+                                context.getString(R.string.sos_alerting),
+                                clickable = false,
+                            ))
                             EmergencyManager.uiState.first { it.status != EmergencyStatus.ALERTING }
                         }
                     }

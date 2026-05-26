@@ -338,7 +338,10 @@ class Sender(
      * standalone-"OK" via trim+equals (so "OK" by itself works, but "tOKen" doesn't).
      * Blacklist still runs first as a defense-in-depth catch for known failure modes.
      */
-    private fun isCallMeBotSuccess(statusCode: Int, body: String): Boolean {
+    /** Internal visibility for unit tests — see `CallMeBotSuccessTest`. The K1
+     *  rationale below documents historical false-positive bugs that the tests
+     *  pin against regressions. */
+    internal fun isCallMeBotSuccess(statusCode: Int, body: String): Boolean {
         if (statusCode !in 200..299) return false
         if (body.isBlank()) return false   // captive portal / proxy intercept — never trust.
         val lower = body.lowercase()

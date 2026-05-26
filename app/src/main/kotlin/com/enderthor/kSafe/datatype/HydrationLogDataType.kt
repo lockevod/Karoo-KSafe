@@ -162,12 +162,12 @@ class HydrationLogDataType(
                     } else 0
                     when {
                         !config.preview && !ksafeConfig.hydrationTrackerEnabled ->
-                            Frame(COLOR_OFF, label, "OFF", clickable = false, leftDrawableRes = 0)
+                            Frame(COLOR_OFF, label, context.getString(R.string.field_state_off), clickable = false, leftDrawableRes = 0)
                         state is HydrationLogState.LOGGED ->
                             // LOGGED / UNDONE carry the actual ml that were added/removed at
                             // tap time, so editing the slot config mid-undo-window cannot
                             // desync the flash from the stored entry. See CarbLogDataType.
-                            Frame(COLOR_LOGGED, "+${state.ml}ml", "TAP UNDO", clickable = true, leftDrawableRes = 0)
+                            Frame(COLOR_LOGGED, "+${state.ml}ml", context.getString(R.string.field_state_tap_undo), clickable = true, leftDrawableRes = 0)
                         state is HydrationLogState.UNDONE ->
                             Frame(COLOR_UNDONE, "−${state.ml}ml", "✓", clickable = true, leftDrawableRes = 0)
                         else -> // IDLE

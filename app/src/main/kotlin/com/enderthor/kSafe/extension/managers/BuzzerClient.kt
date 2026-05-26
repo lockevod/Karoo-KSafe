@@ -207,9 +207,38 @@ class BuzzerClient(private val context: Context) {
         // 14=beep, 15=enableMediaPlayer, 16=performMediaAction.
         private const val TRANSACTION_BEEP = 14
 
+        // ─── HAL beep patterns ──────────────────────────────────────────────
+        //
+        // B25-c — SDK ↔ HAL pairing map. Each HAL pattern below is invoked by
+        // `EmergencyManager.playEmergencyBeep(config, sdkPattern, halPattern)`
+        // alongside the SDK pattern listed; the two should convey the same
+        // audible identity so a rider switching between muted (HAL) and
+        // unmuted (SDK) hears the SAME lifecycle event the same way. Editing
+        // one side without the other breaks audio-identity coherence and is
+        // hard to spot in code review — always check the pairing table when
+        // touching either side.
+        //
+        //   SDK (mute OFF)   ↔  HAL (mute ON, bypass enabled)
+        //   ───────────────────────────────────────────────────────────────
+        //   BEEP_LONG        ↔  COUNTDOWN_START     countdown initial beep
+        //   BEEP_URGENT      ↔  COUNTDOWN_TICK      ≤5 s countdown ticks
+        //   BEEP_LONG        ↔  EMERGENCY_PATTERN   sendAlerts final beep
+        //   <descending 5T>  ↔  DELIVERY_FAILED_PATTERN   delivery-failure beep
+        //
+        // Frequency note: HAL patterns sit in the 2000–3000 Hz band because
+        // the Karoo's hardware buzzer is a piezo transducer whose physics
+        // favour those frequencies — going lower than ~1500 Hz produces a
+        // weak, muffled output. The SDK pairings use lower frequencies
+        // (600–880 Hz, 1100 Hz) which the system mixer routes through the
+        // proper speaker. The audible "feel" therefore differs across
+        // channels for the same lifecycle event, but the rhythmic shape
+        // (single-tone / multi-tone-rising / multi-tone-descending) is
+        // preserved so the rider's brain reads the same identity.
+
         /** Rising-urgency pattern (~960 ms) suitable for the ALERTING entry — only once,
          *  to signal "alerts are firing now". Two short bursts plus a longer climb so it
-         *  cuts through ambient road noise even on a partly-occluded buzzer. */
+         *  cuts through ambient road noise even on a partly-occluded buzzer.
+         *  Paired with SDK [PlayBeepPattern] `BEEP_LONG` at the sendAlerts callsite. */
         val EMERGENCY_PATTERN: List<Tone> = listOf(
             Tone(2500, 200),
             Tone(0, 80),
@@ -218,11 +247,45 @@ class BuzzerClient(private val context: Context) {
             Tone(3000, 400),
         )
 
-        /** Single short tone (~200 ms) suitable for the countdown last-5-seconds tick.
-         *  Must fit comfortably inside a 1-second interval so successive invocations don't
-         *  step on each other when the buzzer is busy emitting the previous tick. */
+        /** Rising-urgency 3-tone burst (~520 ms) for the countdown ≤5 s ticks. Paired
+         *  with SDK `BEEP_URGENT` (the multi-tone climbing SDK pattern); the rider
+         *  needs the same "URGENCY rising" cue on both channels because the ≤5 s
+         *  window is the LAST cancel opportunity before the alert fires. Pre-B25-b
+         *  this was a single 200 ms tone — audibly identical to [COUNTDOWN_START]
+         *  below, leaving the muted rider unable to distinguish "countdown began
+         *  (30 s margin)" from "T-3 (act NOW)" by ear. Fits comfortably in the 1 s
+         *  inter-tick gap so successive invocations don't step on each other when
+         *  the buzzer is busy emitting the previous tick. */
         val COUNTDOWN_TICK: List<Tone> = listOf(
-            Tone(2800, 200),
+            Tone(2500, 100),
+            Tone(0, 60),
+            Tone(2500, 100),
+            Tone(0, 60),
+            Tone(3000, 200),
+        )
+
+        /** Single longer tone (~600 ms) for the countdown INITIAL beep — distinct
+         *  from [COUNTDOWN_TICK] so a muted-Karoo rider can tell "the countdown
+         *  has just started (full cancel window ahead)" from "we are in the final
+         *  5 seconds (act NOW)" without looking at the screen. Same pitch family
+         *  as the tick (2800 Hz) so the two read as related events; 3× the
+         *  duration so it doesn't sound like just another tick. Paired with SDK
+         *  `BEEP_LONG`. */
+        val COUNTDOWN_START: List<Tone> = listOf(
+            Tone(2800, 600),
+        )
+
+        /** Descending pattern (~1.2 s) for the "alert delivery failed" notification —
+         *  audibly distinct from [EMERGENCY_PATTERN] (rising) so a rider on a muted
+         *  Karoo can tell "alert fired" from "alert FAILED to fire" without looking
+         *  at the screen. Mirrors the SDK-side `PlayBeepPattern` in
+         *  `EmergencyManager.notifyDeliveryFailure` (600/500/400 Hz tones). */
+        val DELIVERY_FAILED_PATTERN: List<Tone> = listOf(
+            Tone(2400, 200),
+            Tone(0, 80),
+            Tone(2200, 200),
+            Tone(0, 80),
+            Tone(2000, 400),
         )
 
         /** A short single beep for the test button — must not be alarming. */

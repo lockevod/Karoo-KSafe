@@ -99,6 +99,7 @@ Every CSV row is tagged with a short event identifier. The current catalogue:
 |---|---|
 | `HR_FLAT` / `HR_COLLAPSE` | Medical detector fired |
 | `MED_NO` | Medical countdown CANCELLED by rider |
+| `INC_NO` | Any OTHER incident countdown CANCELLED by rider (wellness / check-in / SOS / speed-drop). Payload: `how_long_ms`, `subkind=<EmergencyReason.name>`. Lets post-incident analysis quantify false-positive rates across all six emergency reasons, not just CRASH/MEDICAL. |
 | `WLNS_HR` | Wellness tier fired (critical / sustained / decoupling) |
 | `WARN` / `SILENT` | Generic incident dispatched at WARNING / SILENT level |
 | `INC_SUPP` | An incident arrived while another emergency was in progress and was dropped (audit trail for co-occurring detectors) |

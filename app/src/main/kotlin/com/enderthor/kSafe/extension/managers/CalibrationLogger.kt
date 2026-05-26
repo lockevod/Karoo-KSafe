@@ -159,6 +159,13 @@ class CalibrationLogger(
         HR_STALE("HR_STALE"),
         /** User cancelled a medical episode countdown (false-positive marker). */
         MEDICAL_CANCELLED("MED_NO"),
+        /** User cancelled an incident countdown that isn't crash- or medical-class — covers
+         *  manual SOS, wellness (critical-HR / decoupling / high-HR), check-in expiry, and
+         *  speed-drop. The CSV `subkind` field identifies which one (`reason.name`). Lets
+         *  post-incident analysis cross-check false-positive rates across all six emergency
+         *  reasons, not just CRASH/MEDICAL — a rider report "wellness alert fires too often"
+         *  can now be quantified from the calibration trail. */
+        INCIDENT_CANCELLED("INC_NO"),
         /** Wellness monitor fired (sustained high HR over user-configured threshold). */
         WELLNESS_FIRED("WLNS_HR"),
         /** Generic WARNING-level incident dispatched by EmergencyManager.handleIncident. */

@@ -200,13 +200,13 @@ class CarbLogDataType(
                             // Master tracker disabled — show OFF in grey. Skipped in preview
                             // so the profile-editor gallery shows the slot's configured idle
                             // colour and label, not the disabled-state grey.
-                            Frame(COLOR_OFF, label, "OFF", clickable = false, leftDrawableRes = 0)
+                            Frame(COLOR_OFF, label, context.getString(R.string.field_state_off), clickable = false, leftDrawableRes = 0)
                         state is CarbLogState.LOGGED ->
-                            // LOGGED stays tappable for the 8 s undo window so a second tap
+                            // LOGGED stays tappable for the 6 s undo window so a second tap
                             // on the same slot reverses the entry. The grams shown are the
                             // ones actually logged at tap time, so editing the slot config
                             // mid-window can't desync the flash from the stored entry.
-                            Frame(COLOR_LOGGED, "+${state.grams}g", "TAP UNDO", clickable = true, leftDrawableRes = 0)
+                            Frame(COLOR_LOGGED, "+${state.grams}g", context.getString(R.string.field_state_tap_undo), clickable = true, leftDrawableRes = 0)
                         state is CarbLogState.UNDONE ->
                             // UNDONE is the brief red "−Xg ✓" confirmation after a successful
                             // undo. Tappable so a third quick tap re-logs (mis-tap recovery

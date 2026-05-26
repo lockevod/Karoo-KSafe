@@ -167,21 +167,51 @@ class SensorReader(
      */
     fun start(handler: Handler? = null) {
         if (registered) return
-        val accel = sensorManager.getDefaultSensor(Sensor.TYPE_ACCELEROMETER) ?: return
+        val accel = sensorManager.getDefaultSensor(Sensor.TYPE_ACCELEROMETER)
+        if (accel == null) {
+            Timber.w("SensorReader: accelerometer not available — crash detection disabled")
+            return
+        }
         val gyro = sensorManager.getDefaultSensor(Sensor.TYPE_GYROSCOPE)
-        sensorManager.registerListener(
-            this, accel,
-            SensorManager.SENSOR_DELAY_GAME,
-            BATCH_MAX_LATENCY_US,
-            handler,
-        )
-        gyro?.let {
+        // B11 — check the boolean return AND wrap in try/catch. `registerListener`
+        // can return false (sensor exists but the listener was rejected — rare on
+        // Karoo's stable HAL but possible after an OTA tightens caps) or throw
+        // SecurityException on future Android versions that gate body-sensor
+        // access at runtime. Without these guards, the failure was silent: a
+        // bubbled-up exception was swallowed by the supervisor scope, `registered`
+        // stayed false (so subsequent `stop()` was a no-op) but the manager
+        // believed itself running — crash detection silently disabled with no
+        // log trace until someone read the calibration CSV.
+        val accelOk = try {
             sensorManager.registerListener(
-                this, it,
+                this, accel,
                 SensorManager.SENSOR_DELAY_GAME,
                 BATCH_MAX_LATENCY_US,
                 handler,
             )
+        } catch (e: SecurityException) {
+            Timber.e(e, "SensorReader: accelerometer registerListener threw SecurityException — crash detection disabled")
+            false
+        }
+        if (!accelOk) {
+            Timber.w("SensorReader: accelerometer registerListener returned false — crash detection disabled")
+            return
+        }
+        gyro?.let {
+            val gyroOk = try {
+                sensorManager.registerListener(
+                    this, it,
+                    SensorManager.SENSOR_DELAY_GAME,
+                    BATCH_MAX_LATENCY_US,
+                    handler,
+                )
+            } catch (e: SecurityException) {
+                Timber.w(e, "SensorReader: gyroscope registerListener threw — falling back to accel-only")
+                false
+            }
+            if (!gyroOk) {
+                Timber.i("SensorReader: gyroscope registerListener returned false — accel-only mode")
+            }
         }
         registered = true
     }

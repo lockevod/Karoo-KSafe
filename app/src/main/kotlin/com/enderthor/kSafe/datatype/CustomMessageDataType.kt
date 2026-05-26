@@ -67,9 +67,9 @@ class CustomMessageDataType(
     private val configManager = ConfigurationManager(context)
 
     private fun titleFromConfig(config: KSafeConfig) = when (slot) {
-        2 -> config.customMessage2Title.safeTake(7).ifBlank { "MSG2" }
-        3 -> config.customMessage3Title.safeTake(7).ifBlank { "MSG3" }
-        else -> config.customMessageTitle.safeTake(7).ifBlank { "MSG" }
+        2 -> config.customMessage2Title.safeTake(7).ifBlank { context.getString(R.string.msg_default_title_2) }
+        3 -> config.customMessage3Title.safeTake(7).ifBlank { context.getString(R.string.msg_default_title_3) }
+        else -> config.customMessageTitle.safeTake(7).ifBlank { context.getString(R.string.msg_default_title_1) }
     }
 
     private fun idleColorFromConfig(config: KSafeConfig) = when (slot) {
@@ -142,15 +142,15 @@ class CustomMessageDataType(
                             // Slot disabled in Actions tab — show OFF in grey. Skipped in
                             // preview so the profile-editor gallery shows the slot's
                             // configured idle colour and title, not the disabled-state grey.
-                            Frame(COLOR_OFF, title, "OFF", clickable = false)
+                            Frame(COLOR_OFF, title, context.getString(R.string.field_state_off), clickable = false)
                         state == CustomMessageState.SENDING ->
-                            Frame(COLOR_SENDING, title, "Sending…", clickable = false)
+                            Frame(COLOR_SENDING, title, context.getString(R.string.field_state_msg_sending), clickable = false)
                         state == CustomMessageState.SENT ->
-                            Frame(COLOR_SENT, title, "SENT ✓", clickable = false)
+                            Frame(COLOR_SENT, title, context.getString(R.string.field_state_msg_sent), clickable = false)
                         state == CustomMessageState.ERROR ->
-                            Frame(COLOR_ERROR, title, "ERR retry", clickable = true)
+                            Frame(COLOR_ERROR, title, context.getString(R.string.field_state_err_retry), clickable = true)
                         else -> // IDLE
-                            Frame(idleColor, title, "tap=send", clickable = true)
+                            Frame(idleColor, title, context.getString(R.string.field_state_msg_tap_send), clickable = true)
                     }
                 }.distinctUntilChanged().collect { f ->
                     emitter.updateView(buildView(context, config, f.bgColor, f.main, f.hint, f.clickable))

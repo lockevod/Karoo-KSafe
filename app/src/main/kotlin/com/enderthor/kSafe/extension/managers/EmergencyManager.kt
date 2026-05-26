@@ -204,7 +204,16 @@ class EmergencyManager(
             EmergencyReason.MEDICAL_COLLAPSE -> calibLogger?.log(CalibrationLogger.Event.MEDICAL_CANCELLED) {
                 "how_long_ms=$howLongMs,subkind=${cancelledReason.name}"
             }
-            else -> Unit
+            // B16 — wellness / check-in / SOS / speed-drop cancellations also produce a
+            // calibration-log row so post-incident analysis can quantify false-positive
+            // rates for these reasons too. Pre-B16 only CRASH/MEDICAL cancels were logged,
+            // making rider reports of "wellness alert fires too often" unverifiable from
+            // the CSV. `null` (cancel with no captured reason — shouldn't happen in
+            // practice) skips the log row rather than emit a useless `subkind=null`.
+            null -> Unit
+            else -> calibLogger?.log(CalibrationLogger.Event.INCIDENT_CANCELLED) {
+                "how_long_ms=$howLongMs,subkind=${cancelledReason.name}"
+            }
         }
 
         // Update UI state synchronously — DataTypes react immediately, no DataStore wait.
@@ -486,7 +495,15 @@ class EmergencyManager(
                 Timber.e(e, "Failed to persist COUNTDOWN state; continuing with in-memory state only")
             }
             karooSystem.dispatch(TurnScreenOn)
-            karooSystem.dispatch(BEEP_LONG)
+            // B19 — initial countdown beep also routes through playEmergencyBeep so
+            // the muted-Karoo HAL bypass fires for the most common scenario: a
+            // FRESH crash/medical countdown on a muted Karoo. Pre-B19 this raw
+            // dispatch was silent until the ≤5 s tick window — riders who muted
+            // their Karoo got no "emergency starting" cue despite enabling
+            // buzzerOnEmergencyEnabled, defeating the whole point of the bypass.
+            // The resume/resumeAfterDeadline paths were migrated in B13;
+            // this completes the symmetry on the fresh-countdown path.
+            playEmergencyBeep(config, BEEP_LONG, BuzzerClient.COUNTDOWN_START)
 
             // Defense-in-depth clamp — the Settings UI clamps to [5, 120] on commit,
             // but a corrupted DataStore (file edited externally, restore from old
@@ -581,7 +598,14 @@ class EmergencyManager(
         countdownJob = scope.launch {
             // No re-save to DataStore on resume — the existing persisted state is the source of truth.
             karooSystem.dispatch(TurnScreenOn)
-            karooSystem.dispatch(BEEP_LONG)
+            // B13 — route through [playEmergencyBeep] so the muted-Karoo HAL
+            // bypass fires when the rider opted in. Resume is the most safety-
+            // critical scenario for the bypass: Android killed the extension
+            // mid-countdown, the rider may not even know the process died.
+            // Raw `karooSystem.dispatch(BEEP_LONG)` here was silent on muted
+            // Karoos despite `buzzerOnEmergencyEnabled=true` — defeating the
+            // whole reason the bypass exists.
+            playEmergencyBeep(config, BEEP_LONG, BuzzerClient.COUNTDOWN_START)
 
             // H4 — clamp before .toInt() so a corrupted persisted deadline (e.g.
             // milliseconds accidentally stored where seconds were expected by a
@@ -598,7 +622,10 @@ class EmergencyManager(
                 }
                 if (remaining % 5 == 0 || remaining <= 10) {
                     if (remaining <= 10) karooSystem.dispatch(TurnScreenOn)
-                    if (remaining <= 5) karooSystem.dispatch(BEEP_URGENT)
+                    // B13 — same rationale: ≤5 s ticks are the last-chance audio
+                    // cue for the rider to cancel. Mirrors the [startCountdown]
+                    // line ~512 path which already uses playEmergencyBeep.
+                    if (remaining <= 5) playEmergencyBeep(config, BEEP_URGENT, BuzzerClient.COUNTDOWN_TICK)
                 }
                 delay(1_000L)
             }
@@ -631,12 +658,15 @@ class EmergencyManager(
         countdownJob?.cancel()
         countdownJob = scope.launch {
             karooSystem.dispatch(TurnScreenOn)
-            karooSystem.dispatch(BEEP_LONG)
+            // B13 — see resumeCountdown for the same rationale: the mini-confirm
+            // appears after a process kill, so the bypass is more important here
+            // than during a fresh countdown.
+            playEmergencyBeep(config, BEEP_LONG, BuzzerClient.COUNTDOWN_START)
             for (remaining in MINI_CONFIRM_SECONDS downTo 1) {
                 sosOverlay.showOrUpdate(reason, remaining) {
                     scope.launch { cancelEmergency(config) }
                 }
-                if (remaining <= 5) karooSystem.dispatch(BEEP_URGENT)
+                if (remaining <= 5) playEmergencyBeep(config, BEEP_URGENT, BuzzerClient.COUNTDOWN_TICK)
                 delay(1_000L)
             }
             sendAlerts(config, reason)
@@ -752,7 +782,7 @@ class EmergencyManager(
                         // sequence looks identical to a successful delivery
                         // (5 s ALERTING then SAFE), so a rider whose crash alert
                         // never reached contacts would have no way to know.
-                        notifyDeliveryFailure(config.activeProvider, reason)
+                        notifyDeliveryFailure(config, reason)
                     } else {
                         Timber.d("Delivery failure for $reason notification suppressed — alertJob superseded by newer emergency")
                     }
@@ -821,17 +851,30 @@ class EmergencyManager(
      * combines a distinct beep with a 20-s persistent InRideAlert so a rider in a
      * tunnel / coverage gap learns immediately that they cannot rely on the alert.
      */
-    private fun notifyDeliveryFailure(provider: com.enderthor.kSafe.data.ProviderType, reason: EmergencyReason) {
-        // Distinct beep pattern — two short low pulses then a longer descending tone.
-        // Audibly different from BEEP_LONG (alert fired) so a rider can tell the two
-        // states apart without looking at the screen.
-        karooSystem.dispatch(PlayBeepPattern(listOf(
-            PlayBeepPattern.Tone(frequency = 600, durationMs = 300),
-            PlayBeepPattern.Tone(frequency = null, durationMs = 150),
-            PlayBeepPattern.Tone(frequency = 500, durationMs = 300),
-            PlayBeepPattern.Tone(frequency = null, durationMs = 150),
-            PlayBeepPattern.Tone(frequency = 400, durationMs = 600),
-        )))
+    private fun notifyDeliveryFailure(config: KSafeConfig, reason: EmergencyReason) {
+        val provider = config.activeProvider
+        // Distinct descending beep pattern — audibly different from EMERGENCY_PATTERN
+        // (rising, "alert fired") so a rider can tell "delivery failed" from
+        // "alert sent" without looking at the screen.
+        //
+        // B13 — route through [playEmergencyBeep] so the muted-Karoo HAL bypass
+        // engages here too. Delivery failure is exactly the case where the rider
+        // CANNOT rely on the alert getting out; if their Karoo is muted, the
+        // raw SDK dispatch was silent and the rider would never learn until
+        // they checked the screen. The HAL pattern [BuzzerClient.
+        // DELIVERY_FAILED_PATTERN] mirrors the SDK descending shape so the
+        // audible identity holds whether or not the bypass dispatched.
+        playEmergencyBeep(
+            config = config,
+            sdkPattern = PlayBeepPattern(listOf(
+                PlayBeepPattern.Tone(frequency = 600, durationMs = 300),
+                PlayBeepPattern.Tone(frequency = null, durationMs = 150),
+                PlayBeepPattern.Tone(frequency = 500, durationMs = 300),
+                PlayBeepPattern.Tone(frequency = null, durationMs = 150),
+                PlayBeepPattern.Tone(frequency = 400, durationMs = 600),
+            )),
+            halPattern = BuzzerClient.DELIVERY_FAILED_PATTERN,
+        )
         // Unique-per-fire suffix on both ids (InRideAlert AND SystemNotification):
         // the sender's retry loop can call notifyDeliveryFailure multiple times for
         // the same provider+reason across its ~30 min retry window. Re-dispatching

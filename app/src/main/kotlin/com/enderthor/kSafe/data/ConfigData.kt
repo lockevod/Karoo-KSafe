@@ -69,6 +69,13 @@ const val KAROO_LIVE_BASE_URL = "https://dashboard.hammerhead.io/live/"
  *             carried forward into BOTH new fields so a rider who had customised the message
  *             keeps the previous "same text for time and deficit" behaviour. A blank legacy
  *             field leaves the new fields blank → the source-specific default strings apply.
+ *  v14 → v15: `wellnessCriticalThresholdBpm` default raised from 175 to 185 to repair the
+ *             tier inversion shipped before v15 (critical 175 ≤ sustained 180 meant the
+ *             critical tier could never fire because the sustained tier always caught the
+ *             reading first). The migration only fixes riders left at the broken default —
+ *             those who deliberately changed critical away from 175 keep their value. The
+ *             repaired value is `max(185, sustained + 5)` so the fix also rescues riders
+ *             who raised their sustained tier without re-checking the critical tier.
  *  v15 → v16: buzzerOnEmergencyEnabled added. Default true so existing safety-conscious
  *             users get the audible-even-when-muted behaviour automatically after update;
  *             riders who deliberately mute their Karoo can opt out from Settings.

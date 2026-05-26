@@ -170,12 +170,13 @@ class WebhookDataType(
                     when (stateData.state) {
                         WebhookState.IDLE -> {
                             val bgColor = if (enabled) idleColor else COLOR_DISABLED
-                            val hint    = if (enabled) "tap" else "off"
+                            val hint    = if (enabled) context.getString(R.string.field_state_webhook_tap)
+                                          else context.getString(R.string.field_state_webhook_disabled)
                             Frame(bgColor, label, hint, clickable = true)
                         }
-                        WebhookState.FIRING  -> Frame(COLOR_FIRING,  label, "firing…", clickable = false)
-                        WebhookState.SUCCESS -> Frame(COLOR_SUCCESS, label, stateData.message.ifBlank { "OK ✓" }, clickable = false)
-                        WebhookState.ERROR   -> Frame(COLOR_ERROR,   label, stateData.message.ifBlank { "ERR retry" }, clickable = true)
+                        WebhookState.FIRING  -> Frame(COLOR_FIRING,  label, context.getString(R.string.field_state_webhook_firing), clickable = false)
+                        WebhookState.SUCCESS -> Frame(COLOR_SUCCESS, label, stateData.message.ifBlank { context.getString(R.string.field_state_webhook_ok) }, clickable = false)
+                        WebhookState.ERROR   -> Frame(COLOR_ERROR,   label, stateData.message.ifBlank { context.getString(R.string.field_state_err_retry) }, clickable = true)
                     }
                 }.distinctUntilChanged().collect { f ->
                     emitter.updateView(buildView(context, config, f.bgColor, f.main, f.hint, f.clickable))

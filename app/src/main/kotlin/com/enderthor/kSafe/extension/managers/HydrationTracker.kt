@@ -485,25 +485,22 @@ class HydrationTracker(
      *  the time-alert path (deficit wins; if a time tick was due in the same
      *  tick it gets consumed silently). */
     private fun evaluateDeficitAlert(now: Long): Boolean {
-        if (!config.hydrationDeficitAlertEnabled) return false
-        // Initial-delay grace period — only applies to the FIRST deficit alert of
-        // the session AND only while the rider hasn't logged anything yet. Once
-        // any deficit alert has fired OR the rider has logged water, normal
-        // cooldown logic takes over (see CarbsTracker.evaluateDeficitAlert).
-        val isFirstDeficitAlert = lastDeficitAlertFireMs == 0L && cumLoggedMl == 0
-        if (isFirstDeficitAlert && config.hydrationDeficitInitialDelayMin > 0) {
-            val initialDelayMs = config.hydrationDeficitInitialDelayMin * 60_000L
-            if (now - sessionStartMs < initialDelayMs) return false
-        }
+        // v18.2 B9 — gate delegated to [FuelingAlertScheduler.shouldFireDeficit]
+        // so the carb and hydration deficit logic is single-sourced and unit-
+        // tested in `FuelingAlertSchedulerTest`. Mirrors `CarbsTracker.evaluateDeficitAlert`.
         val deficit = (cumTargetMl - cumLoggedMl).toInt()
-        if (deficit < config.hydrationDeficitThresholdMl) return false
-        // v17: configurable reminder cooldown. Previously hard-coded at 5 min,
-        // which riders found too frequent on long endurance rides where the
-        // deficit can sit unresolved for an hour. The cooldown is gated by the
-        // PER-SOURCE clock so an unrelated time-alert fire doesn't throttle the
-        // deficit reminder cadence and vice versa.
-        val reminderIntervalMs = config.hydrationDeficitReminderIntervalMin * 60_000L
-        if (now - lastDeficitAlertFireMs < reminderIntervalMs) return false
+        val fire = FuelingAlertScheduler.shouldFireDeficit(
+            enabled                = config.hydrationDeficitAlertEnabled,
+            deficit                = deficit,
+            deficitThreshold       = config.hydrationDeficitThresholdMl,
+            lastDeficitAlertFireMs = lastDeficitAlertFireMs,
+            reminderIntervalMs     = config.hydrationDeficitReminderIntervalMin * 60_000L,
+            initialDelayMs         = config.hydrationDeficitInitialDelayMin * 60_000L,
+            cumLogged              = cumLoggedMl,
+            sessionStartMs         = sessionStartMs,
+            now                    = now,
+        )
+        if (!fire) return false
         fireAlert("deficit", deficit, (now - lastRealLogMs) / 60_000)
         lastDeficitAlertFireMs = now
         return true

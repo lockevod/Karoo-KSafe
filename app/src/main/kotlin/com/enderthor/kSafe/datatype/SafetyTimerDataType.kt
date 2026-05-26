@@ -126,11 +126,11 @@ class SafetyTimerDataType(
                     when {
                         state.status == EmergencyStatus.COUNTDOWN -> {
                             val secs = state.countdownRemaining()
-                            emit(COLOR_CANCEL, "CANCEL\n${secs}s", "", clickable = true)
+                            emit(COLOR_CANCEL, context.getString(R.string.timer_cancel_countdown, secs), "", clickable = true)
                             delay(1_000L)
                         }
                         !state.checkinEnabled -> {
-                            emit(COLOR_DISABLED, "Timer\nOFF", "", clickable = false)
+                            emit(COLOR_DISABLED, context.getString(R.string.timer_off), "", clickable = false)
                             EmergencyManager.uiState.first { it != state }
                         }
                         else -> {
@@ -144,14 +144,14 @@ class SafetyTimerDataType(
                                 else      -> renderedColor
                             }
                             val mainText = when {
-                                isExpired -> "CHECK\nIN!"
+                                isExpired -> context.getString(R.string.timer_checkin)
                                 else -> {
                                     val h = remaining / 60
                                     val m = remaining % 60
                                     if (h > 0) "${h}h${m}m" else "${m}m"
                                 }
                             }
-                            val hintText = if (isExpired) "" else "tap=ok"
+                            val hintText = if (isExpired) "" else context.getString(R.string.timer_ok)
                             emit(bgColor, mainText, hintText, clickable = true)
                             // The display value changes when the minute counter rolls over.
                             // Compute the time until the next minute boundary so we can wake

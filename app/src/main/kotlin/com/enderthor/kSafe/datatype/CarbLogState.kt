@@ -18,7 +18,8 @@ import timber.log.Timber
 sealed class CarbLogState {
     /** Ready — shows the configured label and per-tap grams. */
     object IDLE : CarbLogState()
-    /** Green "+Xg" confirmation; field remains tappable for the 8 s undo window.
+    /** Green "+Xg" confirmation; field remains tappable for the 6 s undo window
+     *  (see `KSafeExtension.handleCarbLogTap`'s `delay(6_000L)`).
      *  [grams] is the amount actually added (frozen at log time). */
     data class LOGGED(val grams: Int) : CarbLogState()
     /** Red "−Xg ✓" confirmation after a successful undo; tappable to re-log.
