@@ -43,7 +43,9 @@ class ReadinessDecisionTest {
         val advice = decideReadiness(h, NOW)
         assertNotNull(advice)
         assertEquals(ReadinessLevel.TAKE_IT_EASY, advice!!.level)
-        assertTrue("reason mentions drift", advice.reasons.first().contains("drift"))
+        val first = advice.reasons.first()
+        assertTrue("reason is CardiacDrift", first is ReadinessReason.CardiacDrift)
+        assertEquals(11.5f, (first as ReadinessReason.CardiacDrift).percent, 0.001f)
     }
 
     @Test
@@ -51,7 +53,9 @@ class ReadinessDecisionTest {
         val h = WellnessHistory(listOf(record(ageHours = 8, sustainedFires = 1, decouplingFires = 1)))
         val advice = decideReadiness(h, NOW)
         assertEquals(ReadinessLevel.CAUTION, advice?.level)
-        assertTrue(advice!!.reasons.first().contains("2 wellness alerts"))
+        val first = advice!!.reasons.first()
+        assertTrue("reason is WellnessAlerts", first is ReadinessReason.WellnessAlerts)
+        assertEquals(2, (first as ReadinessReason.WellnessAlerts).count)
     }
 
     @Test
@@ -62,7 +66,9 @@ class ReadinessDecisionTest {
         )))
         val advice = decideReadiness(h, NOW)
         assertEquals(ReadinessLevel.CAUTION, advice?.level)
-        assertTrue(advice!!.reasons.first().contains("above critical"))
+        val first = advice!!.reasons.first()
+        assertTrue("reason is MinutesAboveCritical", first is ReadinessReason.MinutesAboveCritical)
+        assertEquals(12, (first as ReadinessReason.MinutesAboveCritical).minutes)
     }
 
     @Test
@@ -74,7 +80,9 @@ class ReadinessDecisionTest {
         ))
         val advice = decideReadiness(h, NOW)
         assertEquals(ReadinessLevel.CAUTION, advice?.level)
-        assertTrue(advice!!.reasons.first().contains("3 rides"))
+        val first = advice!!.reasons.first()
+        assertTrue("reason is RidesIn72h", first is ReadinessReason.RidesIn72h)
+        assertEquals(3, (first as ReadinessReason.RidesIn72h).count)
     }
 
     @Test
@@ -92,7 +100,9 @@ class ReadinessDecisionTest {
         // Rule 1: drift < 10 → no. Rule 2: 1 fire < 2 → no. Rule 3: 0 ms critical → no.
         // Rule 4: 3 rides within 72 h → yes.
         assertEquals(ReadinessLevel.CAUTION, advice?.level)
-        assertTrue(advice!!.reasons.first().contains("3 rides"))
+        val first = advice!!.reasons.first()
+        assertTrue("reason is RidesIn72h", first is ReadinessReason.RidesIn72h)
+        assertEquals(3, (first as ReadinessReason.RidesIn72h).count)
     }
 
     @Test

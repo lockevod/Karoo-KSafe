@@ -319,6 +319,29 @@
     <!-- SafetyTimer DataType — countdown / check-in / disabled. -->
     <string name="timer_cancel_countdown">CANCEL\n%1$ds</string>
 
+    <!-- B26 — Readiness advice reasons. Rendered at the UI boundary in
+         KSafeExtension.fireReadinessAdvice from the structured
+         ReadinessReason sealed type, so future translation has a single
+         source of truth and the pure decideReadiness() function stays
+         locale-free. Format args match the sealed-class payload. -->
+    <string name="readiness_reason_cardiac_drift">Cardiac drift %1$.0f%% on the last ride</string>
+    <string name="readiness_reason_wellness_alerts">%1$d wellness alerts on the last ride</string>
+    <string name="readiness_reason_minutes_critical">%1$d min above critical HR in your last ride</string>
+    <string name="readiness_reason_rides_72h">%1$d rides in the last 72 h</string>
+
+    <!-- B26 — Settings → Buzzer test button + diagnostic result strings.
+         Pulled out of inline literals so future translation has a single
+         source of truth. The %1$s args are dynamic diagnostic context
+         (bind error message, BeepResult enum name). -->
+    <string name="settings_buzzer_bypass_hint">Plays the Karoo buzzer on crash countdown and SOS firing, even if your Karoo is muted. Non-emergency beeps (ride start, check-in, wellness warnings) still respect mute as usual.</string>
+    <string name="settings_buzzer_test_label">Test buzzer (HAL probe)</string>
+    <string name="settings_buzzer_test_running">Binding…</string>
+    <string name="settings_buzzer_test_bind_failed">Bind failed: %1$s — KSafe will fall back to SDK beep on emergencies.</string>
+    <string name="settings_buzzer_test_beep_ok">Beep dispatched — did you hear it? Bypass is working.</string>
+    <string name="settings_buzzer_test_gated">Bypass GATED by Karoo OTA (SecurityException). KSafe will fall back to SDK beep on emergencies — same as pre-bypass behaviour.</string>
+    <string name="settings_buzzer_test_transact_failed">Bypass FAILED (transact threw — descriptor/transaction-ID drift in a Karoo OTA?). KSafe will fall back to SDK beep on emergencies.</string>
+    <string name="settings_buzzer_test_failed_other">Bypass FAILED (%1$s). KSafe will fall back to SDK beep on emergencies. Check logcat.</string>
+
     <!-- Overlay permission warning -->
     <string name="overlay_permission_title">⚠ Overlay permission required</string>
     <string name="overlay_permission_body">KSafe needs \"Draw over other apps\" permission to show the SOS cancel overlay on top of the ride screen. Without it, you won\'t see the cancel button during an emergency countdown.</string>

@@ -1,7 +1,6 @@
 package com.enderthor.kSafe.extension.util
 
 import com.enderthor.kSafe.data.WellnessHistory
-import java.util.Locale
 
 /**
  * Categorical readiness level surfaced to the rider on the first Recording transition
@@ -14,13 +13,33 @@ import java.util.Locale
 enum class ReadinessLevel { RECOVERED, CAUTION, TAKE_IT_EASY }
 
 /**
- * One readiness recommendation — `level` plus the human-readable [reasons] strings that
- * are joined into the InRideAlert detail. Reasons come pre-formatted; the surface code
- * (KSafeExtension) just joins them with " · ".
+ * Structured reason for a [ReadinessAdvice]. Carries the numeric payload only —
+ * rendering to a human-readable string is done at the UI boundary
+ * (`KSafeExtension.fireReadinessAdvice`) via Android string resources, so this
+ * decision layer stays pure and localisation-ready.
+ *
+ * B26: introduced when Copilot flagged that hardcoded English advice text inside
+ * the pure decision function made future translation impossible and mixed
+ * presentation into the algorithmic layer.
+ */
+sealed class ReadinessReason {
+    /** Cardiac drift over 10 % on the most recent ride. [percent] is the actual drift. */
+    data class CardiacDrift(val percent: Float) : ReadinessReason()
+    /** ≥ 2 wellness alerts fired on the most recent ride. [count] is the total. */
+    data class WellnessAlerts(val count: Int) : ReadinessReason()
+    /** ≥ 10 minutes spent above the critical HR threshold on the most recent ride. */
+    data class MinutesAboveCritical(val minutes: Int) : ReadinessReason()
+    /** ≥ 3 rides recorded in the last 72 hours (training-load saturation signal). */
+    data class RidesIn72h(val count: Int) : ReadinessReason()
+}
+
+/**
+ * One readiness recommendation — `level` plus the structured [reasons] (rendered to
+ * localised strings at the UI boundary).
  */
 data class ReadinessAdvice(
     val level: ReadinessLevel,
-    val reasons: List<String>,
+    val reasons: List<ReadinessReason>,
 )
 
 /**
@@ -65,19 +84,19 @@ fun decideReadiness(history: WellnessHistory, nowMs: Long): ReadinessAdvice? {
     return when {
         recent && newest.maxDriftPct >= 10f -> ReadinessAdvice(
             ReadinessLevel.TAKE_IT_EASY,
-            listOf(String.format(Locale.US, "Cardiac drift %.0f%% on the last ride", newest.maxDriftPct)),
+            listOf(ReadinessReason.CardiacDrift(newest.maxDriftPct)),
         )
         recent && newest.totalFires >= 2 -> ReadinessAdvice(
             ReadinessLevel.CAUTION,
-            listOf("${newest.totalFires} wellness alerts on the last ride"),
+            listOf(ReadinessReason.WellnessAlerts(newest.totalFires)),
         )
         recent && minutesAbove(newest.cumMsCriticalAbove) >= 10 -> ReadinessAdvice(
             ReadinessLevel.CAUTION,
-            listOf("${minutesAbove(newest.cumMsCriticalAbove)} min above critical HR in your last ride"),
+            listOf(ReadinessReason.MinutesAboveCritical(minutesAbove(newest.cumMsCriticalAbove))),
         )
         ridesWithin72h >= 3 -> ReadinessAdvice(
             ReadinessLevel.CAUTION,
-            listOf("$ridesWithin72h rides in the last 72 h"),
+            listOf(ReadinessReason.RidesIn72h(ridesWithin72h)),
         )
         else -> null
     }

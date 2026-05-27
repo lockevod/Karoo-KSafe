@@ -1391,11 +1391,27 @@ class KSafeExtension : KarooExtension("ksafe", BuildConfig.VERSION_NAME), Corout
             ReadinessLevel.CAUTION -> R.string.readiness_alert_caution_title to R.color.alert_orange_light
             ReadinessLevel.TAKE_IT_EASY -> R.string.readiness_alert_take_easy_title to R.color.alert_red
         }
+        // B26 — render structured ReadinessReason values to localised strings here,
+        // at the UI boundary. The decideReadiness() function returns sealed-class
+        // payloads only, keeping the pure decision layer free of presentation
+        // concerns and localisation-ready.
+        val detail = advice.reasons.joinToString(" • ") { reason ->
+            when (reason) {
+                is com.enderthor.kSafe.extension.util.ReadinessReason.CardiacDrift ->
+                    getString(R.string.readiness_reason_cardiac_drift, reason.percent)
+                is com.enderthor.kSafe.extension.util.ReadinessReason.WellnessAlerts ->
+                    getString(R.string.readiness_reason_wellness_alerts, reason.count)
+                is com.enderthor.kSafe.extension.util.ReadinessReason.MinutesAboveCritical ->
+                    getString(R.string.readiness_reason_minutes_critical, reason.minutes)
+                is com.enderthor.kSafe.extension.util.ReadinessReason.RidesIn72h ->
+                    getString(R.string.readiness_reason_rides_72h, reason.count)
+            }
+        }
         karooSystem.dispatch(InRideAlert(
             id = "ksafe-readiness-${System.currentTimeMillis()}",
             icon = R.drawable.ic_ksafe,
             title = getString(titleRes),
-            detail = advice.reasons.joinToString(" • "),
+            detail = detail,
             autoDismissMs = 15_000L,
             backgroundColor = bgColorRes,
             textColor = R.color.alert_text_white,

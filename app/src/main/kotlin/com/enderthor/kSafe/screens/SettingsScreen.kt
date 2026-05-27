@@ -155,9 +155,7 @@ fun SettingsScreen(vm: MainViewModel) {
             Switch(checked = buzzerOnEmergency, onCheckedChange = { buzzerOnEmergency = it })
         }
         Text(
-            text = "Plays the Karoo buzzer on crash countdown and SOS firing, even if your " +
-                   "Karoo is muted. Non-emergency beeps (ride start, check-in, wellness " +
-                   "warnings) still respect mute as usual.",
+            text = stringResource(R.string.settings_buzzer_bypass_hint),
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant
         )
@@ -165,10 +163,19 @@ fun SettingsScreen(vm: MainViewModel) {
         // Diagnostic button — binds the HAL service and plays a short test tone. Useful
         // for confirming the bypass works after a Karoo OTA (Hammerhead can gate the
         // service in any future update).
+        // B26: localised result strings. `successPrefix` mirrors the localisation-
+        // friendly "beep dispatched" prefix used by `isSuccess` below — for English
+        // both happen to start with "Beep", so we keep `it.startsWith(...)` against
+        // the same localised string the success branch returns.
+        val testLabel = stringResource(R.string.settings_buzzer_test_label)
+        val runningLabel = stringResource(R.string.settings_buzzer_test_running)
+        val beepOkMessage = stringResource(R.string.settings_buzzer_test_beep_ok)
+        val gatedMessage = stringResource(R.string.settings_buzzer_test_gated)
+        val transactFailedMessage = stringResource(R.string.settings_buzzer_test_transact_failed)
         TestActionButton(
-            label = "Test buzzer (HAL probe)",
-            runningLabel = "Binding…",
-            isSuccess = { it.startsWith("Beep") },
+            label = testLabel,
+            runningLabel = runningLabel,
+            isSuccess = { it == beepOkMessage },
             onAction = {
                 val client = com.enderthor.kSafe.extension.managers.BuzzerClient(context)
                 try {
@@ -184,17 +191,17 @@ fun SettingsScreen(vm: MainViewModel) {
                     if (!client.isReady()) {
                         // Failure A: bind itself was refused. Most likely cause if it
                         // worked before: a Karoo OTA changed the service exports.
-                        "Bind failed: $bindDiag — KSafe will fall back to SDK beep on emergencies."
+                        context.getString(R.string.settings_buzzer_test_bind_failed, bindDiag)
                     } else {
                         val ok = client.beep(com.enderthor.kSafe.extension.managers.BuzzerClient.TEST_PATTERN)
                         when {
-                            ok -> "Beep dispatched — did you hear it? Bypass is working."
+                            ok -> beepOkMessage
                             client.lastResult == com.enderthor.kSafe.extension.managers.BuzzerClient.BeepResult.GATED_BY_SECURITY ->
-                                "Bypass GATED by Karoo OTA (SecurityException). KSafe will fall back to SDK beep on emergencies — same as pre-bypass behaviour."
+                                gatedMessage
                             client.lastResult == com.enderthor.kSafe.extension.managers.BuzzerClient.BeepResult.TRANSACT_THREW ->
-                                "Bypass FAILED (transact threw — descriptor/transaction-ID drift in a Karoo OTA?). KSafe will fall back to SDK beep on emergencies."
+                                transactFailedMessage
                             else ->
-                                "Bypass FAILED (${client.lastResult}). KSafe will fall back to SDK beep on emergencies. Check logcat."
+                                context.getString(R.string.settings_buzzer_test_failed_other, client.lastResult.toString())
                         }
                     }
                 } finally {
