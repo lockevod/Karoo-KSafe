@@ -6,7 +6,7 @@ package com.enderthor.kSafe.extension.util
  * implement the same grid-aligned time-alert + cooldown-gated deficit-alert
  * machinery; lifting it out unblocks unit testing without a Robolectric harness.
  *
- * Three contracts pinned by tests:
+ * Two contracts pinned by tests, each implemented as a pure function:
  *
  *  1. **Time-grid alignment** (`currentDueTimeTick`). The schedule is fixed at
  *     `sessionStartMs + N × intervalMs` for N = 1, 2, 3, … Rider logs do NOT
@@ -23,11 +23,11 @@ package com.enderthor.kSafe.extension.util
  *     alert in a session may additionally be gated by `initialDelayMs` if the
  *     rider hasn't logged anything yet.
  *
- *  4. **Coincidence resolution** (`resolveCoincidence`). When both deficit and
- *     time alerts are due in the same tick, deficit wins; the time tick is
- *     "consumed" (the caller should stamp `lastTimeAlertFireMs = now`) so the
- *     next tick doesn't immediately re-fire the time alert in a back-to-back
- *     burst.
+ * **Coincidence resolution** (deficit + time tick on the same call) is NOT
+ * handled here — it's the tracker's responsibility because resolving it
+ * involves stamping `lastTimeAlertFireMs` to consume the time tick, which is
+ * a mutation outside this object's pure-function contract. See
+ * `CarbsTracker.tick` / `HydrationTracker.tick` for the deficit-wins logic.
  */
 internal object FuelingAlertScheduler {
 

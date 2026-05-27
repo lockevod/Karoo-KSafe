@@ -81,14 +81,18 @@ object IntensityZoneCalculator {
      * (distance to the nearer of zone.min / zone.max).
      */
     private fun clampToNearestZone(value: Int, zones: List<UserProfile.Zone>): Int =
-        zones.indices.minBy { i ->
+        // `minByOrNull` (not `minBy`) — both callers gate on `zones.isNotEmpty()`,
+        // so the `?: 0` fallback is unreachable in practice, but using
+        // `minByOrNull` keeps the call total instead of relying on the
+        // non-empty precondition being respected by every future caller.
+        zones.indices.minByOrNull { i ->
             val z = zones[i]
             when {
                 value < z.min -> z.min - value
                 value > z.max -> value - z.max
                 else -> 0
             }
-        }
+        } ?: 0
 
     private fun snapshot(source: ZoneSource, idx: Int, total: Int): ZoneSnapshot {
         val ratio = idx.toFloat() / (total - 1).coerceAtLeast(1)
