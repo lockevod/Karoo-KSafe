@@ -501,10 +501,17 @@ class HydrationTracker(
             now                    = now,
         )
         if (!fire) return false
-        fireAlert("deficit", deficit, (now - lastRealLogMs) / 60_000)
+        fireAlert("deficit", deficit, elapsedMinutesSinceRealLog(now))
         lastDeficitAlertFireMs = now
         return true
     }
+
+    /** See [CarbsTracker.elapsedMinutesSinceRealLog] for the contract and the B33
+     *  rationale. Same defensive guards: sentinel-zero on uninitialised
+     *  `lastRealLogMs`, clamp on backwards NTP step. */
+    private fun elapsedMinutesSinceRealLog(now: Long): Long =
+        if (lastRealLogMs <= 0L) 0L
+        else (now - lastRealLogMs).coerceAtLeast(0L) / 60_000
 
     /**
      * Returns the grid-tick timestamp that would fire in this call, or `0L` when
@@ -533,7 +540,7 @@ class HydrationTracker(
     /** See [evaluateDeficitAlert] return-value note — same contract on the time side. */
     private fun evaluateTimeAlert(now: Long): Boolean {
         if (currentDueTimeTick(now) == 0L) return false
-        fireAlert("time", (cumTargetMl - cumLoggedMl).toInt(), (now - lastRealLogMs) / 60_000)
+        fireAlert("time", (cumTargetMl - cumLoggedMl).toInt(), elapsedMinutesSinceRealLog(now))
         lastTimeAlertFireMs = now
         // I8 — `lastRealLogMs` stays untouched on alert fires; it tracks the
         // rider's last actual log so `{elapsed}` reports time-since-real-log.

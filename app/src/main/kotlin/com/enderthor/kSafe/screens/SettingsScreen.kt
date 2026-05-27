@@ -151,7 +151,7 @@ fun SettingsScreen(vm: MainViewModel) {
         // (countdown last 5s, ALERTING entry) directly to the Karoo's physical buzzer,
         // bypassing the rider's audio-alerts mute. ON by default — a safety extension
         // should be heard in a crash; riders who deliberately mute can opt out here.
-        SettingRow(label = "Buzzer on emergency (overrides mute)") {
+        SettingRow(label = stringResource(R.string.settings_buzzer_bypass_label)) {
             Switch(checked = buzzerOnEmergency, onCheckedChange = { buzzerOnEmergency = it })
         }
         Text(
@@ -163,10 +163,11 @@ fun SettingsScreen(vm: MainViewModel) {
         // Diagnostic button — binds the HAL service and plays a short test tone. Useful
         // for confirming the bypass works after a Karoo OTA (Hammerhead can gate the
         // service in any future update).
-        // B26: localised result strings. `successPrefix` mirrors the localisation-
-        // friendly "beep dispatched" prefix used by `isSuccess` below — for English
-        // both happen to start with "Beep", so we keep `it.startsWith(...)` against
-        // the same localised string the success branch returns.
+        // B26: localised result strings. The button captions, the running label, and
+        // the four diagnostic-message branches all resolve through R.string at compose
+        // time. `isSuccess` compares against the same localised `beepOkMessage` that
+        // the success branch returns, so the classification holds in any locale (no
+        // substring matching against English-specific text).
         val testLabel = stringResource(R.string.settings_buzzer_test_label)
         val runningLabel = stringResource(R.string.settings_buzzer_test_running)
         val beepOkMessage = stringResource(R.string.settings_buzzer_test_beep_ok)

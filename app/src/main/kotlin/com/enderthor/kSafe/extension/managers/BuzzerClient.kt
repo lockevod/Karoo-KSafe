@@ -109,8 +109,21 @@ class BuzzerClient(private val context: Context) {
         try { context.applicationContext.unbindService(connection) }
         catch (e: IllegalArgumentException) { /* not registered, ignore */ }
         catch (e: Exception) { Timber.w(e, "BuzzerClient unbind failed") }
-        bound = false
+        // B34 — clear `binder` BEFORE `bound`. A concurrent `beep()` reads `bound`
+        // as the fast-path gate, then dereferences `binder`. Pre-B34 the order
+        // (`bound = false` first, then `binder = null`) opened a narrow window
+        // where a beep call between the two writes would observe `bound == false`
+        // *AND* still see a non-null `binder` that's about to be torn down — or
+        // observe `bound == false` and short-circuit cleanly. Order is reversed
+        // so a beep racing with disconnect either sees `binder != null && bound ==
+        // true` (transact runs against a still-live binder; service.unbind in
+        // flight catches the result) OR `binder == null` (early-return).
+        // `transact()` on a dead binder still throws → caught by the TRANSACT_THREW
+        // branch and falls back to SDK; this swap removes the race symptom
+        // ("transact threw on what looked like a live binder") rather than the
+        // failure mode.
         binder = null
+        bound = false
     }
 
     /**

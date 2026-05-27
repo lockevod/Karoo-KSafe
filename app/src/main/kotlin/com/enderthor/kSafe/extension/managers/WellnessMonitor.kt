@@ -9,6 +9,8 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.launch
 import timber.log.Timber
 import java.util.Locale
@@ -117,7 +119,15 @@ class WellnessMonitor(
     // tick-side iteration cannot ConcurrentModificationException-kill the monitor loop
     // and cannot read a torn snapshot when computing baseline statistics.
     private val powerSamplesLock = Any()
-    private val powerSamples = ArrayDeque<Pair<Long, Int>>()
+    /** Primitive ring buffer for the baseline-stability guard's 2-min power window.
+     *  Pre-B30 this was `ArrayDeque<Pair<Long, Int>>` — every [updatePower] call
+     *  boxed both the Long timestamp and the Int watts (~3 allocations / Hz, plus
+     *  the per-tick `.toList()` snapshot for statistics). 18 000 allocs / hour
+     *  while a power meter is paired. The primitive ring mirrors the
+     *  [MedicalEpisodeDetector] `HrHistory` pattern: capacity power of two, head
+     *  + size + mask, in-place sum / sumSq iteration via [wattAt] indices —
+     *  zero allocations on the add or read paths. */
+    private val powerSamples = PowerHistory(capacity = 256)  // >= POWER_BUFFER_MAX_SIZE, power of two
     @Volatile private var lastBaselineAttemptMs = 0L
 
     // ─── Session accumulators (consumed by FIT export + Health tab) ─────────
@@ -134,6 +144,19 @@ class WellnessMonitor(
 
     @Volatile private var config = KSafeConfig()
     private var monitorJob: Job? = null
+
+    // ─── Status publisher (B29) ──────────────────────────────────────────────
+    /** Push-based [WellnessSummary] snapshot, mirroring the pattern in
+     *  [CarbsTracker.statusFlow] / [HydrationTracker.statusFlow]. The FIT
+     *  writer in `KSafeExtension.startFit` reads `.value` on every 1 Hz
+     *  ELAPSED_TIME tick — pre-B29 it called `getSummary()` instead, which
+     *  allocated a fresh `WellnessSummary` per tick (~3 600/h) on top of the
+     *  estimator chain. Publishing here once per [tick] (30 s) drops it to
+     *  the actual rate of change of the wellness signals. `null` means
+     *  "no summary published yet" — readers fall back to a default. */
+    private val _summaryFlow = MutableStateFlow<WellnessSummary?>(null)
+    val summaryFlow: StateFlow<WellnessSummary?> get() = _summaryFlow
+    private fun publishSummary() { _summaryFlow.value = getSummary() }
 
     // ─── Public API ──────────────────────────────────────────────────────────
 
@@ -154,7 +177,7 @@ class WellnessMonitor(
         lastDecouplingTriggerMs = 0L
         ratioSamples.clear()
         ratioRunningSum = 0.0
-        synchronized(powerSamplesLock) { powerSamples.clear() }
+        synchronized(powerSamplesLock) { powerSamples.clear() }  // B30 ring
         lastBaselineAttemptMs = 0L
         // Reset session accumulators — fresh ride, fresh totals.
         sessionMaxHr = 0
@@ -165,6 +188,10 @@ class WellnessMonitor(
         criticalFires = 0
         sustainedFires = 0
         decouplingFires = 0
+        // B29 — publish a zeroed summary so the FIT writer reads a sensible
+        // value from `summaryFlow.value` from the first tick onwards (instead
+        // of `null` until the first tick has run).
+        publishSummary()
         monitorJob = scope.launch {
             oldJob?.cancelAndJoin()
             // H3 — defensive try/catch: a single uncaught throw from tick() would
@@ -182,6 +209,9 @@ class WellnessMonitor(
     fun stop() {
         monitorJob?.cancel()
         monitorJob = null
+        // B29 — clear the published summary on stop so a stale value can't be
+        // read after the monitor is no longer running.
+        _summaryFlow.value = null
         Timber.d("WellnessMonitor stopped")
     }
 
@@ -203,7 +233,7 @@ class WellnessMonitor(
         decouplingBaselineHrPerW = 0f
         // Same continuity argument as the streak timers: the OFF period invalidates the
         // power stability window, so the guard re-evaluates from scratch on resume.
-        synchronized(powerSamplesLock) { powerSamples.clear() }
+        synchronized(powerSamplesLock) { powerSamples.clear() }  // B30 ring
         // Clear the HR/W ratio rolling window too — without this, the re-established
         // baseline averages pre-OFF samples (potentially a high-effort interval) with
         // post-ON samples (fresh steady state), anchoring the baseline on a contaminated
@@ -247,17 +277,13 @@ class WellnessMonitor(
         lastPowerW = w
         // Feed the 2-min ring buffer used by the baseline-stability guard. Sampled at
         // whatever rate the SDK pushes power (~1 Hz). The buffer is double-bounded:
-        // by time (POWER_BUFFER_WINDOW_MS) and by absolute count (POWER_BUFFER_MAX_SIZE)
-        // so a pathological high-frequency stream cannot grow it without bound.
+        // by time (POWER_BUFFER_WINDOW_MS) and by absolute count via the ring's own
+        // capacity (256 ≥ POWER_BUFFER_MAX_SIZE; the ring's tail-overwrite handles
+        // the count cap automatically). B30 — primitive ring, no Pair allocation.
         val now = clock.nowMs()
         synchronized(powerSamplesLock) {
-            powerSamples.addLast(now to w)
-            while (powerSamples.isNotEmpty() &&
-                (now - powerSamples.first().first > POWER_BUFFER_WINDOW_MS ||
-                    powerSamples.size > POWER_BUFFER_MAX_SIZE)
-            ) {
-                powerSamples.removeFirst()
-            }
+            powerSamples.add(now, w)
+            powerSamples.trimOlderThan(now - POWER_BUFFER_WINDOW_MS)
         }
     }
     fun updateUserProfile(p: UserProfile) { lastUserProfile = p }
@@ -276,6 +302,10 @@ class WellnessMonitor(
             criticalSinceMs = 0L
             sustainedSinceMs = 0L
             decouplingExceededSinceMs = 0L
+            // B29 — still refresh the published snapshot (drift / max may have moved
+            // since the last tick before the strap went silent). The FIT writer
+            // reads `summaryFlow.value` once per second so it must stay current.
+            publishSummary()
             return
         }
         // Feed the time-in-zone buckets at MONITOR_TICK_MS granularity. The bucket attribution
@@ -290,6 +320,8 @@ class WellnessMonitor(
         evaluateCriticalTier(now)
         evaluateSustainedTier(now)
         evaluateDecouplingTier(now)
+        // B29 — publish the post-tick snapshot for the FIT writer's StateFlow read.
+        publishSummary()
     }
 
     // ── Tier 1 — Critical HR ────────────────────────────────────────────────
@@ -448,31 +480,39 @@ class WellnessMonitor(
         if (lastBaselineAttemptMs != 0L && now - lastBaselineAttemptMs < BASELINE_RETRY_INTERVAL_MS) {
             return true
         }
-        // Snapshot the buffer under the lock so the iteration below cannot tear when
-        // updatePower fires concurrently from the SDK power-callback thread.
-        val snapshot = synchronized(powerSamplesLock) { powerSamples.toList() }
-        val n = snapshot.size
-        // E5 fix — when we have fewer than POWER_STABILITY_MIN_SAMPLES, DEFER (return
-        // true) rather than establish the baseline from a thin warmup window. Without
-        // this, a power meter that wakes up mid-warmup (~8 min into the ride) accumulated
-        // only ~10 samples by the 10-min DECOUPLING_BASELINE_WAIT_MS — the original
-        // `return false` anchored the baseline on the warmup ramp's HR/W (low HR,
-        // decent power), so 20 min later at steady tempo the drift evaluation fired
-        // a false WELLNESS_DECOUPLING warning. The hard cap at BASELINE_MAX_DEFER_MS
-        // above guarantees we will eventually establish even on a permanently-thin
-        // buffer, so the rider with a late-paired power meter just gets a slightly
-        // later (but trustworthy) baseline.
-        if (n < POWER_STABILITY_MIN_SAMPLES) return true
-        // Single-pass mean + variance using the running-sum / sum-of-squares form. Cheap and
-        // good enough for n ≈ 120 with all-positive integer watts; we don't need a
-        // numerically-stable Welford pass for this magnitude range.
+        // B30 — compute statistics in place under the lock. Pre-B30 took a `.toList()`
+        // snapshot (Pair allocations) then iterated; now we walk the primitive ring
+        // by index with zero allocations. The lock-held window is identical in
+        // duration (n ≈ 120 iterations of a Double add).
+        var n = 0
         var sum = 0.0
         var sumSq = 0.0
-        for ((_, w) in snapshot) {
-            val wd = w.toDouble()
-            sum += wd
-            sumSq += wd * wd
+        synchronized(powerSamplesLock) {
+            n = powerSamples.size
+            // E5 fix — when we have fewer than POWER_STABILITY_MIN_SAMPLES, DEFER (return
+            // true) rather than establish the baseline from a thin warmup window. Without
+            // this, a power meter that wakes up mid-warmup (~8 min into the ride) accumulated
+            // only ~10 samples by the 10-min DECOUPLING_BASELINE_WAIT_MS — the original
+            // `return false` anchored the baseline on the warmup ramp's HR/W (low HR,
+            // decent power), so 20 min later at steady tempo the drift evaluation fired
+            // a false WELLNESS_DECOUPLING warning. The hard cap at BASELINE_MAX_DEFER_MS
+            // above guarantees we will eventually establish even on a permanently-thin
+            // buffer, so the rider with a late-paired power meter just gets a slightly
+            // later (but trustworthy) baseline.
+            if (n >= POWER_STABILITY_MIN_SAMPLES) {
+                // Single-pass mean + variance using the running-sum / sum-of-squares form.
+                // Cheap and good enough for n ≈ 120 with all-positive integer watts; we
+                // don't need a numerically-stable Welford pass for this magnitude range.
+                var i = 0
+                while (i < n) {
+                    val wd = powerSamples.wattAt(i).toDouble()
+                    sum += wd
+                    sumSq += wd * wd
+                    i++
+                }
+            }
         }
+        if (n < POWER_STABILITY_MIN_SAMPLES) return true
         val mean = sum / n
         if (mean <= 0.0) return false  // all zeros / degenerate — let establishment proceed
         val variance = (sumSq / n) - (mean * mean)
@@ -573,4 +613,55 @@ class WellnessMonitor(
         sustainedFires     = sustainedFires,
         decouplingFires    = decouplingFires,
     )
+}
+
+/**
+ * Primitive ring buffer for (timestamp, watts) samples — used by the
+ * WellnessMonitor decoupling-baseline stability guard. Mirrors the design of
+ * `HrHistory` in MedicalEpisodeDetector (B30 follow-up): power-of-two
+ * capacity for bitmask wrap, LongArray + IntArray backing, no Pair / box
+ * allocations on add or read.
+ *
+ * Thread safety: caller (WellnessMonitor) serialises every access through
+ * `powerSamplesLock`. This class itself is single-threaded by contract.
+ */
+internal class PowerHistory(private val capacity: Int) {
+    init { require(capacity > 0 && capacity and (capacity - 1) == 0) { "capacity must be a power of two" } }
+    private val mask = capacity - 1
+    private val times = LongArray(capacity)
+    private val watts = IntArray(capacity)
+    private var head = 0      // index of the oldest sample
+    var size: Int = 0
+        private set
+
+    fun add(timeMs: Long, w: Int) {
+        val idx = (head + size) and mask
+        times[idx] = timeMs
+        watts[idx] = w
+        if (size < capacity) {
+            size++
+        } else {
+            // Tail overwrite when full — also serves as the absolute-count cap
+            // that the previous ArrayDeque-based code maintained via the
+            // `size > POWER_BUFFER_MAX_SIZE` while-loop. Capacity is sized
+            // above POWER_BUFFER_MAX_SIZE so the time-based trim is the
+            // primary eviction path in practice.
+            head = (head + 1) and mask
+        }
+    }
+
+    /** Drop entries whose timestamp is ≤ [cutoffMs]. Amortised O(1) per [add]. */
+    fun trimOlderThan(cutoffMs: Long) {
+        while (size > 0 && times[head] <= cutoffMs) {
+            head = (head + 1) and mask
+            size--
+        }
+    }
+
+    /** Watts at logical index `[0, size)`. Used by the in-place statistics
+     *  loop in `shouldDeferBaseline` — replaces the prior `.toList()` snapshot
+     *  + destructured `for ((_, w) in snapshot)` iteration. */
+    fun wattAt(i: Int): Int = watts[(head + i) and mask]
+
+    fun clear() { head = 0; size = 0 }
 }

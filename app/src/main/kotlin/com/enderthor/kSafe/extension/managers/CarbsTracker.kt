@@ -622,10 +622,26 @@ class CarbsTracker(
             now                    = now,
         )
         if (!fire) return false
-        fireAlert(source = "deficit", deficit = deficit, elapsedMin = (now - lastRealLogMs) / 60_000)
+        fireAlert(source = "deficit", deficit = deficit, elapsedMin = elapsedMinutesSinceRealLog(now))
         lastDeficitAlertFireMs = now
         return true
     }
+
+    /**
+     * Minutes since the rider's last real log, with two defensive guards (B33):
+     *  1. `lastRealLogMs <= 0L` → return 0 instead of "minutes since epoch" (28M+).
+     *     Today every [start] / [resume] seeds `lastRealLogMs` to `now` so the
+     *     zero sentinel is unreachable, but a future refactor that called
+     *     [evaluateDeficitAlert] / [evaluateTimeAlert] before [start] would
+     *     otherwise render "Eat now — 28815555 min since last" in the rider
+     *     alert. Cheap to defend against.
+     *  2. `coerceAtLeast(0L)` — a backwards NTP step between two ticks could
+     *     make `now &lt; lastRealLogMs`. The `{elapsed}` token in the alert
+     *     template would then render a negative integer. Clamp to 0.
+     */
+    private fun elapsedMinutesSinceRealLog(now: Long): Long =
+        if (lastRealLogMs <= 0L) 0L
+        else (now - lastRealLogMs).coerceAtLeast(0L) / 60_000
 
     /** See [HydrationTracker.currentDueTimeTick] — same contract, carb side.
      *  Pure read; never mutates state. */
@@ -643,7 +659,7 @@ class CarbsTracker(
     private fun evaluateTimeAlert(now: Long): Boolean {
         if (currentDueTimeTick(now) == 0L) return false
         val deficit = (cumBurnedG - cumLoggedG).toInt()
-        fireAlert(source = "time", deficit = deficit, elapsedMin = (now - lastRealLogMs) / 60_000)
+        fireAlert(source = "time", deficit = deficit, elapsedMin = elapsedMinutesSinceRealLog(now))
         lastTimeAlertFireMs = now
         // I8 — `lastRealLogMs` stays untouched on alert fires; it tracks the
         // rider's last actual log so `{elapsed}` reports time-since-real-log.

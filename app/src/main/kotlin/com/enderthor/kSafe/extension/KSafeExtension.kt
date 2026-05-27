@@ -2419,12 +2419,22 @@ class KSafeExtension : KarooExtension("ksafe", BuildConfig.VERSION_NAME), Corout
             karooSystem.streamDataFlow(DataType.Type.ELAPSED_TIME)
                 .mapNotNull { (it as? StreamState.Streaming)?.dataPoint?.singleValue }
                 .collect {
-                    val carbStatus = carbsTrackerOrNull()?.getStatus()
+                    // B29 — read the trackers' / monitor's published StateFlow snapshot
+                    // instead of calling `getStatus()` / `getSummary()` every second.
+                    // Each `.value` access is a single volatile read of an already-
+                    // computed data class; the old call path allocated a fresh
+                    // CarbStatus + BurnEstimate + ZoneSnapshot + HydrationStatus +
+                    // WellnessSummary per ELAPSED_TIME tick (~5 objects/sec × 3600/h
+                    // ≈ 720 KB young-gen/h) AND re-ran the full Keytel/Swain estimator
+                    // pipeline for the carb tracker. The published flows update on the
+                    // trackers' own tick cadence (15 s for fueling, 30 s for wellness),
+                    // which is the actual rate of change of the underlying signals.
+                    val carbStatus = carbsTrackerOrNull()?.statusFlow?.value
                     val carbsG       = (carbStatus?.cumLoggedG ?: 0).toDouble()
                     val carbsBurnedG = (carbStatus?.cumBurnedG ?: 0).toDouble()
                     val burnRateGph  = (carbStatus?.burnRateGph ?: 0).toDouble()
-                    val hydMl  = (hydrationTrackerOrNull()?.getStatus()?.cumLoggedMl ?: 0).toDouble()
-                    val wellness = wellnessMonitorOrNull()?.getSummary()
+                    val hydMl  = (hydrationTrackerOrNull()?.statusFlow?.value?.cumLoggedMl ?: 0).toDouble()
+                    val wellness = wellnessMonitorOrNull()?.summaryFlow?.value
                     val driftPct    = wellness?.currentDriftPct?.toDouble() ?: 0.0
                     val maxDriftPct = wellness?.maxDriftPct?.toDouble() ?: 0.0
                     val fires       = wellness?.totalFires?.toDouble() ?: 0.0

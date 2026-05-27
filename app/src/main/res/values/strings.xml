@@ -333,6 +333,7 @@
          Pulled out of inline literals so future translation has a single
          source of truth. The %1$s args are dynamic diagnostic context
          (bind error message, BeepResult enum name). -->
+    <string name="settings_buzzer_bypass_label">Buzzer on emergency (overrides mute)</string>
     <string name="settings_buzzer_bypass_hint">Plays the Karoo buzzer on crash countdown and SOS firing, even if your Karoo is muted. Non-emergency beeps (ride start, check-in, wellness warnings) still respect mute as usual.</string>
     <string name="settings_buzzer_test_label">Test buzzer (HAL probe)</string>
     <string name="settings_buzzer_test_running">Binding…</string>
