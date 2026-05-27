@@ -162,9 +162,28 @@ class SafetyTimerDataType(
                             // value the instant the minute ticks. Also merges with the
                             // colour-flow so config edits update the field immediately.
                             val now = System.currentTimeMillis()
+                            // Defense in depth — use `floorMod` instead of Kotlin's
+                            // truncated `%`, and clamp the result. Two scenarios this
+                            // guards against if the wall clock jumps backwards
+                            // (NTP correction, user rewinds the date) while the
+                            // check-in is running:
+                            //  • `msSinceStart < 0` ⇒ truncated `%` returns a value
+                            //    in (-60_000, 0] ⇒ `60_000 - r` lands in
+                            //    [60_000, 120_000), so the field would wait up to
+                            //    2× the intended period before refreshing.
+                            //  • A future refactor that lets `msUntilNextMinute`
+                            //    reach 0 or negative would pass a non-positive
+                            //    timeout to `withTimeoutOrNull`, which returns
+                            //    immediately and would spin the surrounding
+                            //    `while` loop with no backoff. `coerceIn(1L,
+                            //    60_000L)` keeps it inside the documented
+                            //    1-minute boundary.
+                            // `floorMod` always returns a value in [0, 60_000) — so
+                            // `60_000 - r` is in (0, 60_000], no clamp surprises.
                             val msUntilNextMinute = if (state.checkinStartTime > 0L) {
                                 val msSinceStart = now - state.checkinStartTime
-                                60_000L - (msSinceStart % 60_000L)
+                                (60_000L - Math.floorMod(msSinceStart, 60_000L))
+                                    .coerceIn(1L, 60_000L)
                             } else 30_000L
                             withTimeoutOrNull(msUntilNextMinute) {
                                 merge(
