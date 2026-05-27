@@ -513,6 +513,16 @@ class HydrationTracker(
         if (lastRealLogMs <= 0L) 0L
         else (now - lastRealLogMs).coerceAtLeast(0L) / 60_000
 
+    /** See [CarbsTracker.elapsedMinutesSinceLastTimeAlert] for the rationale —
+     *  same two-anchor pattern (last fire or session start) and same defensive
+     *  guards. Used by [evaluateTimeAlert] so `{elapsed}` reads as "min since
+     *  last reminder", aligned with the interval-grid fire schedule. */
+    private fun elapsedMinutesSinceLastTimeAlert(now: Long): Long {
+        val anchor = if (lastTimeAlertFireMs > 0L) lastTimeAlertFireMs else sessionStartMs
+        if (anchor <= 0L) return 0L
+        return (now - anchor).coerceAtLeast(0L) / 60_000
+    }
+
     /**
      * Returns the grid-tick timestamp that would fire in this call, or `0L` when
      * no tick is currently due (alert disabled, before the first tick, already
@@ -540,7 +550,9 @@ class HydrationTracker(
     /** See [evaluateDeficitAlert] return-value note — same contract on the time side. */
     private fun evaluateTimeAlert(now: Long): Boolean {
         if (currentDueTimeTick(now) == 0L) return false
-        fireAlert("time", (cumTargetMl - cumLoggedMl).toInt(), elapsedMinutesSinceRealLog(now))
+        // See CarbsTracker.evaluateTimeAlert — time alert is interval-driven,
+        // so `{elapsed}` measures since the last reminder, not since last log.
+        fireAlert("time", (cumTargetMl - cumLoggedMl).toInt(), elapsedMinutesSinceLastTimeAlert(now))
         lastTimeAlertFireMs = now
         // I8 — `lastRealLogMs` stays untouched on alert fires; it tracks the
         // rider's last actual log so `{elapsed}` reports time-since-real-log.

@@ -62,7 +62,6 @@ fun FuelingScreen(vm: MainViewModel) {
     var carbDeficitOn        by remember(config.carbDeficitAlertEnabled)    { mutableStateOf(config.carbDeficitAlertEnabled) }
     var carbDeficitThreshold by remember(config.carbDeficitThresholdG)      { mutableStateOf(config.carbDeficitThresholdG.toString()) }
     var carbDeficitInitialDelay by remember(config.carbDeficitInitialDelayMin) { mutableStateOf(config.carbDeficitInitialDelayMin.toString()) }
-    var carbDeficitReminder  by remember(config.carbDeficitReminderIntervalMin) { mutableStateOf(config.carbDeficitReminderIntervalMin.toString()) }
     var carbTimeOn           by remember(config.carbTimeAlertEnabled)       { mutableStateOf(config.carbTimeAlertEnabled) }
     var carbTimeInterval     by remember(config.carbTimeIntervalMin)        { mutableStateOf(config.carbTimeIntervalMin.toString()) }
     var carbTimeInitialDelay by remember(config.carbTimeInitialDelayMin)    { mutableStateOf(config.carbTimeInitialDelayMin.toString()) }
@@ -90,7 +89,6 @@ fun FuelingScreen(vm: MainViewModel) {
     var hydDeficitOn         by remember(config.hydrationDeficitAlertEnabled)   { mutableStateOf(config.hydrationDeficitAlertEnabled) }
     var hydDeficitThreshold  by remember(config.hydrationDeficitThresholdMl)    { mutableStateOf(config.hydrationDeficitThresholdMl.toString()) }
     var hydDeficitInitialDelay by remember(config.hydrationDeficitInitialDelayMin) { mutableStateOf(config.hydrationDeficitInitialDelayMin.toString()) }
-    var hydDeficitReminder   by remember(config.hydrationDeficitReminderIntervalMin) { mutableStateOf(config.hydrationDeficitReminderIntervalMin.toString()) }
     var hydTimeOn            by remember(config.hydrationTimeAlertEnabled)      { mutableStateOf(config.hydrationTimeAlertEnabled) }
     var hydTimeInterval      by remember(config.hydrationTimeIntervalMin)       { mutableStateOf(config.hydrationTimeIntervalMin.toString()) }
     var hydTimeInitialDelay  by remember(config.hydrationTimeInitialDelayMin)   { mutableStateOf(config.hydrationTimeInitialDelayMin.toString()) }
@@ -197,12 +195,18 @@ fun FuelingScreen(vm: MainViewModel) {
                     onCommit = { carbDeficitInitialDelay = it; vm.saveConfig(config.copy(carbDeficitInitialDelayMin = it.toInt())) },
                     onTextChange = { carbDeficitInitialDelay = it },
                 )
-                IntField(
+                // Discrete picker (5/10/15/30 min) rather than free-text — those four
+                // are the only values that make sense for an alert cooldown on
+                // endurance rides: too fast and the rider gets nagged, too slow and a
+                // sustained deficit goes silent. Off-grid persisted values (from a
+                // legacy build that exposed the free-text input, or a manual edit)
+                // snap visually to the nearest grid point but are NOT silently
+                // rewritten; the first deliberate tap commits a valid value.
+                MinutesPickerRow(
                     label = stringResource(R.string.fueling_deficit_reminder_interval_label),
-                    text = carbDeficitReminder,
-                    range = 1..60,
-                    onCommit = { carbDeficitReminder = it; vm.saveConfig(config.copy(carbDeficitReminderIntervalMin = it.toInt())) },
-                    onTextChange = { carbDeficitReminder = it },
+                    hint = stringResource(R.string.fueling_deficit_reminder_interval_hint),
+                    selected = config.carbDeficitReminderIntervalMin,
+                    onSelected = { vm.saveConfig(config.copy(carbDeficitReminderIntervalMin = it)) },
                 )
                 FuelingRow(label = stringResource(R.string.fueling_alert_time_label)) {
                     Switch(
@@ -379,12 +383,11 @@ fun FuelingScreen(vm: MainViewModel) {
                     onCommit = { hydDeficitInitialDelay = it; vm.saveConfig(config.copy(hydrationDeficitInitialDelayMin = it.toInt())) },
                     onTextChange = { hydDeficitInitialDelay = it },
                 )
-                IntField(
+                MinutesPickerRow(
                     label = stringResource(R.string.fueling_deficit_reminder_interval_label),
-                    text = hydDeficitReminder,
-                    range = 1..60,
-                    onCommit = { hydDeficitReminder = it; vm.saveConfig(config.copy(hydrationDeficitReminderIntervalMin = it.toInt())) },
-                    onTextChange = { hydDeficitReminder = it },
+                    hint = stringResource(R.string.fueling_deficit_reminder_interval_hint),
+                    selected = config.hydrationDeficitReminderIntervalMin,
+                    onSelected = { vm.saveConfig(config.copy(hydrationDeficitReminderIntervalMin = it)) },
                 )
                 FuelingRow(label = stringResource(R.string.fueling_alert_time_label)) {
                     Switch(
@@ -656,6 +659,70 @@ private fun RiderSexRow(
                 }
             }
         }
+    }
+}
+
+/**
+ * Discrete picker for the deficit-reminder repeat interval. Mirrors
+ * [RiderSexRow]'s outlined-when-unselected / filled-when-selected pattern but
+ * over a fixed 4-value minute grid (5 / 10 / 15 / 30). The grid points are the
+ * only values that make sense for a "you're still behind" reminder cadence on
+ * endurance rides — anything finer-grained nags the rider, anything coarser
+ * makes a sustained deficit go too quiet.
+ *
+ * Off-grid `selected` (a legacy persisted value like 12 from when this was a
+ * free-text field) snaps to the nearest grid point for HIGHLIGHTING only —
+ * the persisted value isn't silently rewritten, so a user who never opens
+ * Settings keeps their old value. The first deliberate tap commits a valid
+ * grid value via [onSelected].
+ */
+@Composable
+private fun MinutesPickerRow(
+    label: String,
+    hint: String,
+    selected: Int,
+    options: List<Int> = listOf(5, 10, 15, 30),
+    onSelected: (Int) -> Unit,
+) {
+    val highlighted = remember(selected) {
+        options.minByOrNull { kotlin.math.abs(it - selected) } ?: options.first()
+    }
+    Column(verticalArrangement = Arrangement.spacedBy(4.dp), modifier = Modifier.fillMaxWidth()) {
+        Text(
+            text = label,
+            style = MaterialTheme.typography.bodySmall,
+            fontWeight = FontWeight.Bold,
+        )
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(6.dp),
+        ) {
+            for (option in options) {
+                val display = "${option}m"
+                if (option == highlighted) {
+                    Button(
+                        onClick = { onSelected(option) },
+                        modifier = Modifier.weight(1f),
+                        contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 4.dp, vertical = 6.dp),
+                    ) {
+                        Text(text = display, style = MaterialTheme.typography.labelSmall)
+                    }
+                } else {
+                    OutlinedButton(
+                        onClick = { onSelected(option) },
+                        modifier = Modifier.weight(1f),
+                        contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 4.dp, vertical = 6.dp),
+                    ) {
+                        Text(text = display, style = MaterialTheme.typography.labelSmall)
+                    }
+                }
+            }
+        }
+        Text(
+            text = hint,
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
     }
 }
 

@@ -91,6 +91,7 @@
          typical values 5 / 10 / 15 / 20 / 30 min. Default 10. -->
     <string name="fueling_deficit_initial_delay_label">Skip first (min, 0 = off)</string>
     <string name="fueling_deficit_reminder_interval_label">Repeat every (min)</string>
+    <string name="fueling_deficit_reminder_interval_hint">Repeated only while the rider keeps the deficit. The first deficit alert is gated by the initial delay above.</string>
     <string name="fueling_alert_bg_color_label">Alert background colour</string>
     <string name="fueling_enabled_label">Enabled</string>
     <string name="fueling_items_section">Items</string>

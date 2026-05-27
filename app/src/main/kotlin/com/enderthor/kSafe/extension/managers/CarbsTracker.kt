@@ -638,10 +638,46 @@ class CarbsTracker(
      *  2. `coerceAtLeast(0L)` — a backwards NTP step between two ticks could
      *     make `now &lt; lastRealLogMs`. The `{elapsed}` token in the alert
      *     template would then render a negative integer. Clamp to 0.
+     *
+     *  Used by the DEFICIT alert path — the deficit framing is "you haven't
+     *  logged in a while AND you're behind", so anchoring on the last actual
+     *  log is the right semantic. The TIME alert path uses
+     *  [elapsedMinutesSinceLastTimeAlert] instead because its fire schedule
+     *  is an interval grid anchored on session start (see
+     *  [FuelingAlertScheduler.currentDueTimeTick]), independent of whether
+     *  the rider logged anything in between.
      */
     private fun elapsedMinutesSinceRealLog(now: Long): Long =
         if (lastRealLogMs <= 0L) 0L
         else (now - lastRealLogMs).coerceAtLeast(0L) / 60_000
+
+    /**
+     * Minutes since the last TIME-alert fire — or since session start before the
+     * first fire. Used by [evaluateTimeAlert] so the `{elapsed}` token in the
+     * time-alert template reads "min since last reminder" (matching the rider's
+     * mental model of an interval-based reminder), not "min since last log"
+     * (which is what [elapsedMinutesSinceRealLog] reports for the deficit path).
+     *
+     * Why two helpers: the time-alert fire schedule is a grid anchored on
+     * [sessionStartMs] with spacing `config.carbTimeIntervalMin`; it fires
+     * regardless of how recently the rider logged. Reporting "min since last
+     * log" inside a time-alert message is therefore semantically off — it's
+     * not the reason the alert fired.
+     *
+     * Anchor selection:
+     *  - First fire of the session: anchor on [sessionStartMs] → for an
+     *    interval=30 first tick the message reads "30 min since last".
+     *  - Subsequent fires: anchor on [lastTimeAlertFireMs] → "30 min since
+     *    last" measured against the prior fire.
+     *
+     * Same defensive guards as the real-log helper: sentinel-zero on
+     * uninitialised anchor, clamp on backwards NTP step.
+     */
+    private fun elapsedMinutesSinceLastTimeAlert(now: Long): Long {
+        val anchor = if (lastTimeAlertFireMs > 0L) lastTimeAlertFireMs else sessionStartMs
+        if (anchor <= 0L) return 0L
+        return (now - anchor).coerceAtLeast(0L) / 60_000
+    }
 
     /** See [HydrationTracker.currentDueTimeTick] — same contract, carb side.
      *  Pure read; never mutates state. */
@@ -659,7 +695,10 @@ class CarbsTracker(
     private fun evaluateTimeAlert(now: Long): Boolean {
         if (currentDueTimeTick(now) == 0L) return false
         val deficit = (cumBurnedG - cumLoggedG).toInt()
-        fireAlert(source = "time", deficit = deficit, elapsedMin = elapsedMinutesSinceRealLog(now))
+        // `elapsedMinutesSinceLastTimeAlert` (not `…SinceRealLog`) — the time
+        // alert fires on an interval grid, not in response to the rider's
+        // last log, so `{elapsed}` should read as "min since last reminder".
+        fireAlert(source = "time", deficit = deficit, elapsedMin = elapsedMinutesSinceLastTimeAlert(now))
         lastTimeAlertFireMs = now
         // I8 — `lastRealLogMs` stays untouched on alert fires; it tracks the
         // rider's last actual log so `{elapsed}` reports time-since-real-log.
