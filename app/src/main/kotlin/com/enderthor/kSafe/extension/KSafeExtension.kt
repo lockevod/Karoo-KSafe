@@ -1926,7 +1926,16 @@ class KSafeExtension : KarooExtension("ksafe", BuildConfig.VERSION_NAME), Corout
                 // during the brief GPS cold-start window where some MTK/Broadcom
                 // chipsets report (0,0) before locking, a legitimate fix at any other
                 // location would still be misclassified.
-                val curFix = locationManager.currentFix()
+                //
+                // G9 — use `getFreshFix(3_000L)` instead of `currentFix()`. The
+                // persistent collector sample-rate is 2 min, so a rider who has just
+                // arrived at the target would otherwise hit a stale cache and see
+                // "Blocked — 200-400 m away" until the next sample tick. The fresh
+                // fetch reuses the cached fix when it's < 10 s old (rapid double-tap)
+                // and falls back to cache on timeout. Webhook taps are rider-
+                // initiated and infrequent — the per-tap 1-3 s IPC round-trip is
+                // negligible against the safety win.
+                val curFix = locationManager.getFreshFix(3_000L)
                 if (curFix == null) {
                     WebhookState.update(slot, WebhookState.ERROR, "no GPS")
                     scheduleWebhookRevert(slot, 4_000L)

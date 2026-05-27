@@ -114,6 +114,63 @@ class LocationManager(
     }
 
     /**
+     * Tries to obtain a fresh GPS fix within [timeoutMs] milliseconds, mirroring the
+     * cache-then-fresh-then-fallback logic of [getFreshLocationLink] but returning
+     * the raw [GpsFix] for callers that need the coordinates (not a Maps link) —
+     * specifically the webhook geo-fence distance check.
+     *
+     * **Why webhooks need this.** The persistent collector started by [start] applies
+     * `.sample(LOCATION_SAMPLE_MS = 2 min)` so [currentFix] can be up to two minutes
+     * stale. A rider who has just arrived at the webhook target spot would tap the
+     * field, the geo-fence would compute distance against the position two minutes
+     * earlier (~200-400 m back along the route), and the request would be blocked
+     * — even though the rider IS at the target. The blocked-then-eventually-works
+     * pattern observed in v1.2 and earlier 2.0 builds matched exactly this: 2-3 taps
+     * spaced out until the next `.sample()` window let a fresh emission through.
+     *
+     * **Cost.** Webhook taps are rider-initiated and infrequent (a handful per
+     * ride). The 10 s [REUSE_CACHED_FRESH_MS] window absorbs rapid retries so a
+     * double-tap doesn't pay for two IPC round-trips.
+     */
+    suspend fun getFreshFix(timeoutMs: Long = 3_000L): GpsFix? {
+        val now = System.currentTimeMillis()
+        val cached = lastFix
+        if (cached != null && cached.sampleTimeMs > 0L && now - cached.sampleTimeMs < REUSE_CACHED_FRESH_MS) {
+            if (BuildConfig.DEBUG) Timber.d("getFreshFix: reusing cached (${(now - cached.sampleTimeMs) / 1000}s old)")
+            return cached
+        }
+        return try {
+            val event = withTimeout(timeoutMs) {
+                karooSystem.streamLocation().first()
+            }
+            if (!event.lat.isFinite() || !event.lng.isFinite()) {
+                Timber.w("getFreshFix: SDK returned non-finite coords (lat=${event.lat}, lng=${event.lng}); falling back to cache")
+                return cached
+            }
+            val fresh = GpsFix(event.lat, event.lng, System.currentTimeMillis())
+            lastFix = fresh
+            if (BuildConfig.DEBUG) Timber.d("getFreshFix: fresh fix obtained: ${event.lat}, ${event.lng}")
+            fresh
+        } catch (_: TimeoutCancellationException) {
+            Timber.w("getFreshFix: timed out after ${timeoutMs}ms, falling back to cached fix (${if (cached == null) "none" else "${(now - cached.sampleTimeMs) / 1000}s old"})")
+            cached
+        } catch (e: kotlinx.coroutines.CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            // Same broaden-the-catch rationale as getFreshLocationLink — the SDK
+            // can throw RemoteException / IllegalStateException during a Companion
+            // rebind, NoSuchElementException on an empty flow, etc. Fall back to
+            // the cached value rather than propagating; the caller (webhook
+            // dispatcher) treats a null fix as "no GPS" and surfaces it to the
+            // rider, which is the right end-state for a real GPS outage but the
+            // wrong one for a transient binder hiccup that the cached fix can
+            // serve through.
+            Timber.w(e, "getFreshFix: threw — falling back to cached fix")
+            cached
+        }
+    }
+
+    /**
      * Tries to obtain a fresh GPS fix within [timeoutMs] milliseconds.
      * If the fix arrives in time, the cache is updated and the fresh link is returned.
      * If the timeout expires, the cached link (possibly null) is returned instead.
