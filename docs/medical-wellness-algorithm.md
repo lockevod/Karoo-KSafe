@@ -233,12 +233,17 @@ At each baseline-establishment attempt (first attempt = minute 10):
   if (now - sessionStartMs >= BASELINE_MAX_DEFER_MS):   # 25 min hard cap
     establish_now()                                      # better late than never
   elif (powerSamples_2min.size < POWER_STABILITY_MIN_SAMPLES):
-    establish_now()                                      # not enough data to judge — pass
+    defer; re-attempt in BASELINE_RETRY_INTERVAL_MS      # E5 — too thin a window
+                                                         # to trust; wait for more
+                                                         # samples (or for the hard
+                                                         # cap above to fire)
   elif (stddev / mean over last 2 min > 0.30):
     defer; re-attempt in BASELINE_RETRY_INTERVAL_MS (2 min)
   else:
     establish_now()
 ```
+
+**E5 — under-sampled defer.** A power meter that pairs mid-warmup (~8 min into the ride) only accumulates ~10 samples by the 10-min establishment attempt. Establishing on those 10 samples anchors the baseline on the warmup ramp — low HR, decent W — and 20 min later at steady tempo the drift evaluation fires a false `WELLNESS_DECOUPLING`. Defer until the buffer fills, OR until `BASELINE_MAX_DEFER_MS` forces establishment (a rider with a permanently thin buffer still gets a baseline, just slightly later).
 
 Constants live in `WellnessMonitor.kt`:
 
