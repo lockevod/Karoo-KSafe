@@ -100,7 +100,15 @@ object CarbIntegrator {
         val deltaG = (dtSec * ratePerSec).toFloat()
         // `effectiveGph > 0`: confidence=NONE produces gph=0, which yields
         // deltaG=0; that tick must NOT count toward active-integration time.
-        val deltaActiveMs = if (effectiveGph > 0.0) (dtSec * 1000.0).toLong() else 0L
+        // Use the original Long `dtMs` instead of round-tripping through
+        // `dtSec` (Float): the Float→Long path truncates any sub-1000 ms
+        // residue, e.g. dtMs=1001 → dtSec=1.001f → *1000.0 → 1001.0 →
+        // .toLong()=1001 nominally, but the Float quantum at ~1.0 is
+        // ~1.2e-7 so values that look exact in Double drift after the
+        // Float cast and a 6+ hour ride can drop ~50-100 ms of
+        // active-integration time. `dtMs` is already > 0 by the early-
+        // return at the top of the function, no coerce needed.
+        val deltaActiveMs = if (effectiveGph > 0.0) dtMs else 0L
         return IntegrationStep(
             deltaG = deltaG,
             deltaActiveMs = deltaActiveMs,

@@ -16,11 +16,16 @@ import io.hammerhead.karooext.models.ViewConfig
  * Default on older SDKs (or when the rider has not changed alignment) is RIGHT,
  * which matches the karoo-ext documented default and what native fields show.
  *
- * Only the four passive status fields (CarbStatus, HydrationStatus, CarbBurnRate,
- * CarbsBurned) actually call this — the tap-target fields (SOS, Timer, Custom
- * Message, Webhook, Carb/Hyd Log) are always rendered CENTERED because they're
- * action surfaces, not data readouts, and following per-field alignment on them
- * makes the field look broken when laid out next to a tappable native field.
+ * Only the three passive numeric fields (CarbBurnRate, CarbAvgBurnRate,
+ * CarbsBurned) actually call this — they render a pure number where the
+ * rider's alignment choice matters. CarbStatus / HydrationStatus are
+ * semaphore-style status fields and explicitly centre their text regardless
+ * of profile alignment (a left-aligned semaphore icon next to a centred one
+ * looks broken). The tap-target fields (SOS, Timer, Custom Message,
+ * Webhook, Carb/Hyd Log) are also always rendered CENTERED because they're
+ * action surfaces, not data readouts, and following per-field alignment on
+ * them makes the field look broken when laid out next to a tappable native
+ * field.
  */
 internal fun ViewConfig.fieldGravity(): Int = when (alignment) {
     ViewConfig.Alignment.LEFT   -> Gravity.START  or Gravity.CENTER_VERTICAL
