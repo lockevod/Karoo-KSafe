@@ -129,7 +129,7 @@ class LocationManager(
      * spaced out until the next `.sample()` window let a fresh emission through.
      *
      * **Cost.** Webhook taps are rider-initiated and infrequent (a handful per
-     * ride). The 10 s [REUSE_CACHED_FRESH_MS] window absorbs rapid retries so a
+     * ride). The 5 s [REUSE_CACHED_FRESH_MS] window absorbs rapid retries so a
      * double-tap doesn't pay for two IPC round-trips.
      */
     suspend fun getFreshFix(timeoutMs: Long = 3_000L): GpsFix? {
@@ -230,11 +230,13 @@ class LocationManager(
         private const val LOCATION_SAMPLE_MS = 2 * 60_000L
 
         /** Reuse the cached fix without opening a new consumer if it's at most this old.
-         *  Deliberately small (10 s, much less than [LOCATION_SAMPLE_MS]) so that
-         *  [getFreshLocationLink] almost always opens a one-shot consumer for the
-         *  EMERGENCY path — the message contains a near-real-time fix, not a sample
-         *  that could be up to 2 min stale. The cache is just a thundering-herd
-         *  protection for the rare case of multiple alerts firing within seconds. */
-        private const val REUSE_CACHED_FRESH_MS = 10_000L
+         *  Deliberately small (5 s, much less than [LOCATION_SAMPLE_MS]) so that
+         *  [getFreshLocationLink] / [getFreshFix] almost always open a one-shot
+         *  consumer — the message / geo-fence check contains a near-real-time fix,
+         *  not a sample that could be up to 2 min stale. The cache is just a
+         *  thundering-herd protection: rapid back-to-back emergencies firing
+         *  within a few seconds, or a rider deliberately double-tapping a webhook
+         *  field after a transient "no GPS" error — both fit inside 5 s. */
+        private const val REUSE_CACHED_FRESH_MS = 5_000L
     }
 }
