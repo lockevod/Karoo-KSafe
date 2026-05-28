@@ -10,24 +10,32 @@ Event catalogue understood by this script:
 
   Crash pipeline:
     PERIODIC, HIGH_MAG, IMPACT_IN, IMPACT_TMO, CRASH_OK (CRASH_CONFIRMED),
-    CRASH_NO (CRASH_CANCELLED), RST_SNAP, CAD_GATE, GYRO_BLK, GPS_STALE,
-    TERRAIN_CLUST, SIL_IN, SIL_TMO, SIL_BRK, SPD_REJECT, POST_TMO_BOOST,
-    CRASH_GATE_SUPPRESSED
+    CRASH_NO (CRASH_CANCELLED), RST_SNAP, CAD_GATE,
+    CAD_GATE_SUPPRESSED (diagnostic — cadence gate suppressed by on-side angle),
+    GYRO_BLK, GPS_STALE, TERRAIN_CLUST, SIL_IN, SIL_TMO, SIL_BRK, SPD_REJECT,
+    POST_TMO_BOOST, CRASH_SUPPRESSED (gate suppressed inside cooldown)
 
   Speed-drop watchdog (added 2026-05):
-    SPEEDDROP_EVAL, SPEEDDROP_WIN_START (SPDRP_WSTART),
-    SPEEDDROP_WIN_CLOSE (SPDRP_WCLOSE)
+    SPDRP_EVAL (SPEEDDROP_EVAL), SPDRP_WSTART (SPEEDDROP_WIN_START),
+    SPDRP_WCLOSE (SPEEDDROP_WIN_CLOSE)
 
-  Medical / wellness / fueling:
+  Medical / wellness:
     HR_FLAT, HR_COLLAPSE, MED_NO, HR_STALE, HR_PERIODIC, WLNS_HR,
     WARN (INCIDENT_WARNING), SILENT (INCIDENT_SILENT),
-    INC_SUPP (INCIDENT_SUPPRESSED — new co-occurring incident drop)
-    CARB_START / CARB_LOG / CARB_UNDO / CARB_DEFICIT / CARB_TIME
-    HYD_START / HYD_LOG / HYD_UNDO / HYD_DEFICIT / HYD_TIME
+    INC_SUPP (INCIDENT_SUPPRESSED — co-occurring incident dropped),
+    INC_NO (INCIDENT_CANCELLED — non-crash/medical cancel: wellness /
+    SOS / check-in / speed-drop, with `subkind=<reason>` payload)
+
+  Fueling (carbs + hydration):
+    CARB_START / CARB_LOG / CARB_UNDO / CARB_FIRE / CARB_PERIODIC
+    HYD_START / HYD_LOG / HYD_UNDO / HYD_FIRE / HYD_PERIODIC
 
   Emergency dispatch:
     EMERG_TRIG (EMERGENCY_TRIGGERED), ALERT_FAIL (ALERT_DELIVERY_FAILED),
     LOGGER_START, LOG_END
+
+  FIT writer:
+    FIT_START (FIT_WRITER_START), FIT_STOP (FIT_WRITER_STOP)
 
 The per-file report surfaces the rows a post-incident dev cares about
 FIRST (CRASH_OK, CRASH_NO, ALERT_FAIL, EMERG_TRIG, INC_SUPP, MED_NO)
@@ -191,11 +199,28 @@ class FileSummary:
         # Each list stores the full payload + elapsed_min for verbatim printing.
         self.crash_cancelled_payloads: list[dict[str, str | float]] = []
         self.medical_cancelled_payloads: list[dict[str, str | float]] = []
+        # Non-crash/medical cancels (wellness / SOS / check-in / speed-drop).
+        # `subkind` payload field carries the EmergencyReason.name.
+        self.incident_cancelled_payloads: list[dict[str, str | float]] = []
         self.alert_delivery_failed_payloads: list[dict[str, str | float]] = []
         self.emergency_triggered_payloads: list[dict[str, str | float]] = []
         self.incident_suppressed_payloads: list[dict[str, str | float]] = []
         self.medical_fired_payloads: list[dict[str, str | float]] = []
         self.wellness_fired_payloads: list[dict[str, str | float]] = []
+        # Fueling firings — every CARB_FIRE / HYD_FIRE row gets surfaced verbatim
+        # so a "I got a fuel alert every 5 min" report is auditable. The legacy
+        # tags CARB_DEFICIT/CARB_TIME/HYD_DEFICIT/HYD_TIME never made it to
+        # production — the single FIRE row carries `source=deficit|time` instead.
+        self.carb_fired_payloads: list[dict[str, str | float]] = []
+        self.hydration_fired_payloads: list[dict[str, str | float]] = []
+        # Periodic 2-minute fueling snapshots — counted only (not surfaced row by
+        # row to keep the per-file report terse).
+        self.carb_periodic_count = 0
+        self.hydration_periodic_count = 0
+        # Diagnostic-only: cadence-gate fired the cross-check but was suppressed
+        # by the live on-side angle. Rare (only after IMPACT_IN→onSideRelaxed or
+        # a latched SILENCE_CHECK angle); count is enough to spot a regression.
+        self.cadence_gate_suppressed_count = 0
 
         # ─── Speed-drop watchdog telemetry (added 2026-05) ───────────────────
         # SPDRP_WSTART / SPDRP_WCLOSE pairs. The W_CLOSE payload's max_speed_kmh
@@ -315,6 +340,28 @@ class FileSummary:
                 # Surfaces co-occurring detectors that the timeline would
                 # otherwise hide.
                 self.incident_suppressed_payloads.append({"elapsed_min": el_s / 60.0, **p})
+            elif ev == "INC_NO" or ev == "INCIDENT_CANCELLED":
+                # Non-crash/medical countdown cancelled (wellness / SOS /
+                # check-in / speed-drop). `subkind` holds the EmergencyReason
+                # name; pair with EMERG_TRIG to compute per-detector FP rate.
+                self.incident_cancelled_payloads.append({"elapsed_min": el_s / 60.0, **p})
+            elif ev == "CARB_FIRE" or ev == "FUELING_CARB_FIRED":
+                # Carb tracker fired an alert. `source` field separates
+                # deficit-driven from time-driven firings — pre-v18 schemas
+                # may carry CARB_DEFICIT/CARB_TIME instead, but those tags
+                # never shipped, so this branch is the only one that matters
+                # in production logs.
+                self.carb_fired_payloads.append({"elapsed_min": el_s / 60.0, **p})
+            elif ev == "HYD_FIRE" or ev == "FUELING_HYDRATION_FIRED":
+                # Hydration tracker fired an alert — same contract as
+                # CARB_FIRE; `source` separates deficit from time.
+                self.hydration_fired_payloads.append({"elapsed_min": el_s / 60.0, **p})
+            elif ev == "CARB_PERIODIC" or ev == "FUELING_CARB_PERIODIC":
+                self.carb_periodic_count += 1
+            elif ev == "HYD_PERIODIC" or ev == "FUELING_HYDRATION_PERIODIC":
+                self.hydration_periodic_count += 1
+            elif ev == "CAD_GATE_SUPPRESSED" or ev == "CADENCE_GATE_SUPPRESSED":
+                self.cadence_gate_suppressed_count += 1
             elif ev == "HR_FLAT" or ev == "HR_COLLAPSE":
                 # Medical detector fired. May or may not have reached the
                 # alert path depending on response-level config.
@@ -479,6 +526,11 @@ def _print_per_file(summaries: list[FileSummary]):
             fields=("how_long_ms", "subkind"),
         )
         _print_payload_block(
+            "INCIDENT CANCELLED by rider (wellness / SOS / check-in / speed-drop)",
+            fs.incident_cancelled_payloads,
+            fields=("how_long_ms", "subkind"),
+        )
+        _print_payload_block(
             "MEDICAL FIRED (HR_FLAT / HR_COLLAPSE)", fs.medical_fired_payloads,
             fields=("subkind", "bpm", "since_ms"),
         )
@@ -486,6 +538,21 @@ def _print_per_file(summaries: list[FileSummary]):
             "WELLNESS FIRED", fs.wellness_fired_payloads,
             fields=("subkind", "bpm", "threshold", "drift_pct", "sustained_min"),
         )
+        _print_payload_block(
+            "CARB FIRED", fs.carb_fired_payloads,
+            fields=("source", "deficit_g", "since_log_min", "burn_rate_gph", "confidence", "zone"),
+        )
+        _print_payload_block(
+            "HYDRATION FIRED", fs.hydration_fired_payloads,
+            fields=("source", "deficit_ml", "since_log_min"),
+        )
+
+        # Fueling periodic + cadence-gate-suppressed counts — compact one-liners.
+        # Only printed when non-zero so clean rides stay terse.
+        if fs.carb_periodic_count or fs.hydration_periodic_count:
+            print(f"  FUELING periodic snapshots: carb={fs.carb_periodic_count}  hyd={fs.hydration_periodic_count}")
+        if fs.cadence_gate_suppressed_count:
+            print(f"  CAD_GATE_SUPPRESSED (on-side angle vetoed cadence gate): {fs.cadence_gate_suppressed_count}")
 
         # Speed-drop watchdog telemetry — surfaced compactly when active.
         if fs.speeddrop_win_start_count > 0 or fs.speeddrop_win_close_count > 0:
