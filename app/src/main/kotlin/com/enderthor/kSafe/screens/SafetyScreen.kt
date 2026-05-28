@@ -76,8 +76,12 @@ fun SafetyScreen(vm: MainViewModel) {
         sosFieldColor, timerFieldColor,
     ) {
         delay(600)
-        vm.saveConfig(
-            config.copy(
+        // Merge onto the LATEST config (not this composition snapshot) so a debounced
+        // Safety save can't clobber an unrelated field — e.g. the master `isActive`
+        // kill-switch or the calibration toggle changed on another tab within the 600 ms
+        // window. Same lost-update fix already applied to Settings/Health/Fueling.
+        vm.updateConfig {
+            it.copy(
                 emergencyMessage        = emergencyMessage,
                 // Clamp on commit — a literal "0" parses as 0, which would skip the
                 // entire cancel UI loop (`for (n in 0 downTo 1)` is an empty range)
@@ -111,7 +115,7 @@ fun SafetyScreen(vm: MainViewModel) {
                 sosFieldColor           = sosFieldColor,
                 timerFieldColor         = timerFieldColor,
             )
-        )
+        }
     }
 
     Column(

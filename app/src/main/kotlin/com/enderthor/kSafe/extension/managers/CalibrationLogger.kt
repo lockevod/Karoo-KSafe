@@ -327,7 +327,11 @@ class CalibrationLogger(
         val sizeInfo = if (lineCount > 0) " | $lineCount rows" else ""
         return "📊 kSafe Calibration Log\n" +
                "Install ID: $installId\n" +
-               "Session: $sessionId | ${android.os.Build.MODEL} | v${BuildConfig.VERSION_NAME}$sizeInfo"
+               // DEVICE_LABEL (not raw Build.MODEL): the caption lands in a multipart
+               // form-data body, and a model string containing CR/LF or boundary-like
+               // bytes would corrupt the framing → Telegram 400 → silent upload failure.
+               // DEVICE_LABEL is already stripped to [A-Za-z0-9._-]; the filename uses it too.
+               "Session: $sessionId | $DEVICE_LABEL | v${BuildConfig.VERSION_NAME}$sizeInfo"
     }
 
     /**

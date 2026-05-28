@@ -945,7 +945,14 @@ class EmergencyManager(
             // for ~countdown+30 s, suppressing a real follow-up crash. The alertJob's
             // finally clears currentReason when the job actually completes.
             _uiState.value = EmergencyState()
-            configManager.saveEmergencyState(EmergencyState())
+            // Wrapped like every other persist site (H1/J2): in-memory state is already
+            // IDLE above, so a disk-full IOException here must not propagate out of the
+            // sendAlerts coroutine — the persisted copy heals on the next successful write.
+            try {
+                configManager.saveEmergencyState(EmergencyState())
+            } catch (e: Exception) {
+                Timber.e(e, "Failed to persist IDLE after timed ALERTING rollback; in-memory state already cleared")
+            }
         }
     }
 
