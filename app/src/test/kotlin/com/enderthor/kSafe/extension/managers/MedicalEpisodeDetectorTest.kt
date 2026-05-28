@@ -187,6 +187,35 @@ class MedicalEpisodeDetectorTest {
     }
 
     @Test
+    fun `collapse does NOT fire right after a Paused-Recording resume - start clears the HR baseline`() {
+        val f = Fixture()
+        val cfg = KSafeConfig(medicalEpisodeEnabled = true)
+        // Build a full high-HR baseline + active speed (the firing test above proves this
+        // setup + a low-HR drop fires COLLAPSE).
+        for (i in 0 until 250) {
+            f.clock.nowMs += 1_000L
+            f.hr(160)
+            f.speed(20.0 + (i % 5) * 0.1)
+        }
+        // Simulate an autopause→resume: KSafeExtension calls start() unconditionally on
+        // every Recording entry (no preceding stop on the resume path). start() MUST clear
+        // the 5-min HR ring so the pre-pause 160 bpm baseline can't contaminate the
+        // post-resume comparison. Without the reset, the low remount HR below reads as a
+        // ~50% drop vs the stale 160 baseline and fires a FALSE MEDICAL_COLLAPSE (a bogus
+        // EMERGENCY SOS to the rider's contacts). This pins that resetSessionState() runs.
+        f.detector.start(cfg)
+        // Remount at low HR — only a short burst of fresh history exists after the reset.
+        for (i in 0 until 15) {
+            f.clock.nowMs += 1_000L
+            f.hr(80)
+            f.speed(20.0 + (i % 5) * 0.1)
+        }
+        f.detector.tick()
+        assertNull("resume must start from a clean HR baseline — no false COLLAPSE: ${f.captured}", f.captured)
+        f.detector.stop()   // cancel the parked monitor coroutine launched by start()
+    }
+
+    @Test
     fun `collapse does NOT fire when drop is below 40 percent`() {
         val f = Fixture()
         for (i in 0 until 250) {

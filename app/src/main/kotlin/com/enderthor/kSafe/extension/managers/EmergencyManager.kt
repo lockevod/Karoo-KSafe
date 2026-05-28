@@ -901,7 +901,14 @@ class EmergencyManager(
                         currentStatus = EmergencyStatus.IDLE
                         currentReason = null
                         _uiState.value = EmergencyState()
-                        configManager.saveEmergencyState(EmergencyState())
+                        // Wrapped like every other persist site (H1/J2): a disk-full
+                        // IOException here must NOT skip `alertJob = null` below — that
+                        // would leak a stale reference to this already-completed job.
+                        try {
+                            configManager.saveEmergencyState(EmergencyState())
+                        } catch (e: Exception) {
+                            Timber.e(e, "Failed to persist IDLE after alert job finished; in-memory state already cleared")
+                        }
                     }
                     alertJob = null
                 }

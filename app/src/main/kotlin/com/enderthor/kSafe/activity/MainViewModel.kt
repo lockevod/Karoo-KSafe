@@ -9,6 +9,7 @@ import com.enderthor.kSafe.data.ProviderType
 import com.enderthor.kSafe.data.SenderConfig
 import com.enderthor.kSafe.data.defaultSenderConfigs
 import com.enderthor.kSafe.data.materializeAlertDefaults
+import com.enderthor.kSafe.data.migrateToLatest
 import com.enderthor.kSafe.data.toBackupExport
 import com.enderthor.kSafe.data.toSenderConfigs
 import com.enderthor.kSafe.extension.jsonForExport
@@ -60,6 +61,18 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     fun saveConfig(config: KSafeConfig) {
         viewModelScope.launch { configManager.saveConfig(config) }
+    }
+
+    /**
+     * Read-modify-write a subset of config fields against the LATEST emitted config rather
+     * than a composition snapshot. A debounced multi-field save in SettingsScreen otherwise
+     * captures `config` at launch time and `config.copy(...)` clobbers any OTHER field
+     * (e.g. a calibration toggle) saved from a different snapshot in the same window —
+     * a last-writer-wins lost update. Applying [transform] to `config.value` at execution
+     * time (after the debounce, so prior writes have propagated) preserves unrelated fields.
+     */
+    fun updateConfig(transform: (KSafeConfig) -> KSafeConfig) {
+        viewModelScope.launch { configManager.saveConfig(transform(config.value)) }
     }
 
     fun saveSenderConfigs(configs: List<SenderConfig>) {
@@ -159,7 +172,12 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     .toSenderConfigs()
             }
 
-            saveConfig(config)
+            // Normalise the imported blob to the current schema before persisting. An export
+            // from an older app version carries a stale configVersion + pre-migration field
+            // layout; without this the read path eventually migrates it, but persisting the
+            // un-migrated blob is a latent footgun (e.g. a version-0 stamp re-runs the v0→v2
+            // crash-speed rewrite on every read). migrateToLatest() is idempotent.
+            saveConfig(config.migrateToLatest())
             saveSenderConfigs(senderConfigs)
             true
         } catch (e: Exception) {

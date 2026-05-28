@@ -89,6 +89,14 @@ class WellnessMonitor(
     @Volatile private var lastUserProfile: UserProfile? = null
 
     // ─── Session state (reset by start()) ────────────────────────────────────
+    // ALL timestamps below (and lastHrUpdateMs above, powerSamples/ratioSamples keys) are
+    // taken from `clock.monotonicMs()` (elapsedRealtime), NOT wall-clock. They are purely
+    // in-memory session durations/streaks/cooldowns/windows — never persisted — and are
+    // only ever compared against each other as differences. Using a monotonic source makes
+    // them immune to NTP corrections / manual date changes (a backward jump would make a
+    // streak elapsed go negative → never fire; a forward jump would fire prematurely). This
+    // mirrors the MedicalEpisodeDetector D2 fix. Tests inject a Clock whose monotonicMs()
+    // delegates to nowMs(), so deterministic advancement keeps working.
     @Volatile private var sessionStartMs = 0L
     // Critical tier
     @Volatile private var criticalSinceMs = 0L
@@ -166,7 +174,7 @@ class WellnessMonitor(
         // Same cancelAndJoin pattern as the other trackers — guarantees the previous monitor
         // is fully gone before the new one runs.
         val oldJob = monitorJob
-        val now = clock.nowMs()
+        val now = clock.monotonicMs()
         sessionStartMs = now
         criticalSinceMs = 0L
         sustainedSinceMs = 0L
@@ -268,7 +276,7 @@ class WellnessMonitor(
 
     fun updateHr(bpm: Int) {
         lastHrBpm = bpm
-        lastHrUpdateMs = clock.nowMs()
+        lastHrUpdateMs = clock.monotonicMs()
         // Track session peak. Called every HR callback (~1 Hz), more precise than tick().
         if (bpm > sessionMaxHr) sessionMaxHr = bpm
     }
@@ -280,7 +288,7 @@ class WellnessMonitor(
         // by time (POWER_BUFFER_WINDOW_MS) and by absolute count via the ring's own
         // capacity (256 ≥ POWER_BUFFER_MAX_SIZE; the ring's tail-overwrite handles
         // the count cap automatically). B30 — primitive ring, no Pair allocation.
-        val now = clock.nowMs()
+        val now = clock.monotonicMs()
         synchronized(powerSamplesLock) {
             powerSamples.add(now, w)
             powerSamples.trimOlderThan(now - POWER_BUFFER_WINDOW_MS)
@@ -293,7 +301,7 @@ class WellnessMonitor(
     // synchronously without spinning up the coroutine loop — avoids the wall-clock
     // vs virtual-time interaction quirks of runTest + advanceTimeBy.
     internal fun tick() {
-        val now = clock.nowMs()
+        val now = clock.monotonicMs()
         if (now - lastHrUpdateMs > HR_STALE_MS) {
             // Sensor silent — every per-tier evaluation will return early. Reset the streak
             // accumulators so a transient disconnect doesn't carry forward stale state.

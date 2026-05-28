@@ -68,13 +68,16 @@ fun SettingsScreen(vm: MainViewModel) {
 
     LaunchedEffect(isActive, fitExportEnabled, buzzerOnEmergency) {
         delay(600)
-        vm.saveConfig(
-            config.copy(
+        // Merge onto the LATEST config (not the captured `config` snapshot) so this
+        // debounced save can't clobber an unrelated field — e.g. the calibration toggle
+        // saved immediately in the same window. See MainViewModel.updateConfig.
+        vm.updateConfig {
+            it.copy(
                 isActive                  = isActive,
                 fuelingFitExportEnabled   = fitExportEnabled,
                 buzzerOnEmergencyEnabled  = buzzerOnEmergency,
             )
-        )
+        }
     }
 
     Column(
@@ -273,8 +276,14 @@ fun SettingsScreen(vm: MainViewModel) {
                 checked = calibrationLogging,
                 onCheckedChange = { newValue ->
                     calibrationLogging = newValue
-                    vm.saveConfig(config.copy(calibrationLoggingEnabled = newValue))
-                    calibLogInfo = KSafeExtension.getInstance()?.getCalibrationLogInfo() ?: ""
+                    // Merge onto the latest config (not the captured snapshot) so this
+                    // immediate save and the debounced isActive/fit/buzzer save can't
+                    // clobber each other — fully closes the lost-update class.
+                    vm.updateConfig { it.copy(calibrationLoggingEnabled = newValue) }
+                    // calibLogInfo is refreshed by the LaunchedEffect below (its first
+                    // iteration runs immediately) — do NOT read it here: getCalibrationLogInfo()
+                    // scans the whole CSV + reads the previous file, which on this non-suspend
+                    // Main-thread callback would jank the UI.
                     calibLogNote = if (newValue) "Logging enabled — data will be collected." else "Logging disabled."
                     calibLogNoteIsError = false
                 }
@@ -284,7 +293,10 @@ fun SettingsScreen(vm: MainViewModel) {
         if (calibrationLogging) {
             LaunchedEffect(calibrationLogging) {
                 while (calibrationLogging) {
-                    calibLogInfo = KSafeExtension.getInstance()?.getCalibrationLogInfo() ?: ""
+                    // Off-Main: getCalibrationLogInfo() reads whole files (line scan + readText).
+                    calibLogInfo = withContext(Dispatchers.IO) {
+                        KSafeExtension.getInstance()?.getCalibrationLogInfo() ?: ""
+                    }
                     delay(5_000L)
                 }
             }

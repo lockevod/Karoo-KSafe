@@ -184,12 +184,16 @@ class MedicalEpisodeDetector(
         this.config = config
         if (!config.medicalEpisodeEnabled) return
         monitorJob?.cancel()
-        // Reset session-scoped state. Persistent fields (currentHrBpm) keep their last value
-        // so reconnects between rides don't re-issue cold-start guards.
-        flatlineSinceMs = 0L
-        collapseCooldownUntilMs = 0L
-        lastPeriodicLogMs = 0L
-        lastHrStaleState = false
+        // Reset ALL session-scoped state — crucially the HR rolling window that feeds the
+        // COLLAPSE baseline. start() runs on EVERY Recording entry, including a
+        // Paused→Recording resume (KSafeExtension calls it unconditionally with no
+        // preceding stop()). Without clearing the HR ring here, a café stop at high HR
+        // followed by a low-HR remount leaves a stale high baseline that the recent low
+        // HR crosses → false MEDICAL_COLLAPSE → bogus EMERGENCY SOS to the rider's
+        // contacts. A clean baseline on resume is the safe choice (a brief cold-start
+        // re-guard, never a false positive) — this is exactly the contamination stop()'s
+        // comment warns about, which previously only stop() guarded against.
+        resetSessionState()
         monitorJob = scope.launch {
             while (true) {
                 delay(MONITOR_TICK_MS)
@@ -216,37 +220,43 @@ class MedicalEpisodeDetector(
     fun stop() {
         monitorJob?.cancel()
         monitorJob = null
-        // Clear cross-session state so a new ride starts with a fresh baseline.
-        // Otherwise a stop()→start() cycle can preserve stale HR samples that taint
-        // the 5-min rolling baseline and trigger a false MEDICAL_COLLAPSE EMERGENCY
-        // when the new ride starts at a much lower HR than the previous one ended.
+        resetSessionState()
+        Timber.d("MedicalEpisodeDetector stopped")
+    }
+
+    /**
+     * Clears ALL per-session detector state: the streak/cooldown timers, the HR rolling
+     * window (the COLLAPSE baseline source), and the speed/cadence/power freshness
+     * bookkeeping. Called from both [stop] (ride end / teardown) and [start] (every
+     * Recording entry, including a Paused→Recording resume with no preceding stop()), so a
+     * resumed or new session never inherits a stale HR baseline that would fire a false
+     * COLLAPSE, nor a stuck value-change timestamp that would mis-report sensor staleness.
+     */
+    private fun resetSessionState() {
+        flatlineSinceMs = 0L
+        collapseCooldownUntilMs = 0L
+        lastPeriodicLogMs = 0L
+        lastHrStaleState = false
+        // HR rolling window — taints the 5-min COLLAPSE baseline if carried across sessions.
         synchronized(hrHistoryLock) { hrSamples.clear() }
         hrDataReceived = false
         currentHrBpm = 0
         lastHrUpdateMs = 0L
-        // H2 fix — reset speed-staleness bookkeeping so a new ride does not inherit a
-        // stuck speedLastChangeMs from the previous ride (would either falsely report
-        // stale forever or, worse, falsely report fresh during the new ride's cold start).
+        // H2 — speed-staleness bookkeeping must not be inherited (would falsely report
+        // stale forever, or falsely fresh during the next cold start).
         speedLastChangeMs = 0L
         lastSpeedKmh = 0.0
         lastSpeedAboveActiveMs = 0L
-        // H3 fix — reset cross-check inputs. The "sensor was paired" sticky flags belong
-        // to a single ride session: if the rider unpairs / re-pairs between rides we want
-        // the fresh ride to bootstrap cleanly.
+        // H3 — cross-check sticky flags belong to one session (unpair/re-pair between rides).
         cadenceDataReceived = false
         currentCadenceRpm = 0.0
         powerDataReceived = false
         currentPowerW = 0
-        // I2 fix — reset freshness-by-change bookkeeping for the same reason as the H2
-        // speedLastChangeMs reset above: a new ride must not inherit a stale value-change
-        // timestamp from the previous ride (would either spuriously mark a stuck sensor as
-        // fresh forever, or — once the clock ages past the threshold — claim staleness
-        // before any value has been observed in the new session).
+        // I2 — freshness-by-change timestamps, same rationale as the H2 speed reset above.
         cadenceLastChangeMs = 0L
         prevCadenceRpm = Double.NaN
         powerLastChangeMs = 0L
         prevPowerW = Int.MIN_VALUE
-        Timber.d("MedicalEpisodeDetector stopped")
     }
 
     /**
