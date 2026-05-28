@@ -150,17 +150,18 @@ class HydrationLogDataType(
                 // config edits that would otherwise force a wasted buildView + IPC.
                 combine(
                     HydrationLogState.flowForSlot(slot),
-                    configManager.loadConfigFlow()
-                ) { state, ksafeConfig ->
+                    configManager.loadConfigFlow(),
+                    com.enderthor.kSafe.extension.KSafeExtension.nightModeFlow,
+                ) { state, ksafeConfig, dark ->
                     val label = labelFromConfig(ksafeConfig)
                     val ml = mlFromConfig(ksafeConfig)
                     val idleIsAutoDay =
                         idleColorFromConfig(ksafeConfig) == FIELD_COLOR_AUTO &&
-                        !context.isKarooNightMode()
+                        !dark
                     val leftDrawable = if (iconFromConfig(ksafeConfig) == FUEL_BOTTLE_DRAWABLE) {
                         if (idleIsAutoDay) R.drawable.ic_fuel_bottle_dark else R.drawable.ic_fuel_bottle
                     } else 0
-                    when {
+                    val frame = when {
                         !config.preview && !ksafeConfig.hydrationTrackerEnabled ->
                             Frame(COLOR_OFF, label, context.getString(R.string.field_state_off), clickable = false, leftDrawableRes = 0)
                         state is HydrationLogState.LOGGED ->
@@ -173,7 +174,9 @@ class HydrationLogDataType(
                         else -> // IDLE
                             Frame(idleColorFromConfig(ksafeConfig), label, "${ml}ml", clickable = true, leftDrawableRes = leftDrawable)
                     }
-                }.distinctUntilChanged().collect { f ->
+                    // See CarbLogDataType — pair with `dark` so a theme flip re-renders.
+                    frame to dark
+                }.distinctUntilChanged().collect { (f, _) ->
                     emitter.updateView(buildView(context, config, f.bgColor, f.main, f.hint, f.clickable, f.leftDrawableRes))
                 }
             } catch (_: CancellationException) {

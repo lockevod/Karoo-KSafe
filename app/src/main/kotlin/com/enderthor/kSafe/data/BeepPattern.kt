@@ -1,6 +1,7 @@
 package com.enderthor.kSafe.data
 
 import io.hammerhead.karooext.models.PlayBeepPattern
+import kotlinx.serialization.Serializable
 
 /**
  * Rider-selectable beep patterns for informational in-ride alerts (carbs, hydration).
@@ -18,6 +19,7 @@ import io.hammerhead.karooext.models.PlayBeepPattern
  *
  * Order matters — UI lists preserve declaration order in the dropdown.
  */
+@Serializable
 enum class BeepPattern {
     /** No sound — visual InRideAlert only. */
     OFF,

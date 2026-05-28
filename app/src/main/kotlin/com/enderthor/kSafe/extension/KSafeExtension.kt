@@ -11,8 +11,10 @@ import com.enderthor.kSafe.extension.util.formatUs
 import com.enderthor.kSafe.data.KSafeConfig
 import com.enderthor.kSafe.data.ProviderType
 import com.enderthor.kSafe.data.RideWellnessRecord
+import android.content.res.Configuration
 import com.enderthor.kSafe.datatype.CustomMessageDataType
 import com.enderthor.kSafe.datatype.CustomMessageState
+import com.enderthor.kSafe.datatype.isKarooNightMode
 import com.enderthor.kSafe.datatype.WebhookState
 import com.enderthor.kSafe.datatype.SafetyTimerDataType
 import com.enderthor.kSafe.datatype.SOSDataType
@@ -63,6 +65,15 @@ import kotlin.math.sin
 import kotlin.math.sqrt
 
 private const val FUELING_PERSIST_INTERVAL_MS: Long = 30_000L
+/** Coarse poll interval for the background loops while their work-gate is unmet
+ *  (no ride recording / calibration logging disabled). The loops still wake to
+ *  re-check the gate, but at ~2 min instead of their active 30 s / 60 s cadence —
+ *  so an extension sitting on the dock (or any rider who never enables calibration
+ *  logging, i.e. nearly all of them) stops paying ~120 wakeups/h for no work. The
+ *  only cost is up to one idle interval of latency before the first persist after a
+ *  ride starts / before the health-check resumes after logging is enabled, both of
+ *  which are non-critical. The ACTIVE cadence is unchanged once the gate is met. */
+private const val BACKGROUND_IDLE_POLL_MS: Long = 2L * 60_000L
 /** Auto-send the calibration log every 20 minutes while a ride is recording so a
  *  long ride with intermittent coverage still trickles data out instead of waiting
  *  for the post-ride upload (which may itself fail). On success, the file is
@@ -301,6 +312,13 @@ class KSafeExtension : KarooExtension("ksafe", BuildConfig.VERSION_NAME), Corout
         val hydrationTrackerFlow = kotlinx.coroutines.flow.MutableStateFlow<
             com.enderthor.kSafe.extension.managers.HydrationTracker?>(null)
 
+        /** Current Karoo night-mode (dark) state, republished by the service's
+         *  [onConfigurationChanged]. The combine-based AUTO-colour data fields merge this so
+         *  they re-render on a day↔night flip — they otherwise only re-emit on a state/config
+         *  change and would keep stale (e.g. black-on-black, invisible) text after a
+         *  sunset/sunrise theme switch while idle. Seeded in onCreate; rarely changes. */
+        val nightModeFlow = kotlinx.coroutines.flow.MutableStateFlow(false)
+
         /** Minimum gap (ms) between two SOS field taps before the second tap is honoured.
          *  Protects BOTH directions around the IDLE→COUNTDOWN flip:
          *   - IDLE→trigger: a phantom retap within the window cannot re-arm.
@@ -345,6 +363,8 @@ class KSafeExtension : KarooExtension("ksafe", BuildConfig.VERSION_NAME), Corout
     override fun onCreate() {
         super.onCreate()
         Timber.d("KSafeExtension created")
+        // Seed the night-mode flow so AUTO-colour fields start with the correct text colour.
+        nightModeFlow.value = isKarooNightMode()
 
         karooSystem = KarooSystemService(applicationContext)
         configManager = ConfigurationManager(applicationContext)
@@ -609,6 +629,14 @@ class KSafeExtension : KarooExtension("ksafe", BuildConfig.VERSION_NAME), Corout
             var lastPersistedCarb: com.enderthor.kSafe.data.CarbFuelingState? = null
             var lastPersistedHyd:  com.enderthor.kSafe.data.HydFuelingState?  = null
             while (true) {
+                // Idle backoff: nothing to persist outside a ride — poll coarsely until
+                // Recording, then persist at the active 30 s cadence. Only the FIRST persist
+                // after a ride starts is delayed (by ≤ one idle interval); the accumulation
+                // in that window is small and within the deadband loss bound documented above.
+                if (currentRideState !is RideState.Recording) {
+                    kotlinx.coroutines.delay(BACKGROUND_IDLE_POLL_MS)
+                    continue
+                }
                 kotlinx.coroutines.delay(FUELING_PERSIST_INTERVAL_MS)
                 if (currentRideState !is RideState.Recording) continue
                 if (!this@KSafeExtension::carbsTracker.isInitialized) continue
@@ -725,9 +753,16 @@ class KSafeExtension : KarooExtension("ksafe", BuildConfig.VERSION_NAME), Corout
             // Covers the "logger seems on but isn't writing — disable+enable fixes it"
             // pattern that's been reported anecdotally.
             while (true) {
+                // Idle backoff: when logging is disabled (the default for ~all riders) there
+                // is nothing to health-check — poll coarsely instead of waking every 60 s for
+                // the whole multi-day service lifetime. Resumes the 60 s cadence within one
+                // idle interval of the rider enabling logging (a deliberate Settings action).
+                if (!this@KSafeExtension::calibLogger.isInitialized || !calibLogger.isEnabled) {
+                    kotlinx.coroutines.delay(BACKGROUND_IDLE_POLL_MS)
+                    continue
+                }
                 kotlinx.coroutines.delay(CALIBRATION_HEALTH_CHECK_INTERVAL_MS)
-                if (!this@KSafeExtension::calibLogger.isInitialized) continue
-                if (!calibLogger.isEnabled) continue
+                if (!this@KSafeExtension::calibLogger.isInitialized || !calibLogger.isEnabled) continue
                 if (!calibLogger.isHealthy()) {
                     Timber.w("Calibration logger unhealthy — restarting flush job")
                     calibLogger.restartFlushJob()
@@ -2568,6 +2603,18 @@ class KSafeExtension : KarooExtension("ksafe", BuildConfig.VERSION_NAME), Corout
         emitter.setCancellable {
             job.cancel()
             calibLogger.log(CalibrationLogger.Event.FIT_WRITER_STOP) { "" }
+        }
+    }
+
+    override fun onConfigurationChanged(newConfig: Configuration) {
+        super.onConfigurationChanged(newConfig)
+        // Republish night-mode on a day↔night flip. resources.configuration is already
+        // updated by the time this fires, so isKarooNightMode() reads the new value. The
+        // combine-based AUTO-colour fields merge nightModeFlow and re-render off this.
+        val dark = isKarooNightMode()
+        if (nightModeFlow.value != dark) {
+            nightModeFlow.value = dark
+            Timber.d("KSafe night-mode changed → dark=%b", dark)
         }
     }
 

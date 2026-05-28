@@ -180,8 +180,9 @@ class CarbLogDataType(
                 // field too, paying the buildView + updateView round-trip for nothing.
                 combine(
                     CarbLogState.flowForSlot(slot),
-                    configManager.loadConfigFlow()
-                ) { state, ksafeConfig ->
+                    configManager.loadConfigFlow(),
+                    com.enderthor.kSafe.extension.KSafeExtension.nightModeFlow,
+                ) { state, ksafeConfig, dark ->
                     val label = labelFromConfig(ksafeConfig)
                     val grams = gramsFromConfig(ksafeConfig)
                     // Pick the dark-fill variant when the slot's idle background is
@@ -191,11 +192,11 @@ class CarbLogDataType(
                     // (always dark) keep the regular white drawable.
                     val idleIsAutoDay =
                         idleColorFromConfig(ksafeConfig) == FIELD_COLOR_AUTO &&
-                        !context.isKarooNightMode()
+                        !dark
                     val leftDrawable = if (iconFromConfig(ksafeConfig) == FUEL_GEL_DRAWABLE) {
                         if (idleIsAutoDay) R.drawable.ic_fuel_gel_dark else R.drawable.ic_fuel_gel
                     } else 0
-                    when {
+                    val frame = when {
                         !config.preview && !ksafeConfig.carbsTrackerEnabled ->
                             // Master tracker disabled — show OFF in grey. Skipped in preview
                             // so the profile-editor gallery shows the slot's configured idle
@@ -217,7 +218,10 @@ class CarbLogDataType(
                         else -> // IDLE
                             Frame(idleColorFromConfig(ksafeConfig), label, "${grams}g", clickable = true, leftDrawableRes = leftDrawable)
                     }
-                }.distinctUntilChanged().collect { f ->
+                    // Pair with `dark` so a day↔night flip (which doesn't change state/config)
+                    // still produces a distinct value and re-renders the AUTO-colour field.
+                    frame to dark
+                }.distinctUntilChanged().collect { (f, _) ->
                     emitter.updateView(buildView(context, config, f.bgColor, f.main, f.hint, f.clickable, f.leftDrawableRes))
                 }
             } catch (_: CancellationException) {

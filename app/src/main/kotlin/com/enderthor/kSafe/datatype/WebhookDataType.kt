@@ -153,13 +153,14 @@ class WebhookDataType(
                 // so an unrelated config edit doesn't force a wasted buildView + IPC.
                 combine(
                     WebhookState.flowForSlot(slot),
-                    configManager.loadConfigFlow()
-                ) { stateData, ksafeConfig ->
+                    configManager.loadConfigFlow(),
+                    com.enderthor.kSafe.extension.KSafeExtension.nightModeFlow,
+                ) { stateData, ksafeConfig, dark ->
                     val label     = labelFromConfig(ksafeConfig)
                     // In preview always render as enabled — see note in the primer above.
                     val enabled   = config.preview || isEnabled(ksafeConfig)
                     val idleColor = idleColorFromConfig(ksafeConfig)
-                    when (stateData.state) {
+                    val frame = when (stateData.state) {
                         WebhookState.IDLE -> {
                             val bgColor = if (enabled) idleColor else COLOR_DISABLED
                             val hint    = if (enabled) context.getString(R.string.field_state_webhook_tap)
@@ -170,7 +171,9 @@ class WebhookDataType(
                         WebhookState.SUCCESS -> Frame(COLOR_SUCCESS, label, stateData.message.ifBlank { context.getString(R.string.field_state_webhook_ok) }, clickable = false)
                         WebhookState.ERROR   -> Frame(COLOR_ERROR,   label, stateData.message.ifBlank { context.getString(R.string.field_state_err_retry) }, clickable = true)
                     }
-                }.distinctUntilChanged().collect { f ->
+                    // See CarbLogDataType — pair with `dark` so a theme flip re-renders.
+                    frame to dark
+                }.distinctUntilChanged().collect { (f, _) ->
                     emitter.updateView(buildView(context, config, f.bgColor, f.main, f.hint, f.clickable))
                 }
             } catch (_: CancellationException) {

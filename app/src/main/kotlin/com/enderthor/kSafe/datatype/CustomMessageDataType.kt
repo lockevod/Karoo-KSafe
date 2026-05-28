@@ -133,11 +133,12 @@ class CustomMessageDataType(
                 // so an unrelated config edit doesn't force a wasted buildView + IPC.
                 combine(
                     CustomMessageState.flowForSlot(slot),
-                    configManager.loadConfigFlow()
-                ) { state, ksafeConfig ->
+                    configManager.loadConfigFlow(),
+                    com.enderthor.kSafe.extension.KSafeExtension.nightModeFlow,
+                ) { state, ksafeConfig, dark ->
                     val title = titleFromConfig(ksafeConfig)
                     val idleColor = idleColorFromConfig(ksafeConfig)
-                    when {
+                    val frame = when {
                         !config.preview && !enabledFromConfig(ksafeConfig) ->
                             // Slot disabled in Actions tab — show OFF in grey. Skipped in
                             // preview so the profile-editor gallery shows the slot's
@@ -152,7 +153,9 @@ class CustomMessageDataType(
                         else -> // IDLE
                             Frame(idleColor, title, context.getString(R.string.field_state_msg_tap_send), clickable = true)
                     }
-                }.distinctUntilChanged().collect { f ->
+                    // See CarbLogDataType — pair with `dark` so a theme flip re-renders.
+                    frame to dark
+                }.distinctUntilChanged().collect { (f, _) ->
                     emitter.updateView(buildView(context, config, f.bgColor, f.main, f.hint, f.clickable))
                 }
             } catch (_: CancellationException) {

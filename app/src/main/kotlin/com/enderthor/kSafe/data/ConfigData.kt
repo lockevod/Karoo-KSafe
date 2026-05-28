@@ -245,8 +245,10 @@ val FIELD_COLOR_PALETTE: List<Int> = listOf(
 
 // ─── Enums ────────────────────────────────────────────────────────────────────
 
+@Serializable
 enum class ProviderType { CALLMEBOT, PUSHOVER, NTFY, TELEGRAM }
 
+@Serializable
 enum class CrashSensitivity {
     LOW,    // Requires stronger impact (fewer false positives)
     MEDIUM, // Balanced
@@ -266,6 +268,7 @@ enum class CrashSensitivity {
  *                  while riding.
  *  - [EMERGENCY] — full crash flow: cancellable countdown + contact alert.
  */
+@Serializable
 enum class IncidentResponseLevel { SILENT, WARNING, EMERGENCY }
 
 @Serializable
