@@ -234,6 +234,27 @@ class CarbBurnEstimatorTest {
         assertEquals(CarbBurnEstimator.Confidence.KEYTEL, r.confidence)
     }
 
+    @Test
+    fun `zero power classifies the CHO zone from HR, not power Z1`() {
+        // Regression: a 0 W reading (freewheeling, or a power meter latched at 0 after a
+        // dropout) makes the kcal tier fall through to HR — the ZONE must follow the SAME
+        // signal. Pre-fix the zone was classified from power=0 → power Z1 → CHO pinned to
+        // the minimum, while kcal reflected an elevated HR, systematically under-counting
+        // carbs (worst with a dead meter stuck at 0 W on a climb).
+        val r = CarbBurnEstimator.estimate(
+            hrBpm = 150,            // maxHr 190 → HR Z3 (134..152), index 2 of 5
+            powerW = 0,             // must NOT pin the zone to power Z1
+            profile = profile(),
+            riderAge = 40,
+            riderSex = RiderSex.MALE,
+        )
+        assertEquals(ZoneSource.HR, r.zoneSnapshot.source)
+        // Z3 of 5 → ratio 2/4 = 0.5 → 0.30 + 0.5×0.65 = 0.625 (NOT CHO_MIN_FRACTION).
+        assertEquals(0.625, r.choFraction, 0.001)
+        assertTrue("CHO must not be pinned to the Z1 minimum",
+            r.choFraction > CarbBurnEstimator.CHO_MIN_FRACTION)
+    }
+
     // ── CHO fraction zone mapping ─────────────────────────────────────────────
 
     @Test

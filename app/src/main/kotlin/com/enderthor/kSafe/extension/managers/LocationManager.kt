@@ -145,7 +145,7 @@ class LocationManager(
             }
             if (!event.lat.isFinite() || !event.lng.isFinite()) {
                 Timber.w("getFreshFix: SDK returned non-finite coords (lat=${event.lat}, lng=${event.lng}); falling back to cache")
-                return cached
+                return cached.freshEnoughForFallback()
             }
             val fresh = GpsFix(event.lat, event.lng, System.currentTimeMillis())
             lastFix = fresh
@@ -153,7 +153,7 @@ class LocationManager(
             fresh
         } catch (_: TimeoutCancellationException) {
             Timber.w("getFreshFix: timed out after ${timeoutMs}ms, falling back to cached fix (${if (cached == null) "none" else "${(now - cached.sampleTimeMs) / 1000}s old"})")
-            cached
+            cached.freshEnoughForFallback()
         } catch (e: kotlinx.coroutines.CancellationException) {
             throw e
         } catch (e: Exception) {
@@ -166,7 +166,7 @@ class LocationManager(
             // wrong one for a transient binder hiccup that the cached fix can
             // serve through.
             Timber.w(e, "getFreshFix: threw — falling back to cached fix")
-            cached
+            cached.freshEnoughForFallback()
         }
     }
 
@@ -238,5 +238,21 @@ class LocationManager(
          *  within a few seconds, or a rider deliberately double-tapping a webhook
          *  field after a transient "no GPS" error — both fit inside 5 s. */
         private const val REUSE_CACHED_FRESH_MS = 5_000L
+
+        /** Upper bound on the age of a CACHED fix returned by the [getFreshFix] fallback
+         *  paths (timeout / non-finite / throw). The geo-fence must not be evaluated against
+         *  an ancient position: a fix minutes old can place the rider hundreds of metres off,
+         *  wrongly firing (or blocking) a geo-fenced webhook. Beyond this age the fallback
+         *  returns null, which the caller treats as "no GPS fix yet" (blocks + tells the
+         *  rider) — the correct end-state when location can't be verified. One sample
+         *  interval + slack: tight enough to reject a real outage, loose enough to serve a
+         *  transient binder hiccup with the most recent persistent-collector sample. */
+        private const val MAX_FALLBACK_FIX_AGE_MS = LOCATION_SAMPLE_MS + 30_000L
     }
+
+    /** The cached fix, but only if recent enough to trust for the geo-fence (see
+     *  [MAX_FALLBACK_FIX_AGE_MS]); otherwise null so the caller surfaces "no GPS". */
+    private fun GpsFix?.freshEnoughForFallback(): GpsFix? =
+        this?.takeIf { it.sampleTimeMs > 0L &&
+            System.currentTimeMillis() - it.sampleTimeMs <= MAX_FALLBACK_FIX_AGE_MS }
 }

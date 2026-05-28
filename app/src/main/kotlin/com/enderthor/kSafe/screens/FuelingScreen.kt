@@ -147,7 +147,7 @@ fun FuelingScreen(vm: MainViewModel) {
                         checked = carbsEnabled,
                         onCheckedChange = {
                             carbsEnabled = it
-                            vm.saveConfig(config.copy(carbsTrackerEnabled = it))
+                            vm.updateConfig { cfg -> cfg.copy(carbsTrackerEnabled = it) }
                         }
                     )
                 }
@@ -164,12 +164,12 @@ fun FuelingScreen(vm: MainViewModel) {
                     label = stringResource(R.string.fueling_rider_age_label),
                     text = riderAge,
                     range = 12..99,
-                    onCommit = { riderAge = it; vm.saveConfig(config.copy(riderAge = it.toInt())) },
+                    onCommit = { riderAge = it; vm.updateConfig { cfg -> cfg.copy(riderAge = it.toInt()) } },
                     onTextChange = { riderAge = it },
                 )
                 RiderSexRow(
                     selected = riderSex,
-                    onSelected = { riderSex = it; vm.saveConfig(config.copy(riderSex = it)) },
+                    onSelected = { riderSex = it; vm.updateConfig { cfg -> cfg.copy(riderSex = it) } },
                 )
                 HorizontalDivider()
                 FuelingRow(label = stringResource(R.string.fueling_alert_deficit_label)) {
@@ -177,7 +177,7 @@ fun FuelingScreen(vm: MainViewModel) {
                         checked = carbDeficitOn,
                         onCheckedChange = {
                             carbDeficitOn = it
-                            vm.saveConfig(config.copy(carbDeficitAlertEnabled = it))
+                            vm.updateConfig { cfg -> cfg.copy(carbDeficitAlertEnabled = it) }
                         }
                     )
                 }
@@ -185,14 +185,14 @@ fun FuelingScreen(vm: MainViewModel) {
                     label = stringResource(R.string.fueling_deficit_threshold_g_label),
                     text = carbDeficitThreshold,
                     range = 5..60,
-                    onCommit = { carbDeficitThreshold = it; vm.saveConfig(config.copy(carbDeficitThresholdG = it.toInt())) },
+                    onCommit = { carbDeficitThreshold = it; vm.updateConfig { cfg -> cfg.copy(carbDeficitThresholdG = it.toInt()) } },
                     onTextChange = { carbDeficitThreshold = it },
                 )
                 IntField(
                     label = stringResource(R.string.fueling_deficit_initial_delay_label),
                     text = carbDeficitInitialDelay,
                     range = 0..240,
-                    onCommit = { carbDeficitInitialDelay = it; vm.saveConfig(config.copy(carbDeficitInitialDelayMin = it.toInt())) },
+                    onCommit = { carbDeficitInitialDelay = it; vm.updateConfig { cfg -> cfg.copy(carbDeficitInitialDelayMin = it.toInt()) } },
                     onTextChange = { carbDeficitInitialDelay = it },
                 )
                 // Discrete picker (5/10/15/30 min) rather than free-text — those four
@@ -206,14 +206,14 @@ fun FuelingScreen(vm: MainViewModel) {
                     label = stringResource(R.string.fueling_deficit_reminder_interval_label),
                     hint = stringResource(R.string.fueling_deficit_reminder_interval_hint),
                     selected = config.carbDeficitReminderIntervalMin,
-                    onSelected = { vm.saveConfig(config.copy(carbDeficitReminderIntervalMin = it)) },
+                    onSelected = { vm.updateConfig { cfg -> cfg.copy(carbDeficitReminderIntervalMin = it) } },
                 )
                 FuelingRow(label = stringResource(R.string.fueling_alert_time_label)) {
                     Switch(
                         checked = carbTimeOn,
                         onCheckedChange = {
                             carbTimeOn = it
-                            vm.saveConfig(config.copy(carbTimeAlertEnabled = it))
+                            vm.updateConfig { cfg -> cfg.copy(carbTimeAlertEnabled = it) }
                         }
                     )
                 }
@@ -221,20 +221,20 @@ fun FuelingScreen(vm: MainViewModel) {
                     label = stringResource(R.string.fueling_time_interval_label),
                     text = carbTimeInterval,
                     range = 1..60,
-                    onCommit = { carbTimeInterval = it; vm.saveConfig(config.copy(carbTimeIntervalMin = it.toInt())) },
+                    onCommit = { carbTimeInterval = it; vm.updateConfig { cfg -> cfg.copy(carbTimeIntervalMin = it.toInt()) } },
                     onTextChange = { carbTimeInterval = it },
                 )
                 IntField(
                     label = stringResource(R.string.fueling_initial_delay_label),
                     text = carbTimeInitialDelay,
                     range = 0..240,
-                    onCommit = { carbTimeInitialDelay = it; vm.saveConfig(config.copy(carbTimeInitialDelayMin = it.toInt())) },
+                    onCommit = { carbTimeInitialDelay = it; vm.updateConfig { cfg -> cfg.copy(carbTimeInitialDelayMin = it.toInt()) } },
                     onTextChange = { carbTimeInitialDelay = it },
                 )
                 CustomAlertField(
                     label = "Carb alert title",
                     value = carbCustomTitle,
-                    onCommit = { v -> carbCustomTitle = v; vm.saveConfig(config.copy(carbAlertCustomTitle = v)) },
+                    onCommit = { v -> carbCustomTitle = v; vm.updateConfig { cfg -> cfg.copy(carbAlertCustomTitle = v) } },
                     defaultText = stringResource(R.string.fueling_carb_alert_title),
                     tokensHint = "",
                     maxLength = 30,
@@ -242,7 +242,7 @@ fun FuelingScreen(vm: MainViewModel) {
                 CustomAlertField(
                     label = "Carb alert detail (time)",
                     value = carbCustomDetailTime,
-                    onCommit = { v -> carbCustomDetailTime = v; vm.saveConfig(config.copy(carbAlertCustomDetailTime = v)) },
+                    onCommit = { v -> carbCustomDetailTime = v; vm.updateConfig { cfg -> cfg.copy(carbAlertCustomDetailTime = v) } },
                     defaultText = stringResource(R.string.fueling_carb_alert_detail_time),
                     tokensHint = "Tokens: {deficit}, {elapsed}, {target}",
                     maxLength = ALERT_DETAIL_MAX_CHARS,
@@ -251,7 +251,7 @@ fun FuelingScreen(vm: MainViewModel) {
                 CustomAlertField(
                     label = "Carb alert detail (deficit)",
                     value = carbCustomDetailDeficit,
-                    onCommit = { v -> carbCustomDetailDeficit = v; vm.saveConfig(config.copy(carbAlertCustomDetailDeficit = v)) },
+                    onCommit = { v -> carbCustomDetailDeficit = v; vm.updateConfig { cfg -> cfg.copy(carbAlertCustomDetailDeficit = v) } },
                     defaultText = stringResource(R.string.fueling_carb_alert_detail_deficit),
                     tokensHint = "Tokens: {deficit}, {elapsed}, {target}",
                     maxLength = ALERT_DETAIL_MAX_CHARS,
@@ -260,48 +260,48 @@ fun FuelingScreen(vm: MainViewModel) {
                 BeepPatternPicker(
                     label = stringResource(R.string.fueling_beep_pattern_label),
                     selected = config.carbBeepPattern,
-                    onSelected = { v -> vm.saveConfig(config.copy(carbBeepPattern = v)) },
+                    onSelected = { v -> vm.updateConfig { cfg -> cfg.copy(carbBeepPattern = v) } },
                 )
                 AlertColorPicker(
                     label = stringResource(R.string.fueling_alert_bg_color_label),
                     selected = carbAlertBgColor,
-                    onSelected = { v -> carbAlertBgColor = v; vm.saveConfig(config.copy(carbAlertBgColor = v)) },
+                    onSelected = { v -> carbAlertBgColor = v; vm.updateConfig { cfg -> cfg.copy(carbAlertBgColor = v) } },
                 )
                 HorizontalDivider()
                 Text(text = stringResource(R.string.fueling_items_section), style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.Bold)
                 val gLabel = stringResource(R.string.fueling_slot_grams_label)
                 SlotRow(label = "Slot 1", labelText = carb1Label, amountText = carb1Grams, unitLabel = gLabel, range = 0..999,
-                    onLabel = { v -> carb1Label = v.safeTake(8); vm.saveConfig(config.copy(carb1Label = v.safeTake(8))) },
-                    onAmountCommit = { v -> carb1Grams = v; vm.saveConfig(config.copy(carb1Grams = v.toInt())) },
+                    onLabel = { v -> carb1Label = v.safeTake(8); vm.updateConfig { cfg -> cfg.copy(carb1Label = v.safeTake(8)) } },
+                    onAmountCommit = { v -> carb1Grams = v; vm.updateConfig { cfg -> cfg.copy(carb1Grams = v.toInt()) } },
                     onAmountText = { carb1Grams = it },
                 )
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     FieldColorPicker(label = "Colour", selected = carb1Color, modifier = Modifier.weight(1f),
-                        onSelected = { v -> carb1Color = v; vm.saveConfig(config.copy(carb1Color = v)) })
+                        onSelected = { v -> carb1Color = v; vm.updateConfig { cfg -> cfg.copy(carb1Color = v) } })
                     FieldEmojiPicker(label = "Icon", selected = carb1Icon, emojis = com.enderthor.kSafe.data.FUEL_EMOJI_CARB, modifier = Modifier.weight(1f),
-                        onSelected = { v -> carb1Icon = v; vm.saveConfig(config.copy(carb1Icon = v)) })
+                        onSelected = { v -> carb1Icon = v; vm.updateConfig { cfg -> cfg.copy(carb1Icon = v) } })
                 }
                 SlotRow(label = "Slot 2", labelText = carb2Label, amountText = carb2Grams, unitLabel = gLabel, range = 0..999,
-                    onLabel = { v -> carb2Label = v.safeTake(8); vm.saveConfig(config.copy(carb2Label = v.safeTake(8))) },
-                    onAmountCommit = { v -> carb2Grams = v; vm.saveConfig(config.copy(carb2Grams = v.toInt())) },
+                    onLabel = { v -> carb2Label = v.safeTake(8); vm.updateConfig { cfg -> cfg.copy(carb2Label = v.safeTake(8)) } },
+                    onAmountCommit = { v -> carb2Grams = v; vm.updateConfig { cfg -> cfg.copy(carb2Grams = v.toInt()) } },
                     onAmountText = { carb2Grams = it },
                 )
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     FieldColorPicker(label = "Colour", selected = carb2Color, modifier = Modifier.weight(1f),
-                        onSelected = { v -> carb2Color = v; vm.saveConfig(config.copy(carb2Color = v)) })
+                        onSelected = { v -> carb2Color = v; vm.updateConfig { cfg -> cfg.copy(carb2Color = v) } })
                     FieldEmojiPicker(label = "Icon", selected = carb2Icon, emojis = com.enderthor.kSafe.data.FUEL_EMOJI_CARB, modifier = Modifier.weight(1f),
-                        onSelected = { v -> carb2Icon = v; vm.saveConfig(config.copy(carb2Icon = v)) })
+                        onSelected = { v -> carb2Icon = v; vm.updateConfig { cfg -> cfg.copy(carb2Icon = v) } })
                 }
                 SlotRow(label = "Slot 3", labelText = carb3Label, amountText = carb3Grams, unitLabel = gLabel, range = 0..999,
-                    onLabel = { v -> carb3Label = v.safeTake(8); vm.saveConfig(config.copy(carb3Label = v.safeTake(8))) },
-                    onAmountCommit = { v -> carb3Grams = v; vm.saveConfig(config.copy(carb3Grams = v.toInt())) },
+                    onLabel = { v -> carb3Label = v.safeTake(8); vm.updateConfig { cfg -> cfg.copy(carb3Label = v.safeTake(8)) } },
+                    onAmountCommit = { v -> carb3Grams = v; vm.updateConfig { cfg -> cfg.copy(carb3Grams = v.toInt()) } },
                     onAmountText = { carb3Grams = it },
                 )
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     FieldColorPicker(label = "Colour", selected = carb3Color, modifier = Modifier.weight(1f),
-                        onSelected = { v -> carb3Color = v; vm.saveConfig(config.copy(carb3Color = v)) })
+                        onSelected = { v -> carb3Color = v; vm.updateConfig { cfg -> cfg.copy(carb3Color = v) } })
                     FieldEmojiPicker(label = "Icon", selected = carb3Icon, emojis = com.enderthor.kSafe.data.FUEL_EMOJI_CARB, modifier = Modifier.weight(1f),
-                        onSelected = { v -> carb3Icon = v; vm.saveConfig(config.copy(carb3Icon = v)) })
+                        onSelected = { v -> carb3Icon = v; vm.updateConfig { cfg -> cfg.copy(carb3Icon = v) } })
                 }
                 }  // end if (carbsEnabled)
             }
@@ -323,7 +323,7 @@ fun FuelingScreen(vm: MainViewModel) {
                         checked = hydEnabled,
                         onCheckedChange = {
                             hydEnabled = it
-                            vm.saveConfig(config.copy(hydrationTrackerEnabled = it))
+                            vm.updateConfig { cfg -> cfg.copy(hydrationTrackerEnabled = it) }
                         }
                     )
                 }
@@ -333,7 +333,7 @@ fun FuelingScreen(vm: MainViewModel) {
                         checked = hydDynamic,
                         onCheckedChange = {
                             hydDynamic = it
-                            vm.saveConfig(config.copy(hydrationDynamicEstimateEnabled = it))
+                            vm.updateConfig { cfg -> cfg.copy(hydrationDynamicEstimateEnabled = it) }
                         }
                     )
                 }
@@ -350,7 +350,7 @@ fun FuelingScreen(vm: MainViewModel) {
                         label = stringResource(R.string.fueling_target_hyd_label),
                         text = hydTarget,
                         range = 200..1500,
-                        onCommit = { hydTarget = it; vm.saveConfig(config.copy(hydrationTargetMlPerHour = it.toInt())) },
+                        onCommit = { hydTarget = it; vm.updateConfig { cfg -> cfg.copy(hydrationTargetMlPerHour = it.toInt()) } },
                         onTextChange = { hydTarget = it },
                     )
                     Text(
@@ -365,7 +365,7 @@ fun FuelingScreen(vm: MainViewModel) {
                         checked = hydDeficitOn,
                         onCheckedChange = {
                             hydDeficitOn = it
-                            vm.saveConfig(config.copy(hydrationDeficitAlertEnabled = it))
+                            vm.updateConfig { cfg -> cfg.copy(hydrationDeficitAlertEnabled = it) }
                         }
                     )
                 }
@@ -373,28 +373,28 @@ fun FuelingScreen(vm: MainViewModel) {
                     label = stringResource(R.string.fueling_deficit_threshold_ml_label),
                     text = hydDeficitThreshold,
                     range = 50..800,
-                    onCommit = { hydDeficitThreshold = it; vm.saveConfig(config.copy(hydrationDeficitThresholdMl = it.toInt())) },
+                    onCommit = { hydDeficitThreshold = it; vm.updateConfig { cfg -> cfg.copy(hydrationDeficitThresholdMl = it.toInt()) } },
                     onTextChange = { hydDeficitThreshold = it },
                 )
                 IntField(
                     label = stringResource(R.string.fueling_deficit_initial_delay_label),
                     text = hydDeficitInitialDelay,
                     range = 0..240,
-                    onCommit = { hydDeficitInitialDelay = it; vm.saveConfig(config.copy(hydrationDeficitInitialDelayMin = it.toInt())) },
+                    onCommit = { hydDeficitInitialDelay = it; vm.updateConfig { cfg -> cfg.copy(hydrationDeficitInitialDelayMin = it.toInt()) } },
                     onTextChange = { hydDeficitInitialDelay = it },
                 )
                 MinutesPickerRow(
                     label = stringResource(R.string.fueling_deficit_reminder_interval_label),
                     hint = stringResource(R.string.fueling_deficit_reminder_interval_hint),
                     selected = config.hydrationDeficitReminderIntervalMin,
-                    onSelected = { vm.saveConfig(config.copy(hydrationDeficitReminderIntervalMin = it)) },
+                    onSelected = { vm.updateConfig { cfg -> cfg.copy(hydrationDeficitReminderIntervalMin = it) } },
                 )
                 FuelingRow(label = stringResource(R.string.fueling_alert_time_label)) {
                     Switch(
                         checked = hydTimeOn,
                         onCheckedChange = {
                             hydTimeOn = it
-                            vm.saveConfig(config.copy(hydrationTimeAlertEnabled = it))
+                            vm.updateConfig { cfg -> cfg.copy(hydrationTimeAlertEnabled = it) }
                         }
                     )
                 }
@@ -402,20 +402,20 @@ fun FuelingScreen(vm: MainViewModel) {
                     label = stringResource(R.string.fueling_time_interval_label),
                     text = hydTimeInterval,
                     range = 1..60,
-                    onCommit = { hydTimeInterval = it; vm.saveConfig(config.copy(hydrationTimeIntervalMin = it.toInt())) },
+                    onCommit = { hydTimeInterval = it; vm.updateConfig { cfg -> cfg.copy(hydrationTimeIntervalMin = it.toInt()) } },
                     onTextChange = { hydTimeInterval = it },
                 )
                 IntField(
                     label = stringResource(R.string.fueling_initial_delay_label),
                     text = hydTimeInitialDelay,
                     range = 0..240,
-                    onCommit = { hydTimeInitialDelay = it; vm.saveConfig(config.copy(hydrationTimeInitialDelayMin = it.toInt())) },
+                    onCommit = { hydTimeInitialDelay = it; vm.updateConfig { cfg -> cfg.copy(hydrationTimeInitialDelayMin = it.toInt()) } },
                     onTextChange = { hydTimeInitialDelay = it },
                 )
                 CustomAlertField(
                     label = "Hydration alert title",
                     value = hydCustomTitle,
-                    onCommit = { v -> hydCustomTitle = v; vm.saveConfig(config.copy(hydrationAlertCustomTitle = v)) },
+                    onCommit = { v -> hydCustomTitle = v; vm.updateConfig { cfg -> cfg.copy(hydrationAlertCustomTitle = v) } },
                     defaultText = stringResource(R.string.fueling_hyd_alert_title),
                     tokensHint = "",
                     maxLength = 30,
@@ -423,7 +423,7 @@ fun FuelingScreen(vm: MainViewModel) {
                 CustomAlertField(
                     label = "Hydration alert detail (time)",
                     value = hydCustomDetailTime,
-                    onCommit = { v -> hydCustomDetailTime = v; vm.saveConfig(config.copy(hydrationAlertCustomDetailTime = v)) },
+                    onCommit = { v -> hydCustomDetailTime = v; vm.updateConfig { cfg -> cfg.copy(hydrationAlertCustomDetailTime = v) } },
                     defaultText = stringResource(R.string.fueling_hyd_alert_detail_time),
                     tokensHint = "Tokens: {deficit}, {elapsed}, {target}",
                     maxLength = ALERT_DETAIL_MAX_CHARS,
@@ -432,7 +432,7 @@ fun FuelingScreen(vm: MainViewModel) {
                 CustomAlertField(
                     label = "Hydration alert detail (deficit)",
                     value = hydCustomDetailDeficit,
-                    onCommit = { v -> hydCustomDetailDeficit = v; vm.saveConfig(config.copy(hydrationAlertCustomDetailDeficit = v)) },
+                    onCommit = { v -> hydCustomDetailDeficit = v; vm.updateConfig { cfg -> cfg.copy(hydrationAlertCustomDetailDeficit = v) } },
                     defaultText = stringResource(R.string.fueling_hyd_alert_detail_deficit),
                     tokensHint = "Tokens: {deficit}, {elapsed}, {target}",
                     maxLength = ALERT_DETAIL_MAX_CHARS,
@@ -441,37 +441,37 @@ fun FuelingScreen(vm: MainViewModel) {
                 BeepPatternPicker(
                     label = stringResource(R.string.fueling_beep_pattern_label),
                     selected = config.hydBeepPattern,
-                    onSelected = { v -> vm.saveConfig(config.copy(hydBeepPattern = v)) },
+                    onSelected = { v -> vm.updateConfig { cfg -> cfg.copy(hydBeepPattern = v) } },
                 )
                 AlertColorPicker(
                     label = stringResource(R.string.fueling_alert_bg_color_label),
                     selected = hydAlertBgColor,
-                    onSelected = { v -> hydAlertBgColor = v; vm.saveConfig(config.copy(hydrationAlertBgColor = v)) },
+                    onSelected = { v -> hydAlertBgColor = v; vm.updateConfig { cfg -> cfg.copy(hydrationAlertBgColor = v) } },
                 )
                 HorizontalDivider()
                 Text(text = stringResource(R.string.fueling_items_section), style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.Bold)
                 val mlLabel = stringResource(R.string.fueling_slot_ml_label)
                 SlotRow(label = "Slot 1", labelText = drink1Label, amountText = drink1Ml, unitLabel = mlLabel, range = 0..1000,
-                    onLabel = { v -> drink1Label = v.safeTake(8); vm.saveConfig(config.copy(drink1Label = v.safeTake(8))) },
-                    onAmountCommit = { v -> drink1Ml = v; vm.saveConfig(config.copy(drink1Ml = v.toInt())) },
+                    onLabel = { v -> drink1Label = v.safeTake(8); vm.updateConfig { cfg -> cfg.copy(drink1Label = v.safeTake(8)) } },
+                    onAmountCommit = { v -> drink1Ml = v; vm.updateConfig { cfg -> cfg.copy(drink1Ml = v.toInt()) } },
                     onAmountText = { drink1Ml = it },
                 )
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     FieldColorPicker(label = "Colour", selected = drink1Color, modifier = Modifier.weight(1f),
-                        onSelected = { v -> drink1Color = v; vm.saveConfig(config.copy(drink1Color = v)) })
+                        onSelected = { v -> drink1Color = v; vm.updateConfig { cfg -> cfg.copy(drink1Color = v) } })
                     FieldEmojiPicker(label = "Icon", selected = drink1Icon, emojis = com.enderthor.kSafe.data.FUEL_EMOJI_DRINK, modifier = Modifier.weight(1f),
-                        onSelected = { v -> drink1Icon = v; vm.saveConfig(config.copy(drink1Icon = v)) })
+                        onSelected = { v -> drink1Icon = v; vm.updateConfig { cfg -> cfg.copy(drink1Icon = v) } })
                 }
                 SlotRow(label = "Slot 2", labelText = drink2Label, amountText = drink2Ml, unitLabel = mlLabel, range = 0..1000,
-                    onLabel = { v -> drink2Label = v.safeTake(8); vm.saveConfig(config.copy(drink2Label = v.safeTake(8))) },
-                    onAmountCommit = { v -> drink2Ml = v; vm.saveConfig(config.copy(drink2Ml = v.toInt())) },
+                    onLabel = { v -> drink2Label = v.safeTake(8); vm.updateConfig { cfg -> cfg.copy(drink2Label = v.safeTake(8)) } },
+                    onAmountCommit = { v -> drink2Ml = v; vm.updateConfig { cfg -> cfg.copy(drink2Ml = v.toInt()) } },
                     onAmountText = { drink2Ml = it },
                 )
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     FieldColorPicker(label = "Colour", selected = drink2Color, modifier = Modifier.weight(1f),
-                        onSelected = { v -> drink2Color = v; vm.saveConfig(config.copy(drink2Color = v)) })
+                        onSelected = { v -> drink2Color = v; vm.updateConfig { cfg -> cfg.copy(drink2Color = v) } })
                     FieldEmojiPicker(label = "Icon", selected = drink2Icon, emojis = com.enderthor.kSafe.data.FUEL_EMOJI_DRINK, modifier = Modifier.weight(1f),
-                        onSelected = { v -> drink2Icon = v; vm.saveConfig(config.copy(drink2Icon = v)) })
+                        onSelected = { v -> drink2Icon = v; vm.updateConfig { cfg -> cfg.copy(drink2Icon = v) } })
                 }
                 }  // end if (hydEnabled)
             }

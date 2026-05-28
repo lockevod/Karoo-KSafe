@@ -929,7 +929,12 @@ class EmergencyManager(
         // background — the finally above is a secondary catch-all for the path
         // where the sender wraps up before this delay completes.
         delay(ALERTING_VISIBLE_MS)
-        if (currentStatus == EmergencyStatus.ALERTING) {
+        // Identity guard (same as the alertJob `finally`): roll back ONLY if we are still
+        // the registered alert. If this emergency's sender returned fast, its `finally`
+        // already set IDLE while THIS outer delay was still pending; a follow-up emergency
+        // can then arm and reach ALERTING within the window. Without `alertJob === myJob`
+        // this stale rollback would stomp the NEWER emergency's ALERTING state to IDLE.
+        if (alertJob === myJob && currentStatus == EmergencyStatus.ALERTING) {
             currentStatus = EmergencyStatus.IDLE
             // G3 — DO NOT null currentReason here. The alertJob may still be retrying
             // in the background; if the rider later cancels during that window,

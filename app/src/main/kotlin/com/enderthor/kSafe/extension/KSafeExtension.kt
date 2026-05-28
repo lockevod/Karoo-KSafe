@@ -1947,8 +1947,8 @@ class KSafeExtension : KarooExtension("ksafe", BuildConfig.VERSION_NAME), Corout
                 // persistent collector sample-rate is 2 min, so a rider who has just
                 // arrived at the target would otherwise hit a stale cache and see
                 // "Blocked — 200-400 m away" until the next sample tick. The fresh
-                // fetch reuses the cached fix when it's < 10 s old (rapid double-tap)
-                // and falls back to cache on timeout. Webhook taps are rider-
+                // fetch reuses the cached fix when it's < 5 s old (rapid double-tap)
+                // and falls back to a recent-enough cache on timeout. Webhook taps are rider-
                 // initiated and infrequent — the per-tap 1-3 s IPC round-trip is
                 // negligible against the safety win.
                 val curFix = locationManager.getFreshFix(3_000L)

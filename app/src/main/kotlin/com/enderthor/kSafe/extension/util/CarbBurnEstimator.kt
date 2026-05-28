@@ -114,22 +114,26 @@ object CarbBurnEstimator {
         riderAge: Int,
         riderSex: RiderSex,
     ): BurnEstimate {
-        // Classify the intensity zone ONCE per call. The result is exposed via
-        // [BurnEstimate.zoneSnapshot] so a caller (CarbsTracker) can read the
-        // zone for its own UI / calibration-log surface without classifying
-        // again. M2 fix — pre-v18.1 the tracker invoked IntensityZoneCalculator
-        // directly AND this function classified internally, doubling the work.
-        val zoneSnapshot = IntensityZoneCalculator.calculate(profile, hrBpm, powerW)
+        // Step 1 — kcal/h from the best available tier. Computed BEFORE the zone so the
+        // zone can be classified from the same signal that produced kcal.
+        val tier1 = tier1PowerKcalPerHour(powerW)
+        val tier2 = if (tier1 == null) tier2KeytelKcalPerHour(hrBpm, profile, riderAge, riderSex) else null
+        val tier3 = if (tier1 == null && tier2 == null) tier3SwainKcalPerHour(hrBpm, profile) else null
+
+        // Classify the intensity zone ONCE per call, from the SAME signal that drives kcal:
+        // power when tier1 produced it, otherwise HR. A 0 W reading (coasting, or a power
+        // meter latched at 0 after a dropout) makes tier1 null so kcal comes from HR —
+        // classifying the zone from that 0 W would pin the CHO fraction to Z1 while kcal
+        // reflects an elevated HR, systematically under-counting carbs (worst with a dead
+        // meter stuck at 0 W on a climb). Exposed via [BurnEstimate.zoneSnapshot] for the
+        // caller's UI / calibration log (M2: classify once, not twice).
+        val zonePowerW = if (tier1 != null) powerW else null
+        val zoneSnapshot = IntensityZoneCalculator.calculate(profile, hrBpm, zonePowerW)
         val zone = if (zoneSnapshot.source == ZoneSource.NONE) {
             ZoneClassifier.Zone.NONE
         } else {
             ZoneClassifier.Zone(zoneSnapshot.source, zoneSnapshot.index, zoneSnapshot.total)
         }
-
-        // Step 1 — kcal/h from the best available tier.
-        val tier1 = tier1PowerKcalPerHour(powerW)
-        val tier2 = if (tier1 == null) tier2KeytelKcalPerHour(hrBpm, profile, riderAge, riderSex) else null
-        val tier3 = if (tier1 == null && tier2 == null) tier3SwainKcalPerHour(hrBpm, profile) else null
 
         val kcalPerHour: Double
         val confidence: Confidence
