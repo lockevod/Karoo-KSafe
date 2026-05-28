@@ -85,6 +85,36 @@ class SOSDataType(
     }
 
     override fun startView(context: Context, config: ViewConfig, emitter: ViewEmitter) {
+        // Synchronous seed frame BEFORE launching any coroutine. Without it Karoo
+        // paints the host theme background while waiting for the first
+        // Dispatchers.Default emission, which in day mode shows as a blank white
+        // field (white text on white host bg) — see CarbStatusDataType. SOS is the
+        // safety-critical field, so the seed mirrors the ACTUAL current state read
+        // synchronously from the canonical StateFlow (not a blind "SAFE"): on
+        // coalescing firmware the host may keep this first frame, so it must be
+        // correct even if a countdown/alert is already running when the field
+        // re-attaches (page swap, ride-app restart). The configured idle colour is
+        // only available asynchronously (DataStore), so the IDLE seed uses the
+        // default green and the real colour lands on the colorFlow emission below.
+        val seedState = EmergencyManager.uiState.value
+        when (seedState.status) {
+            EmergencyStatus.COUNTDOWN -> emitter.updateView(buildView(
+                context, config, COLOR_COUNTDOWN,
+                context.getString(R.string.sos_countdown, seedState.countdownRemaining()),
+                context.getString(R.string.sos_tap_cancel),
+            ))
+            EmergencyStatus.ALERTING -> emitter.updateView(buildView(
+                context, config, COLOR_ALERTING,
+                context.getString(R.string.sos_alerting),
+                clickable = false,
+            ))
+            else -> emitter.updateView(buildView(
+                context, config, 0xFF1B5E20.toInt(),
+                context.getString(R.string.sos_safe),
+                context.getString(R.string.sos_field_tap_sos),
+            ))
+        }
+
         val scopeJob = Job()
         val scope = CoroutineScope(Dispatchers.Default + scopeJob)
 

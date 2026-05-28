@@ -47,21 +47,74 @@ class BuzzerClient(private val context: Context) {
             Timber.d("BuzzerClient connected to %s", name.flattenToShortString())
         }
         override fun onServiceDisconnected(name: ComponentName) {
+            // The HAL process died but the binding is RETAINED (BIND_AUTO_CREATE) —
+            // Android calls onServiceConnected again automatically when the service
+            // restarts. Keep `bound = true` so we don't race a manual rebind against
+            // the auto-reconnect; just drop the stale binder.
             binder = null
-            Timber.d("BuzzerClient service disconnected")
+            Timber.d("BuzzerClient service disconnected (auto-reconnect pending)")
         }
         override fun onBindingDied(name: ComponentName) {
+            // Terminal: the binding is dead and will NOT auto-reconnect. Unbind the
+            // dead connection and clear `bound` so a later ensureReady()/connect()
+            // re-establishes a fresh binding. Without resetting `bound`, connect()
+            // short-circuited on the stale `bound == true` and the buzzer bypass
+            // stayed permanently dead (binder == null forever) until process restart.
             binder = null
-            Timber.w("BuzzerClient binding died")
+            bound = false
+            try { context.applicationContext.unbindService(this) }
+            catch (e: IllegalArgumentException) { /* already unbound */ }
+            catch (e: Exception) { Timber.w(e, "BuzzerClient unbind after binding-died failed") }
+            Timber.w("BuzzerClient binding died — will rebind on next emergency")
         }
         override fun onNullBinding(name: ComponentName) {
+            // Service explicitly returned a null binding. Same recovery as a dead
+            // binding: unbind + clear `bound` so a future bind can retry.
             binder = null
+            bound = false
+            try { context.applicationContext.unbindService(this) }
+            catch (e: IllegalArgumentException) { /* already unbound */ }
+            catch (e: Exception) { Timber.w(e, "BuzzerClient unbind after null-binding failed") }
             Timber.w("BuzzerClient onNullBinding — service refused to bind")
         }
     }
 
     /** True when we hold a live binder to the HAL service. */
     fun isReady(): Boolean = binder != null
+
+    /**
+     * Like [isReady], but if the binding previously died (onBindingDied /
+     * onNullBinding cleared `bound`) it kicks off a fresh bind so a LATER beep
+     * can use the HAL again. The rebind is asynchronous — onServiceConnected
+     * fires after this returns — so the current call still reports the live
+     * state (likely false right after a death), and the caller falls back to
+     * the SDK beep for THIS tick; subsequent emergency beeps in the same
+     * countdown then route through the re-established HAL binder. Cheap no-op
+     * when the binder is already live.
+     */
+    fun ensureReady(): Boolean {
+        if (binder != null) return true
+        // binder == null with bound == true means a transient onServiceDisconnected
+        // whose auto-reconnect is still pending — don't thrash it. Only rebind when
+        // the binding is actually dead (bound == false). A successful bindService sets
+        // `bound = true` synchronously, so the common "recoverable" path calls connect()
+        // exactly once. The throttle guards the pathological path where bindService keeps
+        // returning false (HAL genuinely unavailable): without it, every emergency beep
+        // tick would re-run two PackageManager lookups + bindService on Main. One attempt
+        // per REBIND_THROTTLE_MS is plenty — the beep falls back to the SDK path meanwhile.
+        if (!bound) {
+            val now = android.os.SystemClock.elapsedRealtime()
+            if (now - lastBindAttemptMs >= REBIND_THROTTLE_MS) {
+                lastBindAttemptMs = now
+                val diag = connect()
+                Timber.d("BuzzerClient ensureReady rebind: %s", diag)
+            }
+        }
+        return binder != null
+    }
+
+    /** Monotonic timestamp (elapsedRealtime) of the last [ensureReady] rebind attempt. */
+    @Volatile private var lastBindAttemptMs = 0L
 
     /**
      * Bind the HAL service. Idempotent; safe to call multiple times. Logs and
@@ -208,6 +261,8 @@ class BuzzerClient(private val context: Context) {
     }
 
     companion object {
+        /** Min interval between [ensureReady] rebind attempts when bindService keeps failing. */
+        private const val REBIND_THROTTLE_MS = 30_000L
         private const val HAL_PACKAGE = "io.hammerhead.hal"
         private const val HAL_SERVICE = "io.hammerhead.hal.HIDLTranslationService"
         private const val AIDL_DESCRIPTOR = "io.hammerhead.hal.service.IPhoneROMController"

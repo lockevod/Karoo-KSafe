@@ -356,9 +356,11 @@ class MedicalEpisodeDetector(
      * power meter (frozen at the last emitted W, a known pathology with some pedal-based
      * units after a strain-gauge dropout) keeps the sticky [powerDataReceived] true and
      * the value above [POWER_ACTIVE_W] indefinitely. The freshness-by-CHANGE timestamp
-     * lets [evaluateFlatline] age past the cross-check window and fall through. Uses `-1`
-     * (`prevPowerW`) as the "never seen" sentinel so the first emission is not mistaken
-     * for a value change.
+     * lets [evaluateFlatline] age past the cross-check window and fall through. Uses
+     * `Int.MIN_VALUE` (`prevPowerW`) as the "never seen" sentinel — NOT `-1`, because a
+     * real first reading of -1 W (signed/regenerative power) must register as a value
+     * change rather than aliasing with the sentinel — so the first emission is not
+     * mistaken for a value change.
      */
     fun updatePower(w: Int) {
         // D2 — monotonic for all in-memory time math (windows, cooldowns, freshness).

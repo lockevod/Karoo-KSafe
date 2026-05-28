@@ -84,6 +84,16 @@ class CrashDetectionManager(
 
     private companion object {
         const val GRAVITY = 9.81
+        // "No crash yet / cooldown inactive" sentinel for [lastCrashTime]. The cooldown
+        // gate is monotonic — `(clock.monotonicMs() - lastCrashTime) > crashCooldownMs`
+        // — and `monotonicMs()` is `elapsedRealtime()`, which is SMALL right after boot.
+        // A `0L` sentinel therefore reads as "cooldown active" for the first
+        // `crashCooldownMs` of device uptime (`now - 0 <= cooldown`), suppressing a real
+        // impact in that window. A large-negative sentinel makes `now - sentinel` always
+        // exceed any cooldown, so the gate is correctly OPEN until a real confirmation
+        // stamps `lastCrashTime`. Half of MIN_VALUE keeps `now - sentinel` clear of
+        // Long overflow for any plausible `elapsedRealtime()`.
+        const val COOLDOWN_INACTIVE = Long.MIN_VALUE / 2
         // Single source of truth: alias the public constant on [SensorReader] (used as its
         // default constructor argument and exposed for tests). Both the manager-side
         // boundary checks and the SensorReader's per-sample variance-buffer reference now
@@ -154,7 +164,7 @@ class CrashDetectionManager(
     // `clearCrashCooldown` and CrashDetectionManagerWiringTest. The field still has
     // no public API surface (module-internal at runtime). No production caller reads
     // or writes it from outside this class.
-    @Volatile internal var lastCrashTime = 0L
+    @Volatile internal var lastCrashTime = COOLDOWN_INACTIVE
     @Volatile private var currentSpeedKmh = 0.0
     /** Timestamp of the most recent [updateSpeed] emission — any emission, even one that
      *  carries the same value as the previous one. Used for dv/dt math in [updateSpeed]. */
@@ -323,7 +333,7 @@ class CrashDetectionManager(
         // Clear the post-confirmation cooldown gate. Otherwise a rider who disables crash
         // detection mid-cooldown then re-enables it within ~30 s would have a legitimate
         // impact suppressed by stale cooldown state from the previous session.
-        lastCrashTime = 0L
+        lastCrashTime = COOLDOWN_INACTIVE
         Timber.d("CrashDetectionManager STOPPED")
     }
 
@@ -427,7 +437,7 @@ class CrashDetectionManager(
      * so this is a reachable false-negative path.
      */
     fun clearCrashCooldown() {
-        lastCrashTime = 0L
+        lastCrashTime = COOLDOWN_INACTIVE
     }
 
     /**

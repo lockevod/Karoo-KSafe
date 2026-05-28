@@ -3,6 +3,7 @@ package com.enderthor.kSafe.extension.crash
 import com.enderthor.kSafe.extension.managers.CalibrationLogger
 import com.enderthor.kSafe.extension.util.Clock
 import com.enderthor.kSafe.extension.util.SystemClock
+import com.enderthor.kSafe.extension.util.formatUs
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
@@ -117,7 +118,7 @@ class SpeedDropMonitor(
                 maxSpeedInWindowKmh = speedKmh
                 calibLogger?.log(CalibrationLogger.Event.SPEEDDROP_WIN_START) {
                     "trigger_speed_kmh=%.2f,gps_stale=$gpsStale,threshold_kmh=%.1f"
-                        .format(speedKmh, SPEED_DROP_WINDOW_KMH)
+                        .formatUs(speedKmh, SPEED_DROP_WINDOW_KMH)
                 }
             } else if (speedKmh > maxSpeedInWindowKmh) {
                 maxSpeedInWindowKmh = speedKmh
@@ -138,9 +139,9 @@ class SpeedDropMonitor(
 
     private fun closeWindow(reason: String, elapsedMs: Long, recoveredAtKmh: Double? = null) {
         calibLogger?.log(CalibrationLogger.Event.SPEEDDROP_WIN_CLOSE) {
-            val recovered = recoveredAtKmh?.let { ",recovered_at_kmh=%.2f".format(it) } ?: ""
+            val recovered = recoveredAtKmh?.let { ",recovered_at_kmh=%.2f".formatUs(it) } ?: ""
             "reason=$reason,elapsed_ms=$elapsedMs,trigger_speed_kmh=%.2f,max_speed_kmh=%.2f,gps_stale=$triggerGpsStale$recovered"
-                .format(triggerSpeedKmh, maxSpeedInWindowKmh)
+                .formatUs(triggerSpeedKmh, maxSpeedInWindowKmh)
         }
         maxSpeedInWindowKmh = 0.0
         triggerSpeedKmh = 0.0

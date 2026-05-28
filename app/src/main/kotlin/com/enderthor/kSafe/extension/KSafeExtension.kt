@@ -344,7 +344,6 @@ class KSafeExtension : KarooExtension("ksafe", BuildConfig.VERSION_NAME), Corout
 
     override fun onCreate() {
         super.onCreate()
-        setInstance(this)
         Timber.d("KSafeExtension created")
 
         karooSystem = KarooSystemService(applicationContext)
@@ -407,6 +406,14 @@ class KSafeExtension : KarooExtension("ksafe", BuildConfig.VERSION_NAME), Corout
         // docs for the rationale.
         carbsTrackerFlow.value = carbsTracker
         hydrationTrackerFlow.value = hydrationTracker
+
+        // Publish the singleton ONLY after every lateinit manager is constructed.
+        // getInstance() is reached from FieldTapReceiver taps and DataType callbacks;
+        // publishing `this` before the managers exist would let a caller in that window
+        // hit a not-yet-initialised `lateinit` (UninitializedPropertyAccessException).
+        // Broadcasts/startView arrive after onCreate returns (Main thread) so the window
+        // is effectively unreachable today, but ordering this last removes the latent trap.
+        setInstance(this)
 
         // Warm the install ID cache off-Main so the Settings UI and
         // CalibrationLogger.enable() can read it without blocking on cold
@@ -1023,7 +1030,13 @@ class KSafeExtension : KarooExtension("ksafe", BuildConfig.VERSION_NAME), Corout
                         carbsTracker.start(activeConfig, restore?.carb)
                         hydrationTracker.start(activeConfig, restore?.hyd)
                     }
-                    emergencyManager.startCheckinTimer(activeConfig)
+                    // Same first-start vs resume distinction as the trackers above:
+                    // on a Paused→Recording resume the check-in must continue with its
+                    // REMAINING interval, not restart from zero. Restarting on every
+                    // autopause (traffic light, café) meant CHECKIN_EXPIRED could never
+                    // fire on a stop-start ride — the dead-man's-switch was silently dead.
+                    if (isResumeFromPause) emergencyManager.resumeCheckinTimer(activeConfig)
+                    else emergencyManager.startCheckinTimer(activeConfig)
                     // Only send the start notification on the very first Recording event.
                     // Resuming from Pause also triggers Recording — we skip it there.
                     if (!rideStartNotificationSent) {
@@ -1054,8 +1067,11 @@ class KSafeExtension : KarooExtension("ksafe", BuildConfig.VERSION_NAME), Corout
                 // exactly a crash signature, so the in-flight detection must survive
                 // and confirm during the pause.
                 crashManager.onPause(state.auto)
-                // Stop the check-in timer and cancel any active check-in countdown.
-                emergencyManager.stopCheckinTimer()
+                // Suspend (don't reset) the check-in timer and cancel any active
+                // check-in countdown. pauseCheckinTimer preserves the elapsed interval
+                // so the Recording resume above continues from where it left off
+                // instead of re-arming a fresh full interval on every autopause.
+                emergencyManager.pauseCheckinTimer()
                 emergencyManager.cancelCheckinEmergencyOnPause()
                 rideWasActive = true
             }

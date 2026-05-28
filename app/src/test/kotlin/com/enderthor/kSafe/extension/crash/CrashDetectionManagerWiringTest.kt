@@ -10,6 +10,7 @@ import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.test.TestScope
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotEquals
+import org.junit.Assert.assertTrue
 import org.junit.Test
 import org.mockito.Mockito.`when`
 import org.mockito.Mockito.mock
@@ -18,7 +19,7 @@ import org.mockito.Mockito.mock
  * Narrow, facade-level wiring tests for [CrashDetectionManager]. Two contracts
  * verified by inspection elsewhere are pinned here:
  *
- *  - **T1 ([clearCrashCooldown] zeroes [CrashDetectionManager.lastCrashTime]).**
+ *  - **T1 ([clearCrashCooldown] releases the monotonic cooldown gate).**
  *    Wired up in [com.enderthor.kSafe.extension.KSafeExtension] as
  *    `onCrashEmergencyCancelled = { crashManager.clearCrashCooldown() }`.
  *    The load-bearing scenario: rider cancels a false-positive countdown, then
@@ -82,24 +83,32 @@ class CrashDetectionManagerWiringTest {
      * [CrashDetectionManager.lastCrashTime].
      */
     @Test
-    fun `clearCrashCooldown zeroes lastCrashTime so the cooldown gate releases`() {
+    fun `clearCrashCooldown releases the cooldown gate`() {
         val clock = FakeClock(now = 5_000_000L)
         val manager = newManager(clock)
         // Seed the cooldown field as if a previous confirmation had just landed.
-        // Anything > 0 is enough to engage the gate in confirmCrash:
+        // Anything close to `now` engages the gate in confirmCrash:
         //   if ((now - lastCrashTime) <= crashCooldownMs) suppress
         manager.lastCrashTime = clock.now - 1_000L  // 1 s ago — well inside cooldown
-        check(manager.lastCrashTime != 0L)
 
         manager.clearCrashCooldown()
 
-        assertEquals(
-            "clearCrashCooldown() must zero lastCrashTime, otherwise a real crash within " +
-                "crashCooldownMs of a cancelled false-positive countdown is suppressed by " +
-                "confirmCrash. The wiring in KSafeExtension routes the user-cancel callback " +
-                "(EmergencyManager.cancelEmergency, CRASH_DETECTED branch) into this method.",
-            0L,
-            manager.lastCrashTime,
+        // The contract is SEMANTIC: after clearing, the gate must be open, i.e.
+        // `(now - lastCrashTime)` exceeds any plausible crashCooldownMs (max ≈
+        // countdown 300 s + 30 s = 330 s). The sentinel is deliberately NOT 0L: the
+        // gate is monotonic (`clock.monotonicMs()` == elapsedRealtime, which is small
+        // shortly after boot), so a 0L sentinel would read as "cooldown active" for
+        // the first crashCooldownMs of device uptime and SUPPRESS a real crash. A
+        // large-negative sentinel makes the elapsed effectively infinite. Assert the
+        // behaviour (huge elapsed), not the magic value, so this survives the exact
+        // sentinel choice.
+        val elapsedSinceLastCrash = clock.now - manager.lastCrashTime
+        assertTrue(
+            "clearCrashCooldown() must release the gate so a real crash within the cooldown " +
+                "window of a cancelled false-positive is not suppressed by confirmCrash. " +
+                "Elapsed-since-last-crash was $elapsedSinceLastCrash ms, which does not clear " +
+                "the max cooldown. Wired in KSafeExtension as the CRASH_DETECTED cancel callback.",
+            elapsedSinceLastCrash > 24L * 60 * 60 * 1000,   // > 1 day ≫ any cooldown
         )
     }
 

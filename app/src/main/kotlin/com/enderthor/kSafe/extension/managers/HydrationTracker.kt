@@ -387,7 +387,10 @@ class HydrationTracker(
         cumLoggedMl = cumLoggedMl,
         deficitMl = (cumTargetMl - cumLoggedMl).toInt(),
         deficitThresholdMl = config.hydrationDeficitThresholdMl,
-        currentRateMlPerHour = if (config.hydrationDynamicEstimateEnabled) lastSweatRateMlHr.toInt()
+        // Mirror fireAlert: before the first real estimate (lastSweatRateMlHr == 0.0)
+        // report the configured target rather than a misleading "0 ml/h".
+        currentRateMlPerHour = if (config.hydrationDynamicEstimateEnabled && lastSweatRateMlHr > 0.0)
+                                   lastSweatRateMlHr.toInt()
                                else config.hydrationTargetMlPerHour,
         estimateConfidence = if (config.hydrationDynamicEstimateEnabled) lastSweatConfidence else null,
         // See CarbsTracker.getStatus — mirrors the movement + staleness gate in
@@ -565,8 +568,12 @@ class HydrationTracker(
         // In dynamic-estimate mode the {target} placeholder must report the live
         // estimator output, not the fixed config value — a rider on a 30 °C ride
         // configured for 750 ml/h but estimating 1300 ml/h would otherwise see the
-        // wrong number in their custom template.
-        val effectiveTarget = if (config.hydrationDynamicEstimateEnabled)
+        // wrong number in their custom template. BUT until the first MEDIUM-or-better
+        // estimate arrives, `lastSweatRateMlHr` is still 0.0 (the LOW default is
+        // intentionally withheld from the UI/alert path — see the guard in tick()).
+        // Falling back to the configured target avoids rendering a misleading
+        // "0 ml/h" on an early deficit/time alert fired before HR/power connect.
+        val effectiveTarget = if (config.hydrationDynamicEstimateEnabled && lastSweatRateMlHr > 0.0)
             lastSweatRateMlHr.toInt()
         else
             config.hydrationTargetMlPerHour

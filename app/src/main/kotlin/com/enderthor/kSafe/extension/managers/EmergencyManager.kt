@@ -129,6 +129,16 @@ class EmergencyManager(
     @Volatile private var alertJob: Job? = null
     private var checkinJob: Job? = null
     private var checkinWarningJob: Job? = null
+    /** Logical start of the live check-in interval. Preserved across ride pauses so
+     *  [resumeCheckinTimer] can re-arm with the REMAINING interval instead of a fresh
+     *  one — Karoo autopause fires Recording→Paused→Recording at every traffic light,
+     *  and re-starting from zero on each micro-pause meant CHECKIN_EXPIRED could never
+     *  fire on a stop-start ride. 0L = not running. */
+    private var checkinStartTimeMs: Long = 0L
+    /** Wall-clock instant the check-in was paused (0L = not paused). [resumeCheckinTimer]
+     *  shifts [checkinStartTimeMs] forward by the pause duration so the countdown
+     *  effectively freezes during the pause rather than continuing to elapse. */
+    private var checkinPausedAtMs: Long = 0L
     var currentStatus = EmergencyStatus.IDLE
         private set
     private var currentReason: EmergencyReason? = null
@@ -243,15 +253,72 @@ class EmergencyManager(
         if (!config.checkinEnabled) return
         checkinJob?.cancel()
         checkinWarningJob?.cancel()
-        val startTime = System.currentTimeMillis()
-        startCheckinJobs(config, startTime)
+        // startCheckinJobs stamps checkinStartTimeMs / clears checkinPausedAtMs.
+        startCheckinJobs(config, System.currentTimeMillis())
         Timber.d("Check-in timer started: ${config.checkinIntervalMinutes}min")
     }
 
-    /** Schedules checkin warning + expiry jobs; saves state at the start of the job. */
+    /**
+     * Suspends the check-in countdown on a ride pause WITHOUT resetting it. Cancels
+     * the warning/expiry jobs but preserves [checkinStartTimeMs] and stamps the pause
+     * instant, so [resumeCheckinTimer] can re-arm with the remaining interval. This
+     * is what makes Karoo autopause (Recording→Paused→Recording at every light) safe:
+     * the previous stopCheckinTimer-on-pause + startCheckinTimer-on-every-Recording
+     * pairing re-armed a full fresh interval on each micro-pause, so CHECKIN_EXPIRED
+     * could never fire on a stop-start ride — silently defeating the dead-man's-switch.
+     * The countdown freezes during the pause, matching the intent that a check-in must
+     * not fire while the rider is deliberately stopped.
+     */
+    fun pauseCheckinTimer() {
+        if (checkinStartTimeMs == 0L) return            // not running — nothing to suspend
+        checkinJob?.cancel()
+        checkinWarningJob?.cancel()
+        if (checkinPausedAtMs == 0L) checkinPausedAtMs = System.currentTimeMillis()
+        // Mirror the old display behaviour: while suspended the timer field reads
+        // neutral/OFF rather than a frozen countdown that would eventually look
+        // "expired" during a long café stop. ONLY when no emergency countdown is on
+        // screen — a crash (or check-in) COUNTDOWN active during the pause owns
+        // _uiState and must stay visible (an autopause IS the crash signature).
+        if (currentStatus == EmergencyStatus.IDLE) _uiState.value = EmergencyState()
+        Timber.d("Check-in timer paused (preserving elapsed)")
+    }
+
+    /**
+     * Re-arms the check-in countdown after a pause, preserving the time elapsed before
+     * the pause. Shifts [checkinStartTimeMs] forward by the pause duration so the
+     * remaining interval is what was left when the ride paused, not a fresh full one.
+     * Falls back to a fresh [startCheckinTimer] if the timer was never running (e.g.
+     * check-in enabled mid-ride, or a resume with no preceding pause).
+     */
+    fun resumeCheckinTimer(config: KSafeConfig) {
+        if (!config.checkinEnabled) return
+        if (checkinStartTimeMs == 0L) { startCheckinTimer(config); return }
+        val now = System.currentTimeMillis()
+        val pauseDuration = if (checkinPausedAtMs > 0L) (now - checkinPausedAtMs).coerceAtLeast(0L) else 0L
+        checkinStartTimeMs += pauseDuration
+        // startCheckinJobs re-stamps checkinStartTimeMs (to this shifted value) and clears
+        // checkinPausedAtMs — pauseDuration was already captured above.
+        startCheckinJobs(config, checkinStartTimeMs)
+        Timber.d("Check-in timer resumed (paused ${pauseDuration}ms)")
+    }
+
+    /**
+     * Schedules checkin warning + expiry jobs; saves state at the start of the job.
+     * Delays are computed RELATIVE to [startTime] vs now, so a resume with a shifted
+     * (earlier) start re-arms with only the remaining interval. A fresh start passes
+     * `startTime == now`, giving the full interval (identical to the original behaviour).
+     */
     private fun startCheckinJobs(config: KSafeConfig, startTime: Long = System.currentTimeMillis()) {
         checkinJob?.cancel()
         checkinWarningJob?.cancel()
+        // Single source of truth for the resume math: EVERY arming path (startCheckinTimer,
+        // resumeCheckinTimer, and cancelEmergency's post-cancel re-arm) funnels through here,
+        // so stamp the live logical start and clear the pause marker HERE rather than relying
+        // on each caller. cancelEmergency previously re-armed via this function without
+        // updating the fields, leaving a stale checkinStartTimeMs that made the next autopause
+        // resume compute elapsed ≈ ∞ → an instant spurious CHECKIN_EXPIRED.
+        checkinStartTimeMs = startTime
+        checkinPausedAtMs = 0L
 
         // J4 — defense-in-depth clamp. The Settings UI clamps on commit but a
         // corrupted DataStore (file edited externally, backup with bad value,
@@ -261,6 +328,13 @@ class EmergencyManager(
         val safeIntervalMinutes = config.checkinIntervalMinutes.coerceAtLeast(10)
         val intervalMs = safeIntervalMinutes * 60_000L
 
+        // Elapsed since the (possibly shifted) logical start. Clamp to [0, intervalMs]
+        // so a backward wall-clock jump (NTP correction) can't produce a delay longer
+        // than the full interval, and a resume past the deadline fires promptly.
+        val elapsed = (System.currentTimeMillis() - startTime).coerceIn(0L, intervalMs)
+        val expiryDelay = intervalMs - elapsed
+        val warningDelay = (intervalMs - 10 * 60_000L) - elapsed
+
         // Update UI state synchronously so TimerDataType sees the checkin state immediately.
         _uiState.value = EmergencyState(
             checkinEnabled = true,
@@ -269,9 +343,8 @@ class EmergencyManager(
         )
 
         checkinWarningJob = scope.launch {
-            val warningMs = intervalMs - (10 * 60_000L)
-            if (warningMs > 0) {
-                delay(warningMs)
+            if (warningDelay > 0) {
+                delay(warningDelay)
                 if (currentStatus == EmergencyStatus.IDLE) {
                     karooSystem.dispatch(TurnScreenOn)
                     karooSystem.dispatch(BEEP_LONG)
@@ -298,7 +371,7 @@ class EmergencyManager(
                     checkinIntervalMinutes = config.checkinIntervalMinutes
                 )
             )
-            delay(intervalMs)
+            delay(expiryDelay)
             if (currentStatus == EmergencyStatus.IDLE) {
                 Timber.d("Check-in timer expired!")
                 triggerEmergency(EmergencyReason.CHECKIN_EXPIRED, config)
@@ -317,6 +390,8 @@ class EmergencyManager(
     fun stopCheckinTimer() {
         checkinJob?.cancel()
         checkinWarningJob?.cancel()
+        checkinStartTimeMs = 0L
+        checkinPausedAtMs = 0L
         _uiState.value = EmergencyState()
         scope.launch { configManager.saveEmergencyState(EmergencyState()) }
     }
@@ -329,6 +404,8 @@ class EmergencyManager(
         previousAlertJob?.cancel()
         checkinJob?.cancel()
         checkinWarningJob?.cancel()
+        checkinStartTimeMs = 0L
+        checkinPausedAtMs = 0L
         currentStatus = EmergencyStatus.IDLE
         currentReason = null
         countdownStartedAt = 0L
@@ -346,6 +423,13 @@ class EmergencyManager(
     fun cancelCheckinEmergencyOnPause() {
         if (currentStatus == EmergencyStatus.COUNTDOWN && currentReason == EmergencyReason.CHECKIN_EXPIRED) {
             countdownJob?.cancel()
+            // The check-in already expired and its countdown is being cancelled by the
+            // pause. Clear the timer fields so the next Recording resume re-arms a FRESH
+            // full interval (the resumeCheckinTimer → startCheckinTimer fallback) instead
+            // of immediately re-firing CHECKIN_EXPIRED — the elapsed-since-original-start
+            // would otherwise still exceed the interval and expiryDelay would be 0.
+            checkinStartTimeMs = 0L
+            checkinPausedAtMs = 0L
             currentStatus = EmergencyStatus.IDLE
             currentReason = null
             countdownStartedAt = 0L
@@ -470,13 +554,23 @@ class EmergencyManager(
         val startTime = System.currentTimeMillis()
         countdownStartedAt = startTime
 
+        // Defense-in-depth clamp computed ONCE — the Settings UI clamps to [5, 120] on
+        // commit, but a corrupted DataStore (file edited externally, restore from an old
+        // backup with a bad value, future migration bug) could surface 0/negative here.
+        // The SAME clamped value must drive both the persisted state and the countdown
+        // loop below: persisting the raw `config.countdownSeconds` (e.g. 0) made
+        // `countdownDeadlineMs() = startTime + 0` already-in-the-past, so a process-kill
+        // recovery routed to discard/after-deadline and dropped a countdown the rider
+        // could still see ticking locally. Lower bound 5 matches the UI minimum.
+        val totalSeconds = config.countdownSeconds.coerceIn(5, 300)
+
         // Update UI state synchronously so DataTypes react immediately (no DataStore latency).
         val countdownState = EmergencyState(
             status = EmergencyStatus.COUNTDOWN,
             reason = reason.label,
             reasonEnum = reason,                               // persisted so decideResume() can recover
             countdownStartTime = startTime,
-            countdownDurationSeconds = config.countdownSeconds,
+            countdownDurationSeconds = totalSeconds,
             checkinEnabled = config.checkinEnabled,
             checkinIntervalMinutes = config.checkinIntervalMinutes
         )
@@ -505,14 +599,10 @@ class EmergencyManager(
             // this completes the symmetry on the fresh-countdown path.
             playEmergencyBeep(config, BEEP_LONG, BuzzerClient.COUNTDOWN_START)
 
-            // Defense-in-depth clamp — the Settings UI clamps to [5, 120] on commit,
-            // but a corrupted DataStore (file edited externally, restore from old
-            // backup with bad value, future migration bug) could still surface 0
-            // here. `for (n in 0 downTo 1)` is an EMPTY range, which would skip the
-            // entire overlay/beep/cancel-window loop and fire sendAlerts immediately
-            // with no rider abort opportunity. Lower bound 5 matches the UI minimum.
-            val totalSeconds = config.countdownSeconds.coerceIn(5, 300)
-
+            // `totalSeconds` is the clamped value hoisted above (shared with the
+            // persisted countdownDurationSeconds). A `for (n in 0 downTo 1)` empty range
+            // — which the raw unclamped 0 would produce — would skip the entire
+            // overlay/beep/cancel-window loop and fire sendAlerts with no abort window.
             for (remaining in totalSeconds downTo 1) {
                 // Show/update the overlay every second — injected directly into the
                 // Karoo ride Activity view hierarchy (ki2 approach, no special permissions).
@@ -560,7 +650,11 @@ class EmergencyManager(
         halPattern: List<BuzzerClient.Tone>,
     ) {
         val client = buzzerClient
-        val tryBypass = config.buzzerOnEmergencyEnabled && client != null && client.isReady()
+        // ensureReady() (not isReady()) so a binding that died over the device's
+        // multi-day uptime gets re-established — otherwise the bypass stayed dead
+        // until process restart. The rebind is async; this beep may still fall
+        // back to SDK, but later beeps in the countdown use the recovered binder.
+        val tryBypass = config.buzzerOnEmergencyEnabled && client != null && client.ensureReady()
         if (tryBypass && client!!.beep(halPattern)) {
             return                            // HAL bypass dispatched successfully
         }

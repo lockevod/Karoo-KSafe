@@ -90,6 +90,44 @@ class SafetyTimerDataType(
     }
 
     override fun startView(context: Context, config: ViewConfig, emitter: ViewEmitter) {
+        // Synchronous seed frame BEFORE launching any coroutine — see SOSDataType /
+        // CarbStatusDataType for the blank-white-field rationale (host paints its
+        // theme bg until the first Dispatchers.Default emission; day mode → white
+        // text on white). Mirrors the loop's branch selection from the canonical
+        // StateFlow so the first frame is correct even if the host coalesces and
+        // keeps it. The configured idle colour is only available asynchronously, so
+        // the normal branch seeds the default green (the real colour lands on the
+        // okColorFlow emission below).
+        run {
+            val s = EmergencyManager.uiState.value
+            when {
+                s.status == EmergencyStatus.COUNTDOWN -> emitter.updateView(buildView(
+                    context, config, COLOR_CANCEL,
+                    context.getString(R.string.timer_cancel_countdown, s.countdownRemaining()),
+                    "", clickable = true))
+                !s.checkinEnabled -> emitter.updateView(buildView(
+                    context, config, COLOR_DISABLED, context.getString(R.string.timer_off),
+                    "", clickable = false))
+                else -> {
+                    val remaining = s.checkinRemainingMinutes()
+                    val isExpired = remaining <= 0
+                    val isWarning = remaining in 1..CHECKIN_WARNING_THRESHOLD_MINUTES
+                    val bg = when {
+                        isExpired -> COLOR_EXPIRED
+                        isWarning -> COLOR_WARNING
+                        else      -> 0xFF1B5E20.toInt()
+                    }
+                    val main = if (isExpired) context.getString(R.string.timer_checkin)
+                               else {
+                                   val h = remaining / 60; val m = remaining % 60
+                                   if (h > 0) "${h}h${m}m" else "${m}m"
+                               }
+                    val hint = if (isExpired) "" else context.getString(R.string.timer_ok)
+                    emitter.updateView(buildView(context, config, bg, main, hint, clickable = true))
+                }
+            }
+        }
+
         val scopeJob = Job()
         val scope = CoroutineScope(Dispatchers.Default + scopeJob)
 

@@ -27,7 +27,6 @@ import kotlinx.coroutines.awaitCancellation
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.distinctUntilChanged
-import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import timber.log.Timber
 
@@ -137,24 +136,17 @@ class WebhookDataType(
             awaitCancellation()
         }
 
-        // Immediate initial clickable view with real config — ensures PendingIntent is always
-        // registered from the first frame without showing a generic "WH1/WH2" placeholder.
-        scope.launch {
-            val initialConfig = runCatching { configManager.loadConfigFlow().first() }.getOrNull()
-            if (initialConfig != null) {
-                val label     = labelFromConfig(initialConfig)
-                // In preview render the configured idle colour even if the slot is disabled,
-                // so the profile-editor gallery shows what the field will look like once
-                // the rider enables the slot in the Actions tab.
-                val enabled   = config.preview || isEnabled(initialConfig)
-                val idleColor = idleColorFromConfig(initialConfig)
-                val bgColor   = if (enabled) idleColor else COLOR_DISABLED
-                val hint      = if (enabled) "tap" else "off"
-                emitter.updateView(buildView(context, config, bgColor, label, hint))
-            }
-            // If DataStore hasn't emitted yet (very rare), the combine below will render the first view
-        }
-
+        // NOTE: no separate "seed" coroutine here. A previous parallel `scope.launch`
+        // that read `loadConfigFlow().first()` and emitted an initial frame raced the
+        // `viewJob` combine below — both called `emitter.updateView` on Dispatchers.Default
+        // with no ordering guarantee, so the slower seed could overwrite a fresher combine
+        // frame and it bypassed distinctUntilChanged. The combine path already renders the
+        // real config (label + idle colour) and a clickable IDLE frame — which registers the
+        // tap PendingIntent — on its FIRST emission, because WebhookState.flowForSlot is a
+        // StateFlow seeded with IDLE so the combine fires as soon as configFlow emits (the
+        // same trigger the seed used). Dropping the seed removes the race, the redundant
+        // build+IPC, and matches the "let the data flow's first emission be the only early
+        // updateView" rule for coalescing Karoo firmware.
         val viewJob = scope.launch {
             try {
                 // See CarbLogDataType — Frame + distinctUntilChanged dedups identical frames
