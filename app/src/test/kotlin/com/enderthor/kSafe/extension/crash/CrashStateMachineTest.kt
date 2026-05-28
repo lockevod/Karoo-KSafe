@@ -1311,6 +1311,11 @@ class CrashStateMachineTest {
         // A cadence sensor that lost signal repeats its last value bit-exact. After
         // cadenceStaleThresholdMs with no CHANGE it must read as inactive, so it
         // cannot veto a real crash. On-side crash -> 4.5 s window.
+        //
+        // Anchors `docs/calibration-annotations.md` → FN #1 (simulated impact at
+        // 1h37 of the 2026-05-25 ride: cadence stuck bit-exact at 39 RPM from
+        // pre-impact through the silence window — the SIL_TMO observed in the
+        // raw log is exactly the regression this guard prevents).
         val (sm, _) = smEnteringSilence(
             gapMs = 2_000L,
             preRef = PreImpactRef(0.0, 0.0, 9.81, valid = true),
@@ -1334,6 +1339,12 @@ class CrashStateMachineTest {
         // Exercises guard (4) of isCadenceActive specifically:
         //   `sinceChange > cadenceStaleThresholdMs` (sensor WAS fluctuating, then lost
         //   signal mid-ride and repeats its last value bit-exact).
+        //
+        // Anchors `docs/calibration-annotations.md` → FN #2 and FN #3 (real falls
+        // on the 2026-05-25 ride: cadence fluctuated normally during the ride,
+        // then stuck bit-exact at 88 RPM after the FN #2 fall at 2h03 and at
+        // 64 RPM after the FN #3 fall at 4h15. Both events resulted in
+        // SIL_BRK loops + no confirm in the raw log — this guard is the fix).
         //
         // Why this is distinct from the existing "stuck cadence" test:
         //   The existing test feeds a bit-exact 68.0 from the very first call, so
@@ -2860,6 +2871,12 @@ class CrashStateMachineTest {
         // relaxation). With the speed ceiling (25 km/h, default), the gate
         // remains closed and the SM stays in IMPACT. Eventually IMPACT_TIMEOUT
         // fires — no confirm, no FP.
+        //
+        // Anchors `docs/calibration-annotations.md` → FP #1 (the 2026-05-25
+        // ride, elapsed 14141.2 s ≈ 235:69 min: rider sustained 36.6 km/h on a
+        // fast descent with forward lean, on-side accumulator reached 75° vs
+        // upright reference, relaxation fired and CRASH_OK confirmed; rider
+        // cancelled at 7.2 s. The 25 km/h ceiling closes this exact path).
         val thresholds = Thresholds(
             onSideRelaxationMaxSpeedKmh = 25.0,
             crashConfirmSpeedKmh = 5,
