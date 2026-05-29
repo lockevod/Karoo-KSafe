@@ -6,6 +6,7 @@ import android.widget.RemoteViews
 import com.enderthor.kSafe.R
 import com.enderthor.kSafe.extension.KSafeExtension
 import com.enderthor.kSafe.extension.managers.HydrationStatus
+import com.enderthor.kSafe.extension.util.SweatConfidence
 import io.hammerhead.karooext.KarooSystemService
 import io.hammerhead.karooext.extension.DataTypeImpl
 import io.hammerhead.karooext.internal.ViewEmitter
@@ -92,7 +93,16 @@ class HydrationStatusDataType(
                         buildView(config, COLOR_OK, "---", "hyd")
                     } else {
                         val color = colorFor(status.deficitMl, status.deficitThresholdMl)
-                        buildView(config, color, displayMain(status.deficitMl), "hyd")
+                        // Leading "~" = the sweat estimate is running at LOW confidence,
+                        // i.e. with NO live HR/power sensor — the target is a rough
+                        // temperature + weight default rather than HR/power-driven. The
+                        // deficit still accrues and alerts still fire (hydration doesn't
+                        // require a sensor), but the "~" tells the rider the number is
+                        // approximate so they can read a frozen/absent sensor as the
+                        // cause. estimateConfidence is null in fixed mode (deliberate
+                        // config, not "unknown") → no marker there.
+                        val approx = if (status.estimateConfidence == SweatConfidence.LOW) "~" else ""
+                        buildView(config, color, approx + displayMain(status.deficitMl), "hyd")
                     }
                     emitter.updateView(view)
                 }
