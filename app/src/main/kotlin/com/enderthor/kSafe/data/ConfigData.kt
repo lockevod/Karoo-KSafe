@@ -252,6 +252,16 @@ val FIELD_COLOR_PALETTE: List<Int> = listOf(
 @Serializable
 enum class ProviderType { CALLMEBOT, PUSHOVER, NTFY, TELEGRAM }
 
+/**
+ * Which alert categories a single configured contact receives.
+ *  - [ALL]            both emergencies (Sender.sendAlert) and info (Sender.sendInfo).
+ *  - [EMERGENCY_ONLY] only emergencies (crash/SOS/check-in/speed-drop/medical).
+ *  - [INFO_ONLY]      only info (ride start/end + custom messages).
+ * See docs/superpowers/specs/2026-05-29-per-contact-alert-filtering-design.md.
+ */
+@Serializable
+enum class RecipientAlertScope { ALL, EMERGENCY_ONLY, INFO_ONLY }
+
 @Serializable
 enum class CrashSensitivity {
     LOW,    // Requires stronger impact (fewer false positives)
@@ -626,6 +636,11 @@ data class SenderConfig(
     val phoneNumber2: String = "",  // CallMeBot: second recipient WhatsApp number (optional)
     val apiKey3: String = "",       // CallMeBot: third recipient API key (optional)
     val phoneNumber3: String = "",  // CallMeBot: third recipient WhatsApp number (optional)
+    /** Per-recipient alert scope (slots 1/2/3). Default ALL = receives everything
+     *  (back-compat). For NTFY only slot 1 applies (single destination). */
+    val recipient1Alerts: RecipientAlertScope = RecipientAlertScope.ALL,
+    val recipient2Alerts: RecipientAlertScope = RecipientAlertScope.ALL,
+    val recipient3Alerts: RecipientAlertScope = RecipientAlertScope.ALL,
 )
 
 // ─── Rider biological sex (v18) ─────────────────────────────────────────────
