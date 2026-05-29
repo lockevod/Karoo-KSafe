@@ -402,7 +402,12 @@ class HydrationTracker(
         currentRateMlPerHour = if (config.hydrationDynamicEstimateEnabled && lastSweatRateMlHr > 0.0)
                                    lastSweatRateMlHr.toInt()
                                else config.hydrationTargetMlPerHour,
-        estimateConfidence = if (config.hydrationDynamicEstimateEnabled) lastSweatConfidence else null,
+        // LIVE confidence (not the cached lastSweatConfidence, which only updates on
+        // moving ticks): computed from the current fresh sensor inputs so the "~"
+        // marker is right while stopped and at ride start. See [freshSweatInputs].
+        estimateConfidence = if (config.hydrationDynamicEstimateEnabled)
+                                 estimateSweatRate(freshSweatInputs(System.currentTimeMillis())).confidence
+                             else null,
         // See CarbsTracker.getStatus — mirrors the movement + staleness gate in
         // tick() so UI consumers stay coherent with the integrator.
         isIntegrating = monitorJob != null && run {
@@ -422,6 +427,22 @@ class HydrationTracker(
 
     // ─── Internals ───────────────────────────────────────────────────────────
 
+    /** Sweat-estimate inputs with HR/power gated on freshness: a sensor silent for
+     *  longer than [SENSOR_STALE_MS] is passed as null (see
+     *  [CarbsTracker.lastHrUpdateMs]). Shared by [tick] (drives integration) and by
+     *  [getStatus] (the LIVE confidence the hydration field's "~" low-confidence
+     *  marker reads) so both agree exactly — and so the marker reflects the current
+     *  sensor state rather than the cached [lastSweatConfidence], which only refreshes
+     *  on moving ticks and would otherwise show a stale/incorrect "~" while stopped
+     *  or at ride start. */
+    private fun freshSweatInputs(now: Long) = SweatEstimateInputs(
+        hrBpm        = lastHrBpm?.takeIf  { lastHrUpdateMs    > 0L && now - lastHrUpdateMs    <= SENSOR_STALE_MS },
+        powerW       = lastPowerW?.takeIf { lastPowerUpdateMs > 0L && now - lastPowerUpdateMs <= SENSOR_STALE_MS },
+        weightKg     = lastWeightKg,
+        ambientTempC = lastAmbientTempC,
+        humidityPct  = lastHumidityPct,
+    )
+
     private fun tick() {
         val now = System.currentTimeMillis()
         // Movement gate — see CarbsTracker.tick() for the full rationale and the
@@ -434,21 +455,11 @@ class HydrationTracker(
             // Clamp negative dt — see CarbsTracker.tick() for rationale (NTP correction).
             val dtSec = (now - lastTickMs).coerceAtLeast(0L) / 1000f
             val ratePerHour: Float = if (config.hydrationDynamicEstimateEnabled) {
-                // Pull all available signals into the estimator on every tick. Inputs that
-                // have not been received are passed as null so the estimator falls back to
-                // its documented defaults (50 % RH, 20 °C, 70 kg, moderate ride).
-                // Drop HR/power samples older than SENSOR_STALE_MS so a dead
-                // sensor's frozen value can't keep driving the rate — see
-                // CarbsTracker.currentBurnEstimate. `now` is this tick's clock.
-                val freshHr = lastHrBpm?.takeIf { lastHrUpdateMs > 0L && now - lastHrUpdateMs <= SENSOR_STALE_MS }
-                val freshPower = lastPowerW?.takeIf { lastPowerUpdateMs > 0L && now - lastPowerUpdateMs <= SENSOR_STALE_MS }
-                val estimate = estimateSweatRate(SweatEstimateInputs(
-                    hrBpm = freshHr,
-                    powerW = freshPower,
-                    weightKg = lastWeightKg,
-                    ambientTempC = lastAmbientTempC,
-                    humidityPct = lastHumidityPct,
-                ))
+                // Pull all available signals into the estimator on every tick, with
+                // HR/power gated on freshness (a dead sensor's frozen value is dropped
+                // to null so the rate falls back to the live sensor / documented
+                // defaults). See [freshSweatInputs].
+                val estimate = estimateSweatRate(freshSweatInputs(now))
                 lastSweatConfidence = estimate.confidence
                 // Only publish the LOW-confidence default (~298 ml/h) to the UI/alert path
                 // after at least one MEDIUM-or-better tick has happened. Without this guard,
