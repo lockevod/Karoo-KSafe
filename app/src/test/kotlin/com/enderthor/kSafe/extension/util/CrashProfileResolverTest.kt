@@ -53,4 +53,46 @@ class CrashProfileResolverTest {
         val g = global.copy(crashDetectionEnabled = true, crashProfileSettings = listOf(setting))
         assertEquals(false, resolveEffectiveCrashConfig(g, "p1").crashDetectionEnabled)
     }
+
+    @Test fun `learn appends an unseen profile as useGlobal`() {
+        val out = learnProfile(emptyList(), "p1", "Gravel")
+        assertEquals(1, out.size)
+        assertEquals("p1", out[0].profileId)
+        assertEquals("Gravel", out[0].profileName)
+        assertEquals(true, out[0].useGlobal)
+    }
+
+    @Test fun `learn refreshes the name on rename, keeping custom fields`() {
+        val seed = listOf(CrashProfileSetting("p1", "Gravel", useGlobal = false,
+            crashSensitivity = CrashSensitivity.LOW))
+        val out = learnProfile(seed, "p1", "Gravel Race")
+        assertEquals(1, out.size)
+        assertEquals("Gravel Race", out[0].profileName)
+        assertEquals(false, out[0].useGlobal)
+        assertEquals(CrashSensitivity.LOW, out[0].crashSensitivity)
+    }
+
+    @Test fun `learn is a no-op when id and name already match`() {
+        val seed = listOf(CrashProfileSetting("p1", "Gravel"))
+        assertEquals(seed, learnProfile(seed, "p1", "Gravel"))
+    }
+
+    @Test fun `learn prunes a stale same-name orphan (delete-then-recreate)`() {
+        // Old "Gravel" (id A, custom) deleted on the Karoo; recreated as id B, same name.
+        val seed = listOf(CrashProfileSetting("A", "Gravel", useGlobal = false,
+            crashSensitivity = CrashSensitivity.LOW))
+        val out = learnProfile(seed, "B", "Gravel")
+        assertEquals(1, out.size)
+        assertEquals("B", out[0].profileId)      // orphan A removed
+        assertEquals(true, out[0].useGlobal)     // recreated profile starts fresh
+    }
+
+    @Test fun `learn keeps other-named entries when pruning`() {
+        val seed = listOf(
+            CrashProfileSetting("A", "Gravel"),
+            CrashProfileSetting("C", "Enduro", useGlobal = false),
+        )
+        val out = learnProfile(seed, "B", "Gravel")   // recreate Gravel as B
+        assertEquals(setOf("B", "C"), out.map { it.profileId }.toSet())  // Enduro untouched
+    }
 }

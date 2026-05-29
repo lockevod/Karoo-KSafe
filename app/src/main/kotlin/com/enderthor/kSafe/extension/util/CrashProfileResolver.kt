@@ -1,5 +1,6 @@
 package com.enderthor.kSafe.extension.util
 
+import com.enderthor.kSafe.data.CrashProfileSetting
 import com.enderthor.kSafe.data.KSafeConfig
 
 /**
@@ -20,4 +21,27 @@ fun resolveEffectiveCrashConfig(global: KSafeConfig, activeProfileId: String?): 
         minSpeedForCrashKmh = setting.minSpeedForCrashKmh,
         crashConfirmSpeedKmh = setting.crashConfirmSpeedKmh,
     )
+}
+
+/**
+ * Returns [settings] reconciled for the just-activated profile ([id], [name]):
+ *  - **prunes stale same-name orphans**: drops entries with `profileName == name` but a
+ *    different id. The Karoo forbids two live profiles with the same name, so such an
+ *    entry is a deleted-then-recreated predecessor (see spec) — removed automatically.
+ *  - appends a `useGlobal = true` entry if [id] is unseen,
+ *  - refreshes the stored [name] on a rename of this profile (matched by id, custom
+ *    fields preserved),
+ *  - returns the list unchanged when nothing differs.
+ * Matching/identity is by id only; the name is used solely to prune orphans.
+ */
+fun learnProfile(settings: List<CrashProfileSetting>, id: String, name: String): List<CrashProfileSetting> {
+    // Remove stale predecessors that reused this name under a different id. The target's
+    // own entry (matched by id) is never pruned even if its name equals [name].
+    val pruned = settings.filterNot { it.profileName == name && it.profileId != id }
+    val existing = pruned.firstOrNull { it.profileId == id }
+    return when {
+        existing == null -> pruned + CrashProfileSetting(profileId = id, profileName = name)
+        existing.profileName != name -> pruned.map { if (it.profileId == id) it.copy(profileName = name) else it }
+        else -> pruned
+    }
 }
