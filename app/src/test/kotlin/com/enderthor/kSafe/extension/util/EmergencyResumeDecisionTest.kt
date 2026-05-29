@@ -107,7 +107,7 @@ class EmergencyResumeDecisionTest {
             status = EmergencyStatus.ALERTING,
             reason = EmergencyReason.CRASH_DETECTED.label,
             reasonEnum = EmergencyReason.CRASH_DETECTED,
-            countdownStartTime =1_000_000L,
+            countdownStartTime = 1_000_000L,
             countdownDurationSeconds = 30,
         )
         assertEquals(
@@ -129,7 +129,7 @@ class EmergencyResumeDecisionTest {
             reason = EmergencyReason.MANUAL_SOS.label,
             reasonEnum = EmergencyReason.MANUAL_SOS,
             // Timestamps that WOULD route to Active if the status check were skipped:
-            countdownStartTime =startMs,
+            countdownStartTime = startMs,
             countdownDurationSeconds = 60,
         )
         // 30 s into the would-be countdown — Active branch would say "30 s left".
