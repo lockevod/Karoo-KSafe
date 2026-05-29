@@ -163,7 +163,6 @@ class KSafeExtension : KarooExtension("ksafe", BuildConfig.VERSION_NAME), Corout
     private var activeConfig = KSafeConfig()
     private var currentRideState: RideState? = null
     @Volatile private var activeProfileId: String? = null
-    @Volatile private var activeProfileName: String? = null
     /** Whether the crash detector is currently running under the effective config. Kept in
      *  sync by [reapplyEffectiveCrash] so a profile switch can reconcile start/stop without
      *  double-registering the sensor listener (CrashDetectionManager.start re-registers). */
@@ -1027,7 +1026,6 @@ class KSafeExtension : KarooExtension("ksafe", BuildConfig.VERSION_NAME), Corout
                     .collect { profile ->
                         crashManager.updateRideProfile(profile.routingPreference)
                         activeProfileId = profile.id
-                        activeProfileName = profile.name
                         val learned = learnProfile(activeConfig.crashProfileSettings, profile.id, profile.name)
                         if (learned != activeConfig.crashProfileSettings) {
                             configManager.saveConfig(activeConfig.copy(crashProfileSettings = learned))
