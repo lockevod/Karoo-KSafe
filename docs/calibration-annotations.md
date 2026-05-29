@@ -127,6 +127,56 @@ no-confirm under any future tuning:
 
 ---
 
+## 2026-05-28 evening — session `22d1d3` (v1.2.0)
+
+- **App version:** v1.2.0 (pre-locale-fix — see the data-quality note below)
+- **Profile / preset:** GRAVEL / MEDIUM
+- **Device:** k24 (Karoo 2)
+- **Log file:** `ksafe_v1.2.0_22d1d3_k24.csv` (44 KB, ~70 min — 19:58→21:08,
+  Telegram download). Not in the repo (gitignored corpus).
+- **Annotated by:** Sergi, 2026-05-29.
+- **Ground-truth label:** **TRUE NEGATIVE** — uneventful gravel ride, no fall, no
+  manual SOS. Everything the detector did here should stay no-confirm.
+
+### Aggregate (from `analyze_calibration_logs.py`)
+
+| Metric | Value |
+|---|---|
+| Duration | ~70.4 min |
+| `HIGH_MAG` | 184 (2.61/min — gravel chatter) |
+| `IMPACT_IN` | 12 (10.2/h) |
+| `IMPACT_TMO` | 12 / 12 (100 %), **reason = SPEED** |
+| `CRASH_CONFIRMED` | **0** |
+| HIGH_MAG raw p50 / p95 / max | 25.5 / 40.1 / 49.0 m/s² |
+| HIGH_MAG smooth p50 / p95 / max | 14.2 / 19.9 / 28.3 m/s² |
+| IMPACT_TMO `min_spd` during window p50 | 24.6 km/h (rider still riding through the jolt) |
+
+### Terrain (legit gate rejections, NOT crashes)
+
+All 12 `IMPACT_IN` events are gravel jolts that entered IMPACT and timed out on
+the speed gate (`reason = SPEED` — the rider never slowed; `min_spd` p50 24.6 km/h
+through the window). 0 false positives on MEDIUM. This is a clean
+**gravel-chatter true-negative**: any future tuning must keep all 12 no-confirm.
+
+**Threshold headroom (MEDIUM).** The loudest 5 % of gravel spikes (raw p95 40.1 /
+smooth p95 19.9) sit well under the v2.0.0 MEDIUM thresholds — ×1.25 raw and
+×2.26 smooth headroom. Retro-projection: 0/184 HIGH_MAG would cross MEDIUM in
+v2.0.0; the 12 `IMPACT_IN` would still enter IMPACT but be rejected by the same
+speed gate. No regression, no FP.
+
+### Data-quality note — locale corruption (validates the v2.x fix)
+
+The raw CSV is **comma-decimal corrupted**: `elapsed_s=274,2`, `speed=0,0`,
+`accel_dev=0,57` — this Karoo 2 runs a comma-decimal (es/fr/de-style) locale and
+v1.2.0 formatted floats with the JVM default locale, so the decimal comma
+collides with the CSV field separator and shifts every fractional row's columns.
+This is the exact bug fixed in v2.x (`String.formatUs` / `Locale.US` across the
+calibration writers, incl. `SpeedDropMonitor`); logs from this same device on
+v2.x are clean. `analyze_calibration_logs.py` tolerates it by normalising commas,
+but a future author replaying this file directly must account for the shift.
+
+---
+
 ## How these become tests
 
 Each labeled event above is a candidate named test seed. The convention is:
