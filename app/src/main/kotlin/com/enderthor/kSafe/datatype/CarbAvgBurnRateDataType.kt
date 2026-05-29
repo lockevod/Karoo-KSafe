@@ -97,7 +97,12 @@ class CarbAvgBurnRateDataType(
                         // rate field, which shares the same "g/h" unit hint.
                         else -> "ø ${status.avgBurnRateGph}"
                     }
-                    emitter.updateView(buildView(config, main, "g/h"))
+                    // Hint also carries "ø": the field header is hidden
+                    // (showHeader = false), so the instantaneous-rate field and this
+                    // average field would otherwise show an identical "g/h" hint and
+                    // be distinguishable only by the value prefix. "ø g/h" makes the
+                    // unit line itself unambiguous at a glance.
+                    emitter.updateView(buildView(config, main, "ø g/h"))
                 }
             } catch (_: CancellationException) {
                 // normal
