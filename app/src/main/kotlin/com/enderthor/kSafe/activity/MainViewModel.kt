@@ -6,6 +6,7 @@ import androidx.lifecycle.viewModelScope
 import com.enderthor.kSafe.data.KSafeConfig
 import com.enderthor.kSafe.data.KSafeBackupExport
 import com.enderthor.kSafe.data.ProviderType
+import com.enderthor.kSafe.data.RecipientAlertScope
 import com.enderthor.kSafe.data.SenderConfig
 import com.enderthor.kSafe.data.defaultSenderConfigs
 import com.enderthor.kSafe.data.materializeAlertDefaults
@@ -92,6 +93,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         phoneNumber2: String = "",
         apiKey3: String = "",
         phoneNumber3: String = "",
+        recipient1Alerts: RecipientAlertScope = RecipientAlertScope.ALL,
+        recipient2Alerts: RecipientAlertScope = RecipientAlertScope.ALL,
+        recipient3Alerts: RecipientAlertScope = RecipientAlertScope.ALL,
     ) {
         val updated = senderConfigs.value.toMutableList()
         val idx = updated.indexOfFirst { it.provider == provider }
@@ -106,6 +110,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             phoneNumber2 = phoneNumber2,
             apiKey3 = apiKey3,
             phoneNumber3 = phoneNumber3,
+            recipient1Alerts = recipient1Alerts,
+            recipient2Alerts = recipient2Alerts,
+            recipient3Alerts = recipient3Alerts,
         )
         if (idx >= 0) updated[idx] = newConfig else updated.add(newConfig)
         saveSenderConfigs(updated)

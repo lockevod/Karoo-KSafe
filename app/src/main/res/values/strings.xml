@@ -210,6 +210,11 @@
     <string name="telegram_chat_id2_hint">Chat ID — recipient 2 (optional)</string>
     <string name="telegram_chat_id3_hint">Chat ID — recipient 3 (optional)</string>
     <string name="telegram_description">Free Telegram messages via a bot. Create a bot with @BotFather, get the token, and enter your Chat ID.</string>
+    <string name="recipient_alerts_all">All alerts</string>
+    <string name="recipient_alerts_emergency">Emergencies only</string>
+    <string name="recipient_alerts_info">Info only</string>
+    <string name="recipient_alerts_label">This contact receives</string>
+    <string name="recipient_alerts_need_emergency">At least one contact must receive emergency alerts</string>
     <string name="section_safety">Safety configuration</string>
     <string name="backup_export">Export</string>
     <string name="backup_import">Import</string>
