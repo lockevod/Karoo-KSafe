@@ -1295,7 +1295,14 @@ class KSafeExtension : KarooExtension("ksafe", BuildConfig.VERSION_NAME), Corout
      */
     private fun reapplyEffectiveCrash() {
         val eff = effectiveCrashConfig()
-        crashManager.updateConfig(eff)   // live threshold swap; never starts/stops
+        // Mirror applyIdleMonitoring's "any speed" override: when monitoring crashes
+        // outside a ride at any speed, the speed gate is forced to 0. Without this, a
+        // profile switch while Idle (which reaches the updateConfig-only path) would
+        // restore the configured minimum speed and silently defeat anySpeed monitoring.
+        val applied = if (currentRideState is RideState.Idle && eff.isActive && eff.crashMonitorOutsideRideAnySpeed)
+                          eff.copy(minSpeedForCrashKmh = 0)
+                      else eff
+        crashManager.updateConfig(applied)   // live threshold swap; never starts/stops
         val shouldRun = crashShouldBeRunningNow(eff)
         if (shouldRun && !crashEffectiveRunning) {
             when (currentRideState) {

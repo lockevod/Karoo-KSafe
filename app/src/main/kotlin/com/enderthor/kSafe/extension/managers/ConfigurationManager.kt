@@ -128,17 +128,24 @@ class ConfigurationManager(private val context: Context) {
         }
     }
 
+    /** Last successfully-decoded sender configs. Returned by [loadSenderConfigFlow] when a
+     *  later decode throws, so a transient/structural decode failure can't silently wipe the
+     *  rider's emergency contacts mid-session. */
+    @Volatile private var lastGoodSenderConfigs: List<SenderConfig>? = null
+
     fun loadSenderConfigFlow(): Flow<List<SenderConfig>> {
         return context.dataStore.data.map { prefs ->
             val raw = (prefs[senderConfigKey] ?: defaultSenderConfigJson)
                 .replace("\"SIMPLEPUSH\"", "\"NTFY\"") // migration: SIMPLEPUSH renamed to NTFY
             try {
-                jsonWithUnknownKeys.decodeFromString<List<SenderConfig>>(raw)
+                val decoded = jsonWithUnknownKeys.decodeFromString<List<SenderConfig>>(raw)
+                lastGoodSenderConfigs = decoded
+                decoded
             } catch (e: Throwable) {
                 val snippet = raw.take(200).replace("\n", " ")
                 Timber.e(e, "Failed to read SenderConfig (%s: %s) — raw[0..200] = %s",
                     e.javaClass.simpleName, e.message, snippet)
-                emptyList()
+                lastGoodSenderConfigs ?: emptyList()
             }
         }.distinctUntilChanged()
     }
