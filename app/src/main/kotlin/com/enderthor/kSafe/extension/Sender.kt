@@ -389,6 +389,7 @@ class Sender(
                 val encodedMsg = Uri.encode(message)
                 val recipients = callMeBotRecipients(config)
                 val send = recipientsToSend(recipients.map { it.first }, config::scopeForSlot, isEmergency)
+                if (send.isEmpty()) return !isEmergency  // info filtered to zero = intentional no-op (success); emergency-with-no-contacts = failure
                 var anyOk = false
                 for ((slot, phone, key) in recipients) {
                     if (slot !in send) continue
@@ -423,6 +424,7 @@ class Sender(
                 val allKeys = listOf(config.userKey, config.userKey2, config.userKey3)
                 val configuredSlots = allKeys.indices.filter { allKeys[it].isNotBlank() }
                 val send = recipientsToSend(configuredSlots, config::scopeForSlot, isEmergency)
+                if (send.isEmpty()) return !isEmergency  // info filtered to zero = intentional no-op (success); emergency-with-no-contacts = failure
                 var anyOk = false
                 for (slot in send) {
                     val key = allKeys[slot]
@@ -466,7 +468,7 @@ class Sender(
                 if (config.apiKey.isBlank()) return false
                 if (recipientsToSend(listOf(0), config::scopeForSlot, isEmergency).isEmpty()) {
                     Timber.d("ntfy: skipped by per-recipient filter (scope=${config.recipient1Alerts})")
-                    return false
+                    return !isEmergency
                 }
                 val title    = if (isEmergency) "KSafe Emergency" else "KSafe"
                 val priority = if (isEmergency) "urgent" else "default"
@@ -496,6 +498,7 @@ class Sender(
                 val allChatIds = listOf(config.userKey, config.userKey2, config.userKey3)
                 val configuredSlots = allChatIds.indices.filter { allChatIds[it].isNotBlank() }
                 val send = recipientsToSend(configuredSlots, config::scopeForSlot, isEmergency)
+                if (send.isEmpty()) return !isEmergency  // info filtered to zero = intentional no-op (success); emergency-with-no-contacts = failure
                 var anyOk = false
                 for (slot in send) {
                     val chatId = allChatIds[slot]
