@@ -62,9 +62,8 @@ class Sender(
         return try {
             when (provider) {
                 ProviderType.CALLMEBOT -> {
-                    if (config.phoneNumber.isBlank()) return "Missing phone number."
-                    if (config.apiKey.isBlank())      return "Missing API key."
                     val recipients = callMeBotRecipients(config)
+                    if (recipients.isEmpty()) return "Missing phone number or API key."
                     val results = mutableListOf<String>()
                     for ((slot, phone, key) in recipients) {
                         val label = "Recipient ${slot + 1}"
@@ -96,7 +95,7 @@ class Sender(
 
                 ProviderType.PUSHOVER -> {
                     if (config.apiKey.isBlank())  return "Missing App Token."
-                    if (config.userKey.isBlank())  return "Missing User Key."
+                    if (listOf(config.userKey, config.userKey2, config.userKey3).all { it.isBlank() }) return "Missing User Key."
                     val userKeys = listOf(config.userKey, config.userKey2, config.userKey3)
                     val results = mutableListOf<String>()
                     for ((i, key) in userKeys.withIndex()) {
@@ -167,7 +166,7 @@ class Sender(
 
                 ProviderType.TELEGRAM -> {
                     if (config.apiKey.isBlank()) return "Missing Bot Token."
-                    if (config.userKey.isBlank()) return "Missing Chat ID."
+                    if (listOf(config.userKey, config.userKey2, config.userKey3).all { it.isBlank() }) return "Missing Chat ID."
                     val chatIds = listOf(config.userKey, config.userKey2, config.userKey3)
                     val results = mutableListOf<String>()
                     for ((i, chatId) in chatIds.withIndex()) {
@@ -312,7 +311,7 @@ class Sender(
      * false and silently swallow the entire retry budget.
      */
     private fun hasUsableCredentials(provider: ProviderType, config: SenderConfig): Boolean = when (provider) {
-        ProviderType.CALLMEBOT -> callMeBotRecipients(config).isNotEmpty() && config.apiKey.isNotBlank()
+        ProviderType.CALLMEBOT -> callMeBotRecipients(config).isNotEmpty()
         ProviderType.PUSHOVER  -> config.apiKey.isNotBlank() &&
             listOf(config.userKey, config.userKey2, config.userKey3).any { it.isNotBlank() }
         ProviderType.NTFY      -> config.apiKey.isNotBlank()
@@ -385,7 +384,6 @@ class Sender(
 
         return when (provider) {
             ProviderType.CALLMEBOT -> {
-                if (config.phoneNumber.isBlank() || config.apiKey.isBlank()) return false
                 val encodedMsg = Uri.encode(message)
                 val recipients = callMeBotRecipients(config)
                 val send = recipientsToSend(recipients.map { it.first }, config::scopeForSlot, isEmergency)
@@ -420,7 +418,7 @@ class Sender(
             }
 
             ProviderType.PUSHOVER -> {
-                if (config.apiKey.isBlank() || config.userKey.isBlank()) return false
+                if (config.apiKey.isBlank()) return false
                 val allKeys = listOf(config.userKey, config.userKey2, config.userKey3)
                 val configuredSlots = allKeys.indices.filter { allKeys[it].isNotBlank() }
                 val send = recipientsToSend(configuredSlots, config::scopeForSlot, isEmergency)
@@ -494,7 +492,7 @@ class Sender(
             }
 
             ProviderType.TELEGRAM -> {
-                if (config.apiKey.isBlank() || config.userKey.isBlank()) return false
+                if (config.apiKey.isBlank()) return false
                 val allChatIds = listOf(config.userKey, config.userKey2, config.userKey3)
                 val configuredSlots = allChatIds.indices.filter { allChatIds[it].isNotBlank() }
                 val send = recipientsToSend(configuredSlots, config::scopeForSlot, isEmergency)
