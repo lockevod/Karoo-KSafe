@@ -321,12 +321,16 @@ class CalibrationLogger(
      * [lineCount]: total number of data rows in the file (newlines in content); used for
      * a rough size indicator. Pass 0 to omit.
      *
-     * Privacy: contains app version, random session ID, and device model. No personal data.
+     * Privacy: contains app version, an opaque random grouping tag (installId,
+     * shown as "Anon tag"), a random session ID, and the device model. No personal data.
      */
     fun captionForSession(lineCount: Int = 0): String {
         val sizeInfo = if (lineCount > 0) " | $lineCount rows" else ""
         return "📊 kSafe Calibration Log\n" +
-               "Install ID: $installId\n" +
+               // "Anon tag" (not "Install ID"): same opaque random grouping value,
+               // but worded so a rider reading the caption before opting in doesn't
+               // read it as a device/personal identifier. See installId KDoc.
+               "Anon tag: $installId\n" +
                // DEVICE_LABEL (not raw Build.MODEL): the caption lands in a multipart
                // form-data body, and a model string containing CR/LF or boundary-like
                // bytes would corrupt the framing → Telegram 400 → silent upload failure.
