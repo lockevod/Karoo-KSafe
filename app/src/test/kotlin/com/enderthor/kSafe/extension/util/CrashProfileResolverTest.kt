@@ -95,4 +95,13 @@ class CrashProfileResolverTest {
         val out = learnProfile(seed, "B", "Gravel")   // recreate Gravel as B
         assertEquals(setOf("B", "C"), out.map { it.profileId }.toSet())  // Enduro untouched
     }
+
+    @Test fun `resolve treats a blank active id as no match`() {
+        val g = global.copy(crashProfileSettings = listOf(CrashProfileSetting("", "Phantom", useGlobal = false, crashDetectionEnabled = false)))
+        assertEquals(g, resolveEffectiveCrashConfig(g, ""))
+    }
+
+    @Test fun `learn ignores a blank id`() {
+        assertEquals(emptyList<CrashProfileSetting>(), learnProfile(emptyList(), "", "Phantom"))
+    }
 }

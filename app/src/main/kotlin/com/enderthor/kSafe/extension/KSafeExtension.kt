@@ -1026,9 +1026,10 @@ class KSafeExtension : KarooExtension("ksafe", BuildConfig.VERSION_NAME), Corout
                     .collect { profile ->
                         crashManager.updateRideProfile(profile.routingPreference)
                         activeProfileId = profile.id
-                        val learned = learnProfile(activeConfig.crashProfileSettings, profile.id, profile.name)
-                        if (learned != activeConfig.crashProfileSettings) {
-                            configManager.saveConfig(activeConfig.copy(crashProfileSettings = learned))
+                        val latest = configManager.loadConfigFlow().first()
+                        val learned = learnProfile(latest.crashProfileSettings, profile.id, profile.name)
+                        if (learned != latest.crashProfileSettings) {
+                            configManager.saveConfig(latest.copy(crashProfileSettings = learned))
                         }
                         reapplyEffectiveCrash()
                     }
@@ -1282,7 +1283,7 @@ class KSafeExtension : KarooExtension("ksafe", BuildConfig.VERSION_NAME), Corout
     /** Whether crash detection should be running right now under [eff] and the current
      *  ride state. Single source of truth for the crashEffectiveRunning bookkeeping. */
     private fun crashShouldBeRunningNow(eff: KSafeConfig): Boolean =
-        activeConfig.isActive && eff.crashDetectionEnabled && when (currentRideState) {
+        eff.isActive && eff.crashDetectionEnabled && when (currentRideState) {
             is RideState.Recording, is RideState.Paused -> true
             else -> eff.crashMonitorOutsideRide || eff.crashMonitorOutsideRideAnySpeed
         }
@@ -1302,7 +1303,7 @@ class KSafeExtension : KarooExtension("ksafe", BuildConfig.VERSION_NAME), Corout
                 is RideState.Paused    -> crashManager.resume(eff)
                 else -> applyIdleMonitoring(eff)   // handles minSpeed=0 outside-ride variant
             }
-            crashEffectiveRunning = crashShouldBeRunningNow(eff)
+            crashEffectiveRunning = shouldRun
         } else if (!shouldRun && crashEffectiveRunning) {
             crashManager.stop()
             crashEffectiveRunning = false

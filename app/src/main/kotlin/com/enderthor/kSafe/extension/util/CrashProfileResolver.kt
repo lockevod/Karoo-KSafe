@@ -12,7 +12,7 @@ import com.enderthor.kSafe.data.KSafeConfig
  * only further restrict it (logical AND), never re-enable. See the spec.
  */
 fun resolveEffectiveCrashConfig(global: KSafeConfig, activeProfileId: String?): KSafeConfig {
-    val setting = activeProfileId?.let { id -> global.crashProfileSettings.firstOrNull { it.profileId == id } }
+    val setting = activeProfileId?.takeIf { it.isNotBlank() }?.let { id -> global.crashProfileSettings.firstOrNull { it.profileId == id } }
     if (setting == null || setting.useGlobal) return global
     return global.copy(
         crashDetectionEnabled = global.crashDetectionEnabled && setting.crashDetectionEnabled,
@@ -35,6 +35,7 @@ fun resolveEffectiveCrashConfig(global: KSafeConfig, activeProfileId: String?): 
  * Matching/identity is by id only; the name is used solely to prune orphans.
  */
 fun learnProfile(settings: List<CrashProfileSetting>, id: String, name: String): List<CrashProfileSetting> {
+    if (id.isBlank()) return settings
     // Remove stale predecessors that reused this name under a different id. The target's
     // own entry (matched by id) is never pruned even if its name equals [name].
     val pruned = settings.filterNot { it.profileName == name && it.profileId != id }
