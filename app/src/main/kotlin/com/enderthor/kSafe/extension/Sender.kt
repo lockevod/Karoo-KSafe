@@ -98,9 +98,9 @@ class Sender(
                     if (config.apiKey.isBlank())  return "Missing App Token."
                     if (config.userKey.isBlank())  return "Missing User Key."
                     val userKeys = listOf(config.userKey, config.userKey2, config.userKey3)
-                        .filter { it.isNotBlank() }
                     val results = mutableListOf<String>()
                     for ((i, key) in userKeys.withIndex()) {
+                        if (key.isBlank()) continue
                         val label = "Recipient ${i + 1}"
                         val jsonBody = buildJsonObject {
                             put("token",   config.apiKey)
@@ -169,9 +169,9 @@ class Sender(
                     if (config.apiKey.isBlank()) return "Missing Bot Token."
                     if (config.userKey.isBlank()) return "Missing Chat ID."
                     val chatIds = listOf(config.userKey, config.userKey2, config.userKey3)
-                        .filter { it.isNotBlank() }
                     val results = mutableListOf<String>()
                     for ((i, chatId) in chatIds.withIndex()) {
+                        if (chatId.isBlank()) continue
                         val label = "Chat ${i + 1}"
                         val jsonBody = buildJsonObject {
                             put("chat_id", chatId.trim())

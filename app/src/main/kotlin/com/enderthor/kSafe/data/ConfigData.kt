@@ -877,6 +877,9 @@ data class CallMeBotConfig(
     val phoneNumber2: String = "",  // Optional: second recipient's WhatsApp number
     val apiKey3: String = "",       // Optional: third recipient's API key
     val phoneNumber3: String = "",  // Optional: third recipient's WhatsApp number
+    val recipient1Alerts: RecipientAlertScope = RecipientAlertScope.ALL,
+    val recipient2Alerts: RecipientAlertScope = RecipientAlertScope.ALL,
+    val recipient3Alerts: RecipientAlertScope = RecipientAlertScope.ALL,
 )
 
 /** Pushover — app token (from pushover.net) + up to 3 recipient user/group keys. */
@@ -886,12 +889,16 @@ data class PushoverConfig(
     val userKey: String = "",      // Primary recipient user/group key
     val userKey2: String = "",     // Optional: second recipient user/group key
     val userKey3: String = "",     // Optional: third recipient user/group key
+    val recipient1Alerts: RecipientAlertScope = RecipientAlertScope.ALL,
+    val recipient2Alerts: RecipientAlertScope = RecipientAlertScope.ALL,
+    val recipient3Alerts: RecipientAlertScope = RecipientAlertScope.ALL,
 )
 
 /** ntfy.sh — only needs a topic name. Free, no account required, unlimited messages. */
 @Serializable
 data class NtfyConfig(
     val topic: String = "",    // Topic name chosen by you (e.g. "my-ksafe-alerts"). Anyone who knows it can subscribe.
+    val recipient1Alerts: RecipientAlertScope = RecipientAlertScope.ALL,
 )
 
 /** Telegram — bot token (from @BotFather) + up to 3 chat/channel/group IDs. */
@@ -901,6 +908,9 @@ data class TelegramConfig(
     val chatId: String = "",       // Primary chat / channel / group ID
     val chatId2: String = "",      // Optional: second chat ID
     val chatId3: String = "",      // Optional: third chat ID
+    val recipient1Alerts: RecipientAlertScope = RecipientAlertScope.ALL,
+    val recipient2Alerts: RecipientAlertScope = RecipientAlertScope.ALL,
+    val recipient3Alerts: RecipientAlertScope = RecipientAlertScope.ALL,
 )
 
 /**
@@ -932,19 +942,29 @@ fun KSafeBackupExport.toSenderConfigs(): List<SenderConfig> = listOf(
         apiKey2 = callmebot.apiKey2,
         phoneNumber2 = callmebot.phoneNumber2,
         apiKey3 = callmebot.apiKey3,
-        phoneNumber3 = callmebot.phoneNumber3),
+        phoneNumber3 = callmebot.phoneNumber3,
+        recipient1Alerts = callmebot.recipient1Alerts,
+        recipient2Alerts = callmebot.recipient2Alerts,
+        recipient3Alerts = callmebot.recipient3Alerts),
     SenderConfig(ProviderType.PUSHOVER,
         apiKey = pushover.appToken,
         userKey = pushover.userKey,
         userKey2 = pushover.userKey2,
-        userKey3 = pushover.userKey3),
+        userKey3 = pushover.userKey3,
+        recipient1Alerts = pushover.recipient1Alerts,
+        recipient2Alerts = pushover.recipient2Alerts,
+        recipient3Alerts = pushover.recipient3Alerts),
     SenderConfig(ProviderType.NTFY,
-        apiKey = ntfy.topic),
+        apiKey = ntfy.topic,
+        recipient1Alerts = ntfy.recipient1Alerts),
     SenderConfig(ProviderType.TELEGRAM,
         apiKey = telegram.botToken,
         userKey = telegram.chatId,
         userKey2 = telegram.chatId2,
-        userKey3 = telegram.chatId3),
+        userKey3 = telegram.chatId3,
+        recipient1Alerts = telegram.recipient1Alerts,
+        recipient2Alerts = telegram.recipient2Alerts,
+        recipient3Alerts = telegram.recipient3Alerts),
 )
 
 /** Builds a [KSafeBackupExport] from the current [config] and flat sender config list. */
@@ -963,10 +983,29 @@ fun List<SenderConfig>.toBackupExport(config: KSafeConfig): KSafeBackupExport {
             phoneNumber2 = cmb.phoneNumber2,
             apiKey3 = cmb.apiKey3,
             phoneNumber3 = cmb.phoneNumber3,
+            recipient1Alerts = cmb.recipient1Alerts,
+            recipient2Alerts = cmb.recipient2Alerts,
+            recipient3Alerts = cmb.recipient3Alerts,
         ),
-        pushover   = PushoverConfig(appToken = po.apiKey, userKey = po.userKey, userKey2 = po.userKey2, userKey3 = po.userKey3),
-        ntfy       = NtfyConfig(topic = sp.apiKey),
-        telegram   = TelegramConfig(botToken = tg.apiKey, chatId = tg.userKey, chatId2 = tg.userKey2, chatId3 = tg.userKey3),
+        pushover   = PushoverConfig(
+            appToken = po.apiKey,
+            userKey = po.userKey,
+            userKey2 = po.userKey2,
+            userKey3 = po.userKey3,
+            recipient1Alerts = po.recipient1Alerts,
+            recipient2Alerts = po.recipient2Alerts,
+            recipient3Alerts = po.recipient3Alerts,
+        ),
+        ntfy       = NtfyConfig(topic = sp.apiKey, recipient1Alerts = sp.recipient1Alerts),
+        telegram   = TelegramConfig(
+            botToken = tg.apiKey,
+            chatId = tg.userKey,
+            chatId2 = tg.userKey2,
+            chatId3 = tg.userKey3,
+            recipient1Alerts = tg.recipient1Alerts,
+            recipient2Alerts = tg.recipient2Alerts,
+            recipient3Alerts = tg.recipient3Alerts,
+        ),
     )
 }
 
