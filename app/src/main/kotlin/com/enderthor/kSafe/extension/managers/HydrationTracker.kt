@@ -55,6 +55,10 @@ class HydrationTracker(
      *  [MedicalEpisodeDetector]) in lockstep so a future tune touches one place. */
     private val MOVING_GATE_KMH = CarbIntegrator.MOVING_GATE_KMH
     private val SPEED_STALE_MS  = CarbIntegrator.SPEED_STALE_MS
+    /** See [CarbsTracker.SENSOR_STALE_MS]. A HR/power sample older than this is
+     *  treated as "sensor gone" by the sweat-rate estimator, so a dead sensor's
+     *  last value can't keep driving the dynamic hydration rate. */
+    private val SENSOR_STALE_MS = 15_000L
     private val PERIODIC_LOG_INTERVAL_MS = 120_000L
 
     // InRideAlert color contract: SDK expects @ColorRes IDs, NOT packed ARGB ints —
@@ -115,6 +119,12 @@ class HydrationTracker(
     // for adjacent ticks.
     @Volatile private var lastHrBpm: Int? = null
     @Volatile private var lastPowerW: Int? = null
+    /** See [CarbsTracker.lastHrUpdateMs] — wall-clock of the last HR / power
+     *  emission, used to drop a stale sensor's frozen value from the sweat-rate
+     *  estimate so the dynamic rate falls back to the live sensor (or to its
+     *  documented defaults when both are gone) instead of riding a dead reading. */
+    @Volatile private var lastHrUpdateMs = 0L
+    @Volatile private var lastPowerUpdateMs = 0L
     /** Latest speed reading in km/h. `null` until the SDK first emits — used by the
      *  movement gate in [tick] to skip integration when stationary. */
     @Volatile private var lastSpeedKmh: Double? = null
@@ -280,8 +290,8 @@ class HydrationTracker(
     // Called from KSafeExtension whenever a stream emits. All are no-ops unless
     // [KSafeConfig.hydrationDynamicEstimateEnabled] is true at tick time.
 
-    fun updateHr(bpm: Int)            { lastHrBpm = bpm }
-    fun updatePower(w: Int)           { lastPowerW = w }
+    fun updateHr(bpm: Int)            { lastHrBpm = bpm; lastHrUpdateMs = System.currentTimeMillis() }
+    fun updatePower(w: Int)           { lastPowerW = w; lastPowerUpdateMs = System.currentTimeMillis() }
     fun updateSpeed(kmh: Double) {
         // D6/G2 fix — drop NaN AND Infinity samples; see MedicalEpisodeDetector
         // for the IEEE-754 taint mechanism this guards against.
@@ -427,9 +437,14 @@ class HydrationTracker(
                 // Pull all available signals into the estimator on every tick. Inputs that
                 // have not been received are passed as null so the estimator falls back to
                 // its documented defaults (50 % RH, 20 °C, 70 kg, moderate ride).
+                // Drop HR/power samples older than SENSOR_STALE_MS so a dead
+                // sensor's frozen value can't keep driving the rate — see
+                // CarbsTracker.currentBurnEstimate. `now` is this tick's clock.
+                val freshHr = lastHrBpm?.takeIf { lastHrUpdateMs > 0L && now - lastHrUpdateMs <= SENSOR_STALE_MS }
+                val freshPower = lastPowerW?.takeIf { lastPowerUpdateMs > 0L && now - lastPowerUpdateMs <= SENSOR_STALE_MS }
                 val estimate = estimateSweatRate(SweatEstimateInputs(
-                    hrBpm = lastHrBpm,
-                    powerW = lastPowerW,
+                    hrBpm = freshHr,
+                    powerW = freshPower,
                     weightKg = lastWeightKg,
                     ambientTempC = lastAmbientTempC,
                     humidityPct = lastHumidityPct,
