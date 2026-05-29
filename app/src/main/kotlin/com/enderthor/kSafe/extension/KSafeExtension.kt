@@ -25,6 +25,8 @@ import com.enderthor.kSafe.extension.crash.CrashDetectionManager
 import com.enderthor.kSafe.extension.managers.EmergencyManager
 import com.enderthor.kSafe.extension.managers.LocationManager
 import com.enderthor.kSafe.extension.util.LogReporter
+import com.enderthor.kSafe.extension.util.learnProfile
+import com.enderthor.kSafe.extension.util.resolveEffectiveCrashConfig
 import com.enderthor.kSafe.extension.managers.MedicalEpisodeDetector
 import com.enderthor.kSafe.extension.util.ReadinessAdvice
 import com.enderthor.kSafe.extension.util.ReadinessLevel
@@ -160,6 +162,12 @@ class KSafeExtension : KarooExtension("ksafe", BuildConfig.VERSION_NAME), Corout
 
     private var activeConfig = KSafeConfig()
     private var currentRideState: RideState? = null
+    @Volatile private var activeProfileId: String? = null
+    @Volatile private var activeProfileName: String? = null
+    /** Whether the crash detector is currently running under the effective config. Kept in
+     *  sync by [reapplyEffectiveCrash] so a profile switch can reconcile start/stop without
+     *  double-registering the sensor listener (CrashDetectionManager.start re-registers). */
+    @Volatile private var crashEffectiveRunning = false
     /** True once the ride-start notification has been sent for the current recording session. */
     private var rideStartNotificationSent = false
     /** Set true once the Headwind extension publishes a temperature reading for this session.
@@ -476,7 +484,7 @@ class KSafeExtension : KarooExtension("ksafe", BuildConfig.VERSION_NAME), Corout
             configManager.loadConfigFlow().collect { config ->
                 val prevActive = activeConfig.isActive
                 activeConfig = config
-                crashManager.updateConfig(config)
+                crashManager.updateConfig(effectiveCrashConfig(config))
                 // Auto-start branch of the four trackers is gated on the current ride state
                 // so a config emission at extension boot (or a settings save while idle) does
                 // NOT spin up integration / monitoring coroutines outside a ride. Crash is
@@ -517,7 +525,11 @@ class KSafeExtension : KarooExtension("ksafe", BuildConfig.VERSION_NAME), Corout
                 // An in-flight emergency countdown is left alone for Recording-active
                 // transitions — cancel via SOS/cancel button.
                 when (currentRideState) {
-                    is RideState.Idle -> applyIdleMonitoring(config)
+                    is RideState.Idle -> {
+                        val effIdle = effectiveCrashConfig(config)
+                        applyIdleMonitoring(effIdle)
+                        crashEffectiveRunning = crashShouldBeRunningNow(effIdle)
+                    }
                     is RideState.Recording -> applyMasterSwitchTransition(prevActive)
                     is RideState.Paused -> applyMasterSwitchTransitionPaused(prevActive)
                     else -> { /* null: not yet observed, leave as-is */ }
@@ -1014,6 +1026,13 @@ class KSafeExtension : KarooExtension("ksafe", BuildConfig.VERSION_NAME), Corout
                 karooSystem.streamRideProfile()
                     .collect { profile ->
                         crashManager.updateRideProfile(profile.routingPreference)
+                        activeProfileId = profile.id
+                        activeProfileName = profile.name
+                        val learned = learnProfile(activeConfig.crashProfileSettings, profile.id, profile.name)
+                        if (learned != activeConfig.crashProfileSettings) {
+                            configManager.saveConfig(activeConfig.copy(crashProfileSettings = learned))
+                        }
+                        reapplyEffectiveCrash()
                     }
             }
             }  // end supervisorScope (B10)
@@ -1047,8 +1066,10 @@ class KSafeExtension : KarooExtension("ksafe", BuildConfig.VERSION_NAME), Corout
                     // wipe an hour of fueling work). Crash + medical have no rider-visible
                     // accumulator, so .start() is safe in either case.
                     val isResumeFromPause = rideStartNotificationSent
-                    if (isResumeFromPause) crashManager.resume(activeConfig)
-                    else crashManager.start(activeConfig)
+                    val eff = effectiveCrashConfig()
+                    if (isResumeFromPause) crashManager.resume(eff)
+                    else crashManager.start(eff)
+                    crashEffectiveRunning = crashShouldBeRunningNow(eff)
                     medicalDetector.start(activeConfig)
                     if (isResumeFromPause) {
                         wellnessMonitor.resume(activeConfig)
@@ -1131,7 +1152,9 @@ class KSafeExtension : KarooExtension("ksafe", BuildConfig.VERSION_NAME), Corout
                 // running because crash detection may continue outside the ride
                 // (crashMonitorOutsideRide).
                 stopRecordingCollectors()
-                applyIdleMonitoring(activeConfig)
+                val eff = effectiveCrashConfig()
+                applyIdleMonitoring(eff)
+                crashEffectiveRunning = crashShouldBeRunningNow(eff)
                 // Reset per-ride flags
                 rideStartNotificationSent = false
                 rideWasActive = false
@@ -1174,6 +1197,7 @@ class KSafeExtension : KarooExtension("ksafe", BuildConfig.VERSION_NAME), Corout
         if (prevActive && !nowActive) {
             Timber.d("Master switch OFF mid-ride — stopping all monitoring")
             crashManager.stop()
+            crashEffectiveRunning = false
             medicalDetector.stop()
             wellnessMonitor.stop()
             carbsTracker.stop()
@@ -1202,8 +1226,10 @@ class KSafeExtension : KarooExtension("ksafe", BuildConfig.VERSION_NAME), Corout
             startCrashSensorCollectors()
             // Master-switch ON inside an already-Recording ride is semantically
             // a resume — preserve the baseline.
-            if (currentRideState is RideState.Recording) crashManager.resume(activeConfig)
-            else crashManager.start(activeConfig)
+            val eff = effectiveCrashConfig()
+            if (currentRideState is RideState.Recording) crashManager.resume(eff)
+            else crashManager.start(eff)
+            crashEffectiveRunning = crashShouldBeRunningNow(eff)
             medicalDetector.start(activeConfig)
             wellnessMonitor.resume(activeConfig)
             carbsTracker.resume(activeConfig)
@@ -1231,6 +1257,7 @@ class KSafeExtension : KarooExtension("ksafe", BuildConfig.VERSION_NAME), Corout
         if (prevActive && !nowActive) {
             Timber.d("Master switch OFF during Paused — stopping all monitoring")
             crashManager.stop()
+            crashEffectiveRunning = false
             medicalDetector.stop()
             wellnessMonitor.stop()
             carbsTracker.stop()
@@ -1247,6 +1274,40 @@ class KSafeExtension : KarooExtension("ksafe", BuildConfig.VERSION_NAME), Corout
             // stale state). The next Recording transition takes the fresh-start
             // path via `handleRideState.Recording` once the rider unpauses.
             Timber.d("Master switch ON during Paused — deferring re-arm to next Recording")
+        }
+    }
+
+    /** Global config (activeConfig) merged with the active profile's crash override. */
+    private fun effectiveCrashConfig(base: KSafeConfig = activeConfig): KSafeConfig =
+        resolveEffectiveCrashConfig(base, activeProfileId)
+
+    /** Whether crash detection should be running right now under [eff] and the current
+     *  ride state. Single source of truth for the crashEffectiveRunning bookkeeping. */
+    private fun crashShouldBeRunningNow(eff: KSafeConfig): Boolean =
+        activeConfig.isActive && eff.crashDetectionEnabled && when (currentRideState) {
+            is RideState.Recording, is RideState.Paused -> true
+            else -> eff.crashMonitorOutsideRide || eff.crashMonitorOutsideRideAnySpeed
+        }
+
+    /**
+     * Single owner of crash start/stop/threshold reconciliation under the effective
+     * (per-profile) config. Safe to call repeatedly and from any context — touches ONLY
+     * the crash manager, never the trackers/medical/check-in.
+     */
+    private fun reapplyEffectiveCrash() {
+        val eff = effectiveCrashConfig()
+        crashManager.updateConfig(eff)   // live threshold swap; never starts/stops
+        val shouldRun = crashShouldBeRunningNow(eff)
+        if (shouldRun && !crashEffectiveRunning) {
+            when (currentRideState) {
+                is RideState.Recording -> crashManager.start(eff)
+                is RideState.Paused    -> crashManager.resume(eff)
+                else -> applyIdleMonitoring(eff)   // handles minSpeed=0 outside-ride variant
+            }
+            crashEffectiveRunning = crashShouldBeRunningNow(eff)
+        } else if (!shouldRun && crashEffectiveRunning) {
+            crashManager.stop()
+            crashEffectiveRunning = false
         }
     }
 
