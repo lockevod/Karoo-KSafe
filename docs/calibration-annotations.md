@@ -12,15 +12,20 @@ reconstruct or replay them when needed.
 The Python analyser at `scripts/analyze_calibration_logs.py` understands the
 event schema; the helper `_row_iter` parses any row referenced below.
 
+The 6-char session IDs below (e.g. `58ee00`) are **random hex** generated fresh
+on each logging session — no device identifier and no personal data (see
+`CalibrationLogger.sessionId`). They are used here purely as regression-seed
+names.
+
 ---
 
-## Monday 2026-05-25 — session `58ee00`, install `1308ea`
+## Monday 2026-05-25 — session `58ee00`
 
 - **App version:** v2.0.0
 - **Profile / preset:** GRAVEL / LOW
 - **Device:** k24 (Karoo 2)
 - **Log file:** `calibration.csv` (262 KB, ~260 min, copied directly off device).
-  The Telegram chunks `ksafe_v2.0.0_1308ea_58ee00_k24*.csv` cover only the first
+  The Telegram chunks `ksafe_v2.0.0_…_58ee00_k24*.csv` cover only the first
   ~155 min — anything past that is only in `calibration.csv`.
 - **Annotated by:** Sergi, 2026-05-28.
 
