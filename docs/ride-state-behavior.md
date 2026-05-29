@@ -21,7 +21,7 @@ without having to dig through the source.
 | **Speed-drop watchdog** | Same as crash detection | Active | Zero-speed accumulator reset on pause (intentional pauses don't false-trigger) |
 | **Power / HR / Temperature / Headwind sensor streams** | **Not subscribed** (battery win — the SDK isn't keeping radios alive) | Subscribed | Stay subscribed across pause/resume |
 | **Speed / Cadence / Grade / RideProfile streams** | Subscribed (needed by crash detection if monitor-outside-ride is on) | Subscribed | Subscribed |
-| **Check-in timer** | Stopped | Active, counting down | **Stopped + any active countdown cancelled** (no warnings while you eat) |
+| **Check-in timer** | Stopped | Active, counting down | **Frozen — elapsed preserved, resumes from where it left off** (does NOT reset; any active warning/countdown cancelled) |
 | **SOS button + emergency flow** | Available | Available | Available |
 | **GPS location sampler** | Once every 2 min | Once every 2 min | Once every 2 min |
 
@@ -74,9 +74,13 @@ as "Recording-light":
   min would falsely trigger "rider has been stopped too long".
 - **Medical / wellness detection keeps running**. If you have a cardiac
   event mid-pause, KSafe still fires the alert flow.
-- **The check-in timer is paused, and any active warning countdown is
-  cancelled**. You won't get nagged with "5 min to check in" while you're
-  ordering coffee.
+- **The check-in timer freezes — it does NOT reset — and any active warning
+  countdown is cancelled**. The elapsed time is preserved and the timer
+  resumes from exactly where it left off when you start riding again. So you
+  won't get nagged with "5 min to check in" while you're ordering coffee, but
+  the dead-man's-switch is not silently disarmed either. This freeze/resume
+  semantics matters a lot with auto-pause — see
+  [the dedicated section below](#the-check-in-dead-mans-switch-across-pauses).
 - **When you unpause**, the trackers use `resume()` (not `start()`) — the
   carbs and hydration you logged before the pause are preserved across
   the coffee stop. This wasn't always true; older versions reset the
@@ -85,6 +89,50 @@ as "Recording-light":
 The sensor streams (Power, HR, Temperature, Headwind, UserProfile) stay
 subscribed across pause cycles to avoid the cost of resubscribing every
 time Karoo autopauses on a long downhill or at every traffic light.
+
+## The check-in dead-man's-switch across pauses
+
+The **check-in timer** is the "prove you're still conscious" feature: every
+*X* minutes it raises a cancellable SOS countdown, and you cancel it to say
+"I'm fine". The subtle part is what it should do when the ride pauses — and it
+interacts badly with **auto-pause** if you get it wrong. There are three
+possible behaviours, and only the third is correct:
+
+| Behaviour | Long café stop | Frequent auto-pause (traffic lights) |
+|---|---|---|
+| Keep counting through the pause | ❌ fires while you're in the café | ✅ |
+| **Reset** to a full interval on every resume | ✅ | ❌ **never fires** on a stop-start ride |
+| **Freeze + resume** (what KSafe does) | ✅ no spurious fire | ✅ keeps advancing, still fires |
+
+KSafe **freezes** the timer on pause and **resumes from where it left off** —
+it neither keeps counting nor resets:
+
+- **On pause:** the elapsed time is preserved (the logical start timestamp is
+  kept) and the warning + expiry jobs are cancelled. Nothing fires while
+  you're stopped.
+- **On resume:** the logical start is shifted forward by the pause duration,
+  so the remaining interval is exactly what was left when you stopped — not a
+  fresh full interval.
+
+The bug this avoids: an earlier version re-armed a **full** interval on every
+`Recording` entry. With auto-pause firing at every light, the timer reset
+every couple of minutes and **could never reach expiry** — the dead-man's-
+switch was silently dead. Freeze-and-resume fixes that while still keeping the
+café quiet.
+
+**Consequence — the check-in measures riding time, not wall-clock time.** A
+120-minute check-in on a stop-and-go ride fires after 120 minutes of *actual
+movement* (which might be ~140 minutes of wall-clock once you subtract 20
+minutes of stops). That is the only way to satisfy both columns of the table
+above: not spamming at the café **and** still working with auto-pause enabled.
+
+**What about collapsing at a stop?** If you fall and the bike stops, auto-pause
+kicks in and the check-in freezes — so the check-in itself won't fire. That
+case is deliberately left to the detectors that **stay active during a pause**:
+crash detection, the speed-drop watchdog (sustained zero speed), and the
+medical FLATLINE / COLLAPSE detectors. The check-in is specifically the
+"moving rider, prove you're awake" timer; the others cover the
+"stopped / collapsed" case.
 
 ## Edge case: stuck GPS during a pause
 
