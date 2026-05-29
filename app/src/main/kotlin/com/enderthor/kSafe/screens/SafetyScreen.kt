@@ -39,7 +39,7 @@ import kotlinx.coroutines.delay
  * Safety tab — crash detection, speed-drop, check-in, emergency message, countdown, SOS color.
  *
  * Tools-style content (Karoo Live, calibration log, FIT export, backup/restore, Simulate Crash)
- * lives in [ToolsScreen] so this screen stays focused on "things that protect the rider".
+ * lives in [SettingsScreen] so this screen stays focused on "things that protect the rider".
  */
 @Composable
 fun SafetyScreen(vm: MainViewModel) {
@@ -66,7 +66,7 @@ fun SafetyScreen(vm: MainViewModel) {
     var timerFieldColor by remember(config.timerFieldColor) { mutableStateOf(config.timerFieldColor) }
 
     // Auto-save: runs whenever any setting changes, with a short debounce for text fields.
-    // Karoo Live + calibration + backup live in ToolsScreen now and own their own save loops.
+    // Karoo Live + calibration + backup live in SettingsScreen now and own their own save loops.
     LaunchedEffect(
         emergencyMessage, countdownSeconds,
         crashEnabled, crashSensitivity, minSpeedForCrash, customThreshold, crashConfirmSpeed,
@@ -76,10 +76,19 @@ fun SafetyScreen(vm: MainViewModel) {
         sosFieldColor, timerFieldColor,
     ) {
         delay(600)
-        vm.saveConfig(
-            config.copy(
+        // Merge onto the LATEST config (not this composition snapshot) so a debounced
+        // Safety save can't clobber an unrelated field — e.g. the master `isActive`
+        // kill-switch or the calibration toggle changed on another tab within the 600 ms
+        // window. Same lost-update fix already applied to Settings/Health/Fueling.
+        vm.updateConfig {
+            it.copy(
                 emergencyMessage        = emergencyMessage,
-                countdownSeconds        = countdownSeconds.toIntOrNull() ?: 30,
+                // Clamp on commit — a literal "0" parses as 0, which would skip the
+                // entire cancel UI loop (`for (n in 0 downTo 1)` is an empty range)
+                // and fire the alert with no rider abort window. Five seconds is
+                // the documented minimum the SOS overlay can usefully render; 120 s
+                // is the practical maximum any real rider would set.
+                countdownSeconds        = (countdownSeconds.toIntOrNull() ?: 30).coerceIn(5, 120),
                 crashDetectionEnabled   = crashEnabled,
                 crashSensitivity        = crashSensitivity,
                 customCrashThreshold    = customThreshold,
@@ -88,13 +97,25 @@ fun SafetyScreen(vm: MainViewModel) {
                 crashMonitorOutsideRide = crashOutsideRide,
                 crashMonitorOutsideRideAnySpeed = crashOutsideRideAny,
                 speedDropDetectionEnabled = speedDropEnabled,
-                speedDropMinutes        = speedDropMinutes.toIntOrNull() ?: 5,
+                // J4 — clamp speedDropMinutes on commit. The watchdog gates a
+                // 5-min zero-speed window plus a 60-s accel-stillness gate, so
+                // 1 minute is the practical minimum that produces a useful alert;
+                // 60 minutes is well above any realistic rider preference. A
+                // literal "0" would have the timer fire immediately on every
+                // sub-3.5 km/h speed sample.
+                speedDropMinutes        = (speedDropMinutes.toIntOrNull() ?: 5).coerceIn(1, 60),
                 checkinEnabled          = checkinEnabled,
-                checkinIntervalMinutes  = checkinInterval.toIntOrNull() ?: 120,
+                // J4 — clamp checkinIntervalMinutes on commit. A literal "0"
+                // would persist 0 and cause delay(0) in startCheckinJobs →
+                // CHECKIN_EXPIRED fires immediately on every subsequent ride
+                // start, sending a false SOS to contacts within seconds. 10 min
+                // is the documented practical minimum; 24 h is the practical
+                // maximum.
+                checkinIntervalMinutes  = (checkinInterval.toIntOrNull() ?: 120).coerceIn(10, 1440),
                 sosFieldColor           = sosFieldColor,
                 timerFieldColor         = timerFieldColor,
             )
-        )
+        }
     }
 
     Column(
@@ -116,6 +137,32 @@ fun SafetyScreen(vm: MainViewModel) {
             fontWeight = FontWeight.Bold,
             color = MaterialTheme.colorScheme.onSurfaceVariant
         )
+
+        // ── Buzzer / mute warning banner ────────────────────────────────────
+        // The Karoo has a piezo buzzer (not a speaker) and the SDK does not expose
+        // the system mute state. Surface this at the TOP of the Safety tab so a
+        // rider relying on KSafe for emergencies knows that muting the device
+        // silences every audible alert, with no detection or override path.
+        Card(
+            colors = CardDefaults.cardColors(
+                containerColor = MaterialTheme.colorScheme.tertiaryContainer
+            ),
+            elevation = CardDefaults.cardElevation(defaultElevation = 2.dp),
+        ) {
+            Column(modifier = Modifier.padding(8.dp)) {
+                Text(
+                    text = stringResource(R.string.safety_buzzer_mute_title),
+                    style = MaterialTheme.typography.bodySmall,
+                    fontWeight = FontWeight.Bold,
+                    color = MaterialTheme.colorScheme.onTertiaryContainer
+                )
+                Text(
+                    text = stringResource(R.string.safety_buzzer_mute_hint),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onTertiaryContainer
+                )
+            }
+        }
 
         // Emergency message
         OutlinedTextField(

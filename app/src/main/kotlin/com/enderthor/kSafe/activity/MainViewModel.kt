@@ -8,13 +8,19 @@ import com.enderthor.kSafe.data.KSafeBackupExport
 import com.enderthor.kSafe.data.ProviderType
 import com.enderthor.kSafe.data.SenderConfig
 import com.enderthor.kSafe.data.defaultSenderConfigs
+import com.enderthor.kSafe.data.materializeAlertDefaults
+import com.enderthor.kSafe.data.migrateToLatest
 import com.enderthor.kSafe.data.toBackupExport
 import com.enderthor.kSafe.data.toSenderConfigs
 import com.enderthor.kSafe.extension.jsonForExport
 import com.enderthor.kSafe.extension.jsonWithUnknownKeys
 import com.enderthor.kSafe.extension.managers.ConfigurationManager
+import com.enderthor.kSafe.extension.streamUserProfile
+import io.hammerhead.karooext.KarooSystemService
+import io.hammerhead.karooext.models.UserProfile
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import kotlinx.serialization.encodeToString
@@ -26,16 +32,47 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     private val configManager = ConfigurationManager(application)
 
+    /**
+     * Settings-screen-owned KarooSystemService so the UI can read live data from the Karoo
+     * (currently only [UserProfile] for the wellness "% of max HR" resolved-bpm hint).
+     *
+     * Separate from the [KSafeExtension]'s own service — that one runs in the extension
+     * service process and is what the ride-time managers consume. Activities and services
+     * communicate with the Karoo OS via independent client instances.
+     */
+    private val karooSystem = KarooSystemService(application).also { it.connect { } }
+
     val config: StateFlow<KSafeConfig> = configManager.loadConfigFlow()
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), KSafeConfig())
 
     val senderConfigs: StateFlow<List<SenderConfig>> = configManager.loadSenderConfigFlow()
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
 
+    /**
+     * Live stream of the rider's Karoo profile, used by the wellness UI to show the
+     * resolved bpm threshold derived from `maxHr × pct / 100`. Null until the Karoo
+     * delivers the first event (no profile set in the launcher, or the system service
+     * hasn't connected yet).
+     */
+    val userProfile: StateFlow<UserProfile?> = karooSystem.streamUserProfile()
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), null)
+
     // ─── Config updates ───────────────────────────────────────────────────────
 
     fun saveConfig(config: KSafeConfig) {
         viewModelScope.launch { configManager.saveConfig(config) }
+    }
+
+    /**
+     * Read-modify-write a subset of config fields against the LATEST emitted config rather
+     * than a composition snapshot. A debounced multi-field save in SettingsScreen otherwise
+     * captures `config` at launch time and `config.copy(...)` clobbers any OTHER field
+     * (e.g. a calibration toggle) saved from a different snapshot in the same window —
+     * a last-writer-wins lost update. Applying [transform] to `config.value` at execution
+     * time (after the debounce, so prior writes have propagated) preserves unrelated fields.
+     */
+    fun updateConfig(transform: (KSafeConfig) -> KSafeConfig) {
+        viewModelScope.launch { configManager.saveConfig(transform(config.value)) }
     }
 
     fun saveSenderConfigs(configs: List<SenderConfig>) {
@@ -50,11 +87,26 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         userKey: String = "",
         userKey2: String = "",
         userKey3: String = "",
-        phoneNumber: String = ""
+        phoneNumber: String = "",
+        apiKey2: String = "",
+        phoneNumber2: String = "",
+        apiKey3: String = "",
+        phoneNumber3: String = "",
     ) {
         val updated = senderConfigs.value.toMutableList()
         val idx = updated.indexOfFirst { it.provider == provider }
-        val newConfig = SenderConfig(provider, apiKey, userKey, userKey2, userKey3, phoneNumber)
+        val newConfig = SenderConfig(
+            provider = provider,
+            apiKey = apiKey,
+            userKey = userKey,
+            userKey2 = userKey2,
+            userKey3 = userKey3,
+            phoneNumber = phoneNumber,
+            apiKey2 = apiKey2,
+            phoneNumber2 = phoneNumber2,
+            apiKey3 = apiKey3,
+            phoneNumber3 = phoneNumber3,
+        )
         if (idx >= 0) updated[idx] = newConfig else updated.add(newConfig)
         saveSenderConfigs(updated)
     }
@@ -69,9 +121,23 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
      * Serializes current config + sender configs to a pretty-printed JSON string.
      * Each provider has its own typed block containing only its relevant fields,
      * making the file a clean, self-documented template for manual editing.
+     *
+     * Empty alert-customisation fields are pre-filled with their localised default texts
+     * (see [materializeAlertDefaults]) so the rider has a concrete starting point to edit
+     * rather than an empty string they'd have to know how to fill.
+     *
+     * Re-loads from DataStore via `first()` rather than `config.value` because the StateFlow
+     * uses `WhileSubscribed(5000)` — if no UI is collecting at the moment Export is tapped
+     * (e.g. the rider just toggled away from the Settings tab), `.value` would return the
+     * `KSafeConfig()` initial value and the rider would silently get a defaults-only file
+     * written to disk. The DataStore-backed flow always emits the persisted value first.
      */
-    fun exportToJson(): String =
-        jsonForExport.encodeToString(senderConfigs.value.toBackupExport(config.value))
+    suspend fun exportToJson(): String {
+        val freshConfig = configManager.loadConfigFlow().first()
+        val freshSenders = configManager.loadSenderConfigFlow().first()
+        val materialized = freshConfig.materializeAlertDefaults(getApplication())
+        return jsonForExport.encodeToString(freshSenders.toBackupExport(materialized))
+    }
 
     /**
      * Parses [json] and overwrites stored config + sender configs.
@@ -106,12 +172,22 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     .toSenderConfigs()
             }
 
-            saveConfig(config)
+            // Normalise the imported blob to the current schema before persisting. An export
+            // from an older app version carries a stale configVersion + pre-migration field
+            // layout; without this the read path eventually migrates it, but persisting the
+            // un-migrated blob is a latent footgun (e.g. a version-0 stamp re-runs the v0→v2
+            // crash-speed rewrite on every read). migrateToLatest() is idempotent.
+            saveConfig(config.migrateToLatest())
             saveSenderConfigs(senderConfigs)
             true
         } catch (e: Exception) {
             Timber.e(e, "Failed to import config from JSON")
             false
         }
+    }
+
+    override fun onCleared() {
+        karooSystem.disconnect()
+        super.onCleared()
     }
 }

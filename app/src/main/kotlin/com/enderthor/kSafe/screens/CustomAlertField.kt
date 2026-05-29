@@ -1,10 +1,16 @@
 package com.enderthor.kSafe.screens
 
+import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.text.font.FontStyle
+import com.enderthor.kSafe.R
+import com.enderthor.kSafe.extension.util.safeTake
 
 /**
  * Reusable input for an alert title or detail "custom override".
@@ -32,7 +38,9 @@ import androidx.compose.ui.Modifier
  * @param defaultText       Built-in default text shown when nothing is saved.
  * @param tokensHint        Supporting line listing the available tokens
  *                          (e.g. "Tokens: {deficit}, {elapsed}"). May be empty.
- * @param maxLength         Hard cap on the input length (default 80).
+ * @param maxLength         Hard cap on the input length (default 80). A live `N / max`
+ *                          counter is shown so the rider can see how much room is left —
+ *                          the Karoo `InRideAlert` popup clips anything longer mid-word.
  * @param singleLine        True for single-line title fields; false for multi-line detail.
  */
 @Composable
@@ -45,19 +53,45 @@ fun CustomAlertField(
     maxLength: Int = 80,
     singleLine: Boolean = true,
 ) {
-    val displayValue = value.ifBlank { defaultText }
+    val isFollowingDefault = value.isBlank()
+    val displayValue = if (isFollowingDefault) defaultText else value
     OutlinedTextField(
         value = displayValue,
         onValueChange = { v ->
-            val clipped = v.take(maxLength)  // length-cap only — does NOT trim whitespace
+            val clipped = v.safeTake(maxLength)  // length-cap only — surrogate-pair safe
             // Re-tracking the default when the rider's text exactly matches it keeps the
             // config field empty so future default-string changes still propagate.
             onCommit(if (clipped == defaultText) "" else clipped)
         },
         label = { Text(label) },
-        supportingText = if (tokensHint.isNotBlank()) {
-            { Text(tokensHint) }
-        } else null,
+        supportingText = {
+            // Always show the state explicitly. Without this, clearing the field with
+            // backspace produces no visible feedback — the default text just re-appears
+            // and looks like nothing happened. The hint lets the rider see they're back
+            // on the default while keeping the editable text useful.
+            Column {
+                if (isFollowingDefault) {
+                    Text(
+                        text = stringResource(R.string.custom_alert_using_default),
+                        style = MaterialTheme.typography.bodySmall,
+                        fontStyle = FontStyle.Italic,
+                    )
+                }
+                if (tokensHint.isNotBlank()) {
+                    Text(text = tokensHint, style = MaterialTheme.typography.bodySmall)
+                }
+                // Live length counter. The Karoo InRideAlert popup clips a long detail
+                // mid-word, so this is the rider's cue to keep the text within budget.
+                Text(
+                    text = stringResource(
+                        R.string.custom_alert_length_counter,
+                        displayValue.length,
+                        maxLength,
+                    ),
+                    style = MaterialTheme.typography.bodySmall,
+                )
+            }
+        },
         singleLine = singleLine,
         modifier = Modifier.fillMaxWidth(),
     )

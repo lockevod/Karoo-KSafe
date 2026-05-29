@@ -6,10 +6,12 @@
 -keep class com.enderthor.kSafe.activity.FieldTapReceiver { *; }
 
 # ─── DataTypes registered via extension_info.xml ─────────────────────────────
-# All seven DataTypes that appear in res/xml/extension_info.xml plus the two
-# Status fields that the Karoo OS instantiates via the extension's type list.
-# The wildcard covers slot variants (custom-message-field-2/3, carb-log-1/2/3,
-# webhook-field-1/2, etc.) so adding a new slot does not require a new rule.
+# All 16 DataTypes declared in res/xml/extension_info.xml (SOS, Safety Timer,
+# Custom Message ×3, Webhook ×2, Carb Log ×3, Carb Status, Carb Burn Rate,
+# Carbs Burned, Hydration Log ×2, Hydration Status) plus the shared state
+# objects and Glance ActionCallback subclasses living in the same package.
+# The wildcard covers slot variants so adding a new slot or a new sibling
+# DataType in this package does not require a new rule.
 -keep class com.enderthor.kSafe.datatype.** { *; }
 
 # ─── Glance ActionCallbacks (referenced by class name via actionRunCallback) ──

@@ -3,12 +3,16 @@ package com.enderthor.kSafe.datatype
 import android.app.PendingIntent
 import android.content.Context
 import android.content.Intent
+import android.graphics.Color
+import android.view.Gravity
 import android.view.View
 import android.widget.RemoteViews
 import com.enderthor.kSafe.R
 import com.enderthor.kSafe.activity.FieldTapReceiver
+import com.enderthor.kSafe.data.FIELD_COLOR_AUTO
 import com.enderthor.kSafe.data.KSafeConfig
 import com.enderthor.kSafe.extension.managers.ConfigurationManager
+import com.enderthor.kSafe.extension.util.safeTake
 import io.hammerhead.karooext.KarooSystemService
 import io.hammerhead.karooext.extension.DataTypeImpl
 import io.hammerhead.karooext.internal.ViewEmitter
@@ -22,7 +26,7 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.awaitCancellation
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.flow.combine
-import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.launch
 import timber.log.Timber
 
@@ -55,12 +59,23 @@ class WebhookDataType(
 
     private val requestCode = 105 + slot  // 106 for slot1, 107 for slot2
 
+    // Cached PendingIntent — see CarbLogDataType.
+    @Volatile private var cachedPi: PendingIntent? = null
+    private fun pendingIntentFor(context: Context): PendingIntent {
+        cachedPi?.let { return it }
+        return PendingIntent.getBroadcast(
+            context, requestCode,
+            Intent(tapAction).setPackage(context.packageName),
+            PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
+        ).also { cachedPi = it }
+    }
+
     private val configManager = ConfigurationManager(context)
 
     private fun labelFromConfig(config: KSafeConfig) = if (slot == 1)
-        config.webhook1Label.ifBlank { "WH1" }.take(7)
+        config.webhook1Label.ifBlank { "WH1" }.safeTake(7)
     else
-        config.webhook2Label.ifBlank { "WH2" }.take(7)
+        config.webhook2Label.ifBlank { "WH2" }.safeTake(7)
 
     private fun isEnabled(config: KSafeConfig) = if (slot == 1)
         config.webhook1Enabled
@@ -80,24 +95,35 @@ class WebhookDataType(
         hint: String = "",
         clickable: Boolean = true,
     ): RemoteViews {
-        val content = RemoteViews(context.packageName, R.layout.field_view).apply {
-            setInt(R.id.field_container, "setBackgroundColor", bgColor)
-            setTextViewText(R.id.field_text_main, main.take(9))
-            setTextViewText(R.id.field_text_hint, hint.take(9))
+        // See CarbLogDataType.buildView — same layout-switch + center alignment
+        // (tap-target field) + auto-mode text colour contract.
+        val isAuto = bgColor == FIELD_COLOR_AUTO
+        val layout = if (isAuto) R.layout.field_view_auto else R.layout.field_view
+        val content = RemoteViews(context.packageName, layout).apply {
+            if (!isAuto) setInt(R.id.field_container, "setBackgroundColor", bgColor)
+            setTextViewText(R.id.field_text_main, main.safeTake(9))
+            setTextViewText(R.id.field_text_hint, hint.safeTake(9))
             setViewVisibility(R.id.field_text_hint, if (hint.isEmpty()) View.GONE else View.VISIBLE)
+            setInt(R.id.field_text_main, "setGravity", Gravity.CENTER)
+            setInt(R.id.field_text_hint, "setGravity", Gravity.CENTER)
+            if (isAuto) {
+                val dark = context.isKarooNightMode()
+                setTextColor(R.id.field_text_main, if (dark) Color.WHITE else Color.BLACK)
+                setTextColor(R.id.field_text_hint, if (dark) 0xCCFFFFFF.toInt() else 0xCC000000.toInt())
+            }
         }
-        if (!viewConfig.preview && clickable) {
-            val pi = PendingIntent.getBroadcast(
-                context, requestCode,
-                Intent(tapAction).setPackage(context.packageName),
-                PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
-            )
-            val wrapper = RemoteViews(context.packageName, R.layout.field_tap_wrapper)
-            wrapper.setOnClickPendingIntent(R.id.field_tap_wrapper, pi)
-            wrapper.addView(R.id.field_tap_wrapper, content)
-            return wrapper
+        // Always wrap in field_tap_wrapper in non-preview mode so the structural
+        // RemoteViews layout stays identical across IDLE / FIRING / OFF. Karoo's
+        // OS re-attaches the click handler whenever the top-level RemoteViews
+        // structure changes; returning raw content on the non-clickable branches
+        // would lose rapid taps during the structural swap. See CarbLogDataType.
+        if (viewConfig.preview) return content
+        val wrapper = RemoteViews(context.packageName, R.layout.field_tap_wrapper)
+        if (clickable) {
+            wrapper.setOnClickPendingIntent(R.id.field_tap_wrapper, pendingIntentFor(context))
         }
-        return content
+        wrapper.addView(R.id.field_tap_wrapper, content)
+        return wrapper
     }
 
     override fun startView(context: Context, config: ViewConfig, emitter: ViewEmitter) {
@@ -110,42 +136,45 @@ class WebhookDataType(
             awaitCancellation()
         }
 
-        // Immediate initial clickable view with real config — ensures PendingIntent is always
-        // registered from the first frame without showing a generic "WH1/WH2" placeholder.
-        scope.launch {
-            val initialConfig = runCatching { configManager.loadConfigFlow().first() }.getOrNull()
-            if (initialConfig != null) {
-                val label     = labelFromConfig(initialConfig)
-                val enabled   = isEnabled(initialConfig)
-                val idleColor = idleColorFromConfig(initialConfig)
-                val bgColor   = if (enabled) idleColor else COLOR_DISABLED
-                val hint      = if (enabled) "tap" else "off"
-                emitter.updateView(buildView(context, config, bgColor, label, hint))
-            }
-            // If DataStore hasn't emitted yet (very rare), the combine below will render the first view
-        }
-
+        // NOTE: no separate "seed" coroutine here. A previous parallel `scope.launch`
+        // that read `loadConfigFlow().first()` and emitted an initial frame raced the
+        // `viewJob` combine below — both called `emitter.updateView` on Dispatchers.Default
+        // with no ordering guarantee, so the slower seed could overwrite a fresher combine
+        // frame and it bypassed distinctUntilChanged. The combine path already renders the
+        // real config (label + idle colour) and a clickable IDLE frame — which registers the
+        // tap PendingIntent — on its FIRST emission, because WebhookState.flowForSlot is a
+        // StateFlow seeded with IDLE so the combine fires as soon as configFlow emits (the
+        // same trigger the seed used). Dropping the seed removes the race, the redundant
+        // build+IPC, and matches the "let the data flow's first emission be the only early
+        // updateView" rule for coalescing Karoo firmware.
         val viewJob = scope.launch {
             try {
+                // See CarbLogDataType — Frame + distinctUntilChanged dedups identical frames
+                // so an unrelated config edit doesn't force a wasted buildView + IPC.
                 combine(
                     WebhookState.flowForSlot(slot),
-                    configManager.loadConfigFlow()
-                ) { stateData, ksafeConfig ->
+                    configManager.loadConfigFlow(),
+                    com.enderthor.kSafe.extension.KSafeExtension.nightModeFlow,
+                ) { stateData, ksafeConfig, dark ->
                     val label     = labelFromConfig(ksafeConfig)
-                    val enabled   = isEnabled(ksafeConfig)
+                    // In preview always render as enabled — see note in the primer above.
+                    val enabled   = config.preview || isEnabled(ksafeConfig)
                     val idleColor = idleColorFromConfig(ksafeConfig)
-                    when (stateData.state) {
-                        WebhookState.IDLE    -> {
+                    val frame = when (stateData.state) {
+                        WebhookState.IDLE -> {
                             val bgColor = if (enabled) idleColor else COLOR_DISABLED
-                            val hint    = if (enabled) "tap" else "off"
-                            buildView(context, config, bgColor, label, hint)
+                            val hint    = if (enabled) context.getString(R.string.field_state_webhook_tap)
+                                          else context.getString(R.string.field_state_webhook_disabled)
+                            Frame(bgColor, label, hint, clickable = true)
                         }
-                        WebhookState.FIRING  -> buildView(context, config, COLOR_FIRING,  label, "firing…", clickable = false)
-                        WebhookState.SUCCESS -> buildView(context, config, COLOR_SUCCESS,  label, stateData.message.ifBlank { "OK ✓" }, clickable = false)
-                        WebhookState.ERROR   -> buildView(context, config, COLOR_ERROR,    label, stateData.message.ifBlank { "ERR retry" })
+                        WebhookState.FIRING  -> Frame(COLOR_FIRING,  label, context.getString(R.string.field_state_webhook_firing), clickable = false)
+                        WebhookState.SUCCESS -> Frame(COLOR_SUCCESS, label, stateData.message.ifBlank { context.getString(R.string.field_state_webhook_ok) }, clickable = false)
+                        WebhookState.ERROR   -> Frame(COLOR_ERROR,   label, stateData.message.ifBlank { context.getString(R.string.field_state_err_retry) }, clickable = true)
                     }
-                }.collect { view ->
-                    emitter.updateView(view)
+                    // See CarbLogDataType — pair with `dark` so a theme flip re-renders.
+                    frame to dark
+                }.distinctUntilChanged().collect { (f, _) ->
+                    emitter.updateView(buildView(context, config, f.bgColor, f.main, f.hint, f.clickable))
                 }
             } catch (_: CancellationException) {
                 // normal
@@ -161,4 +190,12 @@ class WebhookDataType(
             scopeJob.cancel()
         }
     }
+
+    /** See [CarbLogDataType.Frame] — dedup snapshot for the upstream `combine`. */
+    private data class Frame(
+        val bgColor: Int,
+        val main: String,
+        val hint: String,
+        val clickable: Boolean,
+    )
 }

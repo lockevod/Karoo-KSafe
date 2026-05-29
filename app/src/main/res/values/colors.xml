@@ -1,8 +1,20 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
+    <!--
+      InRideAlert color contract: the Karoo SDK's InRideAlert.backgroundColor and
+      .textColor parameters expect Android RESOURCE IDs (`R.color.x`), NOT packed
+      ARGB ints. Passing a packed int (e.g. 0xFFE65100) is interpreted as a resource
+      ID and crashes the ride app with `Resources$NotFoundException`. All InRideAlert
+      dispatches in this app MUST use one of the entries below (or add a new one).
+    -->
     <color name="alert_red">#B71C1C</color>
     <color name="alert_orange">#E65100</color>
+    <color name="alert_orange_light">#EF6C00</color>
     <color name="alert_yellow">#F57F17</color>
     <color name="alert_green">#1B5E20</color>
+    <color name="alert_blue">#1565C0</color>
+    <color name="alert_purple">#6A1B9A</color>
+    <color name="alert_brown">#5D4037</color>
+    <color name="alert_slate">#263238</color>
     <color name="alert_text_white">#FFFFFF</color>
 </resources>

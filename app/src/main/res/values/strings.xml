@@ -8,13 +8,13 @@
          medical*Custom* / wellness*Custom* config fields. Tokens substituted at runtime
          where they appear: {bpm}, {threshold}, {minutes}, {drift}. -->
     <string name="warning_wellness_high_hr_title">Heart rate high</string>
-    <string name="warning_wellness_high_hr_detail">HR {bpm} bpm above {threshold} for {minutes} min — consider a break.</string>
+    <string name="warning_wellness_high_hr_detail">HR {bpm} high {minutes} min — ease off</string>
     <string name="warning_wellness_critical_hr_title">HR critical — slow down</string>
-    <string name="warning_wellness_critical_hr_detail">HR at {bpm} bpm (over {threshold} for {minutes} min) — slow down now.</string>
+    <string name="warning_wellness_critical_hr_detail">HR {bpm} — slow down now</string>
     <string name="warning_wellness_decoupling_title">HR drift detected</string>
-    <string name="warning_wellness_decoupling_detail">HR drift {drift}% sustained {minutes} min — cool down and hydrate.</string>
+    <string name="warning_wellness_decoupling_detail">HR drift {drift}% — cool down</string>
     <string name="warning_medical_title">Medical alert</string>
-    <string name="warning_medical_detail">HR at {bpm} bpm — possible medical episode, check on the rider.</string>
+    <string name="warning_medical_detail">HR {bpm} bpm — check the rider</string>
 
     <!-- BonusAction labels -->
     <string name="action_cancel_emergency">KSafe: Cancel Emergency</string>
@@ -52,7 +52,7 @@
     <string name="settings_master_hint">When OFF the extension stops monitoring everything — crash, speed-drop, check-in, Health (HR), Fueling. Notifications already configured (ride start/end, custom messages, webhooks) are also suppressed. Leave ON unless you want a hard stop.</string>
     <string name="actions_section_karoo_live">Karoo Live notifications</string>
     <string name="actions_section_karoo_live_tests">Test ride notifications</string>
-    <string name="fueling_fit_export_hint">Writes cumulative carbs (g) and hydration (ml) into the recorded FIT so Strava / Intervals.icu / TrainingPeaks can plot them alongside HR and power.</string>
+    <string name="fueling_fit_export_hint">Writes KSafe data into the recorded FIT so Strava / Intervals.icu / TrainingPeaks can plot it alongside HR and power. Includes cumulative carbs logged (g), cumulative carbs burned (g), current carb burn rate (g/h) and hydration (ml); plus, when wellness is enabled, current HR drift (%), max drift this ride, and wellness alert count.</string>
     <string name="simulate_crash_label">Simulate Crash (send alert now)</string>
     <string name="simulate_crash_confirm_title">Send a real alert?</string>
     <string name="simulate_crash_confirm_body">This sends the configured emergency message through your active provider — no countdown, no cancel. Use this only to verify the channel works end-to-end.</string>
@@ -64,34 +64,82 @@
     <string name="fueling_info_banner">Carbs use HR/power zones if available for intensity-aware targeting; without sensors the target is time-proportional. Hydration is always time-proportional — adjust target manually for hot days.</string>
     <string name="fueling_carb_section">Carbs</string>
     <string name="fueling_hyd_section">Hydration</string>
-    <string name="fueling_target_carb_label">Target (g/h)</string>
+    <!-- v18: target field removed; carb burn now computed from physiology. The
+         former strings are kept as comments above so any in-flight translations
+         have a reference point if they need to be retired downstream. -->
+    <string name="fueling_physiology_hint">Carb burn is estimated from your power meter (most accurate) or HR + age + sex (Keytel) or HR + max/resting HR (Swain).</string>
+    <string name="fueling_rider_age_label">Age (years)</string>
+    <string name="fueling_rider_sex_label">Sex (for Keytel HR-only fallback)</string>
+    <string name="fueling_rider_sex_male">Male</string>
+    <string name="fueling_rider_sex_female">Female</string>
+    <string name="fueling_rider_sex_unset">Not set</string>
     <string name="fueling_target_hyd_label">Target (ml/h)</string>
+    <string name="fueling_target_hyd_hint">Typical: 500–750 ml/h. Hot, humid or long rides: 1000+ ml/h.</string>
     <string name="fueling_alert_deficit_label">Alert by deficit</string>
     <string name="fueling_alert_time_label">Alert by time</string>
     <string name="fueling_deficit_threshold_g_label">Threshold (g)</string>
     <string name="fueling_deficit_threshold_ml_label">Threshold (ml)</string>
-    <string name="fueling_time_interval_label">Interval (min)</string>
-    <string name="fueling_initial_delay_label">Initial delay (min, 0 = off)</string>
-    <string name="fueling_custom_title_label">Custom alert title (optional)</string>
-    <string name="fueling_custom_title_carb_placeholder">Default: Eat something</string>
-    <string name="fueling_custom_title_hyd_placeholder">Default: Drink something</string>
+    <!-- Timer labels: v17 — grid-aligned pure-interval reminders. The "Remind every"
+         cadence is anchored to the session start (ticks at t = N × interval). "Skip
+         first" is a filter — reminders whose scheduled tick falls earlier than the
+         configured minute are silently dropped, the grid is NOT shifted forward. -->
+    <string name="fueling_time_interval_label">Remind every (min)</string>
+    <string name="fueling_initial_delay_label">Skip first (min, 0 = off)</string>
+    <!-- Deficit labels: v17 — "Skip first" suppresses the FIRST deficit alert during the
+         first N minutes (so a fresh-ride deficit doesn't nag at minute ~25). "Repeat every"
+         is the cadence of subsequent reminders while the deficit stays above threshold —
+         typical values 5 / 10 / 15 / 20 / 30 min. Default 10. -->
+    <string name="fueling_deficit_initial_delay_label">Skip first (min, 0 = off)</string>
+    <string name="fueling_deficit_reminder_interval_label">Repeat every (min)</string>
+    <string name="fueling_deficit_reminder_interval_hint">Repeated only while the rider keeps the deficit. The first deficit alert is gated by the initial delay above.</string>
+    <string name="fueling_alert_bg_color_label">Alert background colour</string>
     <string name="fueling_enabled_label">Enabled</string>
     <string name="fueling_items_section">Items</string>
+    <string name="fueling_beep_pattern_label">Sound</string>
+    <string name="beep_pattern_off">Off (visual only)</string>
+    <string name="beep_pattern_single_long">Single long beep</string>
+    <string name="beep_pattern_double_short">Double short pip</string>
+    <string name="beep_pattern_rising_triple">Rising triple chime</string>
+    <string name="beep_pattern_urgent_pulse">Urgent pulse</string>
+    <string name="beep_pattern_done">Done</string>
+    <string name="health_warning_sound_label">Warning sound</string>
+    <string name="health_emergency_sound_hint">Emergency-level uses the urgent crash countdown beep — not configurable by design.</string>
+    <string name="health_medical_sound_hint_warning">In Warning mode this alert plays the picker below (shared with wellness — one sound for every Warning-level alert).</string>
     <string name="fueling_slot_label_label">Label</string>
     <string name="fueling_slot_grams_label">g</string>
     <string name="fueling_slot_ml_label">ml</string>
-    <string name="fueling_post_ride_summary_label">Post-ride summary</string>
-    <string name="fueling_fit_export_label">Write to FIT (Strava / Intervals.icu)</string>
+    <string name="fueling_fit_export_label">Write KSafe data to FIT (Strava / Intervals.icu)</string>
+
+    <!-- Readiness at ride start -->
+    <string name="readiness_at_ride_start_label">Readiness advice at ride start</string>
+    <string name="readiness_at_ride_start_hint">Reads the last 10 rides\' wellness summaries and shows a brief InRideAlert at the start of the next ride if the rider should take it easy. Silent when fully recovered — no per-ride spam. Default ON.</string>
+    <string name="readiness_alert_caution_title">Caution today</string>
+    <string name="readiness_alert_take_easy_title">Take it easy today</string>
+
+    <!-- Footer link to the full docs on GitHub — Karoo can't open URLs, so this is a
+         plain-text reference the rider remembers and looks up on their phone later. -->
+    <string name="fueling_full_guide_hint">More tips and full guide: github.com/lockevod/Karoo-KSafe → docs/health-fueling.md</string>
+    <string name="settings_docs_footer">Help and full docs: github.com/lockevod/Karoo-KSafe → docs/</string>
+
+    <!-- Hydration dynamic estimate -->
+    <string name="fueling_hyd_dynamic_label">Estimate hydration target dynamically</string>
+    <string name="fueling_hyd_dynamic_hint_on">Target now varies with HR / power, body weight, ambient temperature and humidity. Uses karoo-headwind weather data when the extension is installed; otherwise the Karoo onboard temperature sensor (biased +3-8 °C) and 50 %% assumed humidity. Expect ±25-35 %% accuracy in the common HR + onboard configuration; closer to ±20 %% with power meter + Headwind.</string>
+    <string name="fueling_hyd_dynamic_hint_off">Currently using the fixed per-hour target below.</string>
     <string name="fueling_carb_alert_title">Eat something</string>
-    <string name="fueling_carb_alert_detail_deficit">Behind by {deficit}g — eat something now (target {target} g/h).</string>
-    <string name="fueling_carb_alert_detail_time">{elapsed} min since last log — time to eat (target {target} g/h).</string>
+    <string name="fueling_carb_alert_detail_deficit">Eat now — behind {deficit} g</string>
+    <string name="fueling_carb_alert_detail_time">Eat now — {elapsed} min since last</string>
     <string name="fueling_hyd_alert_title">Drink something</string>
-    <string name="fueling_hyd_alert_detail_deficit">Behind by {deficit}ml — drink now (target {target} ml/h).</string>
-    <string name="fueling_hyd_alert_detail_time">{elapsed} min since last log — drink (target {target} ml/h).</string>
+    <string name="fueling_hyd_alert_detail_deficit">Drink now — behind {deficit} ml</string>
+    <string name="fueling_hyd_alert_detail_time">Drink now — {elapsed} min since last</string>
 
     <!-- Fueling BonusActions -->
-    <string name="action_log_carb">KSafe: Log Carb</string>
-    <string name="action_log_drink">KSafe: Log Drink</string>
+    <string name="action_log_carb_1">KSafe: Log Carb 1</string>
+    <string name="action_log_carb_2">KSafe: Log Carb 2</string>
+    <string name="action_log_carb_3">KSafe: Log Carb 3</string>
+    <string name="action_log_drink_1">KSafe: Log Drink 1</string>
+    <string name="action_log_drink_2">KSafe: Log Drink 2</string>
+    <!-- Legacy string IDs preserved for any external translation that still references them.
+         The new per-slot string IDs above are what extension_info.xml uses now. -->
 
     <!-- Fueling DataType labels -->
     <string name="carb_log_1_datatype_name">KSafe Carb 1</string>
@@ -100,23 +148,29 @@
     <string name="carb_log_datatype_desc">Tap to log a configured carb item (e.g. gel, bar). Counts toward your hourly target.</string>
     <string name="carb_status_datatype_name">KSafe Carb Status</string>
     <string name="carb_status_datatype_desc">Shows current carb deficit relative to target. Color-coded by urgency.</string>
+    <string name="carb_burn_rate_datatype_name">KSafe Carb Burn Rate</string>
+    <string name="carb_burn_rate_datatype_desc">Current carb burn rate in g/h, computed from power (Tier 1), HR + age + sex (Tier 2 Keytel) or HR + maxHr + restingHr (Tier 3 Swain). Shows "Pair HR/Pwr" when no sensor is paired.</string>
+    <string name="carb_avg_burn_rate_datatype_name">KSafe Carb Avg Burn</string>
+    <string name="carb_avg_burn_rate_datatype_desc">Session-average carb burn rate (g/h), averaged across only the time you were actively riding (stops excluded). Same sensor requirements as the instantaneous rate.</string>
+    <string name="carbs_burned_datatype_name">KSafe Carbs Burned</string>
+    <string name="carbs_burned_datatype_desc">Cumulative carbs burned this session in grams, from the physiological burn estimator. Companion field to Carb Status (deficit).</string>
+    <!-- Label shown by the burn-rate / burned / avg fields when no HR or power
+         sensor is paired (CarbBurnEstimator.Confidence == NONE). Short enough to
+         fit the Karoo's narrow data field column. -->
+    <string name="carb_no_sensor_label">Pair HR/Pwr</string>
     <string name="hyd_log_1_datatype_name">KSafe Drink 1</string>
     <string name="hyd_log_2_datatype_name">KSafe Drink 2</string>
     <string name="hyd_log_datatype_desc">Tap to log a configured drink item (e.g. sip, bottle). Counts toward your hourly target.</string>
     <string name="hyd_status_datatype_name">KSafe Hydration Status</string>
-    <string name="hyd_status_datatype_desc">Shows current hydration deficit relative to target. Color-coded by urgency.</string>
+    <string name="hyd_status_datatype_desc">Shows current hydration deficit relative to target. Color-coded by urgency. A leading \"~\" means the sweat estimate is running without a HR/power sensor (rough, temperature-based) — the reminders still work, the number is just approximate.</string>
 
     <!-- Health screen -->
     <string name="health_title">Health monitoring</string>
-    <string name="health_no_hr_warning_title">No heart-rate sensor</string>
+    <string name="health_no_hr_warning_title">Heart-rate sensor required</string>
     <string name="health_no_hr_warning_body">Pair a HR sensor to enable medical and wellness detection. Without HR data these detectors stay idle.</string>
     <string name="health_medical_section">Medical episode detection</string>
-    <string name="health_medical_hint">Detects sudden heart-rate flatline or collapse during a ride. Requires a paired HR sensor.</string>
     <string name="health_wellness_section">Wellness monitor</string>
-    <string name="health_wellness_hint">Warns when HR stays above the threshold for a sustained period. Sent on-screen only — never to emergency contacts unless you change the response level.</string>
     <string name="health_enabled_label">Enabled</string>
-    <string name="health_response_level_label">Response level</string>
-    <string name="health_response_silent">Silent</string>
     <string name="health_response_warning">Warning</string>
     <string name="health_response_emergency">Emergency</string>
     <string name="health_wellness_threshold_label">HR threshold (bpm)</string>
@@ -137,9 +191,13 @@
     <!-- Provider screen -->
     <string name="provider_title">Message Provider</string>
     <string name="provider_active_hint">Credentials are saved per provider. Only the selected provider will be used to send alerts.</string>
-    <string name="api_key_hint">API Key</string>
-    <string name="callmebot_phone_hint">Recipient phone (with country code, e.g. +34612345678)</string>
-    <string name="callmebot_description">WhatsApp via CallMeBot. Free — the recipient must activate their API key first.</string>
+    <string name="callmebot_phone_hint">Recipient 1 phone (with country code, e.g. +34612345678)</string>
+    <string name="callmebot_apikey_hint">Recipient 1 API Key</string>
+    <string name="callmebot_phone2_hint">Recipient 2 phone — optional</string>
+    <string name="callmebot_apikey2_hint">Recipient 2 API Key — optional</string>
+    <string name="callmebot_phone3_hint">Recipient 3 phone — optional</string>
+    <string name="callmebot_apikey3_hint">Recipient 3 API Key — optional</string>
+    <string name="callmebot_description">WhatsApp via CallMeBot. Free — up to 3 recipients; each one must activate their own API key from their own phone. Recipients 2 and 3 are optional.</string>
     <string name="pushover_app_token_hint">App Token</string>
     <string name="pushover_user_key_hint">User Key (recipient 1)</string>
     <string name="pushover_user_key2_hint">User Key — recipient 2 (optional)</string>
@@ -152,21 +210,32 @@
     <string name="telegram_chat_id2_hint">Chat ID — recipient 2 (optional)</string>
     <string name="telegram_chat_id3_hint">Chat ID — recipient 3 (optional)</string>
     <string name="telegram_description">Free Telegram messages via a bot. Create a bot with @BotFather, get the token, and enter your Chat ID.</string>
-    <string name="save">Save</string>
     <string name="section_safety">Safety configuration</string>
     <string name="backup_export">Export</string>
     <string name="backup_import">Import</string>
     <string name="test_send">Test Send</string>
-    <string name="test_send_ok">Test message sent!</string>
-    <string name="test_send_error">Error sending test message</string>
 
     <!-- Settings screen -->
     <string name="settings_title">Safety Settings</string>
     <string name="countdown_seconds_label">Countdown before alert (seconds)</string>
     <string name="emergency_message_label">Emergency message</string>
     <string name="emergency_message_hint">Use {location} for GPS link and {reason} for cause</string>
-    <string name="default_emergency_message">EMERGENCY: Possible incident detected. Location: {location} (Reason: {reason})</string>
     <string name="crash_detection_label">Automatic crash detection</string>
+    <string name="safety_buzzer_mute_title">If your Karoo is muted, alerts make no sound</string>
+    <string name="safety_buzzer_mute_hint">KSafe can\'t override the device mute. Everything else still works — alerts fire and messages are sent normally.</string>
+    <string name="health_maxhr_not_loaded">Karoo profile maxHr not loaded yet — set it in Karoo\'s User Profile.</string>
+    <string name="health_pct_enter_range">Enter 60–100 to see the resolved bpm threshold (your maxHr = %1$d).</string>
+    <string name="health_pct_resolved_bpm">= %1$d bpm (your maxHr = %2$d)</string>
+    <string name="health_custom_title_label">Custom title</string>
+    <string name="health_custom_detail_label">Custom detail</string>
+    <string name="health_critical_title_label">Critical alert title</string>
+    <string name="health_critical_detail_label">Critical alert detail</string>
+    <string name="health_sustained_title_label">Sustained alert title</string>
+    <string name="health_sustained_detail_label">Sustained alert detail</string>
+    <string name="health_decoupling_title_label">Decoupling alert title</string>
+    <string name="health_decoupling_detail_label">Decoupling alert detail</string>
+    <string name="custom_alert_using_default">Using default — edit to override</string>
+    <string name="custom_alert_length_counter">%1$d / %2$d — keep it short to fit the alert popup</string>
     <string name="crash_sensitivity_label">Crash detection sensitivity</string>
     <string name="sensitivity_low">Low</string>
     <string name="sensitivity_medium">Medium</string>
@@ -191,7 +260,6 @@
     <string name="crash_outside_ride_any_speed_label">Monitor crash when not riding — any speed</string>
     <string name="crash_outside_ride_any_speed_desc">Same as above but detects crashes at any speed, even while stationary (minimum speed is ignored). ⚠ This can produce more false positives — picking up or dropping the device while still may trigger an alert.</string>
     <string name="crash_outside_ride_warning">⚠ Crash monitoring is active outside of a recorded ride. The device must be moving at the minimum speed configured above (%1$d km/h).</string>
-    <string name="crash_outside_ride_any_speed_warning">⚠ Crash monitoring is active outside of a recorded ride at ANY speed, including while stationary. This increases the risk of false positives.</string>
     <string name="speed_drop_label">Detect prolonged stop during ride</string>
     <string name="speed_drop_minutes_label">Minutes stopped before alert</string>
     <string name="checkin_timer_label">Check-in timer</string>
@@ -209,18 +277,72 @@
     <string name="test_ride_end_notification">Test ride end notification</string>
 
     <!-- Alerts and notifications -->
-    <string name="sos_countdown_alert">SOS in %1$ds — Tap field to cancel (%2$s)</string>
-    <string name="alert_sent">Emergency alert sent to your contacts!</string>
-    <string name="alert_cancelled">Emergency alert cancelled.</string>
-    <string name="checkin_warning">Check-in required in %1$d min — Tap timer field!</string>
     <string name="location_unavailable">Location unavailable</string>
 
-    <!-- SOS field states -->
+    <!-- SOS field states. Format strings match exactly what the SOSDataType renders on
+         the Karoo data field — `sos_countdown` is the main label during COUNTDOWN
+         (e.g. "SOS 25s"), `sos_alerting` is the main label during ALERTING (e.g.
+         "ALERT\nSENT"), `sos_tap_cancel` is the hint subtitle during COUNTDOWN. Kept
+         short so they fit the field at the smallest layout. B21 wired these up from
+         the prior hardcoded inline literals so future translators have a single home. -->
     <string name="sos_safe">SAFE</string>
-    <string name="sos_countdown">SOS\n%1$ds</string>
-    <string name="sos_alerting">ALERT!</string>
-    <string name="sos_tap_cancel">Tap to\ncancel</string>
-    <string name="sos_tap_sos">Tap for\nSOS</string>
+    <string name="sos_countdown">SOS %1$ds</string>
+    <string name="sos_alerting">ALERT\nSENT</string>
+    <string name="sos_tap_cancel">tap=cancel</string>
+
+    <!-- Shared field-state literals (carb-log / hyd-log / custom-message / SOS).
+         Pulled out for B17/B22 so future localisation has a single source of truth.
+         Format strings preserve the exact rendered text on the Karoo data field —
+         see SOSDataType / CustomMessageDataType / WebhookDataType / SafetyTimerDataType
+         where they are consumed. -->
+    <string name="field_state_off">OFF</string>
+    <string name="field_state_tap_undo">TAP UNDO</string>
+    <string name="sos_field_tap_sos">tap=SOS</string>
+
+    <!-- Custom Message DataType (slot 1/2/3) — state flashes + fallback titles. -->
+    <string name="msg_default_title_1">MSG</string>
+    <string name="msg_default_title_2">MSG2</string>
+    <string name="msg_default_title_3">MSG3</string>
+    <string name="field_state_msg_sending">Sending…</string>
+    <string name="field_state_msg_sent">SENT ✓</string>
+    <string name="field_state_msg_tap_send">tap=send</string>
+
+    <!-- Webhook DataType — state flashes + idle/disabled hints. -->
+    <string name="field_state_webhook_tap">tap</string>
+    <string name="field_state_webhook_disabled">off</string>
+    <string name="field_state_webhook_firing">firing…</string>
+    <string name="field_state_webhook_ok">OK ✓</string>
+
+    <!-- Shared "error, tap to retry" hint — used by both Custom Message and Webhook
+         after a failed dispatch. -->
+    <string name="field_state_err_retry">ERR retry</string>
+
+    <!-- SafetyTimer DataType — countdown / check-in / disabled. -->
+    <string name="timer_cancel_countdown">CANCEL\n%1$ds</string>
+
+    <!-- B26 — Readiness advice reasons. Rendered at the UI boundary in
+         KSafeExtension.fireReadinessAdvice from the structured
+         ReadinessReason sealed type, so future translation has a single
+         source of truth and the pure decideReadiness() function stays
+         locale-free. Format args match the sealed-class payload. -->
+    <string name="readiness_reason_cardiac_drift">Cardiac drift %1$.0f%% on the last ride</string>
+    <string name="readiness_reason_wellness_alerts">%1$d wellness alerts on the last ride</string>
+    <string name="readiness_reason_minutes_critical">%1$d min above critical HR in your last ride</string>
+    <string name="readiness_reason_rides_72h">%1$d rides in the last 72 h</string>
+
+    <!-- B26 — Settings → Buzzer test button + diagnostic result strings.
+         Pulled out of inline literals so future translation has a single
+         source of truth. The %1$s args are dynamic diagnostic context
+         (bind error message, BeepResult enum name). -->
+    <string name="settings_buzzer_bypass_label">Buzzer on emergency (overrides mute)</string>
+    <string name="settings_buzzer_bypass_hint">Plays the Karoo buzzer on crash countdown and SOS firing, even if your Karoo is muted. Non-emergency beeps (ride start, check-in, wellness warnings) still respect mute as usual.</string>
+    <string name="settings_buzzer_test_label">Test buzzer (HAL probe)</string>
+    <string name="settings_buzzer_test_running">Binding…</string>
+    <string name="settings_buzzer_test_bind_failed">Bind failed: %1$s — KSafe will fall back to SDK beep on emergencies.</string>
+    <string name="settings_buzzer_test_beep_ok">Beep dispatched — did you hear it? Bypass is working.</string>
+    <string name="settings_buzzer_test_gated">Bypass GATED by Karoo OTA (SecurityException). KSafe will fall back to SDK beep on emergencies — same as pre-bypass behaviour.</string>
+    <string name="settings_buzzer_test_transact_failed">Bypass FAILED (transact threw — descriptor/transaction-ID drift in a Karoo OTA?). KSafe will fall back to SDK beep on emergencies.</string>
+    <string name="settings_buzzer_test_failed_other">Bypass FAILED (%1$s). KSafe will fall back to SDK beep on emergencies. Check logcat.</string>
 
     <!-- Overlay permission warning -->
     <string name="overlay_permission_title">⚠ Overlay permission required</string>
@@ -228,9 +350,12 @@
     <string name="overlay_permission_button">Enable now</string>
 
     <!-- Timer field states -->
-    <string name="timer_off">Check-in\nOFF</string>
+    <!-- B22: text was previously orphan ("Check-in\nOFF" / "Tap to\ncheck in") and the
+         DataType hardcoded "Timer\nOFF" / "tap=ok" inline. Strings updated to match the
+         shipped UX so future translators have a single source of truth. -->
+    <string name="timer_off">Timer\nOFF</string>
     <string name="timer_checkin">CHECK\nIN!</string>
-    <string name="timer_ok">Tap to\ncheck in</string>
+    <string name="timer_ok">tap=ok</string>
 
     <string name="custom_message_section">Custom Messages</string>
     <string name="custom_message_label">Enable message 1</string>
@@ -280,9 +405,14 @@
     <string name="calibration_send">Send now</string>
     <string name="calibration_clear">Clear log</string>
     <string name="calibration_adb_hint">Pull full CSV: adb pull /sdcard/Android/data/com.enderthor.kSafe/files/ksafe_calibration.csv</string>
+    <string name="calibration_install_id_label">Anon tag: %1$s (random, no personal data — include in any bug report)</string>
 
     <!-- Field colour picker -->
     <string name="field_color_label">Field colour</string>
     <string name="sos_field_color_label">SOS field colour</string>
     <string name="timer_field_color_label">Timer field colour</string>
+
+    <!-- Outbound alert delivery failure — fires after Sender exhausts every retry cycle. -->
+    <string name="alert_delivery_failed_title">Alert NOT delivered</string>
+    <string name="alert_delivery_failed_detail">%1$s could not send. Check coverage / credentials.</string>
 </resources>

@@ -48,6 +48,25 @@ val jsonForExport = Json {
     prettyPrint = true
 }
 
+/**
+ * Json instance for **writing** persisted state to DataStore (config blob, sender configs,
+ * emergency state, wellness history). Deliberately *not* configured with `encodeDefaults`:
+ *  - DataStore blobs are read by [jsonWithUnknownKeys] which fills missing fields with their
+ *    Kotlin data-class defaults, so omitting defaults from the stored JSON saves bytes
+ *    (a fresh install writes a config tens of bytes long instead of multiple KB).
+ *  - It also means a forward-compat change to a default value automatically applies to
+ *    every rider whose stored JSON predates the change — they don't see the *old* default
+ *    frozen into their persisted blob. Future default changes that should NOT propagate
+ *    silently must go through a CONFIG_VERSION bump + a migration branch.
+ *
+ * Distinct from the unnamed `Json` instance the standard library exposes: this one is
+ * the project's *named* contract for "writes to disk".
+ */
+val jsonForStorage = Json {
+    // No options — equivalent to default Json. Existing as a named alias so call sites
+    // make the "this is the storage write path" intent explicit.
+}
+
 fun KarooSystemService.streamDataFlow(dataTypeId: String): Flow<StreamState> = callbackFlow {
     val listenerId = addConsumer<OnStreamState>(
         params = OnStreamState.StartStreaming(dataTypeId),

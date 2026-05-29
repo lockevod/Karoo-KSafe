@@ -20,12 +20,14 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import com.enderthor.kSafe.R
@@ -56,6 +58,7 @@ fun SettingsScreen(vm: MainViewModel) {
     var isActive          by remember(config.isActive)                  { mutableStateOf(config.isActive) }
     var fitExportEnabled  by remember(config.fuelingFitExportEnabled)   { mutableStateOf(config.fuelingFitExportEnabled) }
     var calibrationLogging by remember(config.calibrationLoggingEnabled) { mutableStateOf(config.calibrationLoggingEnabled) }
+    var buzzerOnEmergency by remember(config.buzzerOnEmergencyEnabled)  { mutableStateOf(config.buzzerOnEmergencyEnabled) }
     var calibLogInfo       by remember { mutableStateOf("") }
     var calibLogNote       by remember { mutableStateOf("") }
     var calibLogNoteIsError by remember { mutableStateOf(false) }
@@ -63,14 +66,18 @@ fun SettingsScreen(vm: MainViewModel) {
     val exportFile = java.io.File(context.getExternalFilesDir(null), "ksafe_export.json")
     val importFile = java.io.File(context.getExternalFilesDir(null), "ksafe_import.json")
 
-    LaunchedEffect(isActive, fitExportEnabled) {
+    LaunchedEffect(isActive, fitExportEnabled, buzzerOnEmergency) {
         delay(600)
-        vm.saveConfig(
-            config.copy(
-                isActive                = isActive,
-                fuelingFitExportEnabled = fitExportEnabled,
+        // Merge onto the LATEST config (not the captured `config` snapshot) so this
+        // debounced save can't clobber an unrelated field — e.g. the calibration toggle
+        // saved immediately in the same window. See MainViewModel.updateConfig.
+        vm.updateConfig {
+            it.copy(
+                isActive                  = isActive,
+                fuelingFitExportEnabled   = fitExportEnabled,
+                buzzerOnEmergencyEnabled  = buzzerOnEmergency,
             )
-        )
+        }
     }
 
     Column(
@@ -142,6 +149,73 @@ fun SettingsScreen(vm: MainViewModel) {
             }
         )
 
+        // ── Buzzer-on-emergency (HAL bypass) ──────────────────────────────
+        // Toggle + test button for the private-API path that routes emergency-class beeps
+        // (countdown last 5s, ALERTING entry) directly to the Karoo's physical buzzer,
+        // bypassing the rider's audio-alerts mute. ON by default — a safety extension
+        // should be heard in a crash; riders who deliberately mute can opt out here.
+        SettingRow(label = stringResource(R.string.settings_buzzer_bypass_label)) {
+            Switch(checked = buzzerOnEmergency, onCheckedChange = { buzzerOnEmergency = it })
+        }
+        Text(
+            text = stringResource(R.string.settings_buzzer_bypass_hint),
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant
+        )
+
+        // Diagnostic button — binds the HAL service and plays a short test tone. Useful
+        // for confirming the bypass works after a Karoo OTA (Hammerhead can gate the
+        // service in any future update).
+        // B26: localised result strings. The button captions, the running label, and
+        // the four diagnostic-message branches all resolve through R.string at compose
+        // time. `isSuccess` compares against the same localised `beepOkMessage` that
+        // the success branch returns, so the classification holds in any locale (no
+        // substring matching against English-specific text).
+        val testLabel = stringResource(R.string.settings_buzzer_test_label)
+        val runningLabel = stringResource(R.string.settings_buzzer_test_running)
+        val beepOkMessage = stringResource(R.string.settings_buzzer_test_beep_ok)
+        val gatedMessage = stringResource(R.string.settings_buzzer_test_gated)
+        val transactFailedMessage = stringResource(R.string.settings_buzzer_test_transact_failed)
+        TestActionButton(
+            label = testLabel,
+            runningLabel = runningLabel,
+            isSuccess = { it == beepOkMessage },
+            onAction = {
+                val client = com.enderthor.kSafe.extension.managers.BuzzerClient(context)
+                try {
+                    val bindDiag = client.connect()
+                    // Bind is async; wait briefly for onServiceConnected. Bail out after 2s.
+                    // Use the monotonic clock (`elapsedRealtime`) instead of wall-clock so an
+                    // NTP step / user date change during the bind window can't make the loop
+                    // exit early (negative remaining time) or spin past the intended budget.
+                    val deadline = android.os.SystemClock.elapsedRealtime() + 2_000L
+                    while (!client.isReady() && android.os.SystemClock.elapsedRealtime() < deadline) {
+                        delay(50)
+                    }
+                    if (!client.isReady()) {
+                        // Failure A: bind itself was refused. Most likely cause if it
+                        // worked before: a Karoo OTA changed the service exports.
+                        context.getString(R.string.settings_buzzer_test_bind_failed, bindDiag)
+                    } else {
+                        val ok = client.beep(com.enderthor.kSafe.extension.managers.BuzzerClient.TEST_PATTERN)
+                        when {
+                            ok -> beepOkMessage
+                            client.lastResult == com.enderthor.kSafe.extension.managers.BuzzerClient.BeepResult.GATED_BY_SECURITY ->
+                                gatedMessage
+                            client.lastResult == com.enderthor.kSafe.extension.managers.BuzzerClient.BeepResult.TRANSACT_THREW ->
+                                transactFailedMessage
+                            else ->
+                                context.getString(R.string.settings_buzzer_test_failed_other, client.lastResult.toString())
+                        }
+                    }
+                } finally {
+                    // Give the HAL a moment to actually emit before tearing the bind down.
+                    delay(800)
+                    client.disconnect()
+                }
+            }
+        )
+
         HorizontalDivider()
 
         // ── FIT export ────────────────────────────────────────────────────
@@ -175,13 +249,41 @@ fun SettingsScreen(vm: MainViewModel) {
             color = MaterialTheme.colorScheme.onSurfaceVariant
         )
 
+        // Show the persistent install ID so users can reference it when
+        // reporting issues via Telegram. Visible regardless of logging state.
+        val installId by produceState(initialValue = "") {
+            // getInstance() can still be null when this screen first composes if
+            // the extension service has not bound yet — produceState runs its
+            // block only once, so keep polling until the install ID is available.
+            // The coroutine is cancelled when this screen leaves composition, so
+            // an unbounded loop only lives as long as the screen is visible.
+            while (value.isEmpty()) {
+                val id = KSafeExtension.getInstance()?.getInstallIdForUi() ?: ""
+                if (id.isNotEmpty()) value = id else delay(500)
+            }
+        }
+        if (installId.isNotEmpty()) {
+            Text(
+                text = stringResource(R.string.calibration_install_id_label, installId),
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                fontFamily = FontFamily.Monospace,
+            )
+        }
+
         SettingRow(label = stringResource(R.string.calibration_logging_label)) {
             Switch(
                 checked = calibrationLogging,
                 onCheckedChange = { newValue ->
                     calibrationLogging = newValue
-                    vm.saveConfig(config.copy(calibrationLoggingEnabled = newValue))
-                    calibLogInfo = KSafeExtension.getInstance()?.getCalibrationLogInfo() ?: ""
+                    // Merge onto the latest config (not the captured snapshot) so this
+                    // immediate save and the debounced isActive/fit/buzzer save can't
+                    // clobber each other — fully closes the lost-update class.
+                    vm.updateConfig { it.copy(calibrationLoggingEnabled = newValue) }
+                    // calibLogInfo is refreshed by the LaunchedEffect below (its first
+                    // iteration runs immediately) — do NOT read it here: getCalibrationLogInfo()
+                    // scans the whole CSV + reads the previous file, which on this non-suspend
+                    // Main-thread callback would jank the UI.
                     calibLogNote = if (newValue) "Logging enabled — data will be collected." else "Logging disabled."
                     calibLogNoteIsError = false
                 }
@@ -191,7 +293,10 @@ fun SettingsScreen(vm: MainViewModel) {
         if (calibrationLogging) {
             LaunchedEffect(calibrationLogging) {
                 while (calibrationLogging) {
-                    calibLogInfo = KSafeExtension.getInstance()?.getCalibrationLogInfo() ?: ""
+                    // Off-Main: getCalibrationLogInfo() reads whole files (line scan + readText).
+                    calibLogInfo = withContext(Dispatchers.IO) {
+                        KSafeExtension.getInstance()?.getCalibrationLogInfo() ?: ""
+                    }
                     delay(5_000L)
                 }
             }
@@ -308,5 +413,13 @@ fun SettingsScreen(vm: MainViewModel) {
                 )
             }
         }
+
+        // Discreet docs footer. Karoo can't open URLs from a Compose Activity, so this
+        // is plain text the rider reads and looks up later on their phone.
+        Text(
+            text = stringResource(R.string.settings_docs_footer),
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
     }
 }

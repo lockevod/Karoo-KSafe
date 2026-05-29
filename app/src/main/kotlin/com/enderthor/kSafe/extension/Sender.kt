@@ -20,7 +20,23 @@ class Sender(
     private val maxCycles = 3
     private val attemptsPerCycle = 3
     private val delaySeconds = listOf(60, 120, 180)
+    /**
+     * Wait between cycles. Length contract: **must be `maxCycles - 1`** because the loop
+     * skips this list on the last cycle (no point waiting for a cycle that won't run).
+     */
     private val cycleDelayMinutes = listOf(5, 10)
+
+    companion object {
+        /** Per-HTTP-request timeout for a single recipient call (test path + every
+         *  recipient in the multi-recipient retry block). */
+        private const val ATTEMPT_TIMEOUT_MS = 15_000L
+        /** Hard cap on the WHOLE multi-recipient `attemptSend` block. Each recipient
+         *  has its own [ATTEMPT_TIMEOUT_MS] now, so this must be at least
+         *  `MAX_RECIPIENTS * ATTEMPT_TIMEOUT_MS + slack`. 3 recipients × 15 s = 45 s →
+         *  60 s leaves headroom for JSON building, log writes, and the brief gap
+         *  between recipient calls without prematurely killing the third recipient. */
+        private const val ATTEMPT_BLOCK_TIMEOUT_MS = 60_000L
+    }
 
     // ─── Entry points ─────────────────────────────────────────────────────────
 
@@ -46,21 +62,35 @@ class Sender(
                 ProviderType.CALLMEBOT -> {
                     if (config.phoneNumber.isBlank()) return "Missing phone number."
                     if (config.apiKey.isBlank())      return "Missing API key."
-                    val url = "https://api.callmebot.com/whatsapp.php" +
-                        "?phone=${config.phoneNumber.trim()}" +
-                        "&text=${Uri.encode("KSafe test — alerts are configured correctly.")}" +
-                        "&apikey=${config.apiKey}"
-                    val response = withTimeoutOrNull(15_000L) { karooSystem.httpRequest("GET", url) }
-                        ?: return "No response — check your internet connection."
-                    val body = response.body?.toString(Charsets.UTF_8) ?: ""
-                    when {
-                        response.statusCode in 200..299 && !body.contains("ERROR") ->
-                            "Test sent! Check your WhatsApp."
-                        body.contains("not authorized", ignoreCase = true) ||
-                        body.contains("apikey", ignoreCase = true) ->
-                            "Invalid API key — re-check it in CallMeBot."
-                        else -> "Error ${response.statusCode}: ${body.take(120)}"
+                    val recipients = callMeBotRecipients(config)
+                    val results = mutableListOf<String>()
+                    for ((i, pair) in recipients.withIndex()) {
+                        val (phone, key) = pair
+                        val label = "Recipient ${i + 1}"
+                        val url = "https://api.callmebot.com/whatsapp.php" +
+                            "?phone=$phone" +
+                            "&text=${Uri.encode("KSafe test — alerts are configured correctly.")}" +
+                            "&apikey=$key"
+                        val response = withTimeoutOrNull(ATTEMPT_TIMEOUT_MS) { karooSystem.httpRequest("GET", url) }
+                        if (response == null) {
+                            results.add("$label: no response — check connection.")
+                            continue
+                        }
+                        val body = response.body?.toString(Charsets.UTF_8) ?: ""
+                        // J1 — use the same robust success predicate as attemptSend
+                        // so a misconfigured CallMeBot fails BOTH paths consistently
+                        // (testSend reporting "sent ✓" while sendAlert silently fails
+                        // is the worst-of-both-worlds UX).
+                        when {
+                            isCallMeBotSuccess(response.statusCode, body) ->
+                                results.add("$label: sent ✓")
+                            body.contains("not authorized", ignoreCase = true) ||
+                            body.contains("apikey", ignoreCase = true) ->
+                                results.add("$label: invalid API key.")
+                            else -> results.add("$label: HTTP ${response.statusCode} ${body.take(80)}")
+                        }
                     }
+                    results.joinToString("\n")
                 }
 
                 ProviderType.PUSHOVER -> {
@@ -78,7 +108,7 @@ class Sender(
                             put("message", "KSafe test — alerts are configured correctly.")
                             put("priority", 1)
                         }.toString()
-                        val response = withTimeoutOrNull(15_000L) {
+                        val response = withTimeoutOrNull(ATTEMPT_TIMEOUT_MS) {
                             karooSystem.httpRequest(
                                 "POST", "https://api.pushover.net/1/messages.json",
                                 mapOf("Content-Type" to "application/json"),
@@ -90,7 +120,9 @@ class Sender(
                         } else {
                             val body = response.body?.toString(Charsets.UTF_8) ?: ""
                             when {
-                                response.statusCode in 200..299 && body.contains("\"status\":1") ->
+                                // K2 — anchored check, see attemptSend Pushover branch.
+                                response.statusCode in 200..299 &&
+                                    (body.contains("\"status\":1,") || body.contains("\"status\":1}")) ->
                                     results.add("$label: sent ✓")
                                 response.statusCode == 429 ->
                                     results.add("$label: rate limited — try again later.")
@@ -112,7 +144,7 @@ class Sender(
 
                 ProviderType.NTFY -> {
                     if (config.apiKey.isBlank()) return "Missing Topic."
-                    val response = withTimeoutOrNull(15_000L) {
+                    val response = withTimeoutOrNull(ATTEMPT_TIMEOUT_MS) {
                         karooSystem.httpRequest(
                             "POST",
                             "https://ntfy.sh/${config.apiKey.trim()}",
@@ -144,7 +176,7 @@ class Sender(
                             put("chat_id", chatId.trim())
                             put("text", "KSafe test — alerts are configured correctly.")
                         }.toString()
-                        val response = withTimeoutOrNull(15_000L) {
+                        val response = withTimeoutOrNull(ATTEMPT_TIMEOUT_MS) {
                             karooSystem.httpRequest(
                                 "POST",
                                 "https://api.telegram.org/bot${config.apiKey.trim()}/sendMessage",
@@ -176,6 +208,11 @@ class Sender(
                     results.joinToString("\n")
                 }
             }
+        } catch (e: kotlinx.coroutines.CancellationException) {
+            // Never swallow cancellation — it must propagate so the calling coroutine
+            // (e.g. the user pressing Back while the test send is in flight) actually
+            // exits instead of being told "Unexpected error: …".
+            throw e
         } catch (e: Exception) {
             "Unexpected error: ${e.message}"
         }
@@ -192,6 +229,16 @@ class Sender(
             return false
         }
 
+        // Pre-flight credential validation — every provider's attemptSend short-circuits
+        // with `return false` on blank credentials, but without this check the retry
+        // loop would burn the full 9-attempt × ~30 min budget calling that same
+        // short-circuit. Fail fast so the rider's delivery-failure notification fires
+        // immediately instead of after half an hour.
+        if (!hasUsableCredentials(provider, config)) {
+            Timber.e("sendWithRetry: blank/missing credentials for $provider — failing fast without retries")
+            return false
+        }
+
         var totalAttempts = 0
         var currentCycle = 0
 
@@ -204,9 +251,24 @@ class Sender(
                         Timber.d("Retry attempt $totalAttempts, waiting ${waitSeconds}s")
                         delay(waitSeconds * 1000L)
                     }
-                    val result = withTimeoutOrNull(30_000L) {
-                        attemptSend(message, provider, isEmergency, config)
-                    } == true
+                    // Per-attempt try/catch — without this, a synchronous throw from
+                    // attemptSend (RemoteException / IllegalStateException from a
+                    // momentarily-unbound karooSystem, or any provider-specific glitch
+                    // not handled inside attemptSend) would escape withTimeoutOrNull,
+                    // escape the repeat/while, and hit the OUTER catch(Exception) below
+                    // — collapsing the entire 9-attempt × 30-min retry budget into one
+                    // failed try and silently dropping the rider's emergency alert.
+                    val result = try {
+                        withTimeoutOrNull(ATTEMPT_BLOCK_TIMEOUT_MS) {
+                            attemptSend(message, provider, isEmergency, config)
+                        } == true
+                    } catch (e: kotlinx.coroutines.CancellationException) {
+                        // Cancellation must still propagate (caller scope tear-down).
+                        throw e
+                    } catch (e: Exception) {
+                        Timber.w(e, "Attempt $totalAttempts threw — treating as failed, continuing retry chain")
+                        false
+                    }
 
                     if (result) {
                         Timber.d("Message sent on attempt $totalAttempts")
@@ -223,10 +285,86 @@ class Sender(
             }
             Timber.e("Message failed after $totalAttempts attempts")
             false
+        } catch (e: kotlinx.coroutines.CancellationException) {
+            // Cancellation must propagate (caller scope tear-down). Swallowing here
+            // would leave the parent coroutine running past the cancellation point.
+            throw e
         } catch (e: Exception) {
+            // Defensive backstop — per-attempt catch above now handles the per-attempt
+            // throw path; this remains for any unexpected exception escaping the
+            // surrounding control flow (delay between cycles, config load, etc.).
             Timber.e(e, "Retry error: ${e.message}")
             false
         }
+    }
+
+    /**
+     * Pre-flight check called once from [sendWithRetry] so an unconfigured provider
+     * fails the retry loop in microseconds instead of burning ~30 minutes calling
+     * attemptSend's `return false` short-circuit. Mirrors the per-provider blank
+     * checks at the start of each attemptSend branch.
+     *
+     * J3 — checks ALL configured slots (1..3) for providers that support multi-recipient
+     * (CallMeBot, Pushover, Telegram). A rider who deliberately blanks slot 1 (e.g. to
+     * avoid self-notification) and configures contacts in slot 2/3 must still be able
+     * to send — the original slot-1-only check would have made the pre-flight return
+     * false and silently swallow the entire retry budget.
+     */
+    private fun hasUsableCredentials(provider: ProviderType, config: SenderConfig): Boolean = when (provider) {
+        ProviderType.CALLMEBOT -> callMeBotRecipients(config).isNotEmpty() && config.apiKey.isNotBlank()
+        ProviderType.PUSHOVER  -> config.apiKey.isNotBlank() &&
+            listOf(config.userKey, config.userKey2, config.userKey3).any { it.isNotBlank() }
+        ProviderType.NTFY      -> config.apiKey.isNotBlank()
+        ProviderType.TELEGRAM  -> config.apiKey.isNotBlank() &&
+            listOf(config.userKey, config.userKey2, config.userKey3).any { it.isNotBlank() }
+    }
+
+    /**
+     * CallMeBot success predicate. The provider returns HTTP 200 even on most failure
+     * modes — the body string is the discriminator. Documented body patterns:
+     *  - Success: "Message Sent", "Message queued", standalone "OK"
+     *  - Failure: "APIKEY_INVALID", "WhatsApp Number not found", "You need to authorize
+     *    this number", "ERROR: ...", "Forbidden", "Token expired", "Revoked", etc.
+     *
+     * K1 — the previous version had two false-positive vectors:
+     *  1. The whitelist contained the bare 2-char substring "ok", which also matches
+     *     inside common English words found in failure bodies (`tOKen`, `revOKed`,
+     *     `looKup`). A failure body like "Token expired" silently returned true.
+     *  2. `body.isBlank()` treated an empty 2xx response as success, but an empty body
+     *     is a tell-tale signature of a captive-portal / proxy interception, NOT
+     *     a real CallMeBot success — those always include a non-empty status string.
+     *
+     * Robust check: require an explicit success marker as a multi-word phrase OR
+     * standalone-"OK" via trim+equals (so "OK" by itself works, but "tOKen" doesn't).
+     * Blacklist still runs first as a defense-in-depth catch for known failure modes.
+     */
+    /** Internal visibility for unit tests — see `CallMeBotSuccessTest`. The K1
+     *  rationale below documents historical false-positive bugs that the tests
+     *  pin against regressions. */
+    internal fun isCallMeBotSuccess(statusCode: Int, body: String): Boolean {
+        if (statusCode !in 200..299) return false
+        if (body.isBlank()) return false   // captive portal / proxy intercept — never trust.
+        val lower = body.lowercase()
+        val knownFailures = listOf(
+            "error",
+            "apikey_invalid",
+            "not authorized",
+            "not found",
+            "you need to",
+            "forbidden",
+            "invalid",
+            "expired",
+            "revoked",
+            "limit",         // rate-limit hits ("daily limit reached", "limit exceeded")
+            "denied",
+        )
+        if (knownFailures.any { lower.contains(it) }) return false
+        // Whitelist — multi-word phrases that can't accidentally appear inside other
+        // English words. Standalone "OK" (trim+equals, case-insensitive) covers the
+        // legacy minimal-success endpoint without the substring fragility.
+        if (body.trim().equals("OK", ignoreCase = true)) return true
+        val knownSuccess = listOf("message sent", "message queued")
+        return knownSuccess.any { lower.contains(it) }
     }
 
     // ─── Provider implementations ─────────────────────────────────────────────
@@ -248,12 +386,33 @@ class Sender(
             ProviderType.CALLMEBOT -> {
                 if (config.phoneNumber.isBlank() || config.apiKey.isBlank()) return false
                 val encodedMsg = Uri.encode(message)
-                val url = "https://api.callmebot.com/whatsapp.php?phone=${config.phoneNumber.trim()}&text=$encodedMsg&apikey=${config.apiKey}"
-                val response = karooSystem.httpRequest("GET", url)
-                val body = response.body?.toString(Charsets.UTF_8) ?: ""
-                val ok = response.statusCode in 200..299 && !body.contains("ERROR")
-                if (!ok) Timber.e("CallMeBot error ${response.statusCode}: $body")
-                ok
+                val recipients = callMeBotRecipients(config)
+                var anyOk = false
+                for ((phone, key) in recipients) {
+                    val url = "https://api.callmebot.com/whatsapp.php?phone=$phone&text=$encodedMsg&apikey=$key"
+                    // Per-recipient timeout so a hung first recipient doesn't starve
+                    // recipients 2/3 of the outer attempt's 30 s block.
+                    val response = withTimeoutOrNull(ATTEMPT_TIMEOUT_MS) {
+                        karooSystem.httpRequest("GET", url)
+                    }
+                    if (response == null) {
+                        Timber.e("CallMeBot timeout (phone=$phone)")
+                        continue
+                    }
+                    val body = response.body?.toString(Charsets.UTF_8) ?: ""
+                    // J1 — CallMeBot returns HTTP 200 with various failure bodies that
+                    // do NOT contain the literal word "ERROR" (e.g. "APIKEY_INVALID",
+                    // "WhatsApp Number not found", "You need to authorize this number").
+                    // The previous `!body.contains("ERROR")` would treat all of these
+                    // as success, so a misconfigured / expired CallMeBot setup silently
+                    // returned true and the rider's contacts never received the alert.
+                    // Require a positive success marker ("Message Sent" or "Message
+                    // queued"), then double-check no known failure substring is present.
+                    val ok = isCallMeBotSuccess(response.statusCode, body)
+                    if (ok) anyOk = true
+                    else Timber.e("CallMeBot error (phone=$phone) ${response.statusCode}: $body")
+                }
+                anyOk
             }
 
             ProviderType.PUSHOVER -> {
@@ -271,13 +430,27 @@ class Sender(
                         // Info: priority 0 (normal)
                         put("priority", if (isEmergency) 1 else 0)
                     }.toString()
-                    val response = karooSystem.httpRequest(
-                        "POST", "https://api.pushover.net/1/messages.json",
-                        mapOf("Content-Type" to "application/json"),
-                        jsonBody.toByteArray()
-                    )
+                    // Per-recipient timeout so a hung first recipient doesn't starve 2/3.
+                    val response = withTimeoutOrNull(ATTEMPT_TIMEOUT_MS) {
+                        karooSystem.httpRequest(
+                            "POST", "https://api.pushover.net/1/messages.json",
+                            mapOf("Content-Type" to "application/json"),
+                            jsonBody.toByteArray()
+                        )
+                    }
+                    if (response == null) {
+                        Timber.e("Pushover timeout (userKey=$key)")
+                        continue
+                    }
                     val body = response.body?.toString(Charsets.UTF_8) ?: ""
-                    val ok = response.statusCode in 200..299 && body.contains("\"status\":1")
+                    // K2 — anchored substring check. The previous `"status":1` matched
+                    // both `"status":1,` (real success) AND `"status":10,` / `"status":11,`
+                    // (hypothetical future Pushover codes). Pushover documents only 0/1
+                    // today so it's not triggerable yet, but the J1 round-7 finding proved
+                    // this fragility class ships silently for years. Require a JSON value
+                    // terminator (`,` for non-last field, `}` for the last field).
+                    val ok = response.statusCode in 200..299 &&
+                        (body.contains("\"status\":1,") || body.contains("\"status\":1}"))
                     if (ok) anyOk = true
                     else Timber.e("Pushover error (userKey=$key) ${response.statusCode}: $body")
                 }
@@ -288,16 +461,22 @@ class Sender(
                 if (config.apiKey.isBlank()) return false
                 val title    = if (isEmergency) "KSafe Emergency" else "KSafe"
                 val priority = if (isEmergency) "urgent" else "default"
-                val response = karooSystem.httpRequest(
-                    "POST",
-                    "https://ntfy.sh/${config.apiKey.trim()}",
-                    mapOf(
-                        "Content-Type" to "text/plain",
-                        "Title"        to title,
-                        "Priority"     to priority,
-                    ),
-                    message.toByteArray()
-                )
+                val response = withTimeoutOrNull(ATTEMPT_TIMEOUT_MS) {
+                    karooSystem.httpRequest(
+                        "POST",
+                        "https://ntfy.sh/${config.apiKey.trim()}",
+                        mapOf(
+                            "Content-Type" to "text/plain",
+                            "Title"        to title,
+                            "Priority"     to priority,
+                        ),
+                        message.toByteArray()
+                    )
+                }
+                if (response == null) {
+                    Timber.e("ntfy timeout")
+                    return false
+                }
                 val ok = response.statusCode in 200..299
                 if (!ok) Timber.e("ntfy error ${response.statusCode}: ${response.body?.toString(Charsets.UTF_8)}")
                 ok
@@ -313,12 +492,19 @@ class Sender(
                         put("chat_id", chatId.trim())
                         put("text", message)
                     }.toString()
-                    val response = karooSystem.httpRequest(
-                        "POST",
-                        "https://api.telegram.org/bot${config.apiKey.trim()}/sendMessage",
-                        mapOf("Content-Type" to "application/json"),
-                        jsonBody.toByteArray()
-                    )
+                    // Per-recipient timeout — see CallMeBot branch for the rationale.
+                    val response = withTimeoutOrNull(ATTEMPT_TIMEOUT_MS) {
+                        karooSystem.httpRequest(
+                            "POST",
+                            "https://api.telegram.org/bot${config.apiKey.trim()}/sendMessage",
+                            mapOf("Content-Type" to "application/json"),
+                            jsonBody.toByteArray()
+                        )
+                    }
+                    if (response == null) {
+                        Timber.e("Telegram timeout (chatId=$chatId)")
+                        continue
+                    }
                     val body = response.body?.toString(Charsets.UTF_8) ?: ""
                     val ok = response.statusCode in 200..299 && body.contains("\"ok\":true")
                     if (ok) anyOk = true
@@ -327,5 +513,24 @@ class Sender(
                 anyOk
             }
         }
+    }
+
+    /**
+     * Builds the list of `(phone, apiKey)` pairs to deliver a CallMeBot message to.
+     * CallMeBot cannot fan-out a single request, so every recipient needs its own
+     * credential pair. Slots with either half blank are dropped — three slots total,
+     * mirroring Pushover / Telegram.
+     */
+    private fun callMeBotRecipients(config: SenderConfig): List<Pair<String, String>> {
+        fun pair(phone: String, key: String): Pair<String, String>? {
+            val p = phone.trim()
+            val k = key.trim()
+            return if (p.isNotBlank() && k.isNotBlank()) p to k else null
+        }
+        return listOfNotNull(
+            pair(config.phoneNumber,  config.apiKey),
+            pair(config.phoneNumber2, config.apiKey2),
+            pair(config.phoneNumber3, config.apiKey3),
+        )
     }
 }

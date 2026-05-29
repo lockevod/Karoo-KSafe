@@ -47,15 +47,7 @@ class WebhookManager(private val karooSystem: KarooSystemService) {
         if (!enabled) return WebhookResult(false, "Webhook $slot not enabled")
         if (url.isBlank()) return WebhookResult(false, "No URL configured for $label")
 
-        // Parse optional single-header line: "Key: Value"
-        val headers = mutableMapOf<String, String>()
-        if (headersRaw.isNotBlank()) {
-            val colonIdx = headersRaw.indexOf(':')
-            if (colonIdx > 0) {
-                headers[headersRaw.substring(0, colonIdx).trim()] =
-                    headersRaw.substring(colonIdx + 1).trim()
-            }
-        }
+        val headers = parseWebhookHeaders(headersRaw)
 
         val upperMethod = method.trim().uppercase()
         val bodyBytes = if (upperMethod == "POST" && body.isNotBlank()) body.toByteArray() else null
@@ -78,5 +70,38 @@ class WebhookManager(private val karooSystem: KarooSystemService) {
             WebhookResult(false, e.message ?: "Unknown error")
         }
     }
+}
+
+/**
+ * Parse one or more `Key: Value` header lines, one per line. Newlines `\n` separate
+ * entries. Blank lines and lines without a colon are skipped silently so a stray
+ * empty line in the rider's input doesn't fail the request. Common case from a
+ * copy-pasted curl example:
+ * ```
+ * Authorization: Bearer xyz
+ * Content-Type: application/json
+ * ```
+ *
+ * Extracted as a top-level helper so it can be exercised by a pure unit test
+ * (see `WebhookHeaderParserTest`) — a regression that silently drops a critical
+ * `Authorization` header line would otherwise only surface on a real device.
+ *
+ * Duplicate keys: the last occurrence wins (Map semantics). Riders authoring
+ * headers don't reasonably need duplicate keys; this matches HTTP-client
+ * convention where header-list-to-map flattening is common.
+ */
+internal fun parseWebhookHeaders(headersRaw: String): Map<String, String> {
+    val headers = mutableMapOf<String, String>()
+    if (headersRaw.isBlank()) return headers
+    headersRaw.lineSequence().forEach { line ->
+        val trimmed = line.trim()
+        if (trimmed.isEmpty()) return@forEach
+        val colonIdx = trimmed.indexOf(':')
+        if (colonIdx > 0) {
+            headers[trimmed.substring(0, colonIdx).trim()] =
+                trimmed.substring(colonIdx + 1).trim()
+        }
+    }
+    return headers
 }
 

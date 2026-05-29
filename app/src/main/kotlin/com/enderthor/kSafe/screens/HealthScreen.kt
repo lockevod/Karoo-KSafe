@@ -10,6 +10,7 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.SegmentedButton
@@ -32,6 +33,7 @@ import androidx.compose.ui.unit.dp
 import com.enderthor.kSafe.R
 import com.enderthor.kSafe.activity.MainViewModel
 import com.enderthor.kSafe.data.IncidentResponseLevel
+import com.enderthor.kSafe.extension.util.ALERT_DETAIL_MAX_CHARS
 
 /**
  * Health monitoring tab — exposes the user-configurable knobs for MedicalEpisodeDetector
@@ -45,6 +47,7 @@ import com.enderthor.kSafe.data.IncidentResponseLevel
 @Composable
 fun HealthScreen(vm: MainViewModel) {
     val config by vm.config.collectAsState()
+    val userProfile by vm.userProfile.collectAsState()
 
     var medicalEnabled       by remember(config.medicalEpisodeEnabled)        { mutableStateOf(config.medicalEpisodeEnabled) }
     var medicalResponseLevel by remember(config.medicalResponseLevel)         { mutableStateOf(coerceVisible(config.medicalResponseLevel, IncidentResponseLevel.EMERGENCY)) }
@@ -52,6 +55,7 @@ fun HealthScreen(vm: MainViewModel) {
     var medicalCustomDetail  by remember(config.medicalCustomDetail)          { mutableStateOf(config.medicalCustomDetail) }
 
     var wellnessEnabled         by remember(config.wellnessEnabled)              { mutableStateOf(config.wellnessEnabled) }
+    var readinessAtRideStartEnabled by remember(config.readinessAtRideStartEnabled) { mutableStateOf(config.readinessAtRideStartEnabled) }
     var wellnessResponseLevel   by remember(config.wellnessResponseLevel)        { mutableStateOf(coerceVisible(config.wellnessResponseLevel, IncidentResponseLevel.WARNING)) }
     var wellnessUseMaxHrPercent by remember(config.wellnessUseMaxHrPercent)      { mutableStateOf(config.wellnessUseMaxHrPercent) }
     // Sustained tier (existing fields)
@@ -120,7 +124,7 @@ fun HealthScreen(vm: MainViewModel) {
                     checked = medicalEnabled,
                     onCheckedChange = {
                         medicalEnabled = it
-                        vm.saveConfig(config.copy(medicalEpisodeEnabled = it))
+                        vm.updateConfig { cfg -> cfg.copy(medicalEpisodeEnabled = it) }
                     },
                 )
                 if (medicalEnabled) {
@@ -128,23 +132,38 @@ fun HealthScreen(vm: MainViewModel) {
                         selected = medicalResponseLevel,
                         onSelected = {
                             medicalResponseLevel = it
-                            vm.saveConfig(config.copy(medicalResponseLevel = it))
+                            vm.updateConfig { cfg -> cfg.copy(medicalResponseLevel = it) }
                         },
                     )
+                    // Tell the rider where the sound is wired:
+                    //   WARNING  → shares the picker the wellness section exposes (one knob
+                    //              controls every WARNING-level alert across both detectors).
+                    //   EMERGENCY → urgent crash countdown beep, not configurable by design.
+                    Text(
+                        text = stringResource(
+                            if (medicalResponseLevel == IncidentResponseLevel.WARNING)
+                                R.string.health_medical_sound_hint_warning
+                            else
+                                R.string.health_emergency_sound_hint
+                        ),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.padding(horizontal = 4.dp, vertical = 2.dp),
+                    )
                     CustomAlertField(
-                        label = "Custom title",
+                        label = stringResource(R.string.health_custom_title_label),
                         value = medicalCustomTitle,
-                        onCommit = { v -> medicalCustomTitle = v; vm.saveConfig(config.copy(medicalCustomTitle = v)) },
+                        onCommit = { v -> medicalCustomTitle = v; vm.updateConfig { cfg -> cfg.copy(medicalCustomTitle = v) } },
                         defaultText = stringResource(R.string.warning_medical_title),
                         maxLength = 30,
                     )
                     CustomAlertField(
-                        label = "Custom detail",
+                        label = stringResource(R.string.health_custom_detail_label),
                         value = medicalCustomDetail,
-                        onCommit = { v -> medicalCustomDetail = v; vm.saveConfig(config.copy(medicalCustomDetail = v)) },
+                        onCommit = { v -> medicalCustomDetail = v; vm.updateConfig { cfg -> cfg.copy(medicalCustomDetail = v) } },
                         defaultText = stringResource(R.string.warning_medical_detail),
                         tokensHint = "Tokens: {bpm}",
-                        maxLength = 80,
+                        maxLength = ALERT_DETAIL_MAX_CHARS,
                         singleLine = false,
                     )
                 }
@@ -163,7 +182,7 @@ fun HealthScreen(vm: MainViewModel) {
                     checked = wellnessEnabled,
                     onCheckedChange = {
                         wellnessEnabled = it
-                        vm.saveConfig(config.copy(wellnessEnabled = it))
+                        vm.updateConfig { cfg -> cfg.copy(wellnessEnabled = it) }
                     },
                 )
                 if (wellnessEnabled) {
@@ -171,15 +190,34 @@ fun HealthScreen(vm: MainViewModel) {
                     selected = wellnessResponseLevel,
                     onSelected = {
                         wellnessResponseLevel = it
-                        vm.saveConfig(config.copy(wellnessResponseLevel = it))
+                        vm.updateConfig { cfg -> cfg.copy(wellnessResponseLevel = it) }
                     },
                 )
+                // Beep picker is meaningful only for WARNING-level alerts — EMERGENCY-level
+                // fires through the crash countdown which has its own hardcoded urgent beep
+                // (BEEP_LONG + per-second BEEP_URGENT in the last 5 s). Making the picker
+                // mutable in EMERGENCY mode would mislead the rider into thinking they can
+                // mute a safety-critical beep, so we hide it and show a one-liner instead.
+                if (wellnessResponseLevel == IncidentResponseLevel.WARNING) {
+                    BeepPatternPicker(
+                        label = stringResource(R.string.health_warning_sound_label),
+                        selected = config.wellnessBeepPattern,
+                        onSelected = { v -> vm.updateConfig { cfg -> cfg.copy(wellnessBeepPattern = v) } },
+                    )
+                } else {
+                    Text(
+                        text = stringResource(R.string.health_emergency_sound_hint),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.padding(horizontal = 4.dp, vertical = 2.dp),
+                    )
+                }
                 EnableRow(
                     label = stringResource(R.string.health_wellness_use_pct_label),
                     checked = wellnessUseMaxHrPercent,
                     onCheckedChange = {
                         wellnessUseMaxHrPercent = it
-                        vm.saveConfig(config.copy(wellnessUseMaxHrPercent = it))
+                        vm.updateConfig { cfg -> cfg.copy(wellnessUseMaxHrPercent = it) }
                     },
                 )
 
@@ -190,22 +228,21 @@ fun HealthScreen(vm: MainViewModel) {
                     checked = wCriticalOn,
                     onCheckedChange = {
                         wCriticalOn = it
-                        vm.saveConfig(config.copy(wellnessCriticalEnabled = it))
+                        vm.updateConfig { cfg -> cfg.copy(wellnessCriticalEnabled = it) }
                     },
                 )
                 if (wCriticalOn) {
                 if (wellnessUseMaxHrPercent) {
-                    OutlinedTextField(
+                    PercentFieldWithBpmHint(
                         value = wCriticalThresholdPct,
                         onValueChange = { v ->
                             wCriticalThresholdPct = v.filter { it.isDigit() }.take(3)
                             wCriticalThresholdPct.toIntOrNull()?.let { p ->
-                                if (p in 60..100) vm.saveConfig(config.copy(wellnessCriticalThresholdPct = p))
+                                if (p in 60..100) vm.updateConfig { cfg -> cfg.copy(wellnessCriticalThresholdPct = p) }
                             }
                         },
-                        label = { Text(stringResource(R.string.health_wellness_critical_threshold_pct_label)) },
-                        modifier = Modifier.fillMaxWidth(),
-                        singleLine = true,
+                        label = stringResource(R.string.health_wellness_critical_threshold_pct_label),
+                        maxHr = userProfile?.maxHr,
                     )
                 } else {
                     OutlinedTextField(
@@ -213,7 +250,7 @@ fun HealthScreen(vm: MainViewModel) {
                         onValueChange = { v ->
                             wCriticalThresholdBpm = v.filter { it.isDigit() }.take(3)
                             wCriticalThresholdBpm.toIntOrNull()?.let { p ->
-                                if (p in 80..250) vm.saveConfig(config.copy(wellnessCriticalThresholdBpm = p))
+                                if (p in 80..250) vm.updateConfig { cfg -> cfg.copy(wellnessCriticalThresholdBpm = p) }
                             }
                         },
                         label = { Text(stringResource(R.string.health_wellness_critical_threshold_bpm_label)) },
@@ -226,7 +263,7 @@ fun HealthScreen(vm: MainViewModel) {
                     onValueChange = { v ->
                         wCriticalDuration = v.filter { it.isDigit() }.take(3)
                         wCriticalDuration.toIntOrNull()?.let { p ->
-                            if (p in 1..60) vm.saveConfig(config.copy(wellnessCriticalDurationMinutes = p))
+                            if (p in 1..60) vm.updateConfig { cfg -> cfg.copy(wellnessCriticalDurationMinutes = p) }
                         }
                     },
                     label = { Text(stringResource(R.string.health_wellness_critical_duration_label)) },
@@ -234,19 +271,19 @@ fun HealthScreen(vm: MainViewModel) {
                     singleLine = true,
                 )
                 CustomAlertField(
-                    label = "Critical alert title",
+                    label = stringResource(R.string.health_critical_title_label),
                     value = wCriticalCustomTitle,
-                    onCommit = { v -> wCriticalCustomTitle = v; vm.saveConfig(config.copy(wellnessCriticalCustomTitle = v)) },
+                    onCommit = { v -> wCriticalCustomTitle = v; vm.updateConfig { cfg -> cfg.copy(wellnessCriticalCustomTitle = v) } },
                     defaultText = stringResource(R.string.warning_wellness_critical_hr_title),
                     maxLength = 30,
                 )
                 CustomAlertField(
-                    label = "Critical alert detail",
+                    label = stringResource(R.string.health_critical_detail_label),
                     value = wCriticalCustomDetail,
-                    onCommit = { v -> wCriticalCustomDetail = v; vm.saveConfig(config.copy(wellnessCriticalCustomDetail = v)) },
+                    onCommit = { v -> wCriticalCustomDetail = v; vm.updateConfig { cfg -> cfg.copy(wellnessCriticalCustomDetail = v) } },
                     defaultText = stringResource(R.string.warning_wellness_critical_hr_detail),
                     tokensHint = "Tokens: {bpm}, {threshold}, {minutes}",
-                    maxLength = 80,
+                    maxLength = ALERT_DETAIL_MAX_CHARS,
                     singleLine = false,
                 )
                 }  // end if (wCriticalOn)
@@ -258,22 +295,21 @@ fun HealthScreen(vm: MainViewModel) {
                     checked = wSustainedOn,
                     onCheckedChange = {
                         wSustainedOn = it
-                        vm.saveConfig(config.copy(wellnessSustainedEnabled = it))
+                        vm.updateConfig { cfg -> cfg.copy(wellnessSustainedEnabled = it) }
                     },
                 )
                 if (wSustainedOn) {
                 if (wellnessUseMaxHrPercent) {
-                    OutlinedTextField(
+                    PercentFieldWithBpmHint(
                         value = wSustainedThresholdPct,
                         onValueChange = { v ->
                             wSustainedThresholdPct = v.filter { it.isDigit() }.take(3)
                             wSustainedThresholdPct.toIntOrNull()?.let { p ->
-                                if (p in 60..100) vm.saveConfig(config.copy(wellnessHighHrPercent = p))
+                                if (p in 60..100) vm.updateConfig { cfg -> cfg.copy(wellnessHighHrPercent = p) }
                             }
                         },
-                        label = { Text(stringResource(R.string.health_wellness_threshold_pct_label)) },
-                        modifier = Modifier.fillMaxWidth(),
-                        singleLine = true,
+                        label = stringResource(R.string.health_wellness_threshold_pct_label),
+                        maxHr = userProfile?.maxHr,
                     )
                 } else {
                     OutlinedTextField(
@@ -281,7 +317,7 @@ fun HealthScreen(vm: MainViewModel) {
                         onValueChange = { v ->
                             wSustainedThresholdBpm = v.filter { it.isDigit() }.take(3)
                             wSustainedThresholdBpm.toIntOrNull()?.let { p ->
-                                if (p in 80..250) vm.saveConfig(config.copy(wellnessHighHrThreshold = p))
+                                if (p in 80..250) vm.updateConfig { cfg -> cfg.copy(wellnessHighHrThreshold = p) }
                             }
                         },
                         label = { Text(stringResource(R.string.health_wellness_threshold_label)) },
@@ -294,7 +330,7 @@ fun HealthScreen(vm: MainViewModel) {
                     onValueChange = { v ->
                         wSustainedDuration = v.filter { it.isDigit() }.take(3)
                         wSustainedDuration.toIntOrNull()?.let { p ->
-                            if (p in 5..240) vm.saveConfig(config.copy(wellnessHighHrDurationMinutes = p))
+                            if (p in 5..240) vm.updateConfig { cfg -> cfg.copy(wellnessHighHrDurationMinutes = p) }
                         }
                     },
                     label = { Text(stringResource(R.string.health_wellness_duration_label)) },
@@ -302,19 +338,19 @@ fun HealthScreen(vm: MainViewModel) {
                     singleLine = true,
                 )
                 CustomAlertField(
-                    label = "Sustained alert title",
+                    label = stringResource(R.string.health_sustained_title_label),
                     value = wSustainedCustomTitle,
-                    onCommit = { v -> wSustainedCustomTitle = v; vm.saveConfig(config.copy(wellnessSustainedCustomTitle = v)) },
+                    onCommit = { v -> wSustainedCustomTitle = v; vm.updateConfig { cfg -> cfg.copy(wellnessSustainedCustomTitle = v) } },
                     defaultText = stringResource(R.string.warning_wellness_high_hr_title),
                     maxLength = 30,
                 )
                 CustomAlertField(
-                    label = "Sustained alert detail",
+                    label = stringResource(R.string.health_sustained_detail_label),
                     value = wSustainedCustomDetail,
-                    onCommit = { v -> wSustainedCustomDetail = v; vm.saveConfig(config.copy(wellnessSustainedCustomDetail = v)) },
+                    onCommit = { v -> wSustainedCustomDetail = v; vm.updateConfig { cfg -> cfg.copy(wellnessSustainedCustomDetail = v) } },
                     defaultText = stringResource(R.string.warning_wellness_high_hr_detail),
                     tokensHint = "Tokens: {bpm}, {threshold}, {minutes}",
-                    maxLength = 80,
+                    maxLength = ALERT_DETAIL_MAX_CHARS,
                     singleLine = false,
                 )
                 }  // end if (wSustainedOn)
@@ -326,7 +362,7 @@ fun HealthScreen(vm: MainViewModel) {
                     checked = wDecouplingOn,
                     onCheckedChange = {
                         wDecouplingOn = it
-                        vm.saveConfig(config.copy(wellnessDecouplingEnabled = it))
+                        vm.updateConfig { cfg -> cfg.copy(wellnessDecouplingEnabled = it) }
                     },
                 )
                 if (wDecouplingOn) {
@@ -340,7 +376,7 @@ fun HealthScreen(vm: MainViewModel) {
                     onValueChange = { v ->
                         wDecouplingThreshold = v.filter { it.isDigit() }.take(2)
                         wDecouplingThreshold.toIntOrNull()?.let { p ->
-                            if (p in 3..30) vm.saveConfig(config.copy(wellnessDecouplingThresholdPct = p))
+                            if (p in 3..30) vm.updateConfig { cfg -> cfg.copy(wellnessDecouplingThresholdPct = p) }
                         }
                     },
                     label = { Text(stringResource(R.string.health_wellness_decoupling_threshold_label)) },
@@ -352,7 +388,7 @@ fun HealthScreen(vm: MainViewModel) {
                     onValueChange = { v ->
                         wDecouplingDuration = v.filter { it.isDigit() }.take(3)
                         wDecouplingDuration.toIntOrNull()?.let { p ->
-                            if (p in 1..60) vm.saveConfig(config.copy(wellnessDecouplingDurationMinutes = p))
+                            if (p in 1..60) vm.updateConfig { cfg -> cfg.copy(wellnessDecouplingDurationMinutes = p) }
                         }
                     },
                     label = { Text(stringResource(R.string.health_wellness_decoupling_duration_label)) },
@@ -360,22 +396,38 @@ fun HealthScreen(vm: MainViewModel) {
                     singleLine = true,
                 )
                 CustomAlertField(
-                    label = "Decoupling alert title",
+                    label = stringResource(R.string.health_decoupling_title_label),
                     value = wDecouplingCustomTitle,
-                    onCommit = { v -> wDecouplingCustomTitle = v; vm.saveConfig(config.copy(wellnessDecouplingCustomTitle = v)) },
+                    onCommit = { v -> wDecouplingCustomTitle = v; vm.updateConfig { cfg -> cfg.copy(wellnessDecouplingCustomTitle = v) } },
                     defaultText = stringResource(R.string.warning_wellness_decoupling_title),
                     maxLength = 30,
                 )
                 CustomAlertField(
-                    label = "Decoupling alert detail",
+                    label = stringResource(R.string.health_decoupling_detail_label),
                     value = wDecouplingCustomDetail,
-                    onCommit = { v -> wDecouplingCustomDetail = v; vm.saveConfig(config.copy(wellnessDecouplingCustomDetail = v)) },
+                    onCommit = { v -> wDecouplingCustomDetail = v; vm.updateConfig { cfg -> cfg.copy(wellnessDecouplingCustomDetail = v) } },
                     defaultText = stringResource(R.string.warning_wellness_decoupling_detail),
                     tokensHint = "Tokens: {drift}, {minutes}",
-                    maxLength = 80,
+                    maxLength = ALERT_DETAIL_MAX_CHARS,
                     singleLine = false,
                 )
                 }  // end if (wDecouplingOn)
+
+                // ── Readiness advice at ride start (cross-tier — uses ALL wellness data) ─
+                HorizontalDivider(modifier = Modifier.padding(vertical = 6.dp))
+                EnableRow(
+                    label = stringResource(R.string.readiness_at_ride_start_label),
+                    checked = readinessAtRideStartEnabled,
+                    onCheckedChange = {
+                        readinessAtRideStartEnabled = it
+                        vm.updateConfig { cfg -> cfg.copy(readinessAtRideStartEnabled = it) }
+                    },
+                )
+                Text(
+                    text = stringResource(R.string.readiness_at_ride_start_hint),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
                 }  // end if (wellnessEnabled)
             }
         }
@@ -453,4 +505,49 @@ private fun coerceVisible(
 ): IncidentResponseLevel = when (stored) {
     IncidentResponseLevel.SILENT -> fallback
     else -> stored
+}
+
+/**
+ * `OutlinedTextField` for the wellness "% of max HR" entry, with a small hint line below
+ * showing the **resolved bpm threshold** computed from `maxHr × pct / 100`. Lets the rider
+ * verify that the % they entered actually maps to the bpm they expect — KSafe uses
+ * whatever the Karoo profile reports as the rider's max HR, so the only sanity check that
+ * matters is the resolved bpm shown here.
+ *
+ * Resolution states:
+ *  - `maxHr` not loaded yet (or 0)  → hint asks the rider to check the Karoo profile.
+ *  - `pct` outside 60..100          → hint says "Enter 60–100" and shows the maxHr.
+ *  - both valid                     → hint shows the exact resolved bpm.
+ */
+@Composable
+private fun PercentFieldWithBpmHint(
+    value: String,
+    onValueChange: (String) -> Unit,
+    label: String,
+    maxHr: Int?,
+) {
+    androidx.compose.foundation.layout.Column(modifier = Modifier.fillMaxWidth()) {
+        OutlinedTextField(
+            value = value,
+            onValueChange = onValueChange,
+            label = { Text(label) },
+            modifier = Modifier.fillMaxWidth(),
+            singleLine = true,
+        )
+        val pct = value.toIntOrNull()
+        val hint = when {
+            maxHr == null || maxHr <= 0 ->
+                stringResource(R.string.health_maxhr_not_loaded)
+            pct == null || pct !in 60..100 ->
+                stringResource(R.string.health_pct_enter_range, maxHr)
+            else ->
+                stringResource(R.string.health_pct_resolved_bpm, maxHr * pct / 100, maxHr)
+        }
+        Text(
+            text = hint,
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier.padding(start = 4.dp, top = 2.dp),
+        )
+    }
 }

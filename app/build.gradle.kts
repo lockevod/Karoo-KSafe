@@ -21,8 +21,8 @@ android {
         applicationId = "com.enderthor.kSafe"
         minSdk = 23
         targetSdk = 34
-        versionCode = 202605102
-        versionName = "2.1.0"
+        versionCode = 202605281
+        versionName = "2.0.0"
 
         // Calibration log delivery credentials — injected from local.properties at compile time.
         // Falls back to empty string if the key is not set (LogReporter skips sending in that case).
@@ -51,6 +51,16 @@ android {
         compose = true
         buildConfig = true
     }
+    testOptions {
+        // Make android.os.Build.MODEL (and other final-static stub fields) return
+        // their declared defaults (null / 0 / false) instead of throwing
+        // "Method not mocked". The CalibrationLogger DEVICE_LABEL initializer reads
+        // Build.MODEL; without this it NPEs the moment enable() is called from a
+        // JVM unit test. The CalibrationLogger lazy already has `.ifEmpty { "device" }`
+        // as a fallback, but the prior `MODEL.trim()` step NPEs on null. Default
+        // values is the standard AGP knob for this — Robolectric would be heavier.
+        unitTests.isReturnDefaultValues = true
+    }
 }
 
 dependencies {
@@ -71,4 +81,8 @@ dependencies {
     implementation(libs.timber)
     implementation(libs.androidx.foundation.android)
     implementation(libs.androidx.foundation.layout.android)
+
+    testImplementation(libs.junit)
+    testImplementation(libs.kotlinx.coroutines.test)
+    testImplementation(libs.mockito.core)
 }

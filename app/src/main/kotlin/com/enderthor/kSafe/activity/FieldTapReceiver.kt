@@ -31,15 +31,15 @@ class FieldTapReceiver : BroadcastReceiver() {
             }
             ACTION_CUSTOM_MESSAGE -> {
                 Timber.d("FieldTapReceiver: Custom message tap (slot 1)")
-                ext.launch { ext.sendCustomMessage(1) }
+                ext.handleCustomMessageTap(1)
             }
             ACTION_CUSTOM_MESSAGE_2 -> {
                 Timber.d("FieldTapReceiver: Custom message tap (slot 2)")
-                ext.launch { ext.sendCustomMessage(2) }
+                ext.handleCustomMessageTap(2)
             }
             ACTION_CUSTOM_MESSAGE_3 -> {
                 Timber.d("FieldTapReceiver: Custom message tap (slot 3)")
-                ext.launch { ext.sendCustomMessage(3) }
+                ext.handleCustomMessageTap(3)
             }
             ACTION_WEBHOOK_1 -> {
                 Timber.d("FieldTapReceiver: Webhook tap (slot 1)")

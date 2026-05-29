@@ -1,8 +1,25 @@
 # KSafe — Nutrition & Hydration Algorithms
 
-> **Version:** May 2026 (revision 1 — initial release with v2.1.0)
-> **Files:** `CarbsTracker.kt`, `HydrationTracker.kt`, `IntensityZoneCalculator.kt`
-> **Sensors:** Karoo SDK heart-rate stream + power stream + `streamUserProfile()` (HR / power zones)
+> **Version:** May 2026 (revision 3 — **carb burn from physiology**)
+> **Files:** `CarbsTracker.kt`, `HydrationTracker.kt`, `IntensityZoneCalculator.kt`, `CarbBurnEstimator.kt`
+> **Sensors:** Karoo SDK heart-rate stream + power stream + `streamUserProfile()` (weight / maxHr / restingHr / FTP / HR zones / power zones) + rider-entered age + sex
+
+> [!IMPORTANT]
+> **Model rewrite (May 2026)** — the carb tracker no longer multiplies a rider-configured "target g/h" by an intensity multiplier. It now computes **real carb burn** from physiology:
+>
+> 1. **kcal/h** from the highest-confidence tier whose sensors are paired:
+>    - **Tier 1 — power**: `kcal/h = power_W × 3.6` (standard cycling formula; Coyle 1992, Moseley & Jeukendrup 2001; ~5-10 % error).
+>    - **Tier 2 — Keytel et al. 2005**: HR + age + sex + weight (~10-15 % error in cycling 50-80 % VO2max). Requires the rider's age and sex from Settings.
+>    - **Tier 3 — Swain & Leutholtz 1997**: HRR → METs → `kcal/h = METs × weight` (~20-30 % error; fallback when age/sex are not entered).
+>    - **Tier 4 — none**: no usable inputs; the integrator stops and the data fields display `Pair HR/Pwr`.
+> 2. **CHO fraction** from the current intensity zone, mapped linearly from 0.30 (Z1) to 0.95 (Z5+) — anchors from Romijn 1993, Achten & Jeukendrup 2003, Jeukendrup 2014.
+> 3. **g/h carb burn = kcal/h × CHO_fraction / 4**, integrated over active movement time.
+>
+> The deleted `carbTargetGperHour` config field used to drive the integrator (multiplied by `IntensityZoneCalculator.multiplier`). That model produced misleading data ("burned" was actually "planned intake") and required the rider to set a target that conflated their fueling plan with their physiology. The new model has no rider-tunable rate input on the carb side; the rider only sets the **deficit threshold** (when to alert) and **reminder cadence** (how often).
+>
+> Hydration retains the older target-based model — there is no biosensor for sweat rate to replace it with. The optional dynamic estimator (HR + power + weight + ambient temperature + humidity) still applies. See `SweatEstimator.kt`.
+>
+> `IntensityZoneCalculator.multiplier` is no longer read by the carb integrator but is kept in the data class for backwards compatibility; the classifier itself (source / index / total) is still used to derive the CHO fraction.
 
 ---
 
@@ -16,28 +33,34 @@ The nutrition and hydration tracker is KSafe's **preventive safety layer**. The 
 A rider who is properly fueled and hydrated has clearer judgment and faster reaction time, and is less likely to crash, blow up, or need to be rescued. This is the framing that justifies bundling fueling into a *safety* extension.
 
 ```
-┌───────────────────────────────────────────────────────────────┐
-│ Rider's effort (HR or power)                                  │
-└──────┬────────────────────────────────────────────────────────┘
+┌──────────────────────────────────────────────────────────────────────┐
+│ Rider physiology + sensors                                            │
+│  - power (preferred)      - HR + age + sex + weight (Keytel)          │
+│  - HR + maxHr + restingHr + weight (Swain HRR fallback)               │
+└──────┬───────────────────────────────────────────────────────────────┘
        │
        ▼
 ┌──────────────────────────┐    ┌──────────────────────────┐
-│ IntensityZoneCalculator  │    │ Configured per-hour      │
-│  → 0.7..1.3 multiplier   │    │ targets (g/h, ml/h)      │
+│ CarbBurnEstimator        │    │ Configured per-hour      │
+│  → kcal/h  (Tier 1-4)    │    │ target (ml/h)            │
+│  → × CHO_fraction(zone)  │    │  (no biosensor for sweat │
+│  → ÷ 4 kcal/g            │    │   rate — flat per-hour)  │
+│  = real burn (g/h)       │    │                          │
+│  + 90 g/h gut cap        │    │                          │
 └──────┬───────────────────┘    └──────┬───────────────────┘
        │                               │
        ▼                               ▼
 ┌──────────────────────────┐    ┌──────────────────────────┐
 │ CarbsTracker             │    │ HydrationTracker         │
-│  cumTargetG = ∫ rate dt  │    │  cumTargetMl = rate × t  │
-│  (multiplier-aware)      │    │  (flat per-hour)         │
+│  cumBurnedG = ∫ burn dt  │    │  cumTargetMl = rate × t  │
+│  (movement-gated)        │    │  (movement-gated)        │
 └──────┬───────────────────┘    └──────┬───────────────────┘
        │                               │
        ▼                               ▼
    Deficit alert + Time alert + InRideAlert dispatch (each tracker independently)
 ```
 
-Both trackers are **fully optional** and **disabled by default**. The right targets depend on each rider; we don't ship aggressive defaults that would surprise users.
+Both trackers are **fully optional** and **disabled by default**. The carb side has no rider-tunable rate — burn comes from physiology directly. Riders set their **deficit threshold** (g behind which an alert fires) and **reminder cadence** (how often the same alert can re-fire). The hydration side retains a rider-set `hydrationTargetMlPerHour` until a sensor for sweat rate exists.
 
 ---
 
@@ -45,110 +68,79 @@ Both trackers are **fully optional** and **disabled by default**. The right targ
 
 | Source | Used by | Used for |
 |--------|---------|----------|
-| `streamDataFlow(HEART_RATE)` | Carbs (multiplier when no power) | Zone classification via HR zones |
-| `streamDataFlow(POWER)` | Carbs (preferred multiplier source) | Zone classification via power zones (more accurate) |
-| `streamUserProfile()` | Carbs | Read HR zones (5) and power zones (7) directly from the Karoo's user profile — **no manual entry** of weight, FTP, max HR, or anything else |
+| `streamDataFlow(POWER)` | Carbs (Tier 1) | `kcal/h = W × 3.6` — highest-confidence burn estimate |
+| `streamDataFlow(HEART_RATE)` | Carbs (Tier 2/3) | Keytel kcal/h with rider's weight + age + sex; Swain METs fallback when age/sex not entered |
+| `streamUserProfile()` | Carbs | Weight (Keytel/Swain), max HR + resting HR (Swain HRR), HR zones (5) + power zones (7) for the CHO fraction |
+| `riderAge` (Settings) | Carbs (Tier 2) | Required input to Keytel — entered in Settings → Fueling |
+| `riderSex` (Settings) | Carbs (Tier 2) | Required input to Keytel — entered in Settings → Fueling |
 | (none) | Hydration | Pure time integration; no sensor input |
 
-The Karoo profile is the **single source of truth** for the rider's biometric configuration. KSafe never asks for weight, FTP, max HR, or anything similar — the rider has already configured these in their Karoo, and we read them at runtime.
+The Karoo profile is the **single source of truth** for weight, FTP, max HR and zones — KSafe never asks for those. The rider only adds **age** and **sex** in Settings (Keytel needs them; without them the carb estimator falls back to the rougher Swain Tier 3). When neither HR nor power is paired, the data fields render *"Pair HR/Pwr"* and the integrator freezes.
 
 ---
 
-## IntensityZoneCalculator
+## CarbBurnEstimator — physiology-based burn rate
 
-A pure helper (`IntensityZoneCalculator.kt`) that maps the rider's current HR or power against their configured zones and returns a `ZoneSnapshot` with a multiplier.
+A pure helper (`CarbBurnEstimator.kt`) computes the rider's instantaneous **carb burn rate** in g/h from whichever physiological inputs are available. The model has three steps:
 
-### API
+1. **kcal/h** from the highest-confidence tier whose inputs are paired (see Tier 1-4 below).
+2. **CHO fraction** (% of kcal coming from carbs) read from the current intensity zone — linear from 0.30 (Z1 recovery, mostly fat) to 0.95 (Z5+, almost pure carb).
+3. **g/h = kcal/h × CHO_fraction / 4** (1 g CHO ≈ 4 kcal Atwater factor).
+
+The output is `BurnEstimate(gph, kcalPerHour, choFraction, confidence, zoneSnapshot)` — the tracker integrates `gph` over active movement time and surfaces `confidence` to the rider via the data field's *"Pair HR/Pwr"* label when no usable tier fires.
+
+### The four tiers
+
+| Tier | Inputs | Formula | Typical error | When it runs |
+|---|---|---|---|---|
+| **POWER** (1) | Power meter | `kcal/h = power_W × 3.6` (gross efficiency ~22 %; Coyle 1992, Moseley & Jeukendrup 2001) | 5–10 % | Power meter paired AND emitting |
+| **KEYTEL** (2) | HR + age + sex + weight | Keytel et al. 2005 sex-specific HR regressions (output in kJ/min, converted to kcal/h) | 10–15 % @ 50-80 % VO2max | No power; HR + rider age + sex + weight from Karoo profile all available |
+| **SWAIN** (3) | HR + maxHr + restingHr + weight | `%HRR ≈ %VO2R` (Swain & Leutholtz 1997); `METs = 6 × %HRR + 1`; `kcal/h = METs × weight` | 20–30 % | No power; rider hasn't entered age/sex yet |
+| **NONE** (4) | — | `gph = 0`, integrator frozen | — | None of HR / power paired or no zones configured |
+
+### Keytel coefficients
+
+```
+Male:   EE_kJ_per_min = -55.0969 + 0.6309·HR + 0.1988·W + 0.2017·A
+Female: EE_kJ_per_min = -20.4022 + 0.4472·HR - 0.1263·W + 0.0740·A
+kcal/h = EE_kJ_per_min × 60 / 4.184
+```
+
+The formula is validated for HR 90–170 bpm, weight 40–120 kg, age 18–65. Outside this range the regression still returns a number, but error grows — the data field surfaces `Confidence.KEYTEL` regardless so the rider knows the tier. Keytel can produce a negative kJ/min at very low HR with atypical weight; that case clamps to null and the estimator falls through to Swain.
+
+### CHO fraction by zone
+
+The CHO fraction maps the rider's intensity zone index linearly to [0.30, 0.95]:
 
 ```kotlin
-data class ZoneSnapshot(
-    val source: ZoneSource,    // POWER | HR | NONE
-    val index: Int,            // 0-based; 0 = Z1; -1 if NONE
-    val total: Int,            // typically 5 for HR, 7 for power; 0 if NONE
-    val multiplier: Float,     // 0.7..1.3 within configured zones, 1.0 if NONE
-)
+ratio       = zone.index / (zone.total - 1)        // 0.0 .. 1.0
+choFraction = 0.30 + ratio × (0.95 − 0.30)
 ```
 
-### Source preference
+For a 5-zone HR model: Z1 → 0.30, Z2 → 0.4625, Z3 → 0.625, Z4 → 0.7875, Z5 → 0.95. For a 7-zone Coggan power model: Z1 → 0.30, Z4 → ~0.625, Z7 → 0.95. The end-anchors come from Romijn et al. 1993 (substrate utilization at 25/65/85 % VO2max), Achten & Jeukendrup 2003 (maximal fat oxidation), and Jeukendrup 2014 (review).
 
-```
-1) POWER   if profile + currentPowerW + powerZones available, return POWER zone
-2) HR      else if profile + currentHr + heartRateZones available, return HR zone
-3) NONE    else (no sensors, no zones) — multiplier 1.0 fallback
-```
+When no zones are classifiable (NONE source), the CHO fraction falls back to the midpoint (0.625) so a rider with power but no configured zones still gets a sensible carb estimate.
 
-Power is preferred because it's a cleaner intensity proxy than HR (HR lags effort by 30–60 s, drifts over long rides, and is influenced by hydration / temperature).
+### Worked examples
 
-### Zone-to-multiplier mapping
+| Scenario | Inputs | Tier | kcal/h | CHO | g/h |
+|---|---|---|---|---|---|
+| Strong rider on tempo | power=200 W, HR irrelevant, Z3 (index 2 of 5) | POWER | 200 × 3.6 = 720 | 0.625 | **112** → clamped to **90** |
+| Rider with HR only, age/sex entered | HR=150, W=70 kg, age 40, MALE, Z3 | KEYTEL | 882 | 0.625 | **138** → clamped to **90** |
+| Rider with HR only, no age/sex | HR=150, W=70, maxHR=190, restHR=50, Z3 | SWAIN | 370 | 0.625 | **58** |
+| No sensors | — | NONE | 0 | — | **0** (data field shows *"Pair HR/Pwr"*) |
 
-The multiplier scales linearly across the rider's configured zones from **0.7** (recovery) to **1.3** (top zone). The Karoo uses a 5-zone HR model and a 7-zone power model — both fit the same formula because we use **zone index relative to the total**:
+### IntensityZoneCalculator (still used, for zones only)
 
-```kotlin
-ratio      = idx / (total - 1)               // 0.0 .. 1.0
-multiplier = MIN_MULT + ratio × (MAX_MULT - MIN_MULT)
-```
+`IntensityZoneCalculator.kt` continues to classify the rider's current intensity zone from HR or power against the user profile's zone table. Power is preferred when available (cleaner intensity proxy than HR, which lags 30–60 s and drifts on long rides). The returned `ZoneSnapshot(source, index, total, multiplier)` still carries a legacy `multiplier` field for backwards-compatibility with the calibration CSV column — it is no longer read by the integrator and will be removed in a future schema bump. Only `source / index / total` feed the new CHO-fraction lookup.
 
-Concrete values:
+### Why a gut-absorption ceiling
 
-| HR zone (5-zone model) | Multiplier | Power zone (7-zone Coggan) | Multiplier |
-|---|---|---|---|
-| Z1 (recovery) | 0.70 | Z1 (Active recovery) | 0.70 |
-| Z2 (endurance) | 0.85 | Z2 (Endurance) | 0.80 |
-| Z3 (tempo) | 1.00 | Z3 (Tempo) | 0.90 |
-| Z4 (threshold) | 1.15 | Z4 (Lactate threshold) | 1.00 |
-| Z5 (VO2max) | 1.30 | Z5 (VO2max) | 1.10 |
-| — | — | Z6 (Anaerobic) | 1.20 |
-| — | — | Z7 (Neuromuscular) | 1.30 |
+Modern recreational gut-absorption ceiling for a glucose+fructose mix is **~90 g/h** (Jeukendrup 2014; ISSN 2017; IOC 2019 consensus). Race-trained gut adapts to 120-150 g/h after months of training, but recreational riders cannot absorb more than ~90 g/h sustainably without GI distress. The integrator clamps the computed burn rate at this ceiling (`ABSORPTION_CAP_GPH = 90 g/h`) — see [CarbIntegrator](#carbintegrator) below. If the rider's actual physiological burn exceeds 90 g/h (very common at Z4-Z5 with power > ~150 W), the on-screen deficit just keeps growing honestly; clamping the *integration rate* prevents the cumulative total from racing ahead of any plausible intake plan.
 
-### Out-of-range readings
+### Why no rider-tunable target
 
-If `currentHr` is below `heartRateZones[0].min` (rider coasting at very low HR) or above the last zone's max (sprinting beyond configured Z5), the calculator **clamps to the nearest zone edge**:
-
-- Below Z1: returns Z1 multiplier (≈ 0.7) with `source = HR/POWER`
-- Above last zone: returns last-zone multiplier (≈ 1.3) with `source = HR/POWER`
-
-This is meaningfully different from `source = NONE`. Calibration analysis can distinguish "no sensor data" (NONE) from "sensor present, just outside configured zones" (HR/POWER, clamped index).
-
----
-
-## Multiplier rationale — target rate vs. burn rate
-
-> This is the most important conceptual point in the whole design. The multiplier is a **fueling strategy**, not a **physiological match**. Read this section before tuning the constants.
-
-A rider's **actual carb burn rate** in each zone is roughly:
-
-| Zone | Approx burn (g/h) | Notes |
-|---|---|---|
-| Z1 (recovery) | ~25 | Mostly fat metabolism — carb use is low |
-| Z3 (tempo) | ~60 | Balanced 50 / 50 fat + carb |
-| Z5+ (VO2max / sprint) | ~90+ | Almost all carb, but the gut absorbs ≤ 90 g/h regardless |
-
-If the multiplier reflected burn rate strictly, it would need a wider range — roughly **0.4 to 1.5** (a ~3× spread between low and high effort).
-
-KSafe deliberately uses a **narrower** range (**0.7 to 1.3**, ~2× spread) for one reason: **anti-bonk priority**.
-
-The reasoning:
-
-1. When you're cruising in Z1 (descending, recovering between climbs, drafting), you don't need many carbs *for the current effort*. But you should still be eating, because:
-   - Glycogen is finite (~500 g total in muscles + liver). Once depleted, ride performance collapses (the *bonk*).
-   - The rider doesn't know in advance when intensity will rise. Eating consistently across the ride keeps glycogen ready for the next climb / attack / surge.
-   - Modern endurance fueling guidance (Asker Jeukendrup, ISSN, etc.) advises **steady intake throughout the ride at near-target rate**, not "match what you're burning right now".
-
-2. If the multiplier were 0.4 in Z1, the rider on a long descent would consume only 24 g/h (0.4 × 60). Combined with the 4–5 hours required for a typical century, that's a meaningful glycogen deficit accumulating before the next climb.
-
-3. The ceiling at 1.3 is similarly intentional. The gut absorbs ≤ 90 g/h regardless of demand. Pushing the target above ~80 g/h would set the rider up for **GI distress**, not better fueling.
-
-**Practical examples** with `target = 60 g/h`:
-
-| Effort | Multiplier | g/h target |
-|---|---|---|
-| Z1 recovery / descent | 0.70 | 42 g/h |
-| Z3 tempo (e.g. group ride pace) | 1.00 | 60 g/h |
-| Z5 sprint / hard climb | 1.30 | 78 g/h |
-
-This is the range modern coaches recommend. The rider is told to keep eating reasonably even when easy, and to slightly increase intake when working hard — **not** to perfectly match burn rate.
-
-If a future revision wants to lean further into burn-rate matching (e.g. for ultra-distance riders with stronger fat oxidation training), widening to 0.5–1.5 is a single-line change. Defer until calibration data justifies it.
+Pre-v18 KSafe asked the rider to set a `carbTargetGperHour` value (Casual/Endurance/Race presets) and multiplied it by an intensity multiplier. That model produced misleading numbers — "burned" was actually "planned intake adjusted for effort", and required the rider to conflate their fueling *plan* with their physiology. v18 removes the field entirely. Burn is real now; the only carb-side knob the rider sets is **how many grams behind to alert at** (`carbDeficitThresholdG`) and **how often to repeat that alert** (`carbDeficitReminderIntervalMin`). The hydration side keeps its target field because there's no biosensor for sweat rate.
 
 ---
 
@@ -159,70 +151,113 @@ If a future revision wants to lean further into burn-rate matching (e.g. for ult
 ### State
 
 ```kotlin
-@Volatile private var cumTargetG = 0f       // float for integration precision
-@Volatile private var cumLoggedG = 0        // int — exact sum of logs
+@Volatile private var cumBurnedG = 0f         // float for integration precision
+@Volatile private var cumLoggedG = 0          // int — exact sum of logs
 @Volatile private var sessionStartMs = 0L
-@Volatile private var lastTickMs = 0L       // for dt
-@Volatile private var lastLogMs = 0L        // for time-based alert
-@Volatile private var lastAlertMs = 0L      // shared cooldown anchor
+@Volatile private var lastTickMs = 0L         // for dt
+@Volatile private var lastRealLogMs = 0L      // last actual rider log (drives `{elapsed}`)
+@Volatile private var lastLogMs = 0L          // bumped on logs AND time-alert fires (F1)
+@Volatile private var lastTimeAlertFireMs = 0L     // pure time-grid clock (v17)
+@Volatile private var lastDeficitAlertFireMs = 0L  // deficit reminder cooldown clock (v17)
+@Volatile private var activeIntegrationMs = 0L     // for session-average burn rate
 @Volatile private var lastZoneSnapshot = ZoneSnapshot(NONE, -1, 0, 1f)
 @Volatile private var lastPeriodicLogMs = 0L
 ```
 
-All fields are `@Volatile` because they're written from Karoo SDK callbacks and read from the tick coroutine.
+All fields are `@Volatile` because they're written from Karoo SDK callbacks and read from the tick coroutine. `lastRealLogMs` and `lastLogMs` deliberately diverge: a time-alert fire bumps `lastLogMs` (so the next interval gate measures from the alert, not from the last meal — F1) while `lastRealLogMs` only moves when the rider actually taps a log, so the `{elapsed}` token in alert text reflects time since the rider last ate.
 
 ### Per-tick integration
 
-Every 5 s, the tick coroutine:
+Every 15 s the tick coroutine delegates the gates to two pure helpers — `CarbBurnEstimator` for the burn rate and `CarbIntegrator` for the movement gate, GPS-stale freeze, absorption-cap clamp, and the active-time accumulator:
 
 ```kotlin
-val zone = IntensityZoneCalculator.calculate(profile, hr, power)
-if (lastTickMs != 0L) {
-    val dtSec = (now - lastTickMs) / 1000f
-    val ratePerSec = config.carbTargetGperHour / 3600f
-    cumTargetG += dtSec * ratePerSec * zone.multiplier
-}
+val burn = CarbBurnEstimator.estimate(
+    hrBpm    = lastHrBpm,
+    powerW   = lastPowerW,
+    profile  = lastUserProfile,
+    riderAge = config.riderAge,
+    riderSex = config.riderSex,
+)
+lastZoneSnapshot = burn.zoneSnapshot
+
+val stale = lastSpeedChangeMs > 0 && (now - lastSpeedChangeMs) > SPEED_STALE_MS
+val dtMs  = if (lastTickMs == 0L) 0L else (now - lastTickMs).coerceAtLeast(0L)
+val step  = CarbIntegrator.integrate(
+    burnGph    = burn.gph,
+    dtMs       = dtMs,
+    speedKmh   = lastSpeedKmh,
+    speedStale = stale,
+)
+cumBurnedG          += step.deltaG
+activeIntegrationMs += step.deltaActiveMs
 lastTickMs = now
 ```
 
-The `lastTickMs == 0L` guard prevents a spurious 5 s spike on the first tick after `start()`.
+The `lastTickMs == 0L` guard makes `CarbIntegrator` return all-zero deltas on the first tick (no prior timestamp to bracket the dt). NTP stepping the clock backwards is also handled — `dtMs.coerceAtLeast(0L)` floors the dt at 0.
+
+### CarbIntegrator gates
+
+| Gate | Effect | Why |
+|---|---|---|
+| **Movement** (`speedKmh >= 2.0`) | Below 2 km/h → freeze | Cycling only burns what you replace when moving. Bench tests and traffic-light stops don't accumulate. |
+| **GPS-stale** (`now − lastSpeedChangeMs > 10 s`) | Stuck speed → freeze | The Karoo SDK replays the last known value when GPS lock is lost in a tunnel / forest. Trusting the stuck value would integrate during a long tunnel even after the rider stopped inside it. |
+| **Absorption cap** | `effectiveGph = min(burn.gph, 90)` | Recreational gut ceiling. |
+| **Active-time gate** | `activeIntegrationMs +=` only when `effectiveGph > 0` | A movement-gate-passing tick with confidence=NONE adds 0 to cumBurnedG AND must NOT count toward the session-average denominator, or the "Pair HR/Pwr" hint never fires for HR-less riders. |
 
 ### Alert evaluation
 
-**Two combinable alert modes**, both gated by a single 5-minute cooldown so they can't fire within seconds of each other:
+**Two combinable alert modes**, each with its own cooldown clock. Per-source clocks were introduced in v17 — pre-v17 a single shared `lastAlertMs` meant a deficit fire reset the time-alert clock and vice versa.
 
 ```
-Deficit alert:
+Deficit alert (CarbsTracker.evaluateDeficitAlert):
    if carbDeficitAlertEnabled
-      AND (cumTargetG - cumLoggedG) >= carbDeficitThresholdG
-      AND (now - lastAlertMs) >= ALERT_COOLDOWN_MS (5 min)
+      AND (cumBurnedG − cumLoggedG) >= carbDeficitThresholdG
+      AND (now − lastDeficitAlertFireMs) >= carbDeficitReminderIntervalMin × 60_000  (default 10 min)
+      AND (deficit-initial-delay grace passed; see below)
    → fire
 
-Time alert:
-   if carbTimeAlertEnabled
-      AND (now - lastLogMs) >= carbTimeIntervalMin minutes
-      AND (now - lastAlertMs) >= ALERT_COOLDOWN_MS
-      AND (initial-delay grace passed; see below)
+Time alert (CarbsTracker.evaluateTimeAlert via FuelingAlertScheduler):
+   Pure-interval grid: ticks at sessionStartMs + N × intervalMs.
+   The rider's logs no longer shift the grid. The initial-delay
+   FILTERS ticks whose timestamp would be earlier than
+   sessionStartMs + initialDelayMs (the grid stays anchored to
+   session start).
+   if carbTimeAlertEnabled AND a grid tick is due AND no fire stamped at this tick
    → fire
 ```
 
-### Initial delay (time alert only)
+**Coincidence resolution.** When both a deficit AND a time tick are due in the same physical tick, the deficit alert wins — its numeric "behind N g" is more actionable than a "X min since last" reminder, and both ask for the same rider action (eat). The time tick is consumed silently (the grid is still advanced) so the rider doesn't hear two beeps in quick succession.
 
-The time-based alert has a **per-tracker initial grace period**. The motivation: most riders don't eat or drink in the first 20 minutes of a multi-hour ride; firing a "time to eat!" alert at minute 25 of a 4-hour effort is a nag, not safety.
+### Initial delay (both deficit and time alerts)
+
+Both alert paths have a **per-tracker initial grace period**. The motivation:
+
+- **Time alert**: most riders don't eat or drink in the first 20-30 minutes of a multi-hour ride; firing a "time to eat!" alert at minute 25 of a 4-hour effort is a nag, not safety.
+- **Deficit alert**: the integrator runs from t=0, so on a fresh ride the deficit crosses threshold purely from elapsed time without any rider misconduct. Without this gate the rider sees a "behind 25 g" nag at minute ~25 of a fresh ride, which reads as the app malfunctioning.
 
 ```kotlin
-val isFirstAlert = lastAlertMs == 0L && cumLoggedG == 0
-if (isFirstAlert && carbTimeInitialDelayMin > 0) {
-    if ((now - sessionStartMs) < carbTimeInitialDelayMin × 60_000) return
+// Deficit alert (CarbsTracker.evaluateDeficitAlert):
+val isFirstDeficitAlert = lastDeficitAlertFireMs == 0L && cumLoggedG == 0
+if (isFirstDeficitAlert && carbDeficitInitialDelayMin > 0) {
+    if ((now - sessionStartMs) < carbDeficitInitialDelayMin × 60_000) return
 }
+
+// Time alert (via FuelingAlertScheduler.currentDueTimeTick):
+// initialDelayMs FILTERS grid ticks earlier than (sessionStartMs + initialDelayMs).
+// The grid itself stays anchored at sessionStartMs + N × intervalMs — rider logs
+// do not shift it.
 ```
 
-The grace period only applies to the **first** alert in a session. Once any alert fires (`lastAlertMs > 0`) or the rider logs an item (`cumLoggedG > 0`), the regular interval logic takes over for subsequent alerts.
+**Per-source clocks (v17).** The grace period applies to the **first alert of each source**. A deficit fire bumps `lastDeficitAlertFireMs` only; the time-alert initial-delay gate continues to evaluate against `lastTimeAlertFireMs == 0L` independently. Pre-v17 a single shared `lastAlertMs` meant a deficit fire effectively released the time-alert gate too — that coupling is gone, the source clocks are fully independent. The shared release condition is still rider logging: once `cumLoggedG > 0` (or `cumLoggedMl > 0`), the grace gate of BOTH sources falls open because the rider is now actively fueling and the "fresh-ride grace" rationale no longer applies.
 
-| Default | Effect |
-|---|---|
-| `carbTimeInitialDelayMin = 30` | First time-alert can't fire before minute 30 of the session |
-| `carbTimeInitialDelayMin = 0` | Disabled — first alert fires after `carbTimeIntervalMin` from session start (original behaviour) |
+| Field | Default | Effect when default |
+|---|---|---|
+| `carbTimeInitialDelayMin` | 30 | First time-alert can't fire before minute 30 of the session |
+| `carbDeficitInitialDelayMin` | 30 | First deficit-alert can't fire before minute 30 of the session |
+| `hydrationTimeInitialDelayMin` | 30 | (mirror for hydration) |
+| `hydrationDeficitInitialDelayMin` | 30 | (mirror for hydration) |
+
+All four can be set to `0` to disable the grace and fire as soon as the trigger condition is met (original pre-v11 behaviour).
 
 ### Custom alert title and detail
 
@@ -237,13 +272,13 @@ Both the **title** and the **detail line** of the `InRideAlert` are per-rider cu
 
 The renderer substitutes `{token}` placeholders with current data when the alert fires. Tokens not supplied are left literal so a typo is visible to the rider rather than silently blanked.
 
-After substitution, the rendered string is capped at the call site so the popup cannot run off the Karoo screen: titles at `ALERT_TITLE_MAX_CHARS = 40` and details at `ALERT_DETAIL_MAX_CHARS = 90` (defined in `extension/managers/AlertTextRenderer.kt`). When the cap kicks in the last visible char is replaced with `…`. The cap applies only to the on-screen `InRideAlert` — the outgoing emergency message sent through the configured provider (Pushover / Telegram / ntfy / CallMeBot) uses its own separate template (`config.message` etc.) and has no such limit.
+After substitution, the rendered string is capped at the call site so the popup cannot run off the Karoo screen: titles at `ALERT_TITLE_MAX_CHARS = 40` and details at `ALERT_DETAIL_MAX_CHARS = 34` (defined in `extension/util/AlertTextRenderer.kt`; the detail cap was reduced from 90 after on-hardware measurement of where the popup truncates). When the cap kicks in the last visible char is replaced with `…`. The cap applies only to the on-screen `InRideAlert` — the outgoing emergency message sent through the configured provider (Pushover / Telegram / ntfy / CallMeBot) uses its own separate template (`config.message` etc.) and has no such limit.
 
 | Token | Substituted with |
 |---|---|
-| `{deficit}` | Current carb deficit in grams (`cumTargetG − cumLoggedG`, integer) |
-| `{elapsed}` | Minutes since last log entry |
-| `{target}` | Configured `carbTargetGperHour` |
+| `{deficit}` | Current carb deficit in grams (`cumBurnedG − cumLoggedG`, integer) |
+| `{elapsed}` | Minutes since last **real** rider log (`lastRealLogMs`, not bumped by time-alert fires) |
+| `{target}` | Instantaneous burn rate in g/h (post-absorption-cap). Pre-v18 this was the rider-configured `carbTargetGperHour`; that field is gone — `{target}` now reflects the **physiological burn the rider is producing right now**, which is the closest semantic match. |
 
 Examples:
 - Default deficit alert at 35 g behind → *"Behind by 35g"*.
@@ -257,12 +292,12 @@ Each of the three carb slots and two hydration slots carries an idle background 
 
 | Config field | Default | Used by |
 |---|---|---|
-| `carbNColor` (N=1..3) | `0xFF1565C0` (palette dark blue) | `CarbLogDataType.idleColorFromConfig` for the `IDLE` state's background. |
+| `carbNColor` (N=1..3) | `FIELD_COLOR_AUTO` (the Karoo-theme passthrough sentinel = `Color.TRANSPARENT` = 0) | `CarbLogDataType.idleColorFromConfig` for the `IDLE` state's background. When the value is the AUTO sentinel the field inflates `field_view_auto.xml` and skips `setBackgroundColor`; any other value uses `field_view.xml` and paints the bg with that ARGB int. |
 | `carbNIcon` (N=1..3) | `FUEL_GEL_DRAWABLE`, `🍫`, `🍌` | Prepended to the field's main label (`"$emoji $label"`); empty string = no prefix; the `FUEL_GEL_DRAWABLE` sentinel renders as a real vector drawable instead — see below. |
-| `drinkNColor` (N=1..2) | `0xFF1565C0` | `HydrationLogDataType.idleColorFromConfig`. |
+| `drinkNColor` (N=1..2) | `FIELD_COLOR_AUTO` | `HydrationLogDataType.idleColorFromConfig`. Same AUTO-vs-painted layout-switch as carbs. |
 | `drinkNIcon` (N=1..2) | `💧`, `FUEL_BOTTLE_DRAWABLE` | Same prefix logic, with the bottle sentinel rendering the bidón vector drawable. |
 
-The colour palette is shared across the whole app (`FIELD_COLOR_PALETTE`, 12 dark hues organised as 6 families × 2 shades). The reserved state colours (bright red / orange / amber / bright dark green / mid grey — used by SOS, Timer, CustomMessage's SENT/SENDING/ERROR/OFF flashes and the `LOGGED` flash here) are deliberately excluded so a rider's idle pick can never collide with a state-machine signal.
+The colour palette is shared across the whole app (`FIELD_COLOR_PALETTE` = 1 Karoo-default sentinel + 20 dark hues — see [field-colours.md](field-colours.md) for the exact swatches and per-row layout). The reserved state colours (bright red / orange / amber / bright dark green / mid grey — used by SOS, Timer, CustomMessage's SENT/SENDING/ERROR/OFF flashes and the `LOGGED` flash here) are deliberately excluded so a rider's idle pick can never collide with a state-machine signal.
 
 The emoji palettes (`FUEL_EMOJI_CARB`, `FUEL_EMOJI_DRINK`) sit in `data/ConfigData.kt` and start with `""` so riders can opt out of the prefix entirely. Emojis render in colour even though the surrounding TextView is white, so they pop against the coloured background without drawable bundling.
 
@@ -312,25 +347,26 @@ fun getSummary(): CarbSummary    // for the post-ride summary InRideAlert
 
 ## HydrationTracker
 
-`HydrationTracker.kt` mirrors `CarbsTracker` structurally but is **simpler**:
+`HydrationTracker.kt` mirrors `CarbsTracker` structurally but is **simpler** — there is no biosensor for sweat rate so the model stays target-based:
 
-- **No intensity multiplier.** Sweat rate depends mostly on ambient temperature (which the SDK doesn't expose), so we don't try to model it. The rider compensates by raising `hydrationTargetMlPerHour` for hot days.
-- **No sensor input** (no HR / power / user profile consumed).
+- **No physiological burn estimator.** The rider sets `hydrationTargetMlPerHour` (default 750 ml/h) directly. Raising it for hot days remains a manual step.
+- **Optional dynamic estimator.** `dynamicHydrationEnabled` switches on `SweatEstimator` (HR + power + weight + ambient temperature + humidity from Headwind, when available); otherwise the flat per-hour rate applies. Anchors target the literature median (Sawka 2007 / Baker 2017) with a small (~5–10 %) conservative bias — comparable to Garmin's Firstbeat HeatStress targeting. See `SweatEstimator.kt` `heatFactor` for the WBGT-anchored curve.
+- **No HR / power consumed in the default path** (the dynamic estimator does consume them).
 - **2 logging slots** instead of 3.
-- Same dual-mode alerts (deficit + time) with the same 5-minute cooldown.
+- Same dual-mode alerts (deficit + time) with the same configurable reminder cooldown (`hydrationDeficitReminderIntervalMin`, default 10 min) and the same grid-aligned time alert.
 - Same initial-delay grace period and same custom-title option as carbs, with their own per-tracker config fields.
 
 ### Per-tick integration
 
 ```kotlin
-if (lastTickMs != 0L) {
-    val dtSec = (now - lastTickMs) / 1000f
-    val ratePerSec = config.hydrationTargetMlPerHour / 3600f
-    cumTargetMl += dtSec * ratePerSec   // no multiplier
+if (lastTickMs != 0L && moving) {
+    val dtSec = (now - lastTickMs).coerceAtLeast(0L) / 1000f
+    val ratePerSec = effectiveMlPerHour / 3600f       // flat target OR SweatEstimator
+    cumTargetMl += dtSec * ratePerSec
 }
 ```
 
-Everything else is identical to carbs: alert evaluation, initial delay, custom title, logging API, status/summary. The two trackers are kept as separate classes (instead of a parameterised abstraction) because the multiplier path materially differs and the code stays clearer with parallel structure than with branching on category.
+`effectiveMlPerHour` is `hydrationTargetMlPerHour` in the static path; in the dynamic path it comes from `SweatEstimator.estimate(...)`. The movement gate (`speedKmh >= 2.0`) and GPS-stale freeze apply on the hydration side too — same rationale as carbs. The two trackers are kept as separate classes because the burn-estimator path materially differs between them (real physiology on the carb side, target on the hydration side).
 
 ---
 
@@ -347,7 +383,7 @@ Two complementary mechanisms:
 | `CarbStatusDataType` | 1 (carb-status) | Current deficit (color-coded) | Read-only |
 | `HydrationStatusDataType` | 1 (hyd-status) | Same in ml | Read-only |
 
-Tap behaviour: a `PendingIntent` fires a unique broadcast action (`com.enderthor.kSafe.TAP_CARB_LOG_$slot`) → `FieldTapReceiver` → `KSafeExtension.handleCarbLogTap(slot)` → `tracker.logEntry(slot)` → `CarbLogState` flips to LOGGED for 2 s (green flash) → back to IDLE.
+Tap behaviour: a `PendingIntent` fires a unique broadcast action (`com.enderthor.kSafe.TAP_CARB_LOG_$slot`) → `FieldTapReceiver` → `KSafeExtension.handleCarbLogTap(slot)`. The state machine for the slot is `IDLE → LOGGED (6 s window, tappable, hint "TAP UNDO") → IDLE` on timeout, or `IDLE → LOGGED → (tap during window) → UNDONE (1.5 s red flash) → IDLE` if the rider taps the same slot a second time within the 6 s window. The undo path calls `tracker.undoLastForSlot(slot)` which reverses the cumulative grams **and** restores the previous `lastLogMs` so a time-based alert clock isn't perturbed by the bad entry. The pending revert `Job` is stored per slot in `KSafeExtension.carbTapRevertJobs[]` and cancelled before launching a new one, so a stale `LOGGED → IDLE` timer from an earlier tap cannot clobber a fresher state set by a subsequent tap on the same slot.
 
 ### Hardware buttons (BonusActions, SRAM AXS only)
 
@@ -371,9 +407,9 @@ When `RideState` transitions to `Idle`, KSafe captures totals (before stopping t
 
 ---
 
-## FIT export — cumulative carbs and hydration in the ride file
+## FIT export — fueling + wellness developer fields
 
-KSafe writes per-second cumulative carbohydrates (g) and hydration (ml) into the Karoo's FIT file as developer fields, so the rider's activity in Strava / Intervals.icu / TrainingPeaks carries native graphs of fueling alongside HR / power / cadence — coaches can correlate fueling with effort directly without exporting a separate CSV.
+KSafe writes seven developer fields into the Karoo's FIT file so the rider's activity in Strava / Intervals.icu / TrainingPeaks carries native graphs of fueling and cardiac decoupling alongside HR / power / cadence — coaches can correlate substrate / hydration / wellness with effort directly without exporting a separate CSV.
 
 ### SDK surface
 
@@ -381,75 +417,71 @@ The `karoo-ext` SDK exposes `KarooExtension.startFit(emitter: Emitter<FitEffect>
 
 | Effect | When | Lands in |
 |---|---|---|
-| `WriteToRecordMesg(values)` | Each Recording tick | A FIT `record` message — the per-second sample alongside HR / power |
-| `WriteToSessionMesg(values)` | Each Recording tick (overwriting) | The FIT `session` message — the activity's headline / summary entry |
+| `WriteToRecordMesg(values)` | Tracker / wellness value changes | A FIT `record` message — a per-timestamp sample alongside HR / power |
+| `WriteToSessionMesg(values)` | Tracker / wellness summary changes | The FIT `session` message — the activity's headline / summary entry (last value wins) |
 
 Both take a `List<FieldValue>`, where each `FieldValue(developerField, value: Double)` pairs a custom field with its current value.
 
 ### Developer fields
 
-```kotlin
-val carbField = DeveloperField(
-    fieldDefinitionNumber = 0,
-    fitBaseTypeId = 136,        // float32 (= 0x88) — same convention as nomride
-    fieldName = "ksafe_carbs_g",
-    units = "g",
-    nativeFieldNum = null,
-    developerDataIndex = 0,
-)
-val hydField = DeveloperField(
-    fieldDefinitionNumber = 1,
-    fitBaseTypeId = 136,
-    fieldName = "ksafe_hyd_ml",
-    units = "ml",
-    nativeFieldNum = null,
-    developerDataIndex = 0,
-)
-```
+All seven fields are float32 (`fitBaseTypeId = 136`) and live in developer-data index 0. The field-definition numbers are **public API** — once shipped they cannot move because tools that learned the schema from a rider's earlier FIT file would otherwise misinterpret new files.
 
-Notes:
-- **Float32** rather than uint16 so future enhancements (running burn-rate average, fractional values) don't need a schema migration. Integer values up to a single ride's load (~1500 g, ~65 L) convert to float32 exactly.
-- Field definition numbers are stable identifiers within KSafe's developer-data namespace. They MUST NOT change once shipped — riders' historical FIT files would otherwise become uninterpretable to tools that learned the names from earlier rides.
-- `nativeFieldNum = null` because no native FIT field carries "carbs eaten" / "fluid drunk" semantics; these are pure developer fields.
+| # | Field name | Units | In record | In session | Source |
+|---|---|---|---|---|---|
+| 0 | `ksafe_carbs_g` | g | ✅ | ✅ | `CarbsTracker.cumLoggedG` — total rider-logged carbs |
+| 1 | `ksafe_hyd_ml` | ml | ✅ | ✅ | `HydrationTracker.cumLoggedMl` — total rider-logged fluid |
+| 2 | `ksafe_hr_drift_pct` | % | ✅ | — | `WellnessMonitor.currentDriftPct` — instantaneous cardiac decoupling |
+| 3 | `ksafe_max_drift_pct` | % | — | ✅ | Peak cardiac decoupling reached during the ride |
+| 4 | `ksafe_wellness_fires` | count | — | ✅ | Number of wellness alerts that fired |
+| 5 | `ksafe_carbs_burned_g` | g | ✅ | ✅ | `CarbsTracker.cumBurnedG` — total estimated physiological carb burn |
+| 6 | `ksafe_carb_burn_rate_gph` | g/h | ✅ | — | `CarbsTracker.burnRateGph` — instantaneous burn rate (post-cap) |
 
-### Cadence: ELAPSED_TIME stream, not a `delay()` loop
+`#7` is **reserved** — the session-average burn rate is derivable downstream from the `#6` time series, so writing it again would just duplicate information for 4 bytes.
 
-The collector pulses on the Karoo's `DataType.Type.ELAPSED_TIME` stream:
+### Write-on-change throttle
+
+The collector pulses on the Karoo's `DataType.Type.ELAPSED_TIME` stream (1 Hz native cadence — same tick as the HR / power records), but each write is **gated on actual value change**:
 
 ```kotlin
-karooSystem.streamDataFlow(DataType.Type.ELAPSED_TIME)
-    .mapNotNull { (it as? StreamState.Streaming)?.dataPoint?.singleValue }
-    .collect { … }
-```
-
-This is the same pattern used by the official Hammerhead sample app and by `nomride`. Two reasons it beats a `delay(1_000L)` loop:
-
-1. **Aligns with native FIT 1 Hz** — the Karoo's ride app writes a record message each second; ELAPSED_TIME emits on the same tick, so our developer-field values land in the same record as the native HR / power sample. Zero drift over a multi-hour ride.
-2. **Auto-pauses with the ride** — ELAPSED_TIME stops emitting while `RideState.Paused`. A naive `delay()` loop would continue ticking and either accumulate phantom record samples during the pause or have to gate on `currentRideState` itself with the same timing risk. The stream-driven approach removes the question entirely.
-
-A side benefit: when the Karoo sits idle on a desk between rides, no work happens at all. The previous `delay(1000L)` loop ran ~86k iterations/day even outside a ride.
-
-### State branch: emit only on Recording
-
-```kotlin
-when (currentRideState) {
-    is RideState.Recording -> {
-        emitter.onNext(WriteToRecordMesg(values))     // per-second timeline
-        emitter.onNext(WriteToSessionMesg(values))    // running session totals
-    }
-    else -> { /* Paused / Idle / null: don't emit */ }
+val recChanged =
+    carbsG != lastRecCarbsG       ||
+    hydMl  != lastRecHydMl        ||
+    carbsBurnedG != lastRecCarbsBurnedG ||
+    burnRateGph  != lastRecBurnRateGph  ||
+    driftPct     != lastRecDriftPct
+if (recChanged) {
+    emitter.onNext(WriteToRecordMesg(listOf(...)))
+    // ... update cached values ...
 }
 ```
 
-The session message is written **from the Recording branch, not the Paused branch**. This is contrary to a naive reading of nomride (which has a Paused branch for `WriteToSessionMesg`) but it's the one that actually works: ELAPSED_TIME stops emitting while Paused, so a Paused-only session write would never fire. Writing on every Recording tick is cheap (one extra IPC per second alongside the Record write) and means whatever value is current at FIT close becomes the activity summary header in Strava etc.
+The cache initial value is `Double.NaN` — `NaN != NaN` is true in IEEE 754, so the first tick of every ride always emits. The session message uses the same idiom against its own cache.
+
+Why write-on-change instead of 1 Hz:
+- `cumLoggedG` / `cumLoggedMl` are **step curves** — they only move on rider taps. Re-writing the same value every second produces ~18 000 identical records per 5 h ride.
+- `cumBurnedG` / `burnRateGph` only update every 15 s (the integrator's tick cadence). 14 of every 15 same-second writes carry no new information.
+- `currentDriftPct` updates every 30 s (`WellnessMonitor.MONITOR_TICK_MS`). 29 of 30 same-second writes are redundant.
+- FIT consumers (Strava, Intervals.icu, TrainingPeaks) plot developer fields at the emitted timestamps and interpolate. A sparse series renders identically to a dense series that repeats values — but the dense series wastes the FIT file size and the per-record allocation budget.
+- Audit 2026-05-25: pre-throttle the FIT writer accounted for ~50 K allocations/hour (record + session messages + 10 FieldValue per tick + listOf wrappers). Write-on-change brings this to ~3 K allocations/hour without touching the contract.
+
+### Auto-pause / Idle handling
+
+ELAPSED_TIME stops emitting while `RideState.Paused`, so a Paused-only branch would never fire. Both write paths sit inside the `Recording` branch; the session message therefore writes from the same tick as the record. Whatever value is current at FIT close is what becomes the activity-summary header in Strava et al. A side benefit of streaming off ELAPSED_TIME (rather than a `delay()` loop) is that when the Karoo sits idle on a desk between rides, no work happens at all — the previous `delay(1_000L)` ran ~86 k iterations/day even outside a ride.
+
+Notes:
+- **Float32** rather than uint16 so future enhancements (additional decimals, ride-fraction percentages) don't need a schema migration. Integer values up to a single ride's load (~1500 g, ~65 L) convert to float32 exactly.
+- `nativeFieldNum = null` on every field because no native FIT field carries these semantics — they're pure developer fields.
 
 ### Tracker null-safety
 
-`startFit` may be called before the rider opted into fueling — the `CarbsTracker` and `HydrationTracker` are still null in that case. The collector reads via the existing `carbsTrackerOrNull()` / `hydrationTrackerOrNull()` accessors with `?: 0` fallback:
+`startFit` may be called before the rider opted into fueling — the `CarbsTracker`, `HydrationTracker` and `WellnessMonitor` are still null in that case. The collector reads via the existing `*OrNull()` accessors with `?: 0` fallback:
 
 ```kotlin
-val carbsG = (carbsTrackerOrNull()?.getStatus()?.cumLoggedG ?: 0).toDouble()
+val carbsG       = (carbStatus?.cumLoggedG ?: 0).toDouble()
+val carbsBurnedG = (carbStatus?.cumBurnedG ?: 0).toDouble()
+val burnRateGph  = (carbStatus?.burnRateGph ?: 0).toDouble()
 val hydMl  = (hydrationTrackerOrNull()?.getStatus()?.cumLoggedMl ?: 0).toDouble()
+val driftPct    = wellness?.currentDriftPct?.toDouble() ?: 0.0
 ```
 
 A flat-zero column in the FIT is honest data ("no fueling logged") and lets a rider who enables fueling mid-season backfill cleanly without a config drift.
@@ -460,10 +492,11 @@ A flat-zero column in the FIT is honest data ("no fueling logged") and lets a ri
 
 ### Cost
 
-| Concept | Per ride (5 h) |
+| Concept | Per ride (5 h, post-throttle) |
 |---|---|
-| 7200 record IPCs + 7200 session IPCs × ~0.1 ms CPU | ~1.5 s CPU total |
-| Disk: ~8 bytes extra per FIT record (two float32) | ~28 KB |
+| Record + session IPCs (write-on-change, ~1.2 K record + ~0.3 K session writes) | ~0.1 s CPU total |
+| Allocations from FIT writer (`FieldValue` + `WriteToRecordMesg/SessionMesg` + lists) | ~3 K/hour (was ~50 K/hour before write-on-change) |
+| Disk: ~28 bytes extra per FIT record (5 float32) | ~3 KB total — sparse series |
 | Battery overhead | <0.05 % (imperceptible) |
 
 Negligible against the ride app's own write throughput. The toggle exists for riders who don't want extra developer columns in their FIT, not for battery reasons.
@@ -476,8 +509,8 @@ Negligible against the ride app's own write throughput. The toggle exists for ri
 
 Same model as the medical/wellness detectors:
 
-- **Sensor input writes** (`updateHr`, `updatePower`, `updateUserProfile`) happen on Karoo SDK callback threads. Volatile-only writes.
-- **Tick coroutine** (every 5 s) runs on the extension's `Main + SupervisorJob` scope. Reads Volatiles, integrates the float, evaluates booleans for alerts.
+- **Sensor input writes** (`updateHr`, `updatePower`, `updateUserProfile`, `updateSpeed`) happen on Karoo SDK callback threads. Volatile-only writes.
+- **Tick coroutine** (every 15 s) runs on the extension's `Main + SupervisorJob` scope. Reads Volatiles, calls `CarbBurnEstimator.estimate` + `CarbIntegrator.integrate`, evaluates alerts.
 - **`@Volatile`** is required for cross-thread visibility. No locks.
 
 ### Restart safety (`start()` race)
@@ -497,23 +530,30 @@ The `cancelAndJoin` inside the *new* coroutine ensures the previous tick loop is
 
 ### Performance
 
-- Tick allocation: one `ZoneSnapshot` per tick (carbs only) + at most one `String` per alert dispatch. Hot path is <100 µs.
-- Status data field polling: 1 Hz, allocates one `CarbStatus`/`HydrationStatus` per second per visible field. Negligible on Karoo (~80 bytes/s of garbage with both fields visible).
-- `IntensityZoneCalculator.calculate()`: pure function, called once per tick. No state, no I/O.
+- Tick allocation: one `BurnEstimate` + one `ZoneSnapshot` + one `IntegrationStep` per tick (carbs only) + at most one `String` per alert dispatch. Hot path is <100 µs. The zone classifier runs **once per tick** — pre-v18.1 it ran twice (CarbsTracker called it directly and `CarbBurnEstimator.estimate` re-classified internally); fixed by `BurnEstimate.zoneSnapshot`.
+- Status data field updates: push-based via `CarbsTracker.statusFlow` / `HydrationTracker.statusFlow`. Emissions are tick-rate (15 s) plus event-driven (rider logs, movement-gate transitions). Pre-v18.0 the data fields polled at 1 Hz and allocated a fresh `CarbStatus` every second; the push flow cut that to ~4 emissions/min per visible field.
+- `CarbBurnEstimator.estimate()` / `CarbIntegrator.integrate()`: pure functions, no state, no I/O.
 - Calibration logging lambdas: inert when disabled (Volatile boolean check, lambda body never evaluated).
 
 ---
 
 ## Calibration Logging
 
-| Event | Fields |
+| Event (CSV tag) | Fields |
 |---|---|
-| `FUELING_CARB_LOGGED` | `slot, grams, cum_logged, cum_target` |
-| `FUELING_CARB_FIRED` | `source(deficit|time), deficit_g, since_log_min, cum_target, cum_logged, zone, multiplier` |
-| `FUELING_CARB_PERIODIC` | every 2 min: `cum_target, cum_logged, deficit, zone_source, zone_idx, zone_total, multiplier, hr, power` |
-| `FUELING_HYDRATION_LOGGED` | `slot, ml, cum_logged, cum_target` |
-| `FUELING_HYDRATION_FIRED` | `source, deficit_ml, since_log_min, cum_target, cum_logged` |
-| `FUELING_HYDRATION_PERIODIC` | every 2 min: `cum_target, cum_logged, deficit` |
+| `FUELING_CARB_START` (`CARB_START`) | `cum_burned_g, cum_logged_g, tier_at_start` |
+| `FUELING_CARB_LOGGED` (`CARB_LOG`) | `slot, grams, cum_logged, cum_burned` |
+| `FUELING_CARB_UNDONE` (`CARB_UNDO`) | `slot, grams (negative — the reversal amount), cum_logged, cum_burned` |
+| `FUELING_CARB_FIRED` (`CARB_FIRE`) | `source(deficit|time), deficit_g, since_log_min, cum_burned, cum_logged, zone, confidence, kcal_h, cho_fraction` |
+| `FUELING_CARB_PERIODIC` (`CARB_PERIODIC`) | every 2 min: `cum_burned, cum_logged, deficit, zone_source, zone_idx, zone_total, confidence, kcal_h, cho_fraction, hr, power` |
+| `FUELING_HYDRATION_LOGGED` (`HYD_LOG`) | `slot, ml, cum_logged, cum_target` |
+| `FUELING_HYDRATION_UNDONE` (`HYD_UNDO`) | `slot, ml (negative — the reversal amount), cum_logged, cum_target` |
+| `FUELING_HYDRATION_FIRED` (`HYD_FIRE`) | `source, deficit_ml, since_log_min, cum_target, cum_logged` |
+| `FUELING_HYDRATION_PERIODIC` (`HYD_PERIODIC`) | every 2 min: `cum_target, cum_logged, deficit` |
+
+v18: the legacy `multiplier=` field is gone from `CARB_FIRE` and `CARB_PERIODIC`. It was vestigial after the integrator switched from `base × multiplier` to the physiological estimator; the new load-bearing signals are `confidence` (which tier ran), `kcal_h` (the kcal/h that drove the integration step) and `cho_fraction` (Romijn / Jeukendrup table lookup at the current zone). The CSV column header was updated; older logs still parse — the column slots a `multiplier` value into a `confidence` header which is wrong but is also recognizable as legacy v17 data.
+
+> **Counting intakes:** a parser that wants "how many times did the rider tap log" should filter by the `_LOGGED` tags only — `_UNDONE` rows are reversals, not intakes. A parser that sums `grams` / `ml` across **both** `_LOGGED` and `_UNDONE` rows nets out correctly (the negative undo cancels the original positive log). The distinct tag exists precisely so the two analyses don't conflict.
 
 The 2-minute cadence of `*_PERIODIC` matches the existing crash-detection `PERIODIC` event so calibration analysis can correlate timelines by timestamp without modifying crash code.
 
@@ -522,10 +562,11 @@ The 2-minute cadence of `*_PERIODIC` matches the existing crash-detection `PERIO
 ## Open Items / Future Work
 
 - **Soft-fall detection via fueling state.** A rider with high carb deficit + low recent intake who suddenly has an accel impact below the smoothed crash threshold could be a candidate for HR-confirmed soft-fall handling. Requires expanding the crash detector's trigger paths — out of scope for v1.
-- **Power-meter battery awareness.** If the power meter sensor reports low battery, multiplier could fall back to HR mode automatically. Currently we just use whichever data is flowing.
-- **Adaptive targets.** A future iteration could learn from logged intake across rides ("you consistently hit only 70 % of target — consider lowering target or improving fueling discipline"). Out of scope for v1.
-- **Sweat-rate adjustment for hydration.** Requires temperature data from the SDK, which is not currently exposed. Track for a future Karoo SDK version.
+- **Power-meter battery awareness.** If the power meter sensor reports low battery, the burn estimator should explicitly downgrade from Tier 1 (POWER) to Tier 2/3 (HR-based). Currently it uses whichever data is flowing; a dying power meter that emits 0 W is read as "rider is freewheeling", under-counting burn.
+- **Adaptive deficit threshold.** A future iteration could learn from logged intake across rides ("you consistently let the deficit grow to 40 g before logging — consider lowering threshold"). Out of scope for v1.
+- **Dynamic sweat-rate refinement.** `SweatEstimator` already accepts ambient temperature and humidity when Headwind is paired. Future: validate the formula against real-rider field data and expose tuning knobs.
 - **GI-distress upper bound.** Currently nothing alerts the rider if they over-consume. The intestinal absorption ceiling is ~90 g/h; sustained intake above that often causes GI issues. Out of scope per the original spec, but worth re-evaluating with calibration data.
+- **`ZoneSnapshot.multiplier` field removal.** Still present in the data class for backwards compat with the v17 calibration CSV column header. Schedule for removal once enough v18-shipped logs have accumulated that the historical analysis pipeline can drop the legacy column.
 - **Inter-app integration.** Other Karoo extensions might want to consume the carb / hydration state. Requires a defined contract — see future spec.
 
 ---
@@ -534,22 +575,37 @@ The 2-minute cadence of `*_PERIODIC` matches the existing crash-detection `PERIO
 
 All config fields live in `KSafeConfig` (`data/ConfigData.kt`).
 
+### Rider physiology (Tier 2 Keytel inputs)
+
+| Field | Default | UI exposed |
+|---|---|---|
+| `riderAge` | `0` (= not entered → Tier 2 unavailable, falls back to Tier 3 Swain) | ✅ — Settings → Fueling |
+| `riderSex` | `RiderSex.NOT_SET` (= same fallback as above) | ✅ — radio (Male / Female / Unset) |
+
+Riders who don't fill these in still get a useful carb estimate via Swain. Both fields landed in v18; old saved configs deserialise with both at the default and the tracker silently runs Tier 3 until the rider opens Settings.
+
 ### Carbs tracker
 
 | Field | Default | UI exposed |
 |---|---|---|
 | `carbsTrackerEnabled` | `false` (opt-in master — gates all sub-fields and collapses them when off) | ✅ |
-| `carbTargetGperHour` | 60 | ✅ |
 | `carbDeficitAlertEnabled` | `true` | ✅ |
 | `carbDeficitThresholdG` | 25 g | ✅ |
+| `carbDeficitInitialDelayMin` | 30 | ✅ (0 = off — fire as soon as threshold crossed) |
+| `carbDeficitReminderIntervalMin` | 10 | ✅ (5 / 10 / 15 / 20 / 30 — replaces the pre-v17 hard-coded 5 min cooldown) |
 | `carbTimeAlertEnabled` | `false` | ✅ |
-| `carbTimeIntervalMin` | 25 | ✅ |
-| `carbTimeInitialDelayMin` | 30 | ✅ (0 = off) |
+| `carbTimeIntervalMin` | 25 | ✅ (1-60 min) |
+| `carbTimeInitialDelayMin` | 30 | ✅ (0 = off; filters grid ticks below this offset) |
+| `carbAlertBgColor` | `FUELING_ALERT_COLOR_ORANGE` | ✅ — swatch picker (6 colours) |
+| `carbBeepPattern` | `SINGLE_LONG` | ✅ — beep pattern picker |
 | `carbAlertCustomTitle` | `""` (use default) | ✅ |
-| `carbAlertCustomDetail` | `""` (use source-specific default) | ✅ — supports `{deficit}`, `{elapsed}`, `{target}` |
+| `carbAlertCustomDetailTime` | `""` (use source-specific default) | ✅ — supports `{deficit}`, `{elapsed}`, `{target}` |
+| `carbAlertCustomDetailDeficit` | `""` (use source-specific default) | ✅ — same tokens |
 | `carb1Label` / `carb1Grams` / `carb1Color` / `carb1Icon` | "Gel" / 25 / palette-blue / 🧴 | ✅ (per-slot row + colour & icon pickers) |
 | `carb2Label` / `carb2Grams` / `carb2Color` / `carb2Icon` | "Bar" / 30 / palette-blue / 🍫 | ✅ |
 | `carb3Label` / `carb3Grams` / `carb3Color` / `carb3Icon` | "Fruit" / 20 / palette-blue / 🍌 | ✅ |
+
+**Removed in v18:** `carbTargetGperHour`, `CarbRidePreset` enum, the Casual / Endurance / Race preset chips. The rider no longer sets a per-hour target — burn comes from physiology.
 
 ### Hydration tracker
 
@@ -557,13 +613,19 @@ All config fields live in `KSafeConfig` (`data/ConfigData.kt`).
 |---|---|---|
 | `hydrationTrackerEnabled` | `false` (opt-in master — same gating as carbs) | ✅ |
 | `hydrationTargetMlPerHour` | 750 | ✅ |
+| `dynamicHydrationEnabled` | `false` | ✅ — switches to `SweatEstimator` (HR + power + weight + ambient temperature + humidity from Headwind, when paired) |
 | `hydrationDeficitAlertEnabled` | `true` | ✅ |
 | `hydrationDeficitThresholdMl` | 300 ml | ✅ |
+| `hydrationDeficitInitialDelayMin` | 30 | ✅ (0 = off) |
+| `hydrationDeficitReminderIntervalMin` | 10 | ✅ (5 / 10 / 15 / 20 / 30 — mirror of carb side) |
 | `hydrationTimeAlertEnabled` | `false` | ✅ |
-| `hydrationTimeIntervalMin` | 20 | ✅ |
+| `hydrationTimeIntervalMin` | 20 | ✅ (1-60 min) |
 | `hydrationTimeInitialDelayMin` | 30 | ✅ (0 = off) |
+| `hydrationAlertBgColor` | `FUELING_ALERT_COLOR_BLUE` (water-coloured by default) | ✅ — swatch picker (6 colours) |
+| `hydBeepPattern` | `SINGLE_LONG` | ✅ — beep pattern picker |
 | `hydrationAlertCustomTitle` | `""` | ✅ |
-| `hydrationAlertCustomDetail` | `""` (use source-specific default) | ✅ — supports `{deficit}`, `{elapsed}`, `{target}` |
+| `hydrationAlertCustomDetailTime` | `""` (use source-specific default) | ✅ — supports `{deficit}`, `{elapsed}`, `{target}` |
+| `hydrationAlertCustomDetailDeficit` | `""` (use source-specific default) | ✅ — same tokens |
 | `drink1Label` / `drink1Ml` / `drink1Color` / `drink1Icon` | "Sip" / 100 / palette-blue / 💧 | ✅ |
 | `drink2Label` / `drink2Ml` / `drink2Color` / `drink2Icon` | "Bottle" / 500 / palette-blue / 🥤 | ✅ |
 
@@ -577,8 +639,8 @@ All config fields live in `KSafeConfig` (`data/ConfigData.kt`).
 
 | Field | Default | UI exposed |
 |---|---|---|
-| `fuelingFitExportEnabled` | `true` | ✅ Switch — Fueling tab. Sampled once at FIT-pipeline start; mid-ride toggle takes effect on the next ride. |
+| `fuelingFitExportEnabled` | `true` | ✅ Switch — Settings tab. Sampled once at FIT-pipeline start; mid-ride toggle takes effect on the next ride. |
 
-Internal: developer-field definitions and pacing live in `extension/KSafeExtension.startFit`. Field names `ksafe_carbs_g` / `ksafe_hyd_ml` and field definition numbers `0` / `1` are stable identifiers — do not change once shipped.
+Internal: developer-field definitions and pacing live in `extension/KSafeExtension.startFit`. Field names `ksafe_carbs_g` / `ksafe_hyd_ml` / `ksafe_hr_drift_pct` / `ksafe_max_drift_pct` / `ksafe_wellness_fires` / `ksafe_carbs_burned_g` / `ksafe_carb_burn_rate_gph` and field definition numbers `0..6` are stable identifiers — do not change once shipped. `#7` is reserved.
 
-Internal constants (`MIN_MULT`, `MAX_MULT`, `ALERT_COOLDOWN_MS`, `MONITOR_TICK_MS`, `PERIODIC_LOG_INTERVAL_MS`, etc.) are NOT exposed. Calibrated in code from the spec-defined values described above.
+Internal constants (`CarbIntegrator.MOVING_GATE_KMH`, `CarbIntegrator.SPEED_STALE_MS`, `ABSORPTION_CAP_GPH`, `MONITOR_TICK_MS`, `PERIODIC_LOG_INTERVAL_MS`, the Keytel / Swain coefficients in `CarbBurnEstimator`, etc.) are NOT exposed. Calibrated in code from the spec-defined values described above.
