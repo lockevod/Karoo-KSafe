@@ -103,8 +103,12 @@ const val KAROO_LIVE_BASE_URL = "https://dashboard.hammerhead.io/live/"
  *             fall back to the Swain tier until the rider fills them in via
  *             Settings. The removed `carbTargetGperHour` is silently dropped by
  *             kotlinx-serialization's `ignoreUnknownKeys = true`.
+ *  v18 → v19: crashProfileSettings (List<CrashProfileSetting>) added — per-Karoo-profile
+ *             crash overrides. Pure version stamp; the list defaults to empty, so every
+ *             profile keeps using the global crash config and existing installs are
+ *             unaffected until the rider creates an override.
  */
-const val CONFIG_VERSION = 18
+const val CONFIG_VERSION = 19
 
 /**
  * Canonical minSpeedForCrashKmh value per preset.
@@ -315,6 +319,9 @@ data class KSafeConfig(
     // Monitor crash even when no ride is active
     val crashMonitorOutsideRide: Boolean = false,         // uses configured minSpeedForCrashKmh
     val crashMonitorOutsideRideAnySpeed: Boolean = false, // forces minSpeed = 0 — ⚠ more false positives
+    /** Per-profile crash overrides (auto-learned, keyed by RideProfile.id). Empty = every
+     *  profile uses the global crash config above. See CrashProfileSetting. */
+    val crashProfileSettings: List<CrashProfileSetting> = emptyList(),
     // Speed-drop detection
     val speedDropDetectionEnabled: Boolean = false,
     val speedDropMinutes: Int = DEFAULT_SPEED_DROP_MINUTES,
@@ -584,6 +591,25 @@ data class KSafeConfig(
      * New installs also start at 0 and migrate on first load, which is a no-op for most presets.
      */
     val configVersion: Int = 0,
+)
+
+/**
+ * Per-Karoo-profile crash-detection override, keyed by [RideProfile.id]. Auto-learned
+ * (one entry per profile KSafe has seen active). [useGlobal] = true means "inherit the
+ * global crash config"; false means this profile defines its own complete set (all-or-
+ * nothing). The custom fields are ignored while [useGlobal] is true; their defaults mirror
+ * the global crash defaults. See docs/superpowers/specs/2026-05-29-per-profile-crash-thresholds-design.md.
+ */
+@Serializable
+data class CrashProfileSetting(
+    val profileId: String = "",
+    val profileName: String = "",
+    val useGlobal: Boolean = true,
+    val crashDetectionEnabled: Boolean = true,
+    val crashSensitivity: CrashSensitivity = CrashSensitivity.MEDIUM,
+    val customCrashThreshold: Int = 45,
+    val minSpeedForCrashKmh: Int = 10,
+    val crashConfirmSpeedKmh: Int = 5,
 )
 
 @Serializable
@@ -1200,6 +1226,14 @@ fun KSafeConfig.migrateToLatest(): KSafeConfig {
         // every tick, so the next tick after the upgrade switches paths transparently.
         c = c.copy(configVersion = 18)
         Timber.i("KSafeConfig migrated v%d→v18 (physiology-based carb burn estimator)", originalVersion)
+    }
+
+    if (c.configVersion < 19) {
+        // v18 → v19: per-profile crash overrides (crashProfileSettings) added. Pure version
+        // stamp — the new list defaults to empty, so every profile inherits the global crash
+        // config and existing installs behave identically until the rider creates an override.
+        c = c.copy(configVersion = 19)
+        Timber.i("KSafeConfig migrated v%d→v19 (per-profile crash overrides)", originalVersion)
     }
 
     return c

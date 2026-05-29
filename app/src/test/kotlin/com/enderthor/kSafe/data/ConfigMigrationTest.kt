@@ -151,18 +151,45 @@ class ConfigMigrationTest {
     }
 
     @Test
-    fun `v18 config is left unchanged by the migration`() {
-        // Pins that the latest CONFIG_VERSION is a no-op — any post-v18 fields
-        // added later must extend the migration chain, not retroactively edit
-        // v18-stamped configs.
+    fun `v18 config migrates to CONFIG_VERSION preserving physiology fields`() {
+        // v18 now migrates to v19 (per-profile crash overrides). Existing physiology
+        // fields must survive the hop and crashProfileSettings defaults to empty.
         val current = KSafeConfig(
             configVersion = 18,
             riderAge = 40,
             riderSex = com.enderthor.kSafe.data.RiderSex.MALE,
         )
         val migrated = current.migrateToLatest()
-        assertEquals(18, migrated.configVersion)
+        assertEquals(CONFIG_VERSION, migrated.configVersion)
         assertEquals(40, migrated.riderAge)
         assertEquals(com.enderthor.kSafe.data.RiderSex.MALE, migrated.riderSex)
+    }
+
+    @Test
+    fun `v18 config migrates to CONFIG_VERSION with empty crashProfileSettings and fields preserved`() {
+        val old = KSafeConfig(
+            configVersion = 18,
+            crashSensitivity = CrashSensitivity.HIGH,
+            minSpeedForCrashKmh = 15,
+        )
+        val migrated = old.migrateToLatest()
+        assertEquals(CONFIG_VERSION, migrated.configVersion)
+        assertEquals(emptyList<CrashProfileSetting>(), migrated.crashProfileSettings)
+        assertEquals(CrashSensitivity.HIGH, migrated.crashSensitivity)
+        assertEquals(15, migrated.minSpeedForCrashKmh)
+    }
+
+    @Test
+    fun `v19 config preserves existing crashProfileSettings`() {
+        val setting = CrashProfileSetting(
+            profileId = "p1",
+            profileName = "Gravel",
+            useGlobal = false,
+            crashSensitivity = CrashSensitivity.LOW,
+        )
+        val old = KSafeConfig(configVersion = 19, crashProfileSettings = listOf(setting))
+        val migrated = old.migrateToLatest()
+        assertEquals(CONFIG_VERSION, migrated.configVersion)
+        assertEquals(listOf(setting), migrated.crashProfileSettings)
     }
 }
