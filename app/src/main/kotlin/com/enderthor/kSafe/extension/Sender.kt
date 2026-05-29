@@ -4,6 +4,8 @@ import android.net.Uri
 import com.enderthor.kSafe.data.ProviderType
 import com.enderthor.kSafe.data.SenderConfig
 import com.enderthor.kSafe.extension.managers.ConfigurationManager
+import com.enderthor.kSafe.extension.util.recipientsToSend
+import com.enderthor.kSafe.extension.util.scopeForSlot
 import io.hammerhead.karooext.KarooSystemService
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.first
@@ -64,9 +66,8 @@ class Sender(
                     if (config.apiKey.isBlank())      return "Missing API key."
                     val recipients = callMeBotRecipients(config)
                     val results = mutableListOf<String>()
-                    for ((i, pair) in recipients.withIndex()) {
-                        val (phone, key) = pair
-                        val label = "Recipient ${i + 1}"
+                    for ((slot, phone, key) in recipients) {
+                        val label = "Recipient ${slot + 1}"
                         val url = "https://api.callmebot.com/whatsapp.php" +
                             "?phone=$phone" +
                             "&text=${Uri.encode("KSafe test — alerts are configured correctly.")}" +
@@ -387,8 +388,10 @@ class Sender(
                 if (config.phoneNumber.isBlank() || config.apiKey.isBlank()) return false
                 val encodedMsg = Uri.encode(message)
                 val recipients = callMeBotRecipients(config)
+                val send = recipientsToSend(recipients.map { it.first }, config::scopeForSlot, isEmergency)
                 var anyOk = false
-                for ((phone, key) in recipients) {
+                for ((slot, phone, key) in recipients) {
+                    if (slot !in send) continue
                     val url = "https://api.callmebot.com/whatsapp.php?phone=$phone&text=$encodedMsg&apikey=$key"
                     // Per-recipient timeout so a hung first recipient doesn't starve
                     // recipients 2/3 of the outer attempt's 30 s block.
@@ -417,10 +420,12 @@ class Sender(
 
             ProviderType.PUSHOVER -> {
                 if (config.apiKey.isBlank() || config.userKey.isBlank()) return false
-                val userKeys = listOf(config.userKey, config.userKey2, config.userKey3)
-                    .filter { it.isNotBlank() }
+                val allKeys = listOf(config.userKey, config.userKey2, config.userKey3)
+                val configuredSlots = allKeys.indices.filter { allKeys[it].isNotBlank() }
+                val send = recipientsToSend(configuredSlots, config::scopeForSlot, isEmergency)
                 var anyOk = false
-                for (key in userKeys) {
+                for (slot in send) {
+                    val key = allKeys[slot]
                     val jsonBody = buildJsonObject {
                         put("token", config.apiKey)
                         put("user", key)
@@ -459,6 +464,10 @@ class Sender(
 
             ProviderType.NTFY -> {
                 if (config.apiKey.isBlank()) return false
+                if (recipientsToSend(listOf(0), config::scopeForSlot, isEmergency).isEmpty()) {
+                    Timber.d("ntfy: skipped by per-recipient filter (scope=${config.recipient1Alerts})")
+                    return false
+                }
                 val title    = if (isEmergency) "KSafe Emergency" else "KSafe"
                 val priority = if (isEmergency) "urgent" else "default"
                 val response = withTimeoutOrNull(ATTEMPT_TIMEOUT_MS) {
@@ -484,10 +493,12 @@ class Sender(
 
             ProviderType.TELEGRAM -> {
                 if (config.apiKey.isBlank() || config.userKey.isBlank()) return false
-                val chatIds = listOf(config.userKey, config.userKey2, config.userKey3)
-                    .filter { it.isNotBlank() }
+                val allChatIds = listOf(config.userKey, config.userKey2, config.userKey3)
+                val configuredSlots = allChatIds.indices.filter { allChatIds[it].isNotBlank() }
+                val send = recipientsToSend(configuredSlots, config::scopeForSlot, isEmergency)
                 var anyOk = false
-                for (chatId in chatIds) {
+                for (slot in send) {
+                    val chatId = allChatIds[slot]
                     val jsonBody = buildJsonObject {
                         put("chat_id", chatId.trim())
                         put("text", message)
@@ -516,21 +527,22 @@ class Sender(
     }
 
     /**
-     * Builds the list of `(phone, apiKey)` pairs to deliver a CallMeBot message to.
+     * Builds the list of `(slot, phone, apiKey)` triples to deliver a CallMeBot message to.
      * CallMeBot cannot fan-out a single request, so every recipient needs its own
      * credential pair. Slots with either half blank are dropped — three slots total,
-     * mirroring Pushover / Telegram.
+     * mirroring Pushover / Telegram. The slot index (0/1/2) is preserved so the
+     * per-recipient alert-scope filter can gate individual recipients.
      */
-    private fun callMeBotRecipients(config: SenderConfig): List<Pair<String, String>> {
-        fun pair(phone: String, key: String): Pair<String, String>? {
+    private fun callMeBotRecipients(config: SenderConfig): List<Triple<Int, String, String>> {
+        fun entry(slot: Int, phone: String, key: String): Triple<Int, String, String>? {
             val p = phone.trim()
             val k = key.trim()
-            return if (p.isNotBlank() && k.isNotBlank()) p to k else null
+            return if (p.isNotBlank() && k.isNotBlank()) Triple(slot, p, k) else null
         }
         return listOfNotNull(
-            pair(config.phoneNumber,  config.apiKey),
-            pair(config.phoneNumber2, config.apiKey2),
-            pair(config.phoneNumber3, config.apiKey3),
+            entry(0, config.phoneNumber,  config.apiKey),
+            entry(1, config.phoneNumber2, config.apiKey2),
+            entry(2, config.phoneNumber3, config.apiKey3),
         )
     }
 }
