@@ -58,7 +58,11 @@ class CarbBurnRateDataType(
         val dark = context.isKarooNightMode()
         return RemoteViews(context.packageName, R.layout.field_view_auto).apply {
             // No setBackgroundColor — let the host theme show through.
-            setTextViewText(R.id.field_text_main, main.take(9))
+            // take(11): the numeric values are short (≤"90"), but the
+            // "Pair HR/Pwr" label is 11 chars — a take(9) clipped it to
+            // "Pair HR/P". The layout auto-sizes (6–22sp) and wraps to 2 lines,
+            // so 11 fits without overflow.
+            setTextViewText(R.id.field_text_main, main.take(11))
             setTextViewText(R.id.field_text_hint, hint.take(9))
             setViewVisibility(R.id.field_text_hint, if (hint.isEmpty()) View.GONE else View.VISIBLE)
             setInt(R.id.field_text_main, "setGravity", gravity)
@@ -100,13 +104,22 @@ class CarbBurnRateDataType(
                     // whichever tier can still run).
                     val main = when {
                         status == null -> "---"
+                        // Never had a usable sensor this session → prompt to pair.
                         status.burnConfidence == CarbBurnEstimator.Confidence.NONE &&
                             status.cumBurnedG == 0 ->
                             context.getString(R.string.carb_no_sensor_label)
+                        // Had a sensor but it died / went stale mid-ride: the
+                        // instantaneous rate must reflect LIVE data only — never
+                        // freeze on the last value. CarbsTracker now drops to
+                        // confidence=NONE once HR/power exceed SENSOR_STALE_MS, so
+                        // this branch fires the moment the live rate goes away.
+                        // (The cumulative + average fields keep their accumulated
+                        // value — see CarbsBurned / CarbAvgBurnRate.)
+                        status.burnConfidence == CarbBurnEstimator.Confidence.NONE -> "---"
                         !status.isIntegrating -> "---"
                         else -> "${status.burnRateGph}"
                     }
-                    emitter.updateView(buildView(config, main, "carb/h"))
+                    emitter.updateView(buildView(config, main, "g/h"))
                 }
             } catch (_: CancellationException) {
                 // normal

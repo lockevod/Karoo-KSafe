@@ -59,6 +59,11 @@ class CarbsTracker(
      *  publishStatus transition logic. */
     private val MOVING_GATE_KMH = CarbIntegrator.MOVING_GATE_KMH
     private val SPEED_STALE_MS  = CarbIntegrator.SPEED_STALE_MS
+    /** A HR / power sample older than this is treated as "sensor gone" by the
+     *  burn estimator. 15 s tolerates a few missed ~1 Hz samples (brief BLE
+     *  hiccup) without flicker, but reacts well within one 15 s tick when a
+     *  sensor truly drops. Matches the medical detector's HR_STALE_MS feel. */
+    private val SENSOR_STALE_MS = 15_000L
 
     // See HydrationTracker — InRideAlert.backgroundColor / .textColor are @ColorRes,
     // not @ColorInt. Use R.color.* resources or the host's getColor() crashes.
@@ -70,6 +75,17 @@ class CarbsTracker(
     @Volatile private var lastUserProfile: UserProfile? = null
     @Volatile private var lastHrBpm: Int? = null
     @Volatile private var lastPowerW: Int? = null
+    /** Wall-clock of the last HR / power emission. A sensor that stops emitting
+     *  (battery dies, BLE drops) leaves [lastHrBpm] / [lastPowerW] frozen at its
+     *  last value forever — the stream's `?: return` never pushes a "gone" signal.
+     *  These timestamps let [currentBurnEstimate] treat a value older than
+     *  [SENSOR_STALE_MS] as absent, so: (a) if one sensor dies but the other is
+     *  live the estimate falls back to the live tier, and (b) if BOTH are stale
+     *  the estimate drops to confidence=NONE → burn rate 0 → the instantaneous
+     *  field stops showing a stale number and the cumulative / average freeze
+     *  (CarbIntegrator skips active-time accrual when effectiveGph == 0). */
+    @Volatile private var lastHrUpdateMs = 0L
+    @Volatile private var lastPowerUpdateMs = 0L
     /** Latest speed reading in km/h. `null` until the SDK first emits — used by the
      *  movement gate in [tick] to skip integration when stationary. */
     @Volatile private var lastSpeedKmh: Double? = null
@@ -342,8 +358,8 @@ class CarbsTracker(
     }
 
     fun updateUserProfile(p: UserProfile) { lastUserProfile = p }
-    fun updateHr(bpm: Int)                { lastHrBpm = bpm }
-    fun updatePower(w: Int)               { lastPowerW = w }
+    fun updateHr(bpm: Int)                { lastHrBpm = bpm; lastHrUpdateMs = System.currentTimeMillis() }
+    fun updatePower(w: Int)               { lastPowerW = w; lastPowerUpdateMs = System.currentTimeMillis() }
     fun updateSpeed(kmh: Double) {
         // D6/G2 fix — drop NaN AND Infinity samples; see MedicalEpisodeDetector
         // for the IEEE-754 taint mechanism this guards against.
@@ -522,14 +538,23 @@ class CarbsTracker(
      *  integrator agree exactly. Reads the latest live inputs — HR, power, profile,
      *  and the rider's configured age + sex. Returns [CarbBurnEstimator.BurnEstimate.NONE]
      *  when none of the three tiers can fire. */
-    private fun currentBurnEstimate(): CarbBurnEstimator.BurnEstimate =
-        CarbBurnEstimator.estimate(
-            hrBpm = lastHrBpm,
-            powerW = lastPowerW,
+    private fun currentBurnEstimate(): CarbBurnEstimator.BurnEstimate {
+        // Only feed the estimator sensors that emitted within SENSOR_STALE_MS.
+        // A dead sensor's last value lingers in lastHrBpm/lastPowerW forever, so
+        // gating on freshness is what makes the tier fallback (use whichever is
+        // still live) and the "no live sensor → NONE" behaviour work — see the
+        // lastHrUpdateMs KDoc.
+        val now = System.currentTimeMillis()
+        val freshHr = lastHrBpm?.takeIf { lastHrUpdateMs > 0L && now - lastHrUpdateMs <= SENSOR_STALE_MS }
+        val freshPower = lastPowerW?.takeIf { lastPowerUpdateMs > 0L && now - lastPowerUpdateMs <= SENSOR_STALE_MS }
+        return CarbBurnEstimator.estimate(
+            hrBpm = freshHr,
+            powerW = freshPower,
             profile = lastUserProfile,
             riderAge = config.riderAge,
             riderSex = config.riderSex,
         )
+    }
 
     fun getSummary(): CarbSummary = CarbSummary(
         cumBurnedG = cumBurnedG.toInt(),

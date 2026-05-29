@@ -43,7 +43,9 @@ class CarbsBurnedDataType(
         val gravity = viewConfig.fieldGravity()
         val dark = context.isKarooNightMode()
         return RemoteViews(context.packageName, R.layout.field_view_auto).apply {
-            setTextViewText(R.id.field_text_main, main.take(9))
+            // take(11): "Pair HR/Pwr" is 11 chars (a take(9) clipped it to
+            // "Pair HR/P"). Numeric totals are short; layout auto-sizes.
+            setTextViewText(R.id.field_text_main, main.take(11))
             setTextViewText(R.id.field_text_hint, hint.take(9))
             setViewVisibility(R.id.field_text_hint, if (hint.isEmpty()) View.GONE else View.VISIBLE)
             setInt(R.id.field_text_main, "setGravity", gravity)
@@ -70,20 +72,22 @@ class CarbsBurnedDataType(
                 tracker.statusFlow.collectLatest { status ->
                     val main = when {
                         status == null -> "---"
-                        // v18: show "Pair HR/Pwr" ONLY when the rider has never had
-                        // a sensor paired (cumBurnedG still at 0). If a sensor
-                        // disconnects mid-ride after some burn has been accumulated
-                        // (HR battery dies, BLE drops out), keep showing the running
-                        // total — flipping a 120g reading to "Pair HR/Pwr" looks
-                        // like data loss. Accept the rate halting (the rate field
-                        // will read 0 or its own "Pair HR/Pwr" depending on policy)
-                        // but the cumulative is real data the rider earned.
+                        // Show "Pair HR/Pwr" ONLY when the rider has never had a
+                        // sensor paired (cumBurnedG still 0). A mid-ride disconnect
+                        // after some burn keeps showing the running total — flipping
+                        // a 120 reading to the label would look like data loss. The
+                        // total freezes while the sensor is gone (CarbsTracker drops
+                        // to confidence=NONE → rate 0 → no further integration).
                         status.burnConfidence == com.enderthor.kSafe.extension.util.CarbBurnEstimator.Confidence.NONE &&
                             status.cumBurnedG == 0 ->
                             context.getString(R.string.carb_no_sensor_label)
-                        else -> "${status.cumBurnedG}g"
+                        // Nothing accumulated yet → "---" (unified no-data state).
+                        status.cumBurnedG == 0 -> "---"
+                        // Plain number — the gram unit lives in the "g" hint below,
+                        // consistent with the rate fields ("g/h"). No inline suffix.
+                        else -> "${status.cumBurnedG}"
                     }
-                    emitter.updateView(buildView(config, main, "burned"))
+                    emitter.updateView(buildView(config, main, "g"))
                 }
             } catch (_: CancellationException) {
                 // normal

@@ -54,7 +54,9 @@ class CarbAvgBurnRateDataType(
         val gravity = viewConfig.fieldGravity()
         val dark = context.isKarooNightMode()
         return RemoteViews(context.packageName, R.layout.field_view_auto).apply {
-            setTextViewText(R.id.field_text_main, main.take(9))
+            // take(11): "Pair HR/Pwr" is 11 chars (a take(9) clipped it to
+            // "Pair HR/P"). Numeric values ("ø 90") are short; layout auto-sizes.
+            setTextViewText(R.id.field_text_main, main.take(11))
             setTextViewText(R.id.field_text_hint, hint.take(9))
             setViewVisibility(R.id.field_text_hint, if (hint.isEmpty()) View.GONE else View.VISIBLE)
             setInt(R.id.field_text_main, "setGravity", gravity)
@@ -81,20 +83,21 @@ class CarbAvgBurnRateDataType(
                     val main = when {
                         status == null -> "---"
                         // "Pair HR/Pwr" ONLY when the rider has never had a sensor
-                        // paired this session (cumBurnedG == 0). A mid-ride sensor
-                        // disconnect leaves the avg holding the value the rider
-                        // legitimately accumulated — flipping it to the label
-                        // would look like data loss.
+                        // paired this session (cumBurnedG == 0).
                         status.burnConfidence == CarbBurnEstimator.Confidence.NONE &&
                             status.cumBurnedG == 0 ->
                             context.getString(R.string.carb_no_sensor_label)
-                        // The average can legitimately be 0 before the first
-                        // integration tick — render "0" rather than "---" so the
-                        // rider can tell "tracker is ON, nothing logged yet" apart
-                        // from "tracker isn't running at all".
-                        else -> "${status.avgBurnRateGph}"
+                        // Nothing accumulated yet → "---" (unified no-data state
+                        // across all three carb fields). Once burn has accumulated
+                        // the average holds the value the rider earned and FREEZES
+                        // if the sensor later dies (CarbIntegrator stops advancing
+                        // active-integration time when the live rate is 0).
+                        status.cumBurnedG == 0 -> "---"
+                        // "ø" marks this as the session average vs the instantaneous
+                        // rate field, which shares the same "g/h" unit hint.
+                        else -> "ø ${status.avgBurnRateGph}"
                     }
-                    emitter.updateView(buildView(config, main, "avg/h"))
+                    emitter.updateView(buildView(config, main, "g/h"))
                 }
             } catch (_: CancellationException) {
                 // normal
