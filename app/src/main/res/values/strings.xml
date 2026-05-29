@@ -412,6 +412,14 @@
     <string name="sos_field_color_label">SOS field colour</string>
     <string name="timer_field_color_label">Timer field colour</string>
 
+    <!-- Per-profile crash settings -->
+    <string name="crash_per_profile_title">Per-profile crash detection</string>
+    <string name="crash_per_profile_empty">Your Karoo profiles appear here as you use them — scroll to a profile on your Karoo.</string>
+    <string name="crash_per_profile_active">● active now</string>
+    <string name="crash_per_profile_use_global">Use global</string>
+    <string name="crash_per_profile_custom">Custom</string>
+    <string name="crash_per_profile_remove">Remove</string>
+
     <!-- Outbound alert delivery failure — fires after Sender exhausts every retry cycle. -->
     <string name="alert_delivery_failed_title">Alert NOT delivered</string>
     <string name="alert_delivery_failed_detail">%1$s could not send. Check coverage / credentials.</string>

@@ -22,6 +22,7 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -32,7 +33,9 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import com.enderthor.kSafe.R
 import com.enderthor.kSafe.activity.MainViewModel
+import com.enderthor.kSafe.data.CrashProfileSetting
 import com.enderthor.kSafe.data.CrashSensitivity
+import com.enderthor.kSafe.extension.KSafeExtension
 import kotlinx.coroutines.delay
 
 /**
@@ -65,6 +68,15 @@ fun SafetyScreen(vm: MainViewModel) {
     var sosFieldColor   by remember(config.sosFieldColor)   { mutableStateOf(config.sosFieldColor) }
     var timerFieldColor by remember(config.timerFieldColor) { mutableStateOf(config.timerFieldColor) }
 
+    var crashProfileSettings by remember(config.crashProfileSettings) { mutableStateOf(config.crashProfileSettings) }
+
+    val activeProfileId by produceState<String?>(initialValue = null) {
+        while (true) {
+            value = KSafeExtension.getInstance()?.getActiveProfileIdForUi()
+            delay(1000)
+        }
+    }
+
     // Auto-save: runs whenever any setting changes, with a short debounce for text fields.
     // Karoo Live + calibration + backup live in SettingsScreen now and own their own save loops.
     LaunchedEffect(
@@ -74,6 +86,7 @@ fun SafetyScreen(vm: MainViewModel) {
         speedDropEnabled, speedDropMinutes,
         checkinEnabled, checkinInterval,
         sosFieldColor, timerFieldColor,
+        crashProfileSettings,
     ) {
         delay(600)
         // Merge onto the LATEST config (not this composition snapshot) so a debounced
@@ -114,6 +127,7 @@ fun SafetyScreen(vm: MainViewModel) {
                 checkinIntervalMinutes  = (checkinInterval.toIntOrNull() ?: 120).coerceIn(10, 1440),
                 sosFieldColor           = sosFieldColor,
                 timerFieldColor         = timerFieldColor,
+                crashProfileSettings    = crashProfileSettings,
             )
         }
     }
@@ -324,6 +338,37 @@ fun SafetyScreen(vm: MainViewModel) {
 
             HorizontalDivider(modifier = Modifier.padding(vertical = 4.dp))
 
+            // ── Per-profile crash overrides ───────────────────────────────────
+            Text(
+                text = stringResource(R.string.crash_per_profile_title),
+                style = MaterialTheme.typography.bodyMedium,
+                fontWeight = FontWeight.Bold
+            )
+            if (crashProfileSettings.isEmpty()) {
+                Text(
+                    text = stringResource(R.string.crash_per_profile_empty),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            } else {
+                crashProfileSettings.forEach { setting ->
+                    CrashProfileCard(
+                        setting = setting,
+                        isActive = setting.profileId == activeProfileId,
+                        onChange = { updated ->
+                            crashProfileSettings = crashProfileSettings.map {
+                                if (it.profileId == updated.profileId) updated else it
+                            }
+                        },
+                        onRemove = {
+                            crashProfileSettings = crashProfileSettings.filterNot { it.profileId == setting.profileId }
+                        },
+                    )
+                }
+            }
+
+            HorizontalDivider(modifier = Modifier.padding(vertical = 4.dp))
+
             // ── Monitor crash outside of ride ─────────────────────────────────
             SettingRow(label = stringResource(R.string.crash_outside_ride_label)) {
                 Switch(
@@ -421,6 +466,207 @@ fun SafetyScreen(vm: MainViewModel) {
             selected = timerFieldColor,
             onSelected = { timerFieldColor = it }
         )
+    }
+}
+
+@Composable
+private fun CrashProfileCard(
+    setting: CrashProfileSetting,
+    isActive: Boolean,
+    onChange: (CrashProfileSetting) -> Unit,
+    onRemove: () -> Unit,
+) {
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        elevation = CardDefaults.cardElevation(defaultElevation = 1.dp)
+    ) {
+        Column(
+            modifier = Modifier.padding(8.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            // Profile header row: name + active badge + remove button
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        text = setting.profileName,
+                        style = MaterialTheme.typography.bodyMedium,
+                        fontWeight = FontWeight.Bold
+                    )
+                    if (isActive) {
+                        Text(
+                            text = stringResource(R.string.crash_per_profile_active),
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.primary
+                        )
+                    }
+                }
+                androidx.compose.material3.TextButton(onClick = onRemove) {
+                    Text(stringResource(R.string.crash_per_profile_remove))
+                }
+            }
+
+            // Use global / Custom toggle
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                FilterChip(
+                    selected = setting.useGlobal,
+                    onClick = { onChange(setting.copy(useGlobal = true)) },
+                    label = { Text(stringResource(R.string.crash_per_profile_use_global)) }
+                )
+                FilterChip(
+                    selected = !setting.useGlobal,
+                    onClick = { onChange(setting.copy(useGlobal = false)) },
+                    label = { Text(stringResource(R.string.crash_per_profile_custom)) }
+                )
+            }
+
+            // Per-profile custom controls (only when not using global)
+            if (!setting.useGlobal) {
+                // Enable/disable crash for this profile
+                SettingRow(label = stringResource(R.string.crash_detection_label)) {
+                    Switch(
+                        checked = setting.crashDetectionEnabled,
+                        onCheckedChange = { checked ->
+                            onChange(setting.copy(crashDetectionEnabled = checked))
+                        }
+                    )
+                }
+
+                if (setting.crashDetectionEnabled) {
+                    Text(
+                        text = stringResource(R.string.crash_sensitivity_label),
+                        style = MaterialTheme.typography.bodyMedium
+                    )
+                    // First row: Low / Medium / High
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        listOf(CrashSensitivity.LOW, CrashSensitivity.MEDIUM, CrashSensitivity.HIGH).forEach { s ->
+                            FilterChip(
+                                selected = setting.crashSensitivity == s,
+                                onClick = {
+                                    val newMinSpeed = when (s) {
+                                        CrashSensitivity.LOW    -> 3
+                                        CrashSensitivity.MEDIUM -> 10
+                                        CrashSensitivity.HIGH   -> 15
+                                        CrashSensitivity.CUSTOM -> setting.minSpeedForCrashKmh
+                                    }
+                                    val newConfirmSpeed = when (s) {
+                                        CrashSensitivity.LOW    -> 3
+                                        CrashSensitivity.MEDIUM -> 5
+                                        CrashSensitivity.HIGH   -> 5
+                                        CrashSensitivity.CUSTOM -> setting.crashConfirmSpeedKmh
+                                    }
+                                    onChange(setting.copy(crashSensitivity = s, minSpeedForCrashKmh = newMinSpeed, crashConfirmSpeedKmh = newConfirmSpeed))
+                                },
+                                label = {
+                                    Text(
+                                        when (s) {
+                                            CrashSensitivity.LOW    -> stringResource(R.string.sensitivity_low)
+                                            CrashSensitivity.MEDIUM -> stringResource(R.string.sensitivity_medium)
+                                            CrashSensitivity.HIGH   -> stringResource(R.string.sensitivity_high)
+                                            CrashSensitivity.CUSTOM -> ""
+                                        }
+                                    )
+                                }
+                            )
+                        }
+                    }
+                    // Second row: Custom (full width)
+                    FilterChip(
+                        selected = setting.crashSensitivity == CrashSensitivity.CUSTOM,
+                        onClick = { onChange(setting.copy(crashSensitivity = CrashSensitivity.CUSTOM)) },
+                        modifier = Modifier.fillMaxWidth(),
+                        label = { Text(stringResource(R.string.sensitivity_custom)) }
+                    )
+
+                    // Custom threshold slider
+                    if (setting.crashSensitivity == CrashSensitivity.CUSTOM) {
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Text(
+                                text = stringResource(R.string.sensitivity_custom_threshold, setting.customCrashThreshold),
+                                style = MaterialTheme.typography.bodySmall
+                            )
+                            Text(
+                                text = when {
+                                    setting.customCrashThreshold <= 35 -> "≈ High"
+                                    setting.customCrashThreshold <= 50 -> "≈ Medium"
+                                    else                               -> "≈ Low"
+                                },
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                        Slider(
+                            value = setting.customCrashThreshold.toFloat(),
+                            onValueChange = { v -> onChange(setting.copy(customCrashThreshold = v.toInt())) },
+                            valueRange = 20f..70f,
+                            steps = 49,
+                            modifier = Modifier.fillMaxWidth()
+                        )
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween
+                        ) {
+                            Text("20 m/s² (very sensitive)", style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            Text("70 m/s² (hard impacts only)", style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        }
+                    }
+
+                    // Min speed field
+                    var profileMinSpeed by remember(setting.profileId, setting.minSpeedForCrashKmh) {
+                        mutableStateOf(setting.minSpeedForCrashKmh.toString())
+                    }
+                    OutlinedTextField(
+                        value = profileMinSpeed,
+                        onValueChange = { v ->
+                            if (v.all { c -> c.isDigit() }) {
+                                profileMinSpeed = v
+                                onChange(setting.copy(minSpeedForCrashKmh = v.toIntOrNull() ?: setting.minSpeedForCrashKmh))
+                            }
+                        },
+                        label = { Text(stringResource(R.string.min_speed_label)) },
+                        modifier = Modifier.fillMaxWidth(),
+                        singleLine = true,
+                        supportingText = {
+                            Text(
+                                when (setting.crashSensitivity) {
+                                    CrashSensitivity.LOW    -> stringResource(R.string.min_speed_hint_low)
+                                    CrashSensitivity.MEDIUM -> stringResource(R.string.min_speed_hint_medium)
+                                    CrashSensitivity.HIGH   -> stringResource(R.string.min_speed_hint_high)
+                                    CrashSensitivity.CUSTOM -> stringResource(R.string.min_speed_hint_custom)
+                                }
+                            )
+                        }
+                    )
+
+                    // Confirm speed field
+                    var profileConfirmSpeed by remember(setting.profileId, setting.crashConfirmSpeedKmh) {
+                        mutableStateOf(setting.crashConfirmSpeedKmh.toString())
+                    }
+                    OutlinedTextField(
+                        value = profileConfirmSpeed,
+                        onValueChange = { v ->
+                            if (v.all { c -> c.isDigit() }) {
+                                profileConfirmSpeed = v
+                                onChange(setting.copy(crashConfirmSpeedKmh = v.toIntOrNull() ?: setting.crashConfirmSpeedKmh))
+                            }
+                        },
+                        label = { Text(stringResource(R.string.crash_confirm_speed_label)) },
+                        modifier = Modifier.fillMaxWidth(),
+                        singleLine = true,
+                        supportingText = { Text(stringResource(R.string.crash_confirm_speed_hint)) }
+                    )
+                }
+            }
+        }
     }
 }
 

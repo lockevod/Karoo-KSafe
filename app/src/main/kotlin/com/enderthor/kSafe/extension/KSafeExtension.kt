@@ -1826,6 +1826,9 @@ class KSafeExtension : KarooExtension("ksafe", BuildConfig.VERSION_NAME), Corout
      */
     fun getInstallIdForUi(): String = calibLogger.installId
 
+    /** Active Karoo ride-profile id for the Settings UI's per-profile crash section. */
+    fun getActiveProfileIdForUi(): String? = activeProfileId
+
     /** Returns a string with file location info for display in the Settings UI. */
     fun getCalibrationLogInfo(): String {
         val count = calibLogger.getEntryCount()
