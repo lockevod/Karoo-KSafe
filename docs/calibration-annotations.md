@@ -177,6 +177,54 @@ but a future author replaying this file directly must account for the shift.
 
 ---
 
+## 2026-05-29 — session `764b66` (v1.2.0)
+
+- **App version:** v1.2.0 (pre-locale-fix — comma-decimal corrupted, same as `22d1d3`).
+- **Profile / preset:** MTB / LOW.
+- **Device:** k24 (Karoo 2).
+- **Log file:** `ksafe_v1.2.0_764b66_k24.csv` (the `(2)` Telegram copy, 7.4 KB,
+  ~24 min span, Telegram download). Likely a partial chunk (only 2 `PERIODIC`
+  rows logged), but the impact burst is self-contained. Not in the repo.
+- **Annotated by:** Sergi, 2026-05-29.
+- **Ground-truth label:** **TRUE NEGATIVE** — stationary device handling
+  (bike knocked / shaken / picked up while parked). No ride, no fall.
+
+### Aggregate (from `analyze_calibration_logs.py`)
+
+| Metric | Value |
+|---|---|
+| Duration | ~23.7 min (bike never moved — `speed=0` on every row) |
+| `HIGH_MAG` | 3 |
+| `SPD_REJECT` (`IMPACT_SPEED_REJECTED`) | ~64, all in a ~1.4 s burst @ ~23.7 min |
+| `IMPACT_IN` | **0** |
+| `CRASH_CONFIRMED` | **0** |
+| Burst `raw` range | 25.9 → **126.9** m/s² (~13 g) |
+| Burst `smooth` range | 51.0 → **117.3** m/s² |
+| `gyro` peak | **15.2 rad/s** |
+| `speed` throughout | 0 km/h (< `min_speed=3`) |
+
+### Why it stayed no-confirm (speed gate, NOT magnitude)
+
+The burst magnitudes **dwarf** every real fall in the `58ee00` ground-truth ride
+(those peaked raw 78–94 / smooth 33–49 m/s²). A magnitude-only detector would
+have fired hard. It did not, because the bike was stationary: `speed=0` failed
+the speed gate (`minSpeedForCrashKmh`, the `IMPACT_SPEED_REJECTED` path in
+`CrashDetectionManager.kt`), so the state machine never even entered IMPACT —
+hence 0 `IMPACT_IN` despite ~64 supra-threshold samples.
+
+This is the canonical **"I picked up / knocked my parked bike" true-negative**:
+the speed gate is the sole and sufficient defence. Any future tuning that
+weakens or removes the at-rest speed gate must keep this session at 0 confirms.
+
+**v2.0.0 no regression.** The speed gate is unchanged in v2.0.0
+(`CrashStateMachine.kt:514`, `crashConfirmSpeedKmh` / `minSpeedForCrashKmh`
+still gate IMPACT entry and confirm). With `speed=0` the entire burst is
+rejected identically regardless of preset — the retro-projection's magnitude
+crossings (MEDIUM 1/3, HIGH 2/3 of the 3 `HIGH_MAG` rows) are moot because the
+speed gate fires first.
+
+---
+
 ## How these become tests
 
 Each labeled event above is a candidate named test seed. The convention is:
