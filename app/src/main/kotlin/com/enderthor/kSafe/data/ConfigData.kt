@@ -108,7 +108,7 @@ const val KAROO_LIVE_BASE_URL = "https://dashboard.hammerhead.io/live/"
  *             profile keeps using the global crash config and existing installs are
  *             unaffected until the rider creates an override.
  */
-const val CONFIG_VERSION = 19
+const val CONFIG_VERSION = 20
 
 /**
  * Canonical minSpeedForCrashKmh value per preset.
@@ -591,10 +591,10 @@ data class KSafeConfig(
     val drink2Label: String = "Bottle",  val drink2Ml: Int = 500,    val drink2Color: Int = FIELD_COLOR_AUTO,    val drink2Icon: String = FUEL_BOTTLE_DRAWABLE,
 
     /** Write per-second cumulative carbs (g) and hydration (ml) into the FIT file as
-     *  developer fields, plus the totals into the session message. Default ON because
-     *  the cost is negligible (~0.05% battery over 5 h, no perceptible CPU). Riders
-     *  who don't want extra columns in their FIT can turn it off. */
-    val fuelingFitExportEnabled: Boolean = true,
+     *  developer fields, plus the totals into the session message. Default OFF — opt-in:
+     *  most riders don't want extra developer-field columns in their FIT, and the fueling
+     *  trackers that feed it are themselves opt-in. Riders who want the data turn it on. */
+    val fuelingFitExportEnabled: Boolean = false,
     /**
      * Config schema version — used to detect stale saved configs and apply migrations.
      * Default 0 ensures that any pre-versioning config (JSON without this field) triggers migration.
@@ -1303,6 +1303,16 @@ fun KSafeConfig.migrateToLatest(): KSafeConfig {
         // config and existing installs behave identically until the rider creates an override.
         c = c.copy(configVersion = 19)
         Timber.i("KSafeConfig migrated v%d→v19 (per-profile crash overrides)", originalVersion)
+    }
+
+    if (c.configVersion < 20) {
+        // v19 → v20: fuelingFitExportEnabled default flipped ON→OFF (FIT developer-field
+        // export is now opt-in). Pure version stamp: jsonForStorage uses encodeDefaults=false,
+        // so a rider on the old default never serialized `true` — on decode the now-absent
+        // field resolves to the new `false` default, while anyone who explicitly enabled it
+        // (e.g. via an imported config) keeps their `true`. Nothing to rewrite here.
+        c = c.copy(configVersion = 20)
+        Timber.i("KSafeConfig migrated v%d→v20 (FIT export now opt-in/off by default)", originalVersion)
     }
 
     return c
