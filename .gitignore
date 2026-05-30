@@ -13,6 +13,7 @@ ksafe_export.json
 *_ksafe_export.json
 # Stray config-export dumps (any name) — these are the same secret-bearing blob.
 hola.json
+actual.json
 *_export.json
 
 # Internal planning / design notes — kept local, not part of the public repo
