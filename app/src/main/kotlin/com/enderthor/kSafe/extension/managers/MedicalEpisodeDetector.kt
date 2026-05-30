@@ -455,6 +455,14 @@ class MedicalEpisodeDetector(
     }
 
     private fun evaluateFlatline(now: Long, isStale: Boolean) {
+        // Recovery is purely an HR fact: clear the fire latch as soon as a FRESH HR reading is
+        // back at/above the threshold — BEFORE the speed/active gates below. If the clear lived
+        // only in the (gated) `else` branch, a recovery that happens while GPS is stale (tunnel)
+        // or the rider is stopped would never be seen, leaving the latch stuck and able to block
+        // a later GENUINE flatline (a false negative on a life-critical path).
+        if (hrDataReceived && !isStale && currentHrBpm >= HR_FLATLINE_MAX_BPM) {
+            flatlineFiredAwaitingRecovery = false
+        }
         if (!hrDataReceived || isStale) {
             flatlineSinceMs = 0L
             return
@@ -472,9 +480,11 @@ class MedicalEpisodeDetector(
         }
         if (currentHrBpm < HR_FLATLINE_MAX_BPM) {
             // Recovery latch — already fired for this sustained-low episode. Don't re-arm or
-            // re-fire until HR climbs back to/above the threshold (the else branch clears it).
-            // Without this a stuck/dead strap stuck <30 bpm fires a fresh EMERGENCY SOS every
-            // HR_FLATLINE_DURATION_SEC for the rest of the ride.
+            // re-fire until HR climbs back to/above the threshold (cleared at the top of this
+            // function, gated only on HR — not on speed). Without this a stuck/dead strap stuck
+            // <30 bpm fires a fresh EMERGENCY SOS every HR_FLATLINE_DURATION_SEC for the rest of
+            // the ride. (When HR never recovers, there is no valid signal to detect a real event
+            // anyway, so suppressing re-fire on stuck-bad data is correct, not a missed event.)
             if (flatlineFiredAwaitingRecovery) {
                 flatlineSinceMs = 0L
                 return
@@ -533,16 +543,15 @@ class MedicalEpisodeDetector(
                     "bpm=$currentHrBpm,duration_s=${durationMs / 1000},speed=%.1f,threshold=$HR_FLATLINE_MAX_BPM,cadence=%.0f,power=$currentPowerW,cadence_data=$cadenceDataReceived,power_data=$powerDataReceived".formatUs(lastSpeedKmh, currentCadenceRpm)
                 }
                 flatlineSinceMs = 0L
-                // Latch until HR recovers above threshold (enforced in the else branch below)
+                // Latch until HR recovers above threshold (cleared at the top of this function)
                 // so this sustained-low episode raises exactly ONE SOS, not one per window.
                 flatlineFiredAwaitingRecovery = true
                 onIncident(EmergencyReason.MEDICAL_FLATLINE, mapOf("bpm" to currentHrBpm.toString()))
             }
         } else {
-            // HR is at/above threshold → genuine recovery. Reset the timer AND clear the latch
-            // so a subsequent real drop can fire a new episode.
+            // HR is at/above threshold → genuine recovery. Reset the timer; the recovery latch
+            // was already cleared at the top of this function (gated on HR alone, not speed).
             flatlineSinceMs = 0L
-            flatlineFiredAwaitingRecovery = false
         }
     }
 

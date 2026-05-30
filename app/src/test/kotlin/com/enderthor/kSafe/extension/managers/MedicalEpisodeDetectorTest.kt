@@ -121,6 +121,43 @@ class MedicalEpisodeDetectorTest {
     }
 
     @Test
+    fun `flatline recovery clears the latch even while the rider is idle — recovery is gated on HR, not speed`() {
+        val f = Fixture()
+        fun feedActive(seconds: Int, bpm: Int) {
+            for (sec in 0 until seconds) {
+                f.clock.nowMs += 1_000L
+                f.hr(bpm)
+                f.speed(if (sec % 2 == 0) 20.0 else 21.0)
+                f.detector.tick()
+            }
+        }
+
+        // Episode 1 fires (rider active).
+        feedActive(35, 20)
+        assertEquals(EmergencyReason.MEDICAL_FLATLINE, f.captured?.first)
+
+        // Rider STOPS (no active speed → the activity gate would block FLATLINE eval) but HR
+        // recovers to 70 for 70 s. The recovery latch must still clear, because the clear is at
+        // the top of evaluateFlatline (gated on HR alone). Pre-fix, the clear lived only in the
+        // gated else branch, so this idle recovery left the latch stuck.
+        f.captured = null
+        for (sec in 0 until 70) {
+            f.clock.nowMs += 1_000L
+            f.hr(70)
+            f.speed(0.0)            // not active
+            f.detector.tick()
+        }
+
+        // Rider resumes and immediately has a genuine sustained-low episode → must fire again.
+        f.captured = null
+        feedActive(35, 20)
+        assertEquals(
+            "recovery while idle must clear the latch so a later real episode still fires",
+            EmergencyReason.MEDICAL_FLATLINE, f.captured?.first,
+        )
+    }
+
+    @Test
     fun `flatline does NOT fire when HR is fresh but rider has been idle longer than ACTIVE_RECENT_MS`() {
         val f = Fixture()
         // Brief activity to seed lastSpeedAboveActiveMs, then idle out beyond the 60 s window.

@@ -2751,9 +2751,11 @@ class KSafeExtension : KarooExtension("ksafe", BuildConfig.VERSION_NAME), Corout
         // Cancel our own collectors BEFORE dropping the Karoo connection. A streamRide /
         // config collector suspended inside its callbackFlow would otherwise be able to
         // resume on a final SDK event AFTER disconnect() and run handleRideState / dispatch
-        // against a dead connection. Cancelling first turns that resume into a clean
-        // CancellationException (no business logic runs) and lets each callbackFlow's
-        // awaitClose remove its SDK consumer while the connection is still up.
+        // against a dead connection; flipping the job to "cancelling" first means any such
+        // pending emission resolves as a CancellationException and no business logic runs.
+        // (cancel() is non-blocking — onDestroy can't cancelAndJoin on Main — so each
+        // callbackFlow's awaitClose/removeConsumer still runs after this returns; the goal
+        // here is only to stop post-disconnect event PROCESSING, not to order consumer removal.)
         job.cancel()
         karooSystem.disconnect()
         // Null out the published tracker references so any DataType that re-enters
