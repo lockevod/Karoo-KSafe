@@ -413,6 +413,31 @@ class CarbsTracker(
         return grams
     }
 
+    /** Log an EXPLICIT [grams] (combined fuel-log field). Feeds the same [cumLoggedG] total as
+     *  [logEntry]. Returns the grams logged (0 if non-positive). */
+    fun logAmount(grams: Int): Int {
+        if (grams <= 0) return 0
+        cumLoggedG += grams
+        val now = System.currentTimeMillis()
+        lastLogMs = now
+        lastRealLogMs = now
+        calibLogger?.log(CalibrationLogger.Event.FUELING_CARB_LOGGED) {
+            "slot=combined,grams=$grams,cum_logged=$cumLoggedG,cum_burned=${cumBurnedG.toInt()}"
+        }
+        publishStatus()
+        return grams
+    }
+
+    /** Reverse a previous [logAmount] of exactly [grams]. Clamps the total at >= 0. */
+    fun undoAmount(grams: Int) {
+        if (grams <= 0) return
+        cumLoggedG = (cumLoggedG - grams).coerceAtLeast(0)
+        calibLogger?.log(CalibrationLogger.Event.FUELING_CARB_UNDONE) {
+            "slot=combined,grams=-$grams,cum_logged=$cumLoggedG,cum_burned=${cumBurnedG.toInt()}"
+        }
+        publishStatus()
+    }
+
     /**
      * Reverse the most recent [logEntry] for [slot]. Returns the grams undone, or `0` if
      * the slot has nothing left to undo (already undone, or never logged this session).

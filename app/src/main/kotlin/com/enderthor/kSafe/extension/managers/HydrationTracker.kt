@@ -378,6 +378,32 @@ class HydrationTracker(
         return ml
     }
 
+    /** Log an EXPLICIT [ml] (used by the combined fuel-log field, which carries its own amount
+     *  rather than a slot's config). Feeds the same [cumLoggedMl] total as [logEntry]. Returns
+     *  the ml logged (0 if non-positive). The caller records the amount for undo via [undoAmount]. */
+    fun logAmount(ml: Int): Int {
+        if (ml <= 0) return 0
+        cumLoggedMl += ml
+        val now = System.currentTimeMillis()
+        lastLogMs = now
+        lastRealLogMs = now
+        calibLogger?.log(CalibrationLogger.Event.FUELING_HYDRATION_LOGGED) {
+            "slot=combined,ml=$ml,cum_logged=$cumLoggedMl,cum_target=${cumTargetMl.toInt()}"
+        }
+        publishStatus()
+        return ml
+    }
+
+    /** Reverse a previous [logAmount] of exactly [ml]. Clamps the total at >= 0. */
+    fun undoAmount(ml: Int) {
+        if (ml <= 0) return
+        cumLoggedMl = (cumLoggedMl - ml).coerceAtLeast(0)
+        calibLogger?.log(CalibrationLogger.Event.FUELING_HYDRATION_UNDONE) {
+            "slot=combined,ml=-$ml,cum_logged=$cumLoggedMl,cum_target=${cumTargetMl.toInt()}"
+        }
+        publishStatus()
+    }
+
     /** Mirrors [CarbsTracker.hasInterleavedLogAfter] — returns true if any slot OTHER
      *  than [excludeSlot] logged after [thresholdMs]. */
     private fun hasInterleavedLogAfter(excludeSlot: Int, thresholdMs: Long): Boolean {
