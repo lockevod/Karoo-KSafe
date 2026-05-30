@@ -67,15 +67,25 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     /**
-     * Read-modify-write a subset of config fields against the LATEST emitted config rather
+     * Read-modify-write a subset of config fields against the LATEST PERSISTED config rather
      * than a composition snapshot. A debounced multi-field save in SettingsScreen otherwise
      * captures `config` at launch time and `config.copy(...)` clobbers any OTHER field
      * (e.g. a calibration toggle) saved from a different snapshot in the same window —
-     * a last-writer-wins lost update. Applying [transform] to `config.value` at execution
-     * time (after the debounce, so prior writes have propagated) preserves unrelated fields.
+     * a last-writer-wins lost update.
+     *
+     * Reads fresh from DataStore under [settingsWriteMutex] — NOT `config.value` — for the
+     * same two reasons as [setActiveProvider]: (1) the StateFlow's WhileSubscribed(5000) seed
+     * hands back a `KSafeConfig()` default when no UI is collecting, so `transform(config.value)`
+     * could persist a defaults-only config; (2) the mutex serialises this write against
+     * [setActiveProvider] on the same config key so the two can't lost-update each other.
      */
     fun updateConfig(transform: (KSafeConfig) -> KSafeConfig) {
-        viewModelScope.launch { configManager.saveConfig(transform(config.value)) }
+        viewModelScope.launch {
+            settingsWriteMutex.withLock {
+                val current = configManager.loadConfigFlow().first()
+                configManager.saveConfig(transform(current))
+            }
+        }
     }
 
     fun saveSenderConfigs(configs: List<SenderConfig>) {
@@ -209,15 +219,18 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             // un-migrated blob is a latent footgun (e.g. a version-0 stamp re-runs the v0→v2
             // crash-speed rewrite on every read). migrateToLatest() is idempotent.
             val migrated = config.migrateToLatest()
-            // Persist both blobs in ONE coroutine, sequentially, instead of two independent
-            // viewModelScope.launch calls (saveConfig + saveSenderConfigs). DataStore can't
-            // write two keys atomically, but a single ordered launch removes the interleave
-            // window where an import left the config blob saved and the sender blob unsaved
-            // (or vice versa) on a process kill — and guarantees the sender configs are never
-            // written before the config they belong to.
+            // Persist both blobs in ONE coroutine, sequentially, under [settingsWriteMutex] so
+            // the import can't interleave with a concurrent updateConfig / updateSenderConfig /
+            // setActiveProvider (e.g. an in-flight ProviderScreen debounced auto-save) that
+            // would otherwise read a pre-import snapshot and clobber the imported values.
+            // DataStore can't write two keys atomically, but the ordered, serialised launch
+            // removes the interleave window and guarantees senders are never written before
+            // the config they belong to.
             viewModelScope.launch {
-                configManager.saveConfig(migrated)
-                configManager.saveSenderConfigs(senderConfigs)
+                settingsWriteMutex.withLock {
+                    configManager.saveConfig(migrated)
+                    configManager.saveSenderConfigs(senderConfigs)
+                }
             }
             true
         } catch (e: Exception) {

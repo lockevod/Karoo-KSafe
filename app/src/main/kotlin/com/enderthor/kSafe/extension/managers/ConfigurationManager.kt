@@ -24,6 +24,7 @@ import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.catch
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.filterNotNull
 import kotlinx.coroutines.flow.first
@@ -277,6 +278,20 @@ class ConfigurationManager(private val context: Context) {
                         context.applicationContext.dataStore.data
                             .map { prefs ->
                                 mgr.decodeConfig(prefs[mgr.configKey] ?: defaultKSafeConfigJson)
+                            }
+                            // Resilience gate (SAFETY-CRITICAL): if dataStore.data throws —
+                            // IOException on a cold-boot read, eMMC error, corruption — the
+                            // upstream flow terminates. Without this catch the collector dies,
+                            // `seed` stays null forever, and EVERY consumer of loadConfigFlow()
+                            // (the ride-state gate, the emergency-resume `.first()`, the
+                            // ride-profile `.first()`, and all 10+ tappable data fields) suspends
+                            // permanently — crash detection never starts for the whole process.
+                            // Emit the default config instead so the app degrades to defaults
+                            // rather than wedging on a transient storage error. CancellationException
+                            // is transparent to `catch`, so teardown still cancels cleanly.
+                            .catch { e ->
+                                Timber.e(e, "Shared config DataStore read failed — falling back to default config so consumers don't hang")
+                                emit(mgr.decodeConfig(defaultKSafeConfigJson))
                             }
                             .distinctUntilChanged()
                             .collect { seed.value = it }

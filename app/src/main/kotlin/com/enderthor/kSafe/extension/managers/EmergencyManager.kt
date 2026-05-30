@@ -890,12 +890,18 @@ class EmergencyManager(
                     // that some contacts were missed. Only paint UI when WE are still the
                     // registered alertJob (same identity guard as the failure path) so a
                     // superseded emergency can't attribute the notice to the wrong reason.
+                    // Capture the identity ONCE (as the failure branch does with
+                    // supersededByNewer) so the logged `superseded` flag and the UI guard below
+                    // can never disagree if `alertJob` is reassigned between two separate reads.
+                    val partialSuperseded = alertJob !== myJob
                     calibLogger?.log(CalibrationLogger.Event.ALERT_DELIVERY_PARTIAL) {
-                        "provider=${config.activeProvider},reason=${reason.label},reached=${outcome.delivered},total=${outcome.eligible},superseded=${alertJob !== myJob}"
+                        "provider=${config.activeProvider},reason=${reason.label},reached=${outcome.delivered},total=${outcome.eligible},superseded=$partialSuperseded"
                     }
                     Timber.w("Emergency partial delivery: reached ${outcome.delivered}/${outcome.eligible} contacts via ${config.activeProvider} for ${reason.label}")
-                    if (alertJob === myJob) {
+                    if (!partialSuperseded) {
                         notifyPartialDelivery(config, reason, outcome.delivered, outcome.eligible)
+                    } else {
+                        Timber.d("Partial delivery for $reason notification suppressed — alertJob superseded by newer emergency")
                     }
                 }
             } catch (e: kotlinx.coroutines.CancellationException) {
