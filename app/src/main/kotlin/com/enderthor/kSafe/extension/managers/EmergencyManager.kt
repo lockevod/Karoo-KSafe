@@ -885,9 +885,14 @@ class EmergencyManager(
                     // a coverage gap or with an expired key). The SOS DID get out, so this is
                     // NOT the red delivery-FAILED path; surface a softer amber "reached X of
                     // Y" notice so the rider knows some contacts may not have been alerted.
-                    // Always log for post-incident audit; only paint UI when WE are still the
+                    // ALWAYS log to the calibration trail (even when superseded) — symmetric
+                    // with the ALERT_DELIVERY_FAILED branch — so post-incident audit can see
+                    // that some contacts were missed. Only paint UI when WE are still the
                     // registered alertJob (same identity guard as the failure path) so a
                     // superseded emergency can't attribute the notice to the wrong reason.
+                    calibLogger?.log(CalibrationLogger.Event.ALERT_DELIVERY_PARTIAL) {
+                        "provider=${config.activeProvider},reason=${reason.label},reached=${outcome.delivered},total=${outcome.eligible},superseded=${alertJob !== myJob}"
+                    }
                     Timber.w("Emergency partial delivery: reached ${outcome.delivered}/${outcome.eligible} contacts via ${config.activeProvider} for ${reason.label}")
                     if (alertJob === myJob) {
                         notifyPartialDelivery(config, reason, outcome.delivered, outcome.eligible)
@@ -969,7 +974,8 @@ class EmergencyManager(
     }
 
     /**
-     * Fires when [Sender.sendAlert] returns false after exhausting every retry cycle.
+     * Fires when [Sender.sendAlert] returns an outcome that reached nobody (`!anyOk`) after
+     * exhausting every retry cycle.
      * Without this the rider has no on-device way to distinguish "alert delivered to
      * contacts" from "alert silently dropped on every attempt" — the visible field
      * sequence (5 s ALERTING then SAFE) is identical for both cases. The notification

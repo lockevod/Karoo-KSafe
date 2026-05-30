@@ -24,6 +24,8 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.decodeFromJsonElement
@@ -82,6 +84,11 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     // ─── Provider helpers ─────────────────────────────────────────────────────
 
+    /** Serialises the read-modify-write of the provider/sender blobs so two concurrent
+     *  saves (e.g. ProviderScreen's debounced field auto-save racing a provider switch)
+     *  can't both read the same DataStore snapshot and clobber each other's change. */
+    private val settingsWriteMutex = Mutex()
+
     fun updateSenderConfig(
         provider: ProviderType,
         apiKey: String,
@@ -117,10 +124,12 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         // fires .value hands back emptyList() and we'd drop every OTHER provider's saved
         // config. Same guard as exportToJson.
         viewModelScope.launch {
-            val current = configManager.loadSenderConfigFlow().first().toMutableList()
-            val idx = current.indexOfFirst { it.provider == provider }
-            if (idx >= 0) current[idx] = newConfig else current.add(newConfig)
-            configManager.saveSenderConfigs(current)
+            settingsWriteMutex.withLock {
+                val current = configManager.loadSenderConfigFlow().first().toMutableList()
+                val idx = current.indexOfFirst { it.provider == provider }
+                if (idx >= 0) current[idx] = newConfig else current.add(newConfig)
+                configManager.saveSenderConfigs(current)
+            }
         }
     }
 
@@ -130,8 +139,10 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         // KSafeConfig() seed and we'd save a defaults-only config, wiping every other field.
         // Same guard as exportToJson.
         viewModelScope.launch {
-            val current = configManager.loadConfigFlow().first()
-            configManager.saveConfig(current.copy(activeProvider = provider))
+            settingsWriteMutex.withLock {
+                val current = configManager.loadConfigFlow().first()
+                configManager.saveConfig(current.copy(activeProvider = provider))
+            }
         }
     }
 

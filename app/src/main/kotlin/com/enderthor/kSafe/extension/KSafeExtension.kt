@@ -58,6 +58,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeoutOrNull
 import timber.log.Timber
 import kotlin.coroutines.CoroutineContext
 import kotlin.math.PI
@@ -68,6 +69,11 @@ import kotlin.math.sin
 import kotlin.math.sqrt
 
 private const val FUELING_PERSIST_INTERVAL_MS: Long = 30_000L
+/** Hard cap on how long the ride-state collector waits for the first config emission
+ *  (configSeeded) before proceeding anyway. The wait only avoids a brief default-config
+ *  window; 5 s is far longer than a healthy DataStore first read, so if it elapses the
+ *  config load is broken and we must NOT keep crash detection / ride handling blocked. */
+private const val CONFIG_SEED_TIMEOUT_MS: Long = 5_000L
 /** Coarse poll interval for the background loops while their work-gate is unmet
  *  (no ride recording / calibration logging disabled). The loops still wake to
  *  re-check the gate, but at ~2 min instead of their active 30 s / 60 s cadence —
@@ -795,9 +801,18 @@ class KSafeExtension : KarooExtension("ksafe", BuildConfig.VERSION_NAME), Corout
             // streamRide() can emit Recording before the config collector's first emission,
             // and handleRideState would otherwise run against KSafeConfig() defaults
             // (isActive / crash / medical all ON) — briefly starting detectors the rider had
-            // disabled. The deferred completes on the first DataStore emission (~ms), so the
-            // added startup latency is negligible.
-            configSeeded.await()
+            // disabled. The deferred completes on the first DataStore emission (~ms).
+            //
+            // BOUNDED await — this is an OPTIMISATION (skip the ~100 ms default-config window),
+            // so it must NEVER make things worse than not awaiting at all. configSeeded is
+            // completed by the config collector's first emission, which depends on the shared
+            // DataStore flow emitting; if that upstream dies before its first value (DataStore
+            // IOException at cold boot, file corruption), configSeeded would never complete and
+            // ride-state handling — hence crash detection — would hang for the whole process.
+            // Cap the wait and fall back to the original immediate behaviour on timeout.
+            if (withTimeoutOrNull(CONFIG_SEED_TIMEOUT_MS) { configSeeded.await() } == null) {
+                Timber.w("configSeeded not ready after ${CONFIG_SEED_TIMEOUT_MS}ms — proceeding so ride-state/crash handling is never blocked by a stalled config load")
+            }
             karooSystem.streamRide()
                 .distinctUntilChanged()
                 .collect { state ->

@@ -181,6 +181,12 @@ class CalibrationLogger(
          *  fires alongside this row. Critical for post-incident audit when contacts report
          *  they never received an alert. */
         ALERT_DELIVERY_FAILED("ALERT_FAIL"),
+        /** Outbound emergency alert reached at least one but NOT every eligible contact
+         *  (e.g. 1 of 3 — a contact in a coverage gap or with an expired key). The amber
+         *  rider-facing partial-delivery notice fires alongside this row. Logged for the same
+         *  post-incident audit reason as [ALERT_DELIVERY_FAILED]: a contact reporting they
+         *  never received an alert must be correlatable even when others did. */
+        ALERT_DELIVERY_PARTIAL("ALERT_PARTIAL"),
         // ─── Fueling tracker (added 2026-05) ─────────────────────────────────
         /**
          * Snapshot of the carb tracker config at session start. Lets a reader of the CSV
