@@ -413,6 +413,11 @@ class CarbsTracker(
         return grams
     }
 
+    /** Time of the most recent [logAmount] (combined-field) log. Lets [hasInterleavedLogAfter]
+     *  see a combined log it would otherwise miss (logAmount carries no slot), so a per-slot
+     *  [undoLastForSlot] can't roll the {elapsed} timer back past an interleaved combined log. */
+    @Volatile private var lastAmountLogMs = 0L
+
     /** Log an EXPLICIT [grams] (combined fuel-log field). Feeds the same [cumLoggedG] total as
      *  [logEntry]. Returns the grams logged (0 if non-positive). */
     fun logAmount(grams: Int): Int {
@@ -421,6 +426,7 @@ class CarbsTracker(
         val now = System.currentTimeMillis()
         lastLogMs = now
         lastRealLogMs = now
+        lastAmountLogMs = now
         calibLogger?.log(CalibrationLogger.Event.FUELING_CARB_LOGGED) {
             "slot=combined,grams=$grams,cum_logged=$cumLoggedG,cum_burned=${cumBurnedG.toInt()}"
         }
@@ -494,6 +500,9 @@ class CarbsTracker(
      *  to. When true, undoing [excludeSlot]'s timestamp would silently destroy the time
      *  mark of that interleaved log. */
     private fun hasInterleavedLogAfter(excludeSlot: Int, thresholdMs: Long): Boolean {
+        // A combined-field logAmount carries no slot, so it isn't in the per-slot arrays below;
+        // check its timestamp explicitly or a per-slot undo could roll the timer back past it.
+        if (lastAmountLogMs >= thresholdMs) return true
         for (i in 1..3) {
             if (i == excludeSlot) continue
             if (lastLoggedGramsBySlot[i] > 0 && lastLogMsBeforeBySlot[i] >= thresholdMs) return true

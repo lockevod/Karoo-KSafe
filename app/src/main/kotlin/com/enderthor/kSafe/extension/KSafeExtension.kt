@@ -1056,6 +1056,10 @@ class KSafeExtension : KarooExtension("ksafe", BuildConfig.VERSION_NAME), Corout
                 // for post-ride calibration analysis. It is not used as a gate or threshold modifier
                 // at runtime — the reactive cluster boost and grade-aware boost handle that.
                 karooSystem.streamRideProfile()
+                    // Karoo re-emits the current profile on every SDK reconnect (≈daily +
+                    // every lifecycle bounce). Dedup so an unchanged profile doesn't trigger a
+                    // redundant DataStore.edit + reapplyEffectiveCrash on Main.
+                    .distinctUntilChanged()
                     .collect { profile ->
                         crashManager.updateRideProfile(profile.routingPreference)
                         activeProfileId = profile.id
@@ -1063,8 +1067,17 @@ class KSafeExtension : KarooExtension("ksafe", BuildConfig.VERSION_NAME), Corout
                         // profile-learning runs from the service process and must not clobber a
                         // concurrent UI settings save. updateConfig skips the write when nothing
                         // was learned, so this stays a no-op on every unchanged profile emission.
-                        configManager.updateConfig { latest ->
-                            latest.copy(crashProfileSettings = learnProfile(latest.crashProfileSettings, profile.id, profile.name))
+                        // Guarded: a DataStore write failure must NOT kill this collector, or
+                        // profile switches would stop updating activeProfileId / crash config for
+                        // the rest of the ride.
+                        try {
+                            configManager.updateConfig { latest ->
+                                latest.copy(crashProfileSettings = learnProfile(latest.crashProfileSettings, profile.id, profile.name))
+                            }
+                        } catch (e: kotlinx.coroutines.CancellationException) {
+                            throw e
+                        } catch (e: Exception) {
+                            Timber.w(e, "learnProfile persist failed for profile ${profile.id} — continuing")
                         }
                         reapplyEffectiveCrash()
                     }

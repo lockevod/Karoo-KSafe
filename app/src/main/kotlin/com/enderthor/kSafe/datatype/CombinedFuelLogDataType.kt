@@ -134,12 +134,15 @@ class CombinedFuelLogDataType(
                     val idleIsAutoDay = idleColorFromConfig(ksafeConfig) == FIELD_COLOR_AUTO && !dark
                     val leftDrawable = if (idleIsAutoDay) R.drawable.ic_fuel_combined_dark else R.drawable.ic_fuel_combined
                     val frame = when {
-                        !config.preview && bothOff ->
-                            Frame(COLOR_OFF, label, context.getString(R.string.field_state_off), clickable = false, leftDrawableRes = 0)
+                        // LOGGED/UNDONE take precedence over bothOff: if the rider disables both
+                        // trackers DURING the undo window, the flash must stay clickable so they
+                        // can still undo what was logged (the revert job returns it to IDLE/grey).
                         state is CombinedFuelLogState.LOGGED ->
                             Frame(COLOR_LOGGED, loggedText(state.ml, state.grams), context.getString(R.string.field_state_tap_undo), clickable = true, leftDrawableRes = 0)
                         state is CombinedFuelLogState.UNDONE ->
                             Frame(COLOR_UNDONE, undoneText(state.ml, state.grams), "✓", clickable = true, leftDrawableRes = 0)
+                        !config.preview && bothOff ->
+                            Frame(COLOR_OFF, label, context.getString(R.string.field_state_off), clickable = false, leftDrawableRes = 0)
                         else ->
                             Frame(idleColorFromConfig(ksafeConfig), label, amountsHint(ksafeConfig), clickable = true, leftDrawableRes = leftDrawable)
                     }

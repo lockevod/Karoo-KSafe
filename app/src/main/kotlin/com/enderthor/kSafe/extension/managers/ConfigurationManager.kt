@@ -30,6 +30,8 @@ import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.filterNotNull
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.retryWhen
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.serialization.encodeToString
 import timber.log.Timber
@@ -314,6 +316,22 @@ class ConfigurationManager(private val context: Context) {
                         context.applicationContext.dataStore.data
                             .map { prefs ->
                                 mgr.decodeConfig(prefs[mgr.configKey] ?: defaultKSafeConfigJson)
+                            }
+                            // A TRANSIENT read error (eMMC hiccup) must not permanently freeze config
+                            // propagation: re-subscribe to dataStore.data a few times with backoff
+                            // before falling through to the .catch fallback. A persistent error
+                            // (corruption) exhausts the retries and degrades via .catch (keep last-good
+                            // / seed defaults). Without this, the FIRST upstream throw ends the collector
+                            // for the whole process and no later settings change ever reaches consumers.
+                            .retryWhen { cause, attempt ->
+                                if (cause is CancellationException) throw cause
+                                if (attempt >= 3L) {
+                                    false
+                                } else {
+                                    Timber.w(cause, "Shared config read failed (attempt ${attempt + 1}) — retrying")
+                                    delay(500L * (attempt + 1))
+                                    true
+                                }
                             }
                             // Resilience gate (SAFETY-CRITICAL): if dataStore.data throws —
                             // IOException on a cold-boot read, eMMC error, corruption — the
