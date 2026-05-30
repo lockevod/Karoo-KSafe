@@ -504,6 +504,15 @@ fun SafetyScreen(vm: MainViewModel) {
                 modifier = Modifier.fillMaxWidth(),
                 singleLine = true
             )
+            // Onboarding: the check-in is a dead-man's-switch the rider must actively
+            // reset by tapping the field — riders who don't realise this let it expire
+            // and land in a live SOS countdown. Spell out the reset gesture + escalating
+            // warnings right where they enable it.
+            Text(
+                text = stringResource(R.string.checkin_hint),
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
         }
 
         FieldColorPicker(

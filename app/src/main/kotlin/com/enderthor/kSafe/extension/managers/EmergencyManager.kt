@@ -333,8 +333,6 @@ class EmergencyManager(
         // than the full interval, and a resume past the deadline fires promptly.
         val elapsed = (System.currentTimeMillis() - startTime).coerceIn(0L, intervalMs)
         val expiryDelay = intervalMs - elapsed
-        val warningDelay = (intervalMs - 10 * 60_000L) - elapsed
-
         // Update UI state synchronously so TimerDataType sees the checkin state immediately.
         _uiState.value = EmergencyState(
             checkinEnabled = true,
@@ -342,24 +340,44 @@ class EmergencyManager(
             checkinIntervalMinutes = config.checkinIntervalMinutes
         )
 
+        // Escalating pre-expiry warnings. A single -10 min beep was being missed on long
+        // rides — field data showed one rider let the check-in expire 4× in a single ride,
+        // each time landing in a live SOS COUNTDOWN they had to scramble to cancel (one with
+        // only ~24 s of margin). Re-warn at -5 and -1 min, escalating BEEP_LONG → BEEP_URGENT,
+        // and wake the screen on the final nudge. Audio-only by design: the rider resets by
+        // tapping the Timer field. The warning is deliberately NOT a cancellable alert — that
+        // gesture would mimic the crash-cancel flow and blur two distinct interactions.
+        //   Triple(minutesBefore, beep, wakeScreen)
+        val warnStages = listOf(
+            Triple(10, BEEP_LONG, true),
+            Triple(5, BEEP_URGENT, false),
+            Triple(1, BEEP_URGENT, true),
+        )
         checkinWarningJob = scope.launch {
-            if (warningDelay > 0) {
-                delay(warningDelay)
-                if (currentStatus == EmergencyStatus.IDLE) {
-                    karooSystem.dispatch(TurnScreenOn)
-                    karooSystem.dispatch(BEEP_LONG)
-                    karooSystem.dispatch(
-                        SystemNotification(
-                            // Unique-per-fire suffix: a rider who restarts the check-in
-                            // countdown twice in quick succession (e.g. test mode) would
-                            // otherwise re-dispatch the same id and risk crashing the
-                            // host's notification tracker.
-                            id = "ksafe-checkin-warn-${System.currentTimeMillis()}",
-                            message = "Check-in in 10 min",
-                            header = context.getString(R.string.app_name),
-                        )
+            // Delays are cumulative from job start. Offsets are descending (10,5,1) so the
+            // targets are ascending; a stage whose target is already behind us (interval
+            // shorter than the offset, or a resume past that milestone) is skipped without
+            // disturbing the cumulative clock.
+            var firedDelay = 0L
+            for ((minutesBefore, beep, wakeScreen) in warnStages) {
+                val target = (intervalMs - minutesBefore * 60_000L) - elapsed
+                if (target <= firedDelay) continue
+                delay(target - firedDelay)
+                firedDelay = target
+                if (currentStatus != EmergencyStatus.IDLE) continue  // a countdown/alert owns the buzzer
+                if (wakeScreen) karooSystem.dispatch(TurnScreenOn)
+                karooSystem.dispatch(beep)
+                karooSystem.dispatch(
+                    SystemNotification(
+                        // Unique-per-fire suffix: a rider who restarts the check-in
+                        // countdown twice in quick succession (e.g. test mode) would
+                        // otherwise re-dispatch the same id and risk crashing the
+                        // host's notification tracker.
+                        id = "ksafe-checkin-warn-${System.currentTimeMillis()}",
+                        message = context.getString(R.string.checkin_warning_message, minutesBefore),
+                        header = context.getString(R.string.app_name),
                     )
-                }
+                )
             }
         }
 
