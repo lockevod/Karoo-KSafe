@@ -352,6 +352,10 @@ fun SafetyScreen(vm: MainViewModel) {
                 )
             } else {
                 crashProfileSettings.forEach { setting ->
+                    // key() keeps each card's remember{} (text-field focus/selection) bound to its
+                    // profile across add/remove/reorder — otherwise Compose reuses slots by position
+                    // and a removed profile leaks its field state to its neighbour.
+                    androidx.compose.runtime.key(setting.profileId) {
                     CrashProfileCard(
                         setting = setting,
                         isActive = setting.profileId == activeProfileId,
@@ -364,6 +368,7 @@ fun SafetyScreen(vm: MainViewModel) {
                             crashProfileSettings = crashProfileSettings.filterNot { it.profileId == setting.profileId }
                         },
                     )
+                    }
                 }
             }
 

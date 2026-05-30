@@ -19,9 +19,12 @@ import timber.log.Timber
  *
  * - [delivered] — recipients that returned success.
  * - [eligible]  — recipients actually attempted (the post-scope-filter set).
- * - [hardFail]  — the config could deliver to nobody (blank credentials / no configured
- *   contact). Distinguishes a real failure from a legitimate scope-filtered info no-op,
- *   which has `eligible == 0` but is NOT a failure.
+ * - [hardFail]  — this send reached nobody and it is a GENUINE failure, NOT a legitimate
+ *   scope-filtered info no-op. Set for blank/missing credentials, no configured contact, AND
+ *   for a transient total failure (block-level timeout / unexpected exception in the retry
+ *   loop). Its only job is to stop [infoSuccess] from treating a zero-recipient FAILURE like a
+ *   zero-recipient no-op. `eligible` is not read on any failure path (only [partial] reads it,
+ *   and that requires `delivered >= 1`), so the timeout case carrying `eligible == 0` is benign.
  */
 data class SendOutcome(
     val delivered: Int,
@@ -37,7 +40,8 @@ data class SendOutcome(
     val infoSuccess: Boolean get() = !hardFail && (delivered > 0 || eligible == 0)
 
     companion object {
-        /** Non-deliverable: blank credentials or no configured contact. */
+        /** Reached nobody, GENUINE failure (not a no-op): blank/missing credentials, no
+         *  configured contact, or a transient total failure (timeout / unexpected exception). */
         val HARD_FAIL = SendOutcome(0, 0, hardFail = true)
         /** Deliverable but scope-filtered to zero recipients (legitimate info no-op). */
         val NO_OP = SendOutcome(0, 0)

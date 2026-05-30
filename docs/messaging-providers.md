@@ -90,7 +90,7 @@ The Chat ID identifies **who receives the alert**. If you are alerting someone e
 **Easiest — use @userinfobot:**
 
 1. On the **recipient's** phone, open Telegram and search for **@userinfobot**.
-2. Send `/start`. It replies with their numeric **Id** — that is the Chat ID.
+2. Send `/start`. It replies with their numeric **ID** — that is the Chat ID.
 
 **Alternative — via your bot's `getUpdates`:**
 
