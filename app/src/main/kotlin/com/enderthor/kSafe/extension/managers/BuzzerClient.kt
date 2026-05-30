@@ -356,6 +356,17 @@ class BuzzerClient(private val context: Context) {
             Tone(2000, 400),
         )
 
+        /** Two equal mid-tone bursts (~650 ms) for the "partial delivery" notice — the
+         *  emergency reached some but not every contact. Deliberately FLAT (neither the
+         *  rising [EMERGENCY_PATTERN] nor the descending [DELIVERY_FAILED_PATTERN]) so a
+         *  muted-Karoo rider hears it as its own identity. Mirrors the SDK-side
+         *  `PlayBeepPattern` in `EmergencyManager.notifyPartialDelivery` (two equal tones). */
+        val PARTIAL_DELIVERY_PATTERN: List<Tone> = listOf(
+            Tone(2300, 250),
+            Tone(0, 150),
+            Tone(2300, 250),
+        )
+
         /** A short single beep for the test button — must not be alarming. */
         val TEST_PATTERN: List<Tone> = listOf(
             Tone(2000, 150),

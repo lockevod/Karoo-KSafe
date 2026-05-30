@@ -850,8 +850,8 @@ class EmergencyManager(
         lateinit var myJob: kotlinx.coroutines.Job
         myJob = scope.launch {
             try {
-                val delivered = sender.sendAlert(message, config.activeProvider)
-                if (!delivered) {
+                val outcome = sender.sendAlert(message, config.activeProvider)
+                if (!outcome.anyOk) {
                     // H7 — ALWAYS log the delivery failure to the calibration trail.
                     // Even when this emergency has been superseded by a newer one (so
                     // the rider-facing notification is suppressed to avoid wrong-
@@ -879,6 +879,18 @@ class EmergencyManager(
                         notifyDeliveryFailure(config, reason)
                     } else {
                         Timber.d("Delivery failure for $reason notification suppressed — alertJob superseded by newer emergency")
+                    }
+                } else if (outcome.partial) {
+                    // Reached ≥1 but not every emergency contact (e.g. 1 of 3 — a contact in
+                    // a coverage gap or with an expired key). The SOS DID get out, so this is
+                    // NOT the red delivery-FAILED path; surface a softer amber "reached X of
+                    // Y" notice so the rider knows some contacts may not have been alerted.
+                    // Always log for post-incident audit; only paint UI when WE are still the
+                    // registered alertJob (same identity guard as the failure path) so a
+                    // superseded emergency can't attribute the notice to the wrong reason.
+                    Timber.w("Emergency partial delivery: reached ${outcome.delivered}/${outcome.eligible} contacts via ${config.activeProvider} for ${reason.label}")
+                    if (alertJob === myJob) {
+                        notifyPartialDelivery(config, reason, outcome.delivered, outcome.eligible)
                     }
                 }
             } catch (e: kotlinx.coroutines.CancellationException) {
@@ -1013,6 +1025,54 @@ class EmergencyManager(
             id = "ksafe-alert-delivery-failed-sys-${reason.name.lowercase()}-$failureDispatchedAtMs",
             message = context.getString(R.string.alert_delivery_failed_detail, provider.name),
             header = context.getString(R.string.alert_delivery_failed_title),
+        ))
+    }
+
+    /**
+     * Fires when [Sender.sendAlert] reached at least one but not every emergency contact
+     * (e.g. 1 of 3 — a contact in a coverage gap or with an expired key). Distinct from
+     * [notifyDeliveryFailure]: the SOS DID get out, so this is an amber "heads-up", not the
+     * red total-failure alarm. A two-tone "partial" beep plus a 15-s InRideAlert (and a
+     * system-notification fallback for after the ride) tells the rider that some contacts
+     * may not have been alerted, without implying the alert failed outright.
+     */
+    private fun notifyPartialDelivery(
+        config: KSafeConfig,
+        reason: EmergencyReason,
+        reached: Int,
+        total: Int,
+    ) {
+        val provider = config.activeProvider
+        // Two equal mid-tone bursts — deliberately neither the rising EMERGENCY_PATTERN
+        // ("alert fired") nor the descending DELIVERY_FAILED_PATTERN ("alert FAILED"), so a
+        // muted-Karoo rider hears partial delivery as its own identity. Routed through
+        // playEmergencyBeep so the HAL bypass engages on a muted device (a partial delivery
+        // is still safety-relevant). The HAL pattern mirrors this SDK shape.
+        playEmergencyBeep(
+            config = config,
+            sdkPattern = PlayBeepPattern(listOf(
+                PlayBeepPattern.Tone(frequency = 700, durationMs = 250),
+                PlayBeepPattern.Tone(frequency = null, durationMs = 150),
+                PlayBeepPattern.Tone(frequency = 700, durationMs = 250),
+            )),
+            halPattern = BuzzerClient.PARTIAL_DELIVERY_PATTERN,
+        )
+        // Unique-per-fire suffix on both ids — same rationale as notifyDeliveryFailure
+        // (re-dispatching a duplicate id has crashed the ride app's overlay tracker).
+        val dispatchedAtMs = System.currentTimeMillis()
+        karooSystem.dispatch(InRideAlert(
+            id = "ksafe-alert-delivery-partial-${reason.name.lowercase()}-$dispatchedAtMs",
+            icon = com.enderthor.kSafe.R.drawable.ic_ksafe,
+            title = context.getString(R.string.alert_delivery_partial_title),
+            detail = context.getString(R.string.alert_delivery_partial_detail, reached, total, provider.name),
+            autoDismissMs = 15_000L,
+            backgroundColor = com.enderthor.kSafe.R.color.alert_orange,
+            textColor = com.enderthor.kSafe.R.color.alert_text_white,
+        ))
+        karooSystem.dispatch(SystemNotification(
+            id = "ksafe-alert-delivery-partial-sys-${reason.name.lowercase()}-$dispatchedAtMs",
+            message = context.getString(R.string.alert_delivery_partial_detail, reached, total, provider.name),
+            header = context.getString(R.string.alert_delivery_partial_title),
         ))
     }
 }

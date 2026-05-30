@@ -14,6 +14,36 @@ import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
 import timber.log.Timber
 
+/**
+ * Result of a send across a provider's eligible recipients.
+ *
+ * - [delivered] — recipients that returned success.
+ * - [eligible]  — recipients actually attempted (the post-scope-filter set).
+ * - [hardFail]  — the config could deliver to nobody (blank credentials / no configured
+ *   contact). Distinguishes a real failure from a legitimate scope-filtered info no-op,
+ *   which has `eligible == 0` but is NOT a failure.
+ */
+data class SendOutcome(
+    val delivered: Int,
+    val eligible: Int,
+    val hardFail: Boolean = false,
+) {
+    /** At least one recipient was reached. */
+    val anyOk: Boolean get() = delivered > 0
+    /** Reached ≥1 but not every eligible recipient — the emergency partial-delivery signal. */
+    val partial: Boolean get() = delivered in 1 until eligible
+    /** Info-send success: a deliverable config that either reached someone or had a
+     *  legitimate zero-recipient scope no-op (`eligible == 0` and not a hard failure). */
+    val infoSuccess: Boolean get() = !hardFail && (delivered > 0 || eligible == 0)
+
+    companion object {
+        /** Non-deliverable: blank credentials or no configured contact. */
+        val HARD_FAIL = SendOutcome(0, 0, hardFail = true)
+        /** Deliverable but scope-filtered to zero recipients (legitimate info no-op). */
+        val NO_OP = SendOutcome(0, 0)
+    }
+}
+
 class Sender(
     private val karooSystem: KarooSystemService,
     private val configManager: ConfigurationManager
@@ -42,13 +72,18 @@ class Sender(
 
     // ─── Entry points ─────────────────────────────────────────────────────────
 
-    /** Sends an emergency [message] via [provider] (high priority, retries on failure). */
-    suspend fun sendAlert(message: String, provider: ProviderType): Boolean =
+    /**
+     * Sends an emergency [message] via [provider] (high priority, retries on failure).
+     * Returns the [SendOutcome] of the terminal attempt so the caller can distinguish
+     * full delivery from partial delivery (reached some but not all emergency contacts)
+     * and total failure.
+     */
+    suspend fun sendAlert(message: String, provider: ProviderType): SendOutcome =
         sendWithRetry(message, provider, isEmergency = true)
 
     /** Sends an informational [message] via [provider] (normal priority, single attempt). */
     suspend fun sendInfo(message: String, provider: ProviderType): Boolean =
-        attemptSend(message, provider, isEmergency = false)
+        attemptSend(message, provider, isEmergency = false).infoSuccess
 
     /**
      * Single-attempt send for configuration tests.
@@ -220,13 +255,13 @@ class Sender(
 
     // ─── Retry logic ──────────────────────────────────────────────────────────
 
-    private suspend fun sendWithRetry(message: String, provider: ProviderType, isEmergency: Boolean): Boolean {
+    private suspend fun sendWithRetry(message: String, provider: ProviderType, isEmergency: Boolean): SendOutcome {
         // Load config ONCE before the retry loop — avoids up to 9 DataStore reads + JSON
         // deserialisations (one per attempt) for a value that cannot change mid-emergency.
         val configs = configManager.loadSenderConfigFlow().first()
         val config  = configs.find { it.provider == provider } ?: run {
             Timber.e("sendWithRetry: no config found for $provider")
-            return false
+            return SendOutcome.HARD_FAIL
         }
 
         // Pre-flight credential validation — every provider's attemptSend short-circuits
@@ -236,11 +271,14 @@ class Sender(
         // immediately instead of after half an hour.
         if (!hasUsableCredentials(provider, config)) {
             Timber.e("sendWithRetry: blank/missing credentials for $provider — failing fast without retries")
-            return false
+            return SendOutcome.HARD_FAIL
         }
 
         var totalAttempts = 0
         var currentCycle = 0
+        // Outcome of the most recent attempt — returned on exhaustion so a caller still
+        // sees the eligible count even when nothing was delivered.
+        var lastOutcome: SendOutcome = SendOutcome.HARD_FAIL
 
         return try {
             while (currentCycle < maxCycles) {
@@ -258,21 +296,22 @@ class Sender(
                     // escape the repeat/while, and hit the OUTER catch(Exception) below
                     // — collapsing the entire 9-attempt × 30-min retry budget into one
                     // failed try and silently dropping the rider's emergency alert.
-                    val result = try {
+                    val outcome = try {
                         withTimeoutOrNull(ATTEMPT_BLOCK_TIMEOUT_MS) {
                             attemptSend(message, provider, isEmergency, config)
-                        } == true
+                        } ?: SendOutcome.HARD_FAIL   // block-level timeout
                     } catch (e: kotlinx.coroutines.CancellationException) {
                         // Cancellation must still propagate (caller scope tear-down).
                         throw e
                     } catch (e: Exception) {
                         Timber.w(e, "Attempt $totalAttempts threw — treating as failed, continuing retry chain")
-                        false
+                        SendOutcome.HARD_FAIL
                     }
+                    lastOutcome = outcome
 
-                    if (result) {
-                        Timber.d("Message sent on attempt $totalAttempts")
-                        return true
+                    if (outcome.anyOk) {
+                        Timber.d("Message sent on attempt $totalAttempts (delivered=${outcome.delivered}/${outcome.eligible})")
+                        return outcome
                     }
                 }
 
@@ -284,7 +323,7 @@ class Sender(
                 currentCycle++
             }
             Timber.e("Message failed after $totalAttempts attempts")
-            false
+            lastOutcome
         } catch (e: kotlinx.coroutines.CancellationException) {
             // Cancellation must propagate (caller scope tear-down). Swallowing here
             // would leave the parent coroutine running past the cancellation point.
@@ -294,7 +333,7 @@ class Sender(
             // throw path; this remains for any unexpected exception escaping the
             // surrounding control flow (delay between cycles, config load, etc.).
             Timber.e(e, "Retry error: ${e.message}")
-            false
+            SendOutcome.HARD_FAIL
         }
     }
 
@@ -369,9 +408,9 @@ class Sender(
 
     // ─── Provider implementations ─────────────────────────────────────────────
 
-    private suspend fun attemptSend(message: String, provider: ProviderType, isEmergency: Boolean): Boolean {
+    private suspend fun attemptSend(message: String, provider: ProviderType, isEmergency: Boolean): SendOutcome {
         val configs = configManager.loadSenderConfigFlow().first()
-        val config = configs.find { it.provider == provider } ?: return false
+        val config = configs.find { it.provider == provider } ?: return SendOutcome.HARD_FAIL
         return attemptSend(message, provider, isEmergency, config)
     }
 
@@ -380,15 +419,18 @@ class Sender(
         provider: ProviderType,
         isEmergency: Boolean,
         config: SenderConfig,
-    ): Boolean {
+    ): SendOutcome {
 
         return when (provider) {
             ProviderType.CALLMEBOT -> {
                 val encodedMsg = Uri.encode(message)
                 val recipients = callMeBotRecipients(config)
                 val send = recipientsToSend(recipients.map { it.first }, config::scopeForSlot, isEmergency)
-                if (send.isEmpty()) return !isEmergency  // info filtered to zero = intentional no-op (success); emergency-with-no-contacts = failure
-                var anyOk = false
+                // info filtered to zero = intentional no-op (success); emergency with no
+                // configured contact = hard failure (the scope fallback already widened to
+                // all configured slots, so an empty set means there is genuinely no one).
+                if (send.isEmpty()) return if (isEmergency) SendOutcome.HARD_FAIL else SendOutcome.NO_OP
+                var delivered = 0
                 for ((slot, phone, key) in recipients) {
                     if (slot !in send) continue
                     val url = "https://api.callmebot.com/whatsapp.php?phone=$phone&text=$encodedMsg&apikey=$key"
@@ -411,19 +453,19 @@ class Sender(
                     // Require a positive success marker ("Message Sent" or "Message
                     // queued"), then double-check no known failure substring is present.
                     val ok = isCallMeBotSuccess(response.statusCode, body)
-                    if (ok) anyOk = true
+                    if (ok) delivered++
                     else Timber.e("CallMeBot error (phone=$phone) ${response.statusCode}: $body")
                 }
-                anyOk
+                SendOutcome(delivered, send.size)
             }
 
             ProviderType.PUSHOVER -> {
-                if (config.apiKey.isBlank()) return false
+                if (config.apiKey.isBlank()) return SendOutcome.HARD_FAIL
                 val allKeys = listOf(config.userKey, config.userKey2, config.userKey3)
                 val configuredSlots = allKeys.indices.filter { allKeys[it].isNotBlank() }
                 val send = recipientsToSend(configuredSlots, config::scopeForSlot, isEmergency)
-                if (send.isEmpty()) return !isEmergency  // info filtered to zero = intentional no-op (success); emergency-with-no-contacts = failure
-                var anyOk = false
+                if (send.isEmpty()) return if (isEmergency) SendOutcome.HARD_FAIL else SendOutcome.NO_OP
+                var delivered = 0
                 for (slot in send) {
                     val key = allKeys[slot]
                     val jsonBody = buildJsonObject {
@@ -456,17 +498,17 @@ class Sender(
                     // terminator (`,` for non-last field, `}` for the last field).
                     val ok = response.statusCode in 200..299 &&
                         (body.contains("\"status\":1,") || body.contains("\"status\":1}"))
-                    if (ok) anyOk = true
+                    if (ok) delivered++
                     else Timber.e("Pushover error (userKey=$key) ${response.statusCode}: $body")
                 }
-                anyOk
+                SendOutcome(delivered, send.size)
             }
 
             ProviderType.NTFY -> {
-                if (config.apiKey.isBlank()) return false
+                if (config.apiKey.isBlank()) return SendOutcome.HARD_FAIL
                 if (recipientsToSend(listOf(0), config::scopeForSlot, isEmergency).isEmpty()) {
                     Timber.d("ntfy: skipped by per-recipient filter (scope=${config.recipient1Alerts})")
-                    return !isEmergency
+                    return if (isEmergency) SendOutcome.HARD_FAIL else SendOutcome.NO_OP
                 }
                 val title    = if (isEmergency) "KSafe Emergency" else "KSafe"
                 val priority = if (isEmergency) "urgent" else "default"
@@ -484,20 +526,20 @@ class Sender(
                 }
                 if (response == null) {
                     Timber.e("ntfy timeout")
-                    return false
+                    return SendOutcome(0, 1)   // one eligible destination, delivered to none
                 }
                 val ok = response.statusCode in 200..299
                 if (!ok) Timber.e("ntfy error ${response.statusCode}: ${response.body?.toString(Charsets.UTF_8)}")
-                ok
+                SendOutcome(if (ok) 1 else 0, 1)
             }
 
             ProviderType.TELEGRAM -> {
-                if (config.apiKey.isBlank()) return false
+                if (config.apiKey.isBlank()) return SendOutcome.HARD_FAIL
                 val allChatIds = listOf(config.userKey, config.userKey2, config.userKey3)
                 val configuredSlots = allChatIds.indices.filter { allChatIds[it].isNotBlank() }
                 val send = recipientsToSend(configuredSlots, config::scopeForSlot, isEmergency)
-                if (send.isEmpty()) return !isEmergency  // info filtered to zero = intentional no-op (success); emergency-with-no-contacts = failure
-                var anyOk = false
+                if (send.isEmpty()) return if (isEmergency) SendOutcome.HARD_FAIL else SendOutcome.NO_OP
+                var delivered = 0
                 for (slot in send) {
                     val chatId = allChatIds[slot]
                     val jsonBody = buildJsonObject {
@@ -519,10 +561,10 @@ class Sender(
                     }
                     val body = response.body?.toString(Charsets.UTF_8) ?: ""
                     val ok = response.statusCode in 200..299 && body.contains("\"ok\":true")
-                    if (ok) anyOk = true
+                    if (ok) delivered++
                     else Timber.e("Telegram error (chatId=$chatId) ${response.statusCode}: $body")
                 }
-                anyOk
+                SendOutcome(delivered, send.size)
             }
         }
     }

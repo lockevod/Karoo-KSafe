@@ -428,4 +428,7 @@
     <!-- Outbound alert delivery failure — fires after Sender exhausts every retry cycle. -->
     <string name="alert_delivery_failed_title">Alert NOT delivered</string>
     <string name="alert_delivery_failed_detail">%1$s could not send. Check coverage / credentials.</string>
+    <!-- Outbound alert reached some but not all emergency contacts (partial delivery). -->
+    <string name="alert_delivery_partial_title">Alert partly delivered</string>
+    <string name="alert_delivery_partial_detail">Reached %1$d of %2$d contacts via %3$s. Check the others\' setup.</string>
 </resources>

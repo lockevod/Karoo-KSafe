@@ -46,6 +46,7 @@ import io.hammerhead.karooext.models.StreamState
 import io.hammerhead.karooext.models.SystemNotification
 import io.hammerhead.karooext.models.WriteToRecordMesg
 import io.hammerhead.karooext.models.WriteToSessionMesg
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -161,6 +162,10 @@ class KSafeExtension : KarooExtension("ksafe", BuildConfig.VERSION_NAME), Corout
     private lateinit var hydrationTracker: com.enderthor.kSafe.extension.managers.HydrationTracker
 
     private var activeConfig = KSafeConfig()
+    /** Completed on the first config emission from DataStore so the ride-state collector
+     *  never runs [handleRideState] against KSafeConfig() defaults (isActive / crash /
+     *  medical all ON) when the extension (re)connects while the Karoo is already Recording. */
+    private val configSeeded = CompletableDeferred<Unit>()
     private var currentRideState: RideState? = null
     @Volatile private var activeProfileId: String? = null
     /** Whether the crash detector is currently running under the effective config. Kept in
@@ -483,6 +488,9 @@ class KSafeExtension : KarooExtension("ksafe", BuildConfig.VERSION_NAME), Corout
             configManager.loadConfigFlow().collect { config ->
                 val prevActive = activeConfig.isActive
                 activeConfig = config
+                // Idempotent: unblock the ride-state collector's first handleRideState so it
+                // never runs against KSafeConfig() defaults on a mid-ride (re)connect.
+                configSeeded.complete(Unit)
                 crashManager.updateConfig(effectiveCrashConfig(config))
                 // Auto-start branch of the four trackers is gated on the current ride state
                 // so a config emission at extension boot (or a settings save while idle) does
@@ -782,7 +790,14 @@ class KSafeExtension : KarooExtension("ksafe", BuildConfig.VERSION_NAME), Corout
         }
 
         launch {
-            // Observe ride state
+            // Observe ride state. Wait until activeConfig has been seeded from DataStore
+            // (configSeeded) before handling the first transition: on a mid-ride (re)connect
+            // streamRide() can emit Recording before the config collector's first emission,
+            // and handleRideState would otherwise run against KSafeConfig() defaults
+            // (isActive / crash / medical all ON) — briefly starting detectors the rider had
+            // disabled. The deferred completes on the first DataStore emission (~ms), so the
+            // added startup latency is negligible.
+            configSeeded.await()
             karooSystem.streamRide()
                 .distinctUntilChanged()
                 .collect { state ->
@@ -1858,9 +1873,12 @@ class KSafeExtension : KarooExtension("ksafe", BuildConfig.VERSION_NAME), Corout
         Timber.d("Simulated crash test: sending alert directly (no countdown)")
         val config = activeConfig
         val message = emergencyManager.buildMessage(config, EmergencyReason.CRASH_DETECTED)
-        val ok = sender.sendAlert(message, config.activeProvider)
-        return if (ok) "Test alert sent successfully! Check your device."
-               else "Send failed — check your provider configuration."
+        val outcome = sender.sendAlert(message, config.activeProvider)
+        return when {
+            outcome.partial -> "Test alert reached ${outcome.delivered} of ${outcome.eligible} contacts — check the others' configuration."
+            outcome.anyOk   -> "Test alert sent successfully! Check your device."
+            else            -> "Send failed — check your provider configuration."
+        }
     }
 
     /**
