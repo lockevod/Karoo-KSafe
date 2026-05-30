@@ -81,9 +81,19 @@ class Sender(
     suspend fun sendAlert(message: String, provider: ProviderType): SendOutcome =
         sendWithRetry(message, provider, isEmergency = true)
 
-    /** Sends an informational [message] via [provider] (normal priority, single attempt). */
+    /** Sends an informational [message] via [provider] (normal priority, single attempt).
+     *  Wrapped: [attemptSend] can throw (RemoteException / IllegalStateException from a
+     *  momentarily-unbound KarooSystemService) — map that to a clean `false` instead of
+     *  letting it crash the caller (ride-start/end + custom-message paths). */
     suspend fun sendInfo(message: String, provider: ProviderType): Boolean =
-        attemptSend(message, provider, isEmergency = false).infoSuccess
+        try {
+            attemptSend(message, provider, isEmergency = false).infoSuccess
+        } catch (e: kotlinx.coroutines.CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            Timber.w(e, "sendInfo failed for $provider — treating as not delivered")
+            false
+        }
 
     /**
      * Single-attempt send for configuration tests.

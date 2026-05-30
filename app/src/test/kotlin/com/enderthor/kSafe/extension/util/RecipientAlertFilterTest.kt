@@ -20,7 +20,7 @@ class RecipientAlertFilterTest {
         assertEquals(true,  INFO_ONLY.accepts(isEmergency = false))
     }
 
-    @Test fun `scopeForSlot maps 0 1 2 and clamps out-of-range to slot 3`() {
+    @Test fun `scopeForSlot maps 0 1 2 and clamps out-of-range to recipient3`() {
         val c = SenderConfig(
             recipient1Alerts = ALL, recipient2Alerts = EMERGENCY_ONLY, recipient3Alerts = INFO_ONLY)
         assertEquals(ALL, c.scopeForSlot(0))

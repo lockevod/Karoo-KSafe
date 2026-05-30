@@ -74,18 +74,14 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
      * a last-writer-wins lost update.
      *
      * Reads fresh from DataStore under [settingsWriteMutex] — NOT `config.value` — for the
-     * same two reasons as [setActiveProvider]: (1) the StateFlow's WhileSubscribed(5000) seed
-     * hands back a `KSafeConfig()` default when no UI is collecting, so `transform(config.value)`
-     * could persist a defaults-only config; (2) the mutex serialises this write against
-     * [setActiveProvider] on the same config key so the two can't lost-update each other.
+     * Atomic read-modify-write inside ONE DataStore transaction via
+     * [ConfigurationManager.updateConfig], so it can't lose unrelated fields to a concurrent
+     * writer in the service process (e.g. profile-learning, which uses the same helper) and the
+     * StateFlow's WhileSubscribed(5000) seed-default footgun can't apply (it never reads
+     * `config.value`). Supersedes the previous fresh-read + in-process mutex.
      */
     fun updateConfig(transform: (KSafeConfig) -> KSafeConfig) {
-        viewModelScope.launch {
-            settingsWriteMutex.withLock {
-                val current = configManager.loadConfigFlow().first()
-                configManager.saveConfig(transform(current))
-            }
-        }
+        viewModelScope.launch { configManager.updateConfig(transform) }
     }
 
     fun saveSenderConfigs(configs: List<SenderConfig>) {
@@ -144,16 +140,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun setActiveProvider(provider: ProviderType) {
-        // Read-modify-write against the freshly persisted config, NOT config.value: with
-        // WhileSubscribed(5000), if no UI is collecting when this fires .value is the
-        // KSafeConfig() seed and we'd save a defaults-only config, wiping every other field.
-        // Same guard as exportToJson.
-        viewModelScope.launch {
-            settingsWriteMutex.withLock {
-                val current = configManager.loadConfigFlow().first()
-                configManager.saveConfig(current.copy(activeProvider = provider))
-            }
-        }
+        // Atomic read-modify-write inside one DataStore transaction (can't race a service-process
+        // config writer or lose unrelated fields; no WhileSubscribed seed-default footgun).
+        viewModelScope.launch { configManager.updateConfig { it.copy(activeProvider = provider) } }
     }
 
     // ─── Backup / Restore ─────────────────────────────────────────────────────

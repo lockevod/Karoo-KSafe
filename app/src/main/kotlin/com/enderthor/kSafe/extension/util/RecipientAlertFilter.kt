@@ -10,7 +10,8 @@ fun RecipientAlertScope.accepts(isEmergency: Boolean): Boolean = when (this) {
     RecipientAlertScope.INFO_ONLY      -> !isEmergency
 }
 
-/** Scope for recipient slot [i] (0/1/2). Out-of-range clamps to slot 3 (recipient3). */
+/** Scope for recipient index [i] (0=recipient1, 1=recipient2, 2=recipient3).
+ *  Any out-of-range index clamps to recipient3 (index 2). */
 fun SenderConfig.scopeForSlot(i: Int): RecipientAlertScope = when (i) {
     0 -> recipient1Alerts
     1 -> recipient2Alerts
