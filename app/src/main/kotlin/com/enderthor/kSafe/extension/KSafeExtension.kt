@@ -1923,6 +1923,9 @@ class KSafeExtension : KarooExtension("ksafe", BuildConfig.VERSION_NAME), Corout
             template = config.karooLiveStartMessage,
             config = config,
         )
+        // Parity with sendTestRideEnd / the production sendRideStartNotification: don't send
+        // (and don't report success for) an empty message if the rider blanked the template.
+        if (message.isBlank()) return "Ride start message is empty — set it in Settings first."
         val ok = sender.sendInfo(message, config.activeProvider)
         return if (ok) "Ride start message sent successfully! Check your device."
                else "Send failed — check your provider configuration."

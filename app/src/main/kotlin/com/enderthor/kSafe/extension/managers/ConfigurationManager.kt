@@ -23,6 +23,7 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.catch
 import kotlinx.coroutines.flow.distinctUntilChanged
@@ -148,6 +149,15 @@ class ConfigurationManager(private val context: Context) {
                     e.javaClass.simpleName, e.message, snippet)
                 lastGoodSenderConfigs ?: emptyList()
             }
+        }.catch { e ->
+            // Upstream DataStore read failure (IOException) — distinct from the JSON-decode
+            // failure handled inside map above. Without this the flow terminates and a
+            // loadSenderConfigFlow().first() (now called UNDER settingsWriteMutex by
+            // updateSenderConfig) would hang forever, holding the lock and wedging ALL settings
+            // writes. Emit last-good (or empty) so .first() returns and the lock is released.
+            if (e is CancellationException) throw e
+            Timber.e(e, "SenderConfig DataStore read failed — falling back to last-good/empty so consumers don't hang")
+            emit(lastGoodSenderConfigs ?: emptyList())
         }.distinctUntilChanged()
     }
 
@@ -290,8 +300,14 @@ class ConfigurationManager(private val context: Context) {
                             // rather than wedging on a transient storage error. CancellationException
                             // is transparent to `catch`, so teardown still cancels cleanly.
                             .catch { e ->
-                                Timber.e(e, "Shared config DataStore read failed — falling back to default config so consumers don't hang")
-                                emit(mgr.decodeConfig(defaultKSafeConfigJson))
+                                if (e is CancellationException) throw e   // teardown must stay transparent
+                                Timber.e(e, "Shared config DataStore read failed — keeping last-good (or defaults if none yet) so consumers don't hang")
+                                // Only seed defaults when we have NO good value yet (cold-boot read
+                                // failure → seed still null → consumers would hang). If seed already
+                                // holds the rider's real config, KEEP it: a transient MID-SESSION error
+                                // must NOT revert the live config to defaults (which would re-enable
+                                // detectors the rider disabled and reset crash thresholds mid-ride).
+                                if (seed.value == null) emit(mgr.decodeConfig(defaultKSafeConfigJson))
                             }
                             .distinctUntilChanged()
                             .collect { seed.value = it }

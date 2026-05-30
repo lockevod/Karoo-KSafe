@@ -39,6 +39,10 @@ class SendOutcomeTest {
         assertTrue(SendOutcome(0, 0).infoSuccess)
         // Deliverable, recipients attempted, none reached → failure.
         assertFalse(SendOutcome(0, 3).infoSuccess)
+        // Single recipient (ntfy / one-contact Telegram), delivery failed → failure. Guards
+        // against a `delivered >= 0`-style mutation that would wrongly pass the (0,3) case.
+        assertFalse(SendOutcome(0, 1).infoSuccess)
+        assertTrue(SendOutcome(1, 1).infoSuccess)
         // Non-deliverable config (blank creds / no contact) → failure even though eligible==0.
         assertFalse(SendOutcome.HARD_FAIL.infoSuccess)
     }
