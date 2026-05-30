@@ -108,7 +108,7 @@ const val KAROO_LIVE_BASE_URL = "https://dashboard.hammerhead.io/live/"
  *             profile keeps using the global crash config and existing installs are
  *             unaffected until the rider creates an override.
  */
-const val CONFIG_VERSION = 20
+const val CONFIG_VERSION = 21
 
 /**
  * Canonical minSpeedForCrashKmh value per preset.
@@ -589,6 +589,16 @@ data class KSafeConfig(
     val hydrationAlertBgColor: Int = FUELING_ALERT_COLOR_BLUE,
     val drink1Label: String = "Sip",     val drink1Ml: Int = 100,    val drink1Color: Int = FIELD_COLOR_AUTO,    val drink1Icon: String = "💧",
     val drink2Label: String = "Bottle",  val drink2Ml: Int = 500,    val drink2Color: Int = FIELD_COLOR_AUTO,    val drink2Icon: String = FUEL_BOTTLE_DRAWABLE,
+    /** Carbs per 500 ml of the rider's drink mix — used by the Fueling screen to auto-fill
+     *  each combined button's carbs from its volume. Editable; not used at log time (the
+     *  per-button [combined1Carbs]/[combined2Carbs] are what get logged). */
+    val combinedCarbConcentrationPer500ml: Int = 60,
+    /** Combined fuel-log buttons: log a drink volume AND carbs in one tap. Carbs default to
+     *  ml × concentration / 500 but are independently editable. The field is active when
+     *  EITHER the carbs OR hydration tracker is enabled (logs only the enabled side), and
+     *  grey when both are off — no separate enable flag. Icon is fixed (not configurable). */
+    val combined1Label: String = "Sip",     val combined1Ml: Int = 250, val combined1Carbs: Int = 30, val combined1Color: Int = FIELD_COLOR_AUTO,
+    val combined2Label: String = "Bottle",  val combined2Ml: Int = 500, val combined2Carbs: Int = 60, val combined2Color: Int = FIELD_COLOR_AUTO,
 
     /** Write per-second cumulative carbs (g) and hydration (ml) into the FIT file as
      *  developer fields, plus the totals into the session message. Default OFF — opt-in:
@@ -1313,6 +1323,14 @@ fun KSafeConfig.migrateToLatest(): KSafeConfig {
         // (e.g. via an imported config) keeps their `true`. Nothing to rewrite here.
         c = c.copy(configVersion = 20)
         Timber.i("KSafeConfig migrated v%d→v20 (FIT export now opt-in/off by default)", originalVersion)
+    }
+
+    if (c.configVersion < 21) {
+        // v20 → v21: combined fuel-log fields added. Pure version stamp — the new fields are
+        // additive with sensible defaults (Sip 250ml/30g, Bottle 500ml/60g @ 60g/500ml), so
+        // existing installs behave identically until the rider places a combined field.
+        c = c.copy(configVersion = 21)
+        Timber.i("KSafeConfig migrated v%d→v21 (combined fuel-log fields)", originalVersion)
     }
 
     return c

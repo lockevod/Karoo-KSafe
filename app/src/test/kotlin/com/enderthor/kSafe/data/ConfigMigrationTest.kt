@@ -192,4 +192,16 @@ class ConfigMigrationTest {
         assertEquals(CONFIG_VERSION, migrated.configVersion)
         assertEquals(listOf(setting), migrated.crashProfileSettings)
     }
+
+    @Test
+    fun `v20 config migrates to current version with combined-field defaults`() {
+        val old = KSafeConfig(configVersion = 20)
+        val migrated = old.migrateToLatest()
+        assertEquals(CONFIG_VERSION, migrated.configVersion)
+        assertEquals(60, migrated.combinedCarbConcentrationPer500ml)
+        assertEquals(250, migrated.combined1Ml)
+        assertEquals(30, migrated.combined1Carbs)
+        assertEquals(500, migrated.combined2Ml)
+        assertEquals(60, migrated.combined2Carbs)
+    }
 }
