@@ -107,6 +107,13 @@ const val KAROO_LIVE_BASE_URL = "https://dashboard.hammerhead.io/live/"
  *             crash overrides. Pure version stamp; the list defaults to empty, so every
  *             profile keeps using the global crash config and existing installs are
  *             unaffected until the rider creates an override.
+ *  v19 → v20: fuelingFitExportEnabled default flipped true → false (FIT developer-field
+ *             export is now opt-in). Pure version stamp; because jsonForStorage uses
+ *             encodeDefaults=false, existing installs that relied on the old default never
+ *             persisted `true`, so they decode to the new `false` (FIT export off on upgrade).
+ *  v20 → v21: combined fuel-log fields added (combinedCarbConcentrationPer500ml + the
+ *             combined1/2 Label/Ml/Carbs/Color set) for the combined drink+carbs tap field.
+ *             Pure version stamp; all fields have defaults, so existing installs are unaffected.
  */
 const val CONFIG_VERSION = 21
 
