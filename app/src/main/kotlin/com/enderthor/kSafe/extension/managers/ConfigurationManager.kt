@@ -30,8 +30,8 @@ import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.filterNotNull
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
-import kotlinx.coroutines.flow.retryWhen
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.serialization.encodeToString
 import timber.log.Timber
@@ -313,48 +313,41 @@ class ConfigurationManager(private val context: Context) {
                     // `.filterNotNull()` so external callers never observe the null.
                     val seed = MutableStateFlow<KSafeConfig?>(null)
                     sharedJob = sharedScope.launch {
-                        context.applicationContext.dataStore.data
-                            .map { prefs ->
-                                mgr.decodeConfig(prefs[mgr.configKey] ?: defaultKSafeConfigJson)
+                        // Resilient re-subscribing collector (SAFETY-CRITICAL). dataStore.data throws
+                        // on an IOException (cold-boot read, eMMC hiccup, corruption); a plain collect
+                        // would then END for the whole process — `seed` frozen forever, so EVERY
+                        // loadConfigFlow() consumer (ride-state gate, emergency-resume `.first()`,
+                        // ride-profile `.first()`, all 10+ tappable fields) would hang or stop updating.
+                        // Instead RE-SUBSCRIBE with capped backoff: a TRANSIENT error recovers, and even
+                        // a PERSISTENT one keeps retrying (never permanently dead) while consumers keep
+                        // seeing last-good. A plain `.catch` can't do this — once it handles the error the
+                        // downstream completes and the collector exits; only re-subscription survives.
+                        // Cold boot (seed still null) seeds defaults so nothing hangs; a MID-SESSION error
+                        // KEEPS last-good (never reverts to defaults, which would re-enable detectors the
+                        // rider disabled / reset crash thresholds mid-ride). CancellationException is
+                        // rethrown so teardown stays transparent.
+                        var backoffMs = 500L
+                        while (isActive) {
+                            try {
+                                context.applicationContext.dataStore.data
+                                    .map { prefs ->
+                                        mgr.decodeConfig(prefs[mgr.configKey] ?: defaultKSafeConfigJson)
+                                    }
+                                    .distinctUntilChanged()
+                                    .collect {
+                                        seed.value = it
+                                        backoffMs = 500L   // healthy stream → reset backoff
+                                    }
+                                break   // dataStore.data is effectively infinite; a clean completion = stop.
+                            } catch (e: CancellationException) {
+                                throw e
+                            } catch (e: Exception) {
+                                Timber.e(e, "Shared config read failed — re-subscribing in ${backoffMs}ms (keeping last-good${if (seed.value == null) "; seeding defaults" else ""})")
+                                if (seed.value == null) seed.value = mgr.decodeConfig(defaultKSafeConfigJson)
+                                delay(backoffMs)
+                                backoffMs = (backoffMs * 2).coerceAtMost(30_000L)
                             }
-                            // A TRANSIENT read error (eMMC hiccup) must not permanently freeze config
-                            // propagation: re-subscribe to dataStore.data a few times with backoff
-                            // before falling through to the .catch fallback. A persistent error
-                            // (corruption) exhausts the retries and degrades via .catch (keep last-good
-                            // / seed defaults). Without this, the FIRST upstream throw ends the collector
-                            // for the whole process and no later settings change ever reaches consumers.
-                            .retryWhen { cause, attempt ->
-                                if (cause is CancellationException) throw cause
-                                if (attempt >= 3L) {
-                                    false
-                                } else {
-                                    Timber.w(cause, "Shared config read failed (attempt ${attempt + 1}) — retrying")
-                                    delay(500L * (attempt + 1))
-                                    true
-                                }
-                            }
-                            // Resilience gate (SAFETY-CRITICAL): if dataStore.data throws —
-                            // IOException on a cold-boot read, eMMC error, corruption — the
-                            // upstream flow terminates. Without this catch the collector dies,
-                            // `seed` stays null forever, and EVERY consumer of loadConfigFlow()
-                            // (the ride-state gate, the emergency-resume `.first()`, the
-                            // ride-profile `.first()`, and all 10+ tappable data fields) suspends
-                            // permanently — crash detection never starts for the whole process.
-                            // Emit the default config instead so the app degrades to defaults
-                            // rather than wedging on a transient storage error. CancellationException
-                            // is transparent to `catch`, so teardown still cancels cleanly.
-                            .catch { e ->
-                                if (e is CancellationException) throw e   // teardown must stay transparent
-                                Timber.e(e, "Shared config DataStore read failed — keeping last-good (or defaults if none yet) so consumers don't hang")
-                                // Only seed defaults when we have NO good value yet (cold-boot read
-                                // failure → seed still null → consumers would hang). If seed already
-                                // holds the rider's real config, KEEP it: a transient MID-SESSION error
-                                // must NOT revert the live config to defaults (which would re-enable
-                                // detectors the rider disabled and reset crash thresholds mid-ride).
-                                if (seed.value == null) emit(mgr.decodeConfig(defaultKSafeConfigJson))
-                            }
-                            .distinctUntilChanged()
-                            .collect { seed.value = it }
+                        }
                     }
                     seed.asStateFlow().also { sharedState = it }
                 }

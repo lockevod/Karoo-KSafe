@@ -1079,7 +1079,16 @@ class KSafeExtension : KarooExtension("ksafe", BuildConfig.VERSION_NAME), Corout
                         } catch (e: Exception) {
                             Timber.w(e, "learnProfile persist failed for profile ${profile.id} — continuing")
                         }
-                        reapplyEffectiveCrash()
+                        // Guarded too: a crashManager start/stop/updateConfig fault while re-applying
+                        // must not kill this collector, or every LATER profile switch would stop
+                        // re-applying crash config for the rest of the ride.
+                        try {
+                            reapplyEffectiveCrash()
+                        } catch (e: kotlinx.coroutines.CancellationException) {
+                            throw e
+                        } catch (e: Exception) {
+                            Timber.w(e, "reapplyEffectiveCrash failed for profile ${profile.id} — continuing")
+                        }
                     }
             }
             }  // end supervisorScope (B10)
