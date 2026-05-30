@@ -236,8 +236,8 @@
     <string name="emergency_message_label">Emergency message</string>
     <string name="emergency_message_hint">Use {location} for GPS link and {reason} for cause</string>
     <string name="crash_detection_label">Automatic crash detection</string>
-    <string name="safety_buzzer_mute_title">If your Karoo is muted, alerts make no sound</string>
-    <string name="safety_buzzer_mute_hint">KSafe can\'t override the device mute. Everything else still works — alerts fire and messages are sent normally.</string>
+    <string name="safety_buzzer_mute_title">If your Karoo is muted, non-emergency alerts make no sound</string>
+    <string name="safety_buzzer_mute_hint">Emergency sounds (crash countdown, SOS) still play via the buzzer override below. Other beeps (ride start, check-in, wellness) respect the device mute. Alerts still fire and messages are sent normally regardless.</string>
     <string name="health_maxhr_not_loaded">Karoo profile maxHr not loaded yet — set it in Karoo\'s User Profile.</string>
     <string name="health_pct_enter_range">Enter 60–100 to see the resolved bpm threshold (your maxHr = %1$d).</string>
     <string name="health_pct_resolved_bpm">= %1$d bpm (your maxHr = %2$d)</string>
