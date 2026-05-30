@@ -28,7 +28,6 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -76,12 +75,8 @@ fun SafetyScreen(vm: MainViewModel) {
 
     var crashProfileSettings by remember(config.crashProfileSettings) { mutableStateOf(config.crashProfileSettings) }
 
-    val activeProfileId by produceState<String?>(initialValue = null) {
-        while (true) {
-            value = KSafeExtension.getInstance()?.getActiveProfileIdForUi()
-            delay(1000)
-        }
-    }
+    // Reactive: updates immediately on a Karoo profile switch, no polling loop.
+    val activeProfileId by KSafeExtension.activeProfileIdFlow.collectAsState()
 
     // Auto-save: runs whenever any setting changes, with a short debounce for text fields.
     // Karoo Live + calibration + backup live in SettingsScreen now and own their own save loops.

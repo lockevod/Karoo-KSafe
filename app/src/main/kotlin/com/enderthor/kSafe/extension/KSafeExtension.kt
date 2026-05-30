@@ -338,6 +338,11 @@ class KSafeExtension : KarooExtension("ksafe", BuildConfig.VERSION_NAME), Corout
          *  sunset/sunrise theme switch while idle. Seeded in onCreate; rarely changes. */
         val nightModeFlow = kotlinx.coroutines.flow.MutableStateFlow(false)
 
+        /** Active Karoo ride-profile id, mirrored for the Settings UI so the per-profile
+         *  "active" badge updates reactively (and without a polling loop) on a profile switch.
+         *  Updated by the streamRideProfile collector alongside [activeProfileId]. */
+        val activeProfileIdFlow = kotlinx.coroutines.flow.MutableStateFlow<String?>(null)
+
         /** Minimum gap (ms) between two SOS field taps before the second tap is honoured.
          *  Protects BOTH directions around the IDLE→COUNTDOWN flip:
          *   - IDLE→trigger: a phantom retap within the window cannot re-arm.
@@ -1063,6 +1068,7 @@ class KSafeExtension : KarooExtension("ksafe", BuildConfig.VERSION_NAME), Corout
                     .collect { profile ->
                         crashManager.updateRideProfile(profile.routingPreference)
                         activeProfileId = profile.id
+                        activeProfileIdFlow.value = profile.id   // reactive mirror for the Settings UI
                         // Atomic read-modify-write (see ConfigurationManager.updateConfig):
                         // profile-learning runs from the service process and must not clobber a
                         // concurrent UI settings save. updateConfig skips the write when nothing
