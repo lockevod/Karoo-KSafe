@@ -108,6 +108,9 @@
     <string name="fueling_slot_label_label">Label</string>
     <string name="fueling_slot_grams_label">g</string>
     <string name="fueling_slot_ml_label">ml</string>
+    <string name="fueling_combined_section">Combined logging</string>
+    <string name="fueling_combined_concentration_label">Carbs per 500 ml (g)</string>
+    <string name="fueling_combined_hint">One tap logs a drink + its carbs. Set the carb concentration once; each button\'s carbs auto-fill from its volume (still editable). Active when carbs and/or hydration tracking is on.</string>
     <string name="fueling_fit_export_label">Write KSafe data to FIT (Strava / Intervals.icu)</string>
 
     <!-- Readiness at ride start -->

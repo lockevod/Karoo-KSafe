@@ -46,6 +46,7 @@ import com.enderthor.kSafe.data.FUELING_ALERT_COLORS
 import com.enderthor.kSafe.data.RiderSex
 import com.enderthor.kSafe.data.fuelingAlertColorRes
 import com.enderthor.kSafe.extension.util.ALERT_DETAIL_MAX_CHARS
+import com.enderthor.kSafe.extension.util.carbsFromVolume
 import com.enderthor.kSafe.extension.util.safeTake
 
 @Composable
@@ -103,6 +104,17 @@ fun FuelingScreen(vm: MainViewModel) {
     var drink2Ml             by remember(config.drink2Ml)                        { mutableStateOf(config.drink2Ml.toString()) }
     var drink2Color          by remember(config.drink2Color)                     { mutableStateOf(config.drink2Color) }
     var drink2Icon           by remember(config.drink2Icon)                      { mutableStateOf(config.drink2Icon) }
+
+    // Combined logging state
+    var combinedConcentration by remember(config.combinedCarbConcentrationPer500ml) { mutableStateOf(config.combinedCarbConcentrationPer500ml.toString()) }
+    var combined1Label       by remember(config.combined1Label)                   { mutableStateOf(config.combined1Label) }
+    var combined1Ml          by remember(config.combined1Ml)                      { mutableStateOf(config.combined1Ml.toString()) }
+    var combined1Carbs       by remember(config.combined1Carbs)                   { mutableStateOf(config.combined1Carbs.toString()) }
+    var combined1Color       by remember(config.combined1Color)                   { mutableStateOf(config.combined1Color) }
+    var combined2Label       by remember(config.combined2Label)                   { mutableStateOf(config.combined2Label) }
+    var combined2Ml          by remember(config.combined2Ml)                      { mutableStateOf(config.combined2Ml.toString()) }
+    var combined2Carbs       by remember(config.combined2Carbs)                   { mutableStateOf(config.combined2Carbs.toString()) }
+    var combined2Color       by remember(config.combined2Color)                   { mutableStateOf(config.combined2Color) }
 
     // Post-ride summary state
 
@@ -474,6 +486,94 @@ fun FuelingScreen(vm: MainViewModel) {
                         onSelected = { v -> drink2Icon = v; vm.updateConfig { cfg -> cfg.copy(drink2Icon = v) } })
                 }
                 }  // end if (hydEnabled)
+            }
+        }
+
+        // Combined logging card. One tap logs a drink + its carbs together. The carb
+        // concentration is set once; each button's carbs auto-fill from its volume via
+        // carbsFromVolume but stay editable as a manual override. No icon picker — the
+        // combined field's icon is fixed.
+        Card(elevation = CardDefaults.cardElevation(defaultElevation = 2.dp)) {
+            Column(
+                modifier = Modifier.padding(10.dp),
+                verticalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                Text(
+                    text = stringResource(R.string.fueling_combined_section),
+                    style = MaterialTheme.typography.titleSmall,
+                    fontWeight = FontWeight.Bold,
+                )
+                Text(
+                    text = stringResource(R.string.fueling_combined_hint),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                IntField(
+                    label = stringResource(R.string.fueling_combined_concentration_label),
+                    text = combinedConcentration,
+                    range = 0..200,
+                    onCommit = { v ->
+                        combinedConcentration = v
+                        val conc = v.toIntOrNull()?.coerceIn(0, 200) ?: config.combinedCarbConcentrationPer500ml
+                        vm.updateConfig { cfg ->
+                            cfg.copy(
+                                combinedCarbConcentrationPer500ml = conc,
+                                combined1Carbs = carbsFromVolume(cfg.combined1Ml, conc),
+                                combined2Carbs = carbsFromVolume(cfg.combined2Ml, conc),
+                            )
+                        }
+                        // Keep the local carb text in sync with the re-derived values.
+                        combined1Carbs = carbsFromVolume(config.combined1Ml, conc).toString()
+                        combined2Carbs = carbsFromVolume(config.combined2Ml, conc).toString()
+                    },
+                    onTextChange = { combinedConcentration = it },
+                )
+                HorizontalDivider()
+                Text(text = stringResource(R.string.fueling_items_section), style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.Bold)
+                val combinedMlLabel = stringResource(R.string.fueling_slot_ml_label)
+                val combinedGLabel = stringResource(R.string.fueling_slot_grams_label)
+                // Button 1
+                SlotRow(label = "Button 1", labelText = combined1Label, amountText = combined1Ml, unitLabel = combinedMlLabel, range = 0..1000,
+                    onLabel = { v -> combined1Label = v.safeTake(8); vm.updateConfig { cfg -> cfg.copy(combined1Label = v.safeTake(8)) } },
+                    onAmountCommit = { v ->
+                        combined1Ml = v
+                        val ml = (v.toIntOrNull() ?: 0).coerceIn(0, 1000)
+                        val derived = carbsFromVolume(ml, config.combinedCarbConcentrationPer500ml)
+                        combined1Carbs = derived.toString()
+                        vm.updateConfig { cfg -> cfg.copy(combined1Ml = ml, combined1Carbs = carbsFromVolume(ml, cfg.combinedCarbConcentrationPer500ml)) }
+                    },
+                    onAmountText = { combined1Ml = it },
+                )
+                IntField(
+                    label = combinedGLabel,
+                    text = combined1Carbs,
+                    range = 0..999,
+                    onCommit = { v -> combined1Carbs = v; vm.updateConfig { it.copy(combined1Carbs = (v.toIntOrNull() ?: 0).coerceIn(0, 999)) } },
+                    onTextChange = { combined1Carbs = it },
+                )
+                FieldColorPicker(label = "Colour", selected = combined1Color,
+                    onSelected = { v -> combined1Color = v; vm.updateConfig { it.copy(combined1Color = v) } })
+                // Button 2
+                SlotRow(label = "Button 2", labelText = combined2Label, amountText = combined2Ml, unitLabel = combinedMlLabel, range = 0..1000,
+                    onLabel = { v -> combined2Label = v.safeTake(8); vm.updateConfig { cfg -> cfg.copy(combined2Label = v.safeTake(8)) } },
+                    onAmountCommit = { v ->
+                        combined2Ml = v
+                        val ml = (v.toIntOrNull() ?: 0).coerceIn(0, 1000)
+                        val derived = carbsFromVolume(ml, config.combinedCarbConcentrationPer500ml)
+                        combined2Carbs = derived.toString()
+                        vm.updateConfig { cfg -> cfg.copy(combined2Ml = ml, combined2Carbs = carbsFromVolume(ml, cfg.combinedCarbConcentrationPer500ml)) }
+                    },
+                    onAmountText = { combined2Ml = it },
+                )
+                IntField(
+                    label = combinedGLabel,
+                    text = combined2Carbs,
+                    range = 0..999,
+                    onCommit = { v -> combined2Carbs = v; vm.updateConfig { it.copy(combined2Carbs = (v.toIntOrNull() ?: 0).coerceIn(0, 999)) } },
+                    onTextChange = { combined2Carbs = it },
+                )
+                FieldColorPicker(label = "Colour", selected = combined2Color,
+                    onSelected = { v -> combined2Color = v; vm.updateConfig { it.copy(combined2Color = v) } })
             }
         }
 
