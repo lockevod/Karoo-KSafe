@@ -429,7 +429,8 @@
 
     <!-- Per-profile crash settings -->
     <string name="crash_per_profile_title">Per-profile crash detection</string>
-    <string name="crash_per_profile_empty">Your Karoo profiles appear here as you use them — scroll to a profile on your Karoo.</string>
+    <string name="crash_per_profile_empty">No profiles yet — start a ride with a Karoo profile and it will appear here to customise.</string>
+    <string name="crash_per_profile_hint">Each Karoo profile appears here after you start a ride with it. Settings you save take effect at the start of your next ride with that profile.</string>
     <string name="crash_per_profile_active">● active now</string>
     <string name="crash_per_profile_use_global">Use global</string>
     <string name="crash_per_profile_custom">Custom</string>

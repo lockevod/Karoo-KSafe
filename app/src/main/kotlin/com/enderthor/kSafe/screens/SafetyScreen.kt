@@ -353,6 +353,11 @@ fun SafetyScreen(vm: MainViewModel) {
                 style = MaterialTheme.typography.bodyMedium,
                 fontWeight = FontWeight.Bold
             )
+            Text(
+                text = stringResource(R.string.crash_per_profile_hint),
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
             if (crashProfileSettings.isEmpty()) {
                 Text(
                     text = stringResource(R.string.crash_per_profile_empty),
