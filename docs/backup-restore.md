@@ -4,18 +4,28 @@
 >
 > The README has a one-line pointer; the full procedure lives here because it is a power-user workflow consulted once at setup or when migrating between devices, not while riding.
 
+## Permission required (first use only)
+
+> KSafe writes to `/sdcard/KSafe/`, a shared folder outside the app sandbox. On the first tap of **Export** or **Import** the app requests "All files access" (`MANAGE_EXTERNAL_STORAGE`) and opens the system settings screen to grant it (on Android 9 and below a standard storage-permission dialog is shown instead). If your Karoo does not expose that screen, grant it via ADB:
+> ```bash
+> adb shell appops set com.enderthor.kSafe MANAGE_EXTERNAL_STORAGE allow
+> ```
+> The grant persists across app updates.
+
 ## Exporting your configuration
 
 Tap **Export** in the Settings tab. KSafe writes your configuration to:
 
 ```
-/sdcard/Android/data/com.enderthor.kSafe/files/ksafe_export.json
+/sdcard/KSafe/ksafe_export.json
 ```
+
+> The `/sdcard/KSafe/` folder is not wiped when KSafe is uninstalled or updated, so your backup survives a clean reinstall.
 
 You can retrieve this file with ADB:
 
 ```bash
-adb pull /sdcard/Android/data/com.enderthor.kSafe/files/ksafe_export.json
+adb pull /sdcard/KSafe/ksafe_export.json
 ```
 
 ## Restoring a configuration
@@ -23,16 +33,18 @@ adb pull /sdcard/Android/data/com.enderthor.kSafe/files/ksafe_export.json
 To import a configuration, place the file at this exact path **with this exact name**:
 
 ```
-/sdcard/Android/data/com.enderthor.kSafe/files/ksafe_import.json
+/sdcard/KSafe/ksafe_import.json
 ```
 
 You can push it with ADB:
 
 ```bash
-adb push ksafe_export.json /sdcard/Android/data/com.enderthor.kSafe/files/ksafe_import.json
+adb push ksafe_export.json /sdcard/KSafe/ksafe_import.json
 ```
 
 Then tap **Import** in the Settings tab. KSafe will read `ksafe_import.json` and apply the configuration immediately.
+
+> If you are migrating from an older KSafe version and still have `ksafe_import.json` at the old location (`/sdcard/Android/data/com.enderthor.kSafe/files/`), Import finds it there automatically as a one-version fallback — move it to `/sdcard/KSafe/` for future use.
 
 > The export and import files have intentionally different names so there is no risk of accidentally overwriting a backup you just made.
 
@@ -43,7 +55,7 @@ Typing long tokens (Pushover App Token, Telegram Bot Token, etc.) on the Karoo t
 1. Open KSafe on your Karoo and tap **Export** (Settings tab, bottom of screen).
 2. Pull the file to your computer with ADB:
    ```bash
-   adb pull /sdcard/Android/data/com.enderthor.kSafe/files/ksafe_export.json
+   adb pull /sdcard/KSafe/ksafe_export.json
    ```
 3. Open `ksafe_export.json` in any text editor. The exported file has a dedicated block for each provider, each with only the fields that provider actually uses:
 
@@ -92,7 +104,7 @@ Typing long tokens (Pushover App Token, Telegram Bot Token, etc.) on the Karoo t
 
 4. Save the file and push it back as `ksafe_import.json`:
    ```bash
-   adb push ksafe_export.json /sdcard/Android/data/com.enderthor.kSafe/files/ksafe_import.json
+   adb push ksafe_export.json /sdcard/KSafe/ksafe_import.json
    ```
 5. Tap **Import** in KSafe — all keys are applied instantly.
 

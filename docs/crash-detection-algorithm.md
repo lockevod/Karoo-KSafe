@@ -60,6 +60,14 @@ All parameters live in `KSafeConfig` and are user-configurable via the Settings 
 | `crashMonitorOutsideRideAnySpeed` | `false` | Force `minSpeed = 0` outside rides (⚠ more false positives) |
 | `countdownSeconds` | `30` | Duration of the cancel window before alert is sent |
 
+### Per-profile crash overrides
+
+Each Karoo ride profile (Road / Gravel / MTB / custom) can carry its own crash config, auto-learned when KSafe first sees the profile become active. Controlled by `KSafeConfig.crashProfileSettings` (`List<CrashProfileSetting>`, default empty).
+
+Resolution (`CrashProfileResolver.resolveEffectiveCrashConfig`): (1) empty list → global config for all profiles; (2) matching entry (by `RideProfile.id`) with `useGlobal=true` → global unchanged; (3) `useGlobal=false` → the per-profile `crashSensitivity / customCrashThreshold / minSpeedForCrashKmh / crashConfirmSpeedKmh` FULLY replace the global ones (all-or-nothing; per-profile `crashDetectionEnabled` is AND-ed with the global kill-switch — it can only further disable). (4) Auto-learn: each profile switch calls `learnProfile` — new id → appends a `useGlobal=true` stub; rename → updates the stored name; stale same-name/different-id orphans pruned. (5) Applied to the live detector immediately on profile switch via `reapplyEffectiveCrash`.
+
+The per-profile feature does NOT change any global preset thresholds, impact windows, or silence constants — it only routes a different `KSafeConfig` into the same lookup maps.
+
 ### Impact thresholds by sensitivity preset (smoothed magnitude)
 
 The **smoothed** threshold is the 3-sample moving average of total acceleration vector magnitude. At rest this baseline is ~9.8 m/s² (1g).

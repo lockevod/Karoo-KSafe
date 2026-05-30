@@ -281,6 +281,7 @@ Two complementary mechanisms:
 
 - **Data fields**: 3 carb log slots + 2 drink log slots, each with its own configurable **label** (e.g. *"Gel"*, *"Bar"*, *"Bottle"*), **amount** (g or ml), **idle background colour** (Karoo default auto day/night, or any of 20 dark hues — see [field-colours.md](field-colours.md)) and **icon** (emoji like 🍫 / 🥤 / 💧, or one of the two bundled vector drawables for sports gel pouch and cyclist bidón — Unicode has no good emoji for those shapes). One tap = one log. The slot flashes green for **5 seconds** showing `+Xg ✓` (or `+Xml`) with the hint `TAP UNDO`, then returns to its idle label. Add as many or as few slots to your ride profile as you want.
   - **On-screen undo**: a **second tap on the same slot during the 5 s green window reverses the log**. The slot then flashes red `−Xg ✓` (or `−Xml`) for ~1.5 s as confirmation and returns to idle. Per-slot and one-shot: a third tap is a no-op until the next log populates the slot again. Undo restores the time-alert clock to its value before the wrong tap, so the next time-based alert isn't shifted by the bad entry.
+- **Combined fuel-log fields** *(Fuel Combo 1 / 2)*: a tappable field that logs a **drink volume (ml) and carbs (g) in one tap**, feeding the **same** hydration and carb cumulative totals as the separate drink-log / carb-log slots above. It logs only the **enabled** side(s): with only the carb tracker on it logs only the carbs, with only the hydration tracker on it logs only the drink, and with **neither** on the field renders grey/`OFF` and tap is disabled. It has the same ~6 s green confirmation + undo window as the other slots (a second tap reverses the log). Each button stores its own **volume (ml)**, **carbs (g)**, **label** and **idle background colour**, configured in the Fueling tab's **Combined logging** section. That section also has a single **carb concentration** value (grams of carb per 500 ml of mix) that **auto-fills** each button's carbs from its volume via `carbsFromVolume(ml, conc) = round(ml × conc / 500)`; the auto-filled value is an editable override, not a hard binding. Unlike the drink-log slots, the combined field's **icon is fixed** (a bundled bottle + gel drawable) and is **not** rider-pickable.
 - **Hardware buttons (BonusActions, SRAM AXS only)**: KSafe registers two extra actions, *"KSafe: Log Carb"* and *"KSafe: Log Drink"*, both wired to slot 1 of each category. Map them to your AXS shifter buttons so you can log without looking at the screen.
 
 When the master Carb / Hydration toggle is off, the corresponding log fields render in grey with `OFF` and tap is disabled — the data field is still visible on the ride profile but clearly inactive, so a stray tap does nothing instead of silently no-op'ing. Re-enable the master in the Fueling tab and the colour / emoji come back.
@@ -319,7 +320,7 @@ The logged / burned / hydration fields are cumulative step curves. The burn rate
 > [!NOTE]
 > Field-definition numbers 0-6 are **immutable once shipped** — historical FIT files reference them by number, so they cannot be repurposed. Number 7 is reserved (was briefly used during development for the avg burn rate before that field was reduced to in-app only).
 
-Toggleable via the **"Write to FIT"** switch in the **Settings** tab. Default ON because the cost is negligible (~0.05 % battery over a 5 h ride, no perceptible CPU). Riders who don't want extra developer columns in their FIT can opt out cleanly.
+Toggleable via the **"Write to FIT"** switch in the **Settings** tab. Default **OFF** (opt-in) — the cost is negligible (~0.05 % battery over a 5 h ride, no perceptible CPU), but extra developer columns are off by default; riders who want their fueling in the FIT turn it on cleanly.
 
 Pacing aligns with the Karoo's native 1 Hz Record sampling, so the developer fields land on the same timestamps as HR / power. Outside `Recording` (Idle / Paused) nothing is written.
 
@@ -335,7 +336,7 @@ Per category (Carbs, Hydration) the Fueling tab lets you:
 - Pick the **alert sound** (`Off` / `Single long` / `Double pip` / `Rising chime` / `Urgent pulse`) — see [Beep patterns](#beep-patterns)
 - Configure each slot's label, amount, idle background colour (Karoo default or one of 20 dark hues — see [field-colours.md](field-colours.md)), and icon (emoji or one of the bundled vector drawables for sports gel and bidón)
 - For hydration only: toggle the **dynamic estimate** mode
-- Toggle FIT export (default on; controls whether your fueling appears as developer fields in the Karoo's FIT file)
+- Toggle FIT export (default **OFF** (opt-in); controls whether your fueling appears as developer fields in the Karoo's FIT file)
 
 That's it — no biometric data, no FTP, no zone numbers, no max HR. KSafe reads all of that from the Karoo profile.
 
