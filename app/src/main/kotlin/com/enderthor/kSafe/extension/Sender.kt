@@ -103,9 +103,9 @@ class Sender(
                     for ((slot, phone, key) in recipients) {
                         val label = "Recipient ${slot + 1}"
                         val url = "https://api.callmebot.com/whatsapp.php" +
-                            "?phone=$phone" +
+                            "?phone=${Uri.encode(phone)}" +
                             "&text=${Uri.encode("KSafe test — alerts are configured correctly.")}" +
-                            "&apikey=$key"
+                            "&apikey=${Uri.encode(key)}"
                         val response = withTimeoutOrNull(ATTEMPT_TIMEOUT_MS) { karooSystem.httpRequest("GET", url) }
                         if (response == null) {
                             results.add("$label: no response — check connection.")
@@ -440,7 +440,10 @@ class Sender(
                 var delivered = 0
                 for ((slot, phone, key) in recipients) {
                     if (slot !in send) continue
-                    val url = "https://api.callmebot.com/whatsapp.php?phone=$phone&text=$encodedMsg&apikey=$key"
+                    // URL-encode phone + apikey: an international phone entered with a leading
+                    // '+' would otherwise be decoded server-side as a space (the emergency alert
+                    // silently fails to deliver). text is already encoded above.
+                    val url = "https://api.callmebot.com/whatsapp.php?phone=${Uri.encode(phone)}&text=$encodedMsg&apikey=${Uri.encode(key)}"
                     // Per-recipient timeout so a hung first recipient doesn't starve
                     // recipients 2/3 of the outer attempt's 30 s block.
                     val response = withTimeoutOrNull(ATTEMPT_TIMEOUT_MS) {

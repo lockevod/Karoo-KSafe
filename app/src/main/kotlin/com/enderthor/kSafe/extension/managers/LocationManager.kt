@@ -80,7 +80,7 @@ class LocationManager(
                         .sample(LOCATION_SAMPLE_MS)
                         .collect { event ->
                             // H8 — drop non-finite coordinates from the SDK.
-                            if (!event.lat.isFinite() || !event.lng.isFinite()) {
+                            if (!event.lat.isFinite() || !event.lng.isFinite() || (event.lat == 0.0 && event.lng == 0.0)) {
                                 Timber.w("Location sample dropped — non-finite coords (lat=${event.lat}, lng=${event.lng})")
                                 return@collect
                             }
@@ -143,7 +143,7 @@ class LocationManager(
             val event = withTimeout(timeoutMs) {
                 karooSystem.streamLocation().first()
             }
-            if (!event.lat.isFinite() || !event.lng.isFinite()) {
+            if (!event.lat.isFinite() || !event.lng.isFinite() || (event.lat == 0.0 && event.lng == 0.0)) {
                 Timber.w("getFreshFix: SDK returned non-finite coords (lat=${event.lat}, lng=${event.lng}); falling back to cache")
                 return cached.freshEnoughForFallback()
             }
@@ -198,7 +198,7 @@ class LocationManager(
             // distanceMeters calls (which would return NaN, and NaN > radius is
             // always false, bypassing the geo-fence). Fall back to cached on
             // non-finite coordinates the same way we fall back on timeout.
-            if (!event.lat.isFinite() || !event.lng.isFinite()) {
+            if (!event.lat.isFinite() || !event.lng.isFinite() || (event.lat == 0.0 && event.lng == 0.0)) {
                 Timber.w("Fresh location returned non-finite coords (lat=${event.lat}, lng=${event.lng}); falling back to cache")
                 return getLocationLink()
             }
