@@ -31,6 +31,7 @@ import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import com.enderthor.kSafe.R
+import com.enderthor.kSafe.activity.BackupStorage
 import com.enderthor.kSafe.activity.MainViewModel
 import com.enderthor.kSafe.extension.KSafeExtension
 import kotlinx.coroutines.Dispatchers
@@ -63,8 +64,27 @@ fun SettingsScreen(vm: MainViewModel) {
     var calibLogNote       by remember { mutableStateOf("") }
     var calibLogNoteIsError by remember { mutableStateOf(false) }
 
-    val exportFile = java.io.File(context.getExternalFilesDir(null), "ksafe_export.json")
-    val importFile = java.io.File(context.getExternalFilesDir(null), "ksafe_import.json")
+    // Legacy app-private dir kept ONLY as an import fallback for users whose file is still there.
+    val legacyBackupDir = context.getExternalFilesDir(null)
+    // API < 30 runtime-permission launcher (no-op on 30+, which uses the settings deep-link).
+    val writePermLauncher = androidx.activity.compose.rememberLauncherForActivityResult(
+        androidx.activity.result.contract.ActivityResultContracts.RequestPermission()
+    ) { /* result consumed on the user's next Export/Import tap via BackupStorage.hasAccess */ }
+
+    // Returns null if backup access is ready; otherwise kicks off the grant flow and returns a
+    // status string for the button to show. Lazy — only ever runs on an Export/Import tap.
+    fun ensureBackupAccess(): String? {
+        if (BackupStorage.hasAccess(context)) return null
+        val intent = BackupStorage.allFilesSettingsIntent(context)
+        return when {
+            intent != null -> { context.startActivity(intent); context.getString(R.string.backup_grant_opening) }
+            android.os.Build.VERSION.SDK_INT < android.os.Build.VERSION_CODES.R -> {
+                writePermLauncher.launch(android.Manifest.permission.WRITE_EXTERNAL_STORAGE)
+                context.getString(R.string.backup_needs_access)
+            }
+            else -> context.getString(R.string.backup_grant_adb)
+        }
+    }
 
     LaunchedEffect(isActive, fitExportEnabled, buzzerOnEmergency) {
         delay(600)
@@ -363,7 +383,7 @@ fun SettingsScreen(vm: MainViewModel) {
             color = MaterialTheme.colorScheme.onSurfaceVariant
         )
         Text(
-            text = "Export → ksafe_export.json  |  Import ← ksafe_import.json",
+            text = stringResource(R.string.backup_path_hint),
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant
         )
@@ -378,13 +398,15 @@ fun SettingsScreen(vm: MainViewModel) {
                     runningLabel = "Exporting…",
                     isSuccess = { it.startsWith("Exported") },
                     onAction = {
+                        ensureBackupAccess()?.let { return@TestActionButton it }
                         try {
                             val json = vm.exportToJson()
+                            val target = BackupStorage.exportFile()
                             withContext(Dispatchers.IO) {
-                                exportFile.parentFile?.mkdirs()
-                                exportFile.writeText(json)
+                                target.parentFile?.mkdirs()
+                                target.writeText(json)
                             }
-                            "Exported to ksafe_export.json"
+                            "Exported to /sdcard/KSafe/${BackupStorage.EXPORT_NAME}"
                         } catch (e: Exception) {
                             "Export failed: ${e.message}"
                         }
@@ -397,12 +419,15 @@ fun SettingsScreen(vm: MainViewModel) {
                     runningLabel = "Importing…",
                     isSuccess = { it == "Imported successfully." },
                     onAction = {
+                        ensureBackupAccess()?.let { return@TestActionButton it }
                         try {
-                            val exists = withContext(Dispatchers.IO) { importFile.exists() }
-                            if (!exists) {
-                                "ksafe_import.json not found. See README."
+                            val file = withContext(Dispatchers.IO) {
+                                BackupStorage.resolveImportFile(BackupStorage.backupDir(), legacyBackupDir)
+                            }
+                            if (file == null) {
+                                "${BackupStorage.IMPORT_NAME} not found in /sdcard/KSafe/. See README."
                             } else {
-                                val json = withContext(Dispatchers.IO) { importFile.readText() }
+                                val json = withContext(Dispatchers.IO) { file.readText() }
                                 val ok = vm.importFromJson(json)
                                 if (ok) "Imported successfully." else "Import failed — invalid file."
                             }
