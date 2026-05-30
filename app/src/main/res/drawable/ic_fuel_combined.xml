@@ -1,0 +1,30 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Combined fuel icon — a cyclist water bottle (drink) + a sports gel pouch (carbs) side by
+  side, for the Combined fuel-log field that logs both in one tap. Reuses the EXACT
+  ic_fuel_bottle and ic_fuel_gel path data inside scaled/translated <group>s (scale 0.6,
+  bottle left / gel right) so the silhouettes stay consistent with the standalone fields.
+  White silhouette so it reads on every coloured / dark field background; the dark-mode
+  twin is ic_fuel_combined_dark (picked via idleIsAutoDay, same as the bottle/gel fields).
+-->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp"
+    android:height="24dp"
+    android:viewportWidth="24"
+    android:viewportHeight="24">
+
+    <!-- Bottle, left half -->
+    <group android:scaleX="0.6" android:scaleY="0.6" android:translateX="-1.5" android:translateY="4">
+        <path android:fillColor="#FFFFFFFF" android:pathData="M10.5,1.5 L13.5,1.5 L13.5,3 L10.5,3 Z" />
+        <path android:fillColor="#FFFFFFFF" android:pathData="M9.5,3 L14.5,3 L14.5,5 L9.5,5 Z" />
+        <path android:fillColor="#FFFFFFFF" android:pathData="M9.5,5 L14.5,5 A2,2 0 0 1 16.5,7 L16.5,20.5 A1.5,1.5 0 0 1 15,22 L9,22 A1.5,1.5 0 0 1 7.5,20.5 L7.5,7 A2,2 0 0 1 9.5,5 Z" />
+        <path android:fillColor="#000000" android:fillAlpha="0.25" android:pathData="M8,11 L16,11 L16,15 L8,15 Z" />
+    </group>
+
+    <!-- Gel pouch, right half -->
+    <group android:scaleX="0.6" android:scaleY="0.6" android:translateX="10.5" android:translateY="4">
+        <path android:fillColor="#FFFFFFFF" android:pathData="M7,3 L15,3 L17,5 L17,20 A2,2 0 0 1 15,22 L9,22 A2,2 0 0 1 7,20 Z" />
+        <path android:fillColor="#000000" android:fillAlpha="0.35" android:pathData="M15,3 L17,5 L15,5 Z" />
+        <path android:fillColor="#000000" android:fillAlpha="0.25" android:pathData="M7.5,11 L16.5,11 L16.5,14 L7.5,14 Z" />
+    </group>
+</vector>
