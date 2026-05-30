@@ -488,14 +488,16 @@ private fun RecipientAlertScopeSelector(
                 RecipientAlertScope.INFO_ONLY to R.string.recipient_alerts_info,
             )
             options.forEach { (option, labelRes) ->
+                // No weight: each chip sizes to its own label so "Emergency" fits on one line
+                // and "All" / "Info" don't waste a full third of the row each.
                 FilterChip(
                     selected = scope == option,
                     onClick = { onScopeChange(option) },
-                    modifier = Modifier.weight(1f),
                     label = {
                         Text(
                             text = stringResource(labelRes),
-                            style = MaterialTheme.typography.labelSmall
+                            style = MaterialTheme.typography.labelSmall,
+                            maxLines = 1
                         )
                     }
                 )

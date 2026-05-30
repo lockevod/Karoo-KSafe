@@ -360,23 +360,54 @@ fun SafetyScreen(vm: MainViewModel) {
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
             } else {
-                crashProfileSettings.forEach { setting ->
-                    // key() keeps each card's remember{} (text-field focus/selection) bound to its
-                    // profile across add/remove/reorder — otherwise Compose reuses slots by position
-                    // and a removed profile leaks its field state to its neighbour.
+                // key() keeps each card's remember{} (text-field focus/selection) bound to its
+                // profile across add/remove/reorder — otherwise Compose reuses slots by position
+                // and a removed profile leaks its field state to its neighbour.
+                val renderCard: @Composable (CrashProfileSetting) -> Unit = { setting ->
                     androidx.compose.runtime.key(setting.profileId) {
-                    CrashProfileCard(
-                        setting = setting,
-                        isActive = setting.profileId == activeProfileId,
-                        onChange = { updated ->
-                            crashProfileSettings = crashProfileSettings.map {
-                                if (it.profileId == updated.profileId) updated else it
-                            }
-                        },
-                        onRemove = {
-                            crashProfileSettings = crashProfileSettings.filterNot { it.profileId == setting.profileId }
-                        },
-                    )
+                        CrashProfileCard(
+                            setting = setting,
+                            isActive = setting.profileId == activeProfileId,
+                            onChange = { updated ->
+                                crashProfileSettings = crashProfileSettings.map {
+                                    if (it.profileId == updated.profileId) updated else it
+                                }
+                            },
+                            onRemove = {
+                                crashProfileSettings = crashProfileSettings.filterNot { it.profileId == setting.profileId }
+                            },
+                        )
+                    }
+                }
+
+                val activeOnes = crashProfileSettings.filter { it.profileId == activeProfileId }
+                val customized = crashProfileSettings.filter { it.profileId != activeProfileId && !it.useGlobal }
+                val globalStubs = crashProfileSettings.filter { it.profileId != activeProfileId && it.useGlobal }
+
+                // Prominent cards: the active profile first, then any customised profiles.
+                (activeOnes + customized).forEach { renderCard(it) }
+
+                // The rest just inherit the global config — tuck them into a collapsible group
+                // so a long profile list (10+ Karoo profiles) stays manageable.
+                if (globalStubs.isNotEmpty()) {
+                    var globalsExpanded by remember { mutableStateOf(false) }
+                    Row(
+                        modifier = Modifier.fillMaxWidth().clickable { globalsExpanded = !globalsExpanded },
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(
+                            text = stringResource(R.string.crash_per_profile_global_group, globalStubs.size),
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                        Icon(
+                            imageVector = if (globalsExpanded) Icons.Filled.KeyboardArrowUp else Icons.Filled.KeyboardArrowDown,
+                            contentDescription = null
+                        )
+                    }
+                    if (globalsExpanded) {
+                        globalStubs.forEach { renderCard(it) }
                     }
                 }
             }
