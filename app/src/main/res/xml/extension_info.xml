@@ -119,6 +119,18 @@
         graphical="true"
         icon="@drawable/ic_ksafe"
         typeId="hyd-status" />
+    <DataType
+        description="@string/hyd_log_datatype_desc"
+        displayName="@string/combined_log_1_datatype_name"
+        graphical="true"
+        icon="@drawable/ic_ksafe"
+        typeId="combined-log-1" />
+    <DataType
+        description="@string/hyd_log_datatype_desc"
+        displayName="@string/combined_log_2_datatype_name"
+        graphical="true"
+        icon="@drawable/ic_ksafe"
+        typeId="combined-log-2" />
     <BonusAction
         actionId="log-carb-1"
         displayName="@string/action_log_carb_1" />

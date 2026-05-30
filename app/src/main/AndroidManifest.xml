@@ -62,6 +62,8 @@
                 <action android:name="com.enderthor.kSafe.TAP_CARB_LOG_3" />
                 <action android:name="com.enderthor.kSafe.TAP_HYDRATION_LOG_1" />
                 <action android:name="com.enderthor.kSafe.TAP_HYDRATION_LOG_2" />
+                <action android:name="com.enderthor.kSafe.TAP_COMBINED_LOG_1" />
+                <action android:name="com.enderthor.kSafe.TAP_COMBINED_LOG_2" />
             </intent-filter>
         </receiver>
 

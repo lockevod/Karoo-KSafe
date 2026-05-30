@@ -259,6 +259,7 @@ class KSafeExtension : KarooExtension("ksafe", BuildConfig.VERSION_NAME), Corout
      *  arrays (no @Volatile) are safe. */
     private val carbTapRevertJobs: Array<kotlinx.coroutines.Job?> = arrayOfNulls(4)
     private val hydTapRevertJobs: Array<kotlinx.coroutines.Job?> = arrayOfNulls(3)
+    private val combinedTapRevertJobs: Array<kotlinx.coroutines.Job?> = arrayOfNulls(3)
 
     /** Per-slot revert-to-IDLE jobs for webhook and custom-message field state.
      *  Same problem the carb/hyd arrays solve: every ERROR / SUCCESS branch in
@@ -374,6 +375,8 @@ class KSafeExtension : KarooExtension("ksafe", BuildConfig.VERSION_NAME), Corout
             com.enderthor.kSafe.datatype.CarbsBurnedDataType("carbs-burned", applicationContext),
             com.enderthor.kSafe.datatype.HydrationLogDataType("hyd-log-1", applicationContext, karooSystem, slot = 1),
             com.enderthor.kSafe.datatype.HydrationLogDataType("hyd-log-2", applicationContext, karooSystem, slot = 2),
+            com.enderthor.kSafe.datatype.CombinedFuelLogDataType("combined-log-1", applicationContext, karooSystem, slot = 1),
+            com.enderthor.kSafe.datatype.CombinedFuelLogDataType("combined-log-2", applicationContext, karooSystem, slot = 2),
             com.enderthor.kSafe.datatype.HydrationStatusDataType("hyd-status", applicationContext, karooSystem),
         )
     }
@@ -2285,6 +2288,41 @@ class KSafeExtension : KarooExtension("ksafe", BuildConfig.VERSION_NAME), Corout
             kotlinx.coroutines.delay(6_000L)
             com.enderthor.kSafe.datatype.HydrationLogState.update(slot, com.enderthor.kSafe.datatype.HydrationLogState.IDLE)
             hydTapRevertJobs[slot] = null
+        }
+    }
+
+    fun handleCombinedLogTap(slot: Int) {
+        Timber.d("handleCombinedLogTap slot=$slot")
+        if (!activeConfig.isActive) return
+        val carbsOn = activeConfig.carbsTrackerEnabled && this::carbsTracker.isInitialized
+        val hydOn = activeConfig.hydrationTrackerEnabled && this::hydrationTracker.isInitialized
+        if (!carbsOn && !hydOn) return
+        if (slot !in 1..2) return
+        combinedTapRevertJobs[slot]?.cancel()
+        combinedTapRevertJobs[slot] = null
+
+        val St = com.enderthor.kSafe.datatype.CombinedFuelLogState
+        val state = St.flowForSlot(slot).value
+        if (state is com.enderthor.kSafe.datatype.CombinedFuelLogState.LOGGED) {
+            if (state.grams > 0 && carbsOn) carbsTracker.undoAmount(state.grams)
+            if (state.ml > 0 && hydOn) hydrationTracker.undoAmount(state.ml)
+            St.update(slot, com.enderthor.kSafe.datatype.CombinedFuelLogState.UNDONE(state.ml, state.grams))
+            combinedTapRevertJobs[slot] = launch {
+                kotlinx.coroutines.delay(1_500L)
+                St.update(slot, com.enderthor.kSafe.datatype.CombinedFuelLogState.IDLE)
+                combinedTapRevertJobs[slot] = null
+            }
+            return
+        }
+        val ml = if (slot == 2) activeConfig.combined2Ml else activeConfig.combined1Ml
+        val grams = if (slot == 2) activeConfig.combined2Carbs else activeConfig.combined1Carbs
+        val loggedMl = if (hydOn) hydrationTracker.logAmount(ml) else 0
+        val loggedG = if (carbsOn) carbsTracker.logAmount(grams) else 0
+        St.update(slot, com.enderthor.kSafe.datatype.CombinedFuelLogState.LOGGED(loggedMl, loggedG))
+        combinedTapRevertJobs[slot] = launch {
+            kotlinx.coroutines.delay(6_000L)
+            St.update(slot, com.enderthor.kSafe.datatype.CombinedFuelLogState.IDLE)
+            combinedTapRevertJobs[slot] = null
         }
     }
 

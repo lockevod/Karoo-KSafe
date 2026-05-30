@@ -161,6 +161,8 @@
     <string name="hyd_log_1_datatype_name">KSafe Drink 1</string>
     <string name="hyd_log_2_datatype_name">KSafe Drink 2</string>
     <string name="hyd_log_datatype_desc">Tap to log a configured drink item (e.g. sip, bottle). Counts toward your hourly target.</string>
+    <string name="combined_log_1_datatype_name">Fuel Combo 1</string>
+    <string name="combined_log_2_datatype_name">Fuel Combo 2</string>
     <string name="hyd_status_datatype_name">KSafe Hydration Status</string>
     <string name="hyd_status_datatype_desc">Shows current hydration deficit relative to target. Color-coded by urgency. A leading \"~\" means the sweat estimate is running without a HR/power sensor (rough, temperature-based) — the reminders still work, the number is just approximate.</string>
 

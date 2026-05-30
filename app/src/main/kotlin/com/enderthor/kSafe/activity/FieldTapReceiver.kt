@@ -69,6 +69,14 @@ class FieldTapReceiver : BroadcastReceiver() {
                 Timber.d("FieldTapReceiver: Hydration log tap (slot 2)")
                 ext.handleHydrationLogTap(2)
             }
+            ACTION_COMBINED_LOG_1 -> {
+                Timber.d("FieldTapReceiver: Combined log tap (slot 1)")
+                ext.handleCombinedLogTap(1)
+            }
+            ACTION_COMBINED_LOG_2 -> {
+                Timber.d("FieldTapReceiver: Combined log tap (slot 2)")
+                ext.handleCombinedLogTap(2)
+            }
         }
     }
 
@@ -85,6 +93,8 @@ class FieldTapReceiver : BroadcastReceiver() {
         const val ACTION_CARB_LOG_3       = "com.enderthor.kSafe.TAP_CARB_LOG_3"
         const val ACTION_HYDRATION_LOG_1  = "com.enderthor.kSafe.TAP_HYDRATION_LOG_1"
         const val ACTION_HYDRATION_LOG_2  = "com.enderthor.kSafe.TAP_HYDRATION_LOG_2"
+        const val ACTION_COMBINED_LOG_1 = "com.enderthor.kSafe.TAP_COMBINED_LOG_1"
+        const val ACTION_COMBINED_LOG_2 = "com.enderthor.kSafe.TAP_COMBINED_LOG_2"
     }
 }
 
