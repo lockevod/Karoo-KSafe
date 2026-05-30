@@ -5,6 +5,14 @@
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW" />
 
+    <!-- Config backup lives in shared /sdcard/KSafe so it survives uninstall. Requested lazily,
+         only when the user runs Export/Import (see BackupStorage / SettingsScreen). On API 30+
+         this is the special "All files access"; below 30 the legacy write permission is used. -->
+    <uses-permission android:name="android.permission.MANAGE_EXTERNAL_STORAGE" />
+    <uses-permission
+        android:name="android.permission.WRITE_EXTERNAL_STORAGE"
+        android:maxSdkVersion="29" />
+
     <!-- Android 11+ package visibility: required so BuzzerClient can resolve and bind the
          private HAL service (io.hammerhead.hal/.HIDLTranslationService) for emergency-only
          beeper bypass. Without this, bindService() returns false silently. -->
