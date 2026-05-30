@@ -364,13 +364,21 @@ class EmergencyManager(
         }
 
         checkinJob = scope.launch {
-            configManager.saveEmergencyState(
-                EmergencyState(
-                    checkinEnabled = true,
-                    checkinStartTime = startTime,
-                    checkinIntervalMinutes = config.checkinIntervalMinutes
+            // H1 — a disk-full / DataStore IOException from this persist must NOT abort the
+            // check-in coroutine before its delay(expiryDelay) + CHECKIN_EXPIRED trigger: the
+            // persisted copy is recovery metadata that heals on the next write, but if the throw
+            // escaped, the dead-man's-switch coroutine would die silently and never fire.
+            try {
+                configManager.saveEmergencyState(
+                    EmergencyState(
+                        checkinEnabled = true,
+                        checkinStartTime = startTime,
+                        checkinIntervalMinutes = config.checkinIntervalMinutes
+                    )
                 )
-            )
+            } catch (e: Exception) {
+                Timber.e(e, "Failed to persist check-in state; dead-man's-switch continues in-memory")
+            }
             delay(expiryDelay)
             if (currentStatus == EmergencyStatus.IDLE) {
                 Timber.d("Check-in timer expired!")
@@ -393,7 +401,13 @@ class EmergencyManager(
         checkinStartTimeMs = 0L
         checkinPausedAtMs = 0L
         _uiState.value = EmergencyState()
-        scope.launch { configManager.saveEmergencyState(EmergencyState()) }
+        scope.launch {
+            // H1 — wrap the persist (matches every other saveEmergencyState site): a DataStore
+            // IOException on a fire-and-forget cleanup launch would otherwise reach the default
+            // uncaught handler on the service scope.
+            try { configManager.saveEmergencyState(EmergencyState()) }
+            catch (e: Exception) { Timber.e(e, "Failed to persist IDLE emergency state") }
+        }
     }
 
     fun stopAll() {
@@ -411,7 +425,13 @@ class EmergencyManager(
         countdownStartedAt = 0L
         sosOverlay.removeOverlay()
         _uiState.value = EmergencyState()
-        scope.launch { configManager.saveEmergencyState(EmergencyState()) }
+        scope.launch {
+            // H1 — wrap the persist (matches every other saveEmergencyState site): a DataStore
+            // IOException on a fire-and-forget cleanup launch would otherwise reach the default
+            // uncaught handler on the service scope.
+            try { configManager.saveEmergencyState(EmergencyState()) }
+            catch (e: Exception) { Timber.e(e, "Failed to persist IDLE emergency state") }
+        }
     }
 
     /**
@@ -435,7 +455,13 @@ class EmergencyManager(
             countdownStartedAt = 0L
             sosOverlay.removeOverlay()
             _uiState.value = EmergencyState()
-            scope.launch { configManager.saveEmergencyState(EmergencyState()) }
+            scope.launch {
+            // H1 — wrap the persist (matches every other saveEmergencyState site): a DataStore
+            // IOException on a fire-and-forget cleanup launch would otherwise reach the default
+            // uncaught handler on the service scope.
+            try { configManager.saveEmergencyState(EmergencyState()) }
+            catch (e: Exception) { Timber.e(e, "Failed to persist IDLE emergency state") }
+        }
             Timber.d("Check-in emergency cancelled on ride pause")
         }
     }
