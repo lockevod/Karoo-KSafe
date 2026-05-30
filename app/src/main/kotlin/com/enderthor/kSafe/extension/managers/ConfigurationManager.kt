@@ -183,6 +183,16 @@ class ConfigurationManager(private val context: Context) {
                     e.javaClass.simpleName, e.message, snippet)
                 EmergencyState()
             }
+        }.catch { e ->
+            // Upstream DataStore read failure (IOException) — distinct from the decode failure
+            // handled inside map. Without this, the emergency-resume `loadEmergencyStateFlow()
+            // .first()` (KSafeExtension.initializeSystem) hangs forever on a cold-boot storage
+            // error — the same error the config `.catch` now survives — so a persisted in-flight
+            // countdown would never resume. Emit the default (IDLE, nothing to resume) so the
+            // resume path completes instead of wedging.
+            if (e is CancellationException) throw e
+            Timber.e(e, "EmergencyState DataStore read failed — emitting default IDLE so the resume path doesn't hang")
+            emit(EmergencyState())
         }
     }
 

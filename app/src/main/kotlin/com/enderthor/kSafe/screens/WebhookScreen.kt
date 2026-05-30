@@ -113,8 +113,12 @@ fun ActionsScreen(vm: MainViewModel) {
         karooLiveEndEnabled, karooLiveEndMessage,
     ) {
         delay(600)
-        vm.saveConfig(
-            config.copy(
+        // Route through updateConfig (fresh-read under settingsWriteMutex) instead of
+        // saveConfig(config.copy(...)): the composition `config` snapshot can be stale and an
+        // unguarded full-blob write would clobber fields owned by OTHER screens and race the
+        // mutex-guarded writes. Applying the copy to the freshly-read `current` preserves them.
+        vm.updateConfig { current ->
+            current.copy(
                 customMessageEnabled    = customMessageEnabled,
                 customMessageTitle      = customMessageTitle.safeTake(7).ifBlank { "MSG" },
                 customMessage           = customMessage,
@@ -159,7 +163,7 @@ fun ActionsScreen(vm: MainViewModel) {
                 karooLiveEndEnabled     = karooLiveEndEnabled,
                 karooLiveEndMessage     = karooLiveEndMessage,
             )
-        )
+        }
     }
 
     Column(
