@@ -456,12 +456,12 @@ class EmergencyManager(
             sosOverlay.removeOverlay()
             _uiState.value = EmergencyState()
             scope.launch {
-            // H1 — wrap the persist (matches every other saveEmergencyState site): a DataStore
-            // IOException on a fire-and-forget cleanup launch would otherwise reach the default
-            // uncaught handler on the service scope.
-            try { configManager.saveEmergencyState(EmergencyState()) }
-            catch (e: Exception) { Timber.e(e, "Failed to persist IDLE emergency state") }
-        }
+                // H1 — wrap the persist (matches every other saveEmergencyState site): a DataStore
+                // IOException on a fire-and-forget cleanup launch would otherwise reach the default
+                // uncaught handler on the service scope.
+                try { configManager.saveEmergencyState(EmergencyState()) }
+                catch (e: Exception) { Timber.e(e, "Failed to persist IDLE emergency state") }
+            }
             Timber.d("Check-in emergency cancelled on ride pause")
         }
     }

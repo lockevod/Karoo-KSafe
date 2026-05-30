@@ -515,16 +515,20 @@ fun FuelingScreen(vm: MainViewModel) {
                     onCommit = { v ->
                         combinedConcentration = v
                         val conc = v.toIntOrNull()?.coerceIn(0, 200) ?: config.combinedCarbConcentrationPer500ml
+                        // Derive from the LOCAL ml field state (what the rider currently sees), not the
+                        // DataStore snapshot, so display and persisted value agree even if the ml field
+                        // was just edited but hasn't round-tripped through config yet.
+                        val ml1 = combined1Ml.toIntOrNull()?.coerceIn(0, 1000) ?: config.combined1Ml
+                        val ml2 = combined2Ml.toIntOrNull()?.coerceIn(0, 1000) ?: config.combined2Ml
                         vm.updateConfig { cfg ->
                             cfg.copy(
                                 combinedCarbConcentrationPer500ml = conc,
-                                combined1Carbs = carbsFromVolume(cfg.combined1Ml, conc),
-                                combined2Carbs = carbsFromVolume(cfg.combined2Ml, conc),
+                                combined1Carbs = carbsFromVolume(ml1, conc),
+                                combined2Carbs = carbsFromVolume(ml2, conc),
                             )
                         }
-                        // Keep the local carb text in sync with the re-derived values.
-                        combined1Carbs = carbsFromVolume(config.combined1Ml, conc).toString()
-                        combined2Carbs = carbsFromVolume(config.combined2Ml, conc).toString()
+                        combined1Carbs = carbsFromVolume(ml1, conc).toString()
+                        combined2Carbs = carbsFromVolume(ml2, conc).toString()
                     },
                     onTextChange = { combinedConcentration = it },
                 )
@@ -538,9 +542,9 @@ fun FuelingScreen(vm: MainViewModel) {
                     onAmountCommit = { v ->
                         combined1Ml = v
                         val ml = (v.toIntOrNull() ?: 0).coerceIn(0, 1000)
-                        val derived = carbsFromVolume(ml, config.combinedCarbConcentrationPer500ml)
-                        combined1Carbs = derived.toString()
-                        vm.updateConfig { cfg -> cfg.copy(combined1Ml = ml, combined1Carbs = carbsFromVolume(ml, cfg.combinedCarbConcentrationPer500ml)) }
+                        val conc = combinedConcentration.toIntOrNull()?.coerceIn(0, 200) ?: config.combinedCarbConcentrationPer500ml
+                        combined1Carbs = carbsFromVolume(ml, conc).toString()
+                        vm.updateConfig { cfg -> cfg.copy(combined1Ml = ml, combined1Carbs = carbsFromVolume(ml, conc)) }
                     },
                     onAmountText = { combined1Ml = it },
                 )
@@ -559,9 +563,9 @@ fun FuelingScreen(vm: MainViewModel) {
                     onAmountCommit = { v ->
                         combined2Ml = v
                         val ml = (v.toIntOrNull() ?: 0).coerceIn(0, 1000)
-                        val derived = carbsFromVolume(ml, config.combinedCarbConcentrationPer500ml)
-                        combined2Carbs = derived.toString()
-                        vm.updateConfig { cfg -> cfg.copy(combined2Ml = ml, combined2Carbs = carbsFromVolume(ml, cfg.combinedCarbConcentrationPer500ml)) }
+                        val conc = combinedConcentration.toIntOrNull()?.coerceIn(0, 200) ?: config.combinedCarbConcentrationPer500ml
+                        combined2Carbs = carbsFromVolume(ml, conc).toString()
+                        vm.updateConfig { cfg -> cfg.copy(combined2Ml = ml, combined2Carbs = carbsFromVolume(ml, conc)) }
                     },
                     onAmountText = { combined2Ml = it },
                 )
