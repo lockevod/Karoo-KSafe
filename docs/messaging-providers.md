@@ -83,31 +83,32 @@ Telegram lets you send messages for free through a bot you create yourself. Ther
 3. Follow the instructions: choose a name and a username for your bot (username must end in `bot`, e.g. `MySafetyBot`).
 4. BotFather will give you a **Bot Token** (e.g. `7123456789:AAFxxxxxxxxxxxxxxxxxxxxxx`). Copy it.
 
-### Step 2 — Get your Chat ID
+### Step 2 — Get the recipient's Chat ID
 
-The Chat ID tells the bot where to deliver the message. You can send alerts to a **personal chat**, a **group**, or a **channel**.
+The Chat ID identifies **who receives the alert**. If you are alerting someone else (a partner, an emergency contact), the Chat ID is **theirs** — so get it from **their** Telegram, not yours.
 
-For a **personal chat** (easiest):
+**Easiest — use @userinfobot:**
 
-1. Search for your new bot in Telegram and tap **Start** (`/start`).
-2. **Send any message to the bot** (e.g. `hello`) — this is required so the bot has an update to return.
-3. Go to `https://api.telegram.org/bot<BOT_TOKEN>/getUpdates` in a browser (replace `<BOT_TOKEN>` with your bot token).
-4. Look for `"chat":{"id":XXXXXXX}` in the response — that number is your **Chat ID**.
+1. On the **recipient's** phone, open Telegram and search for **@userinfobot**.
+2. Send `/start`. It replies with their numeric **Id** — that is the Chat ID.
 
-For a **group** or **channel**:
+**Alternative — via your bot's `getUpdates`:**
 
-1. Add the bot to the group/channel as an administrator.
-2. Send a message in the group, then fetch `getUpdates` as above — the Chat ID will be a negative number (e.g. `-1001234567890`).
+1. The recipient searches for **your** bot, taps **Start** (`/start`), and sends it any message.
+2. Open `https://api.telegram.org/bot<BOT_TOKEN>/getUpdates` in a browser (replace `<BOT_TOKEN>`).
+3. Find `"chat":{"id":XXXXXXX}` — that number is the Chat ID.
+
+For a **group** or **channel**: add the bot as an administrator, send a message there, then fetch `getUpdates` as above — the Chat ID will be a negative number (e.g. `-1001234567890`).
 
 ### Step 3 — Configure KSafe
 
 1. In the **Provider** tab, select **Telegram**.
 2. Enter your **Bot Token** in the first field.
-3. Enter your **Chat ID** (recipient 1) in the second field.
+3. Enter the recipient's **Chat ID** in the **Recipient 1** field.
 4. Optionally enter a second and third Chat ID to alert additional chats. In most cases one Chat ID is enough — if you want to alert multiple people at once, simply add the bot to a **Telegram group** and use the group's Chat ID.
 5. Tap **Test Send** — all configured chats should receive a message immediately.
 
-> If you don't receive the test message, make sure you have started a conversation with the bot first (send `/start` to it in Telegram).
+> **Important — the #1 reason alerts don't arrive:** a Telegram bot can only message someone who has **started a chat with it first**. Each recipient must open Telegram, search for **your bot**, and tap **Start** (`/start`) once. Until they do, KSafe's messages to them fail silently. If a Test Send doesn't arrive, this is almost always why.
 
 ---
 
