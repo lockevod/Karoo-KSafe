@@ -45,12 +45,17 @@ class LocationManager(
     // latitude from one sample with a longitude from the next. Reference writes are
     // atomic; volatile supplies the cross-thread visibility.
     @Volatile private var lastFix: GpsFix? = null
-    private var locationJob: Job? = null
+    // @Volatile + @Synchronized start()/stop(): the connect callback fires on a Karoo binder
+    // thread and can re-enter start() on a rapid reconnect. Without serialisation two concurrent
+    // start() calls could both read the prior locationJob, both cancel it, both launch, and lose
+    // one assignment — orphaning a GPS collector coroutine for the rest of the service lifetime.
+    @Volatile private var locationJob: Job? = null
 
     /** The most recent stored GPS fix as a single atomic snapshot, or null if none yet. */
     fun currentFix(): GpsFix? = lastFix
 
     @OptIn(kotlinx.coroutines.FlowPreview::class)
+    @Synchronized
     fun start() {
         // Defensive cancel of any prior job — Karoo system reconnects can re-fire
         // the connect callback while a previous collector is still alive. Without
@@ -102,8 +107,10 @@ class LocationManager(
         }
     }
 
+    @Synchronized
     fun stop() {
         locationJob?.cancel()
+        locationJob = null
     }
 
     /** Returns the cached Google Maps link, or null if no fix has been stored yet. */

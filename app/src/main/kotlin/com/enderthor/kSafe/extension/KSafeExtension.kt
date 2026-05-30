@@ -2748,8 +2748,14 @@ class KSafeExtension : KarooExtension("ksafe", BuildConfig.VERSION_NAME), Corout
         // ServiceConnection across extension restarts. Safe to call even if connect()
         // failed — disconnect() is a no-op when not bound.
         if (::buzzerClient.isInitialized) buzzerClient.disconnect()
-        karooSystem.disconnect()
+        // Cancel our own collectors BEFORE dropping the Karoo connection. A streamRide /
+        // config collector suspended inside its callbackFlow would otherwise be able to
+        // resume on a final SDK event AFTER disconnect() and run handleRideState / dispatch
+        // against a dead connection. Cancelling first turns that resume into a clean
+        // CancellationException (no business logic runs) and lets each callbackFlow's
+        // awaitClose remove its SDK consumer while the connection is still up.
         job.cancel()
+        karooSystem.disconnect()
         // Null out the published tracker references so any DataType that re-enters
         // `startView` after a service restart sees the cleared state and waits for
         // the new extension instance to republish them.
