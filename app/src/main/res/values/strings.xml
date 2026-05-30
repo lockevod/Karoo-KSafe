@@ -216,9 +216,9 @@
     <string name="telegram_chat_id2_hint">Chat ID — recipient 2 (optional)</string>
     <string name="telegram_chat_id3_hint">Chat ID — recipient 3 (optional)</string>
     <string name="telegram_description">Free Telegram messages via a bot. Create a bot with @BotFather, get the token, and enter your Chat ID.</string>
-    <string name="recipient_alerts_all">All alerts</string>
-    <string name="recipient_alerts_emergency">Emergencies only</string>
-    <string name="recipient_alerts_info">Info only</string>
+    <string name="recipient_alerts_all">All</string>
+    <string name="recipient_alerts_emergency">Emergency</string>
+    <string name="recipient_alerts_info">Info</string>
     <string name="recipient_alerts_label">This contact receives</string>
     <string name="recipient_alerts_need_emergency">At least one contact must receive emergency alerts</string>
     <string name="section_safety">Safety configuration</string>
@@ -433,6 +433,9 @@
     <string name="crash_per_profile_active">● active now</string>
     <string name="crash_per_profile_use_global">Use global</string>
     <string name="crash_per_profile_custom">Custom</string>
+    <string name="crash_per_profile_summary_global">Global settings</string>
+    <string name="crash_per_profile_summary_off">Crash detection off</string>
+    <string name="crash_per_profile_summary_custom">Custom · %1$s</string>
     <string name="crash_per_profile_remove">Remove</string>
 
     <!-- Outbound alert delivery failure — fires after Sender exhausts every retry cycle. -->

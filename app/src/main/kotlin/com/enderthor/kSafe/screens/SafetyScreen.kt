@@ -9,7 +9,13 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
+import androidx.compose.foundation.clickable
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.KeyboardArrowDown
+import androidx.compose.material.icons.filled.KeyboardArrowUp
 import androidx.compose.material3.FilterChip
+import androidx.compose.material3.FilterChipDefaults
+import androidx.compose.material3.Icon
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
@@ -216,10 +222,12 @@ fun SafetyScreen(vm: MainViewModel) {
                 style = MaterialTheme.typography.bodyMedium
             )
             // First row: Low / Medium / High
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 listOf(CrashSensitivity.LOW, CrashSensitivity.MEDIUM, CrashSensitivity.HIGH).forEach { s ->
                     FilterChip(
                         selected = crashSensitivity == s,
+                        modifier = Modifier.weight(1f),
+                        colors = selectedFilterChipColors(),
                         onClick = {
                             crashSensitivity = s
                             minSpeedForCrash = when (s) {
@@ -255,6 +263,7 @@ fun SafetyScreen(vm: MainViewModel) {
                     crashSensitivity = CrashSensitivity.CUSTOM
                 },
                 modifier = Modifier.fillMaxWidth(),
+                colors = selectedFilterChipColors(),
                 label = { Text(stringResource(R.string.sensitivity_custom)) }
             )
 
@@ -474,6 +483,14 @@ fun SafetyScreen(vm: MainViewModel) {
     }
 }
 
+/** Stronger selected-state colours so the chosen preset chip is obvious on the Karoo's
+ *  sunlight display (the default tint is too subtle to read as "selected"). */
+@Composable
+private fun selectedFilterChipColors() = FilterChipDefaults.filterChipColors(
+    selectedContainerColor = MaterialTheme.colorScheme.primary,
+    selectedLabelColor = MaterialTheme.colorScheme.onPrimary,
+)
+
 @Composable
 private fun CrashProfileCard(
     setting: CrashProfileSetting,
@@ -481,6 +498,8 @@ private fun CrashProfileCard(
     onChange: (CrashProfileSetting) -> Unit,
     onRemove: () -> Unit,
 ) {
+    // Active profile starts expanded; the rest collapse so a long list stays manageable.
+    var expanded by remember(setting.profileId) { mutableStateOf(isActive) }
     Card(
         modifier = Modifier.fillMaxWidth(),
         elevation = CardDefaults.cardElevation(defaultElevation = 1.dp)
@@ -489,9 +508,10 @@ private fun CrashProfileCard(
             modifier = Modifier.padding(8.dp),
             verticalArrangement = Arrangement.spacedBy(8.dp)
         ) {
-            // Profile header row: name + active badge + remove button
+            // Tappable header: name + active badge + (when collapsed) a one-line summary +
+            // an expand chevron. Collapsing keeps a long list of profiles manageable.
             Row(
-                modifier = Modifier.fillMaxWidth(),
+                modifier = Modifier.fillMaxWidth().clickable { expanded = !expanded },
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically
             ) {
@@ -508,22 +528,45 @@ private fun CrashProfileCard(
                             color = MaterialTheme.colorScheme.primary
                         )
                     }
+                    if (!expanded) {
+                        Text(
+                            text = when {
+                                setting.useGlobal -> stringResource(R.string.crash_per_profile_summary_global)
+                                !setting.crashDetectionEnabled -> stringResource(R.string.crash_per_profile_summary_off)
+                                else -> stringResource(
+                                    R.string.crash_per_profile_summary_custom,
+                                    when (setting.crashSensitivity) {
+                                        CrashSensitivity.LOW -> stringResource(R.string.sensitivity_low)
+                                        CrashSensitivity.MEDIUM -> stringResource(R.string.sensitivity_medium)
+                                        CrashSensitivity.HIGH -> stringResource(R.string.sensitivity_high)
+                                        CrashSensitivity.CUSTOM -> stringResource(R.string.sensitivity_custom)
+                                    }
+                                )
+                            },
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
                 }
-                androidx.compose.material3.TextButton(onClick = onRemove) {
-                    Text(stringResource(R.string.crash_per_profile_remove))
-                }
+                Icon(
+                    imageVector = if (expanded) Icons.Filled.KeyboardArrowUp else Icons.Filled.KeyboardArrowDown,
+                    contentDescription = null
+                )
             }
 
+            if (expanded) {
             // Use global / Custom toggle
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 FilterChip(
                     selected = setting.useGlobal,
                     onClick = { onChange(setting.copy(useGlobal = true)) },
+                    colors = selectedFilterChipColors(),
                     label = { Text(stringResource(R.string.crash_per_profile_use_global)) }
                 )
                 FilterChip(
                     selected = !setting.useGlobal,
                     onClick = { onChange(setting.copy(useGlobal = false)) },
+                    colors = selectedFilterChipColors(),
                     label = { Text(stringResource(R.string.crash_per_profile_custom)) }
                 )
             }
@@ -546,10 +589,12 @@ private fun CrashProfileCard(
                         style = MaterialTheme.typography.bodyMedium
                     )
                     // First row: Low / Medium / High
-                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                         listOf(CrashSensitivity.LOW, CrashSensitivity.MEDIUM, CrashSensitivity.HIGH).forEach { s ->
                             FilterChip(
                                 selected = setting.crashSensitivity == s,
+                                modifier = Modifier.weight(1f),
+                                colors = selectedFilterChipColors(),
                                 onClick = {
                                     val newMinSpeed = when (s) {
                                         CrashSensitivity.LOW    -> 3
@@ -583,6 +628,7 @@ private fun CrashProfileCard(
                         selected = setting.crashSensitivity == CrashSensitivity.CUSTOM,
                         onClick = { onChange(setting.copy(crashSensitivity = CrashSensitivity.CUSTOM)) },
                         modifier = Modifier.fillMaxWidth(),
+                        colors = selectedFilterChipColors(),
                         label = { Text(stringResource(R.string.sensitivity_custom)) }
                     )
 
@@ -672,6 +718,11 @@ private fun CrashProfileCard(
                         supportingText = { Text(stringResource(R.string.crash_confirm_speed_hint)) }
                     )
                 }
+            }
+
+            androidx.compose.material3.TextButton(onClick = onRemove) {
+                Text(stringResource(R.string.crash_per_profile_remove))
+            }
             }
         }
     }
