@@ -224,6 +224,10 @@
     <string name="section_safety">Safety configuration</string>
     <string name="backup_export">Export</string>
     <string name="backup_import">Import</string>
+    <string name="backup_path_hint">Export → /sdcard/KSafe/ksafe_export.json  |  Import ← /sdcard/KSafe/ksafe_import.json</string>
+    <string name="backup_needs_access">Backup needs file access. Grant it, then tap again.</string>
+    <string name="backup_grant_opening">Opening file-access settings — grant it, then tap again.</string>
+    <string name="backup_grant_adb">This Karoo can\'t open the file-access screen. Grant via adb:\nadb shell appops set com.enderthor.kSafe MANAGE_EXTERNAL_STORAGE allow</string>
     <string name="test_send">Test Send</string>
 
     <!-- Settings screen -->
