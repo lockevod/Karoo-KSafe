@@ -81,6 +81,22 @@ class ConfigurationManager(private val context: Context) {
     }
 
     /**
+     * Atomic read-modify-write of the config blob: decode (+ migrate) → [transform] → encode
+     * all run inside ONE DataStore [edit] transaction. Unlike a separate `loadConfigFlow()
+     * .first()` + [saveConfig], a concurrent writer (a UI settings save in the other process,
+     * a parallel profile-learn) cannot interleave between the read and the write and clobber
+     * unrelated fields. Persists only when [transform] actually changes the config (data-class
+     * equality), so a no-op transform doesn't churn a redundant write.
+     */
+    suspend fun updateConfig(transform: (KSafeConfig) -> KSafeConfig) {
+        context.dataStore.edit { prefs ->
+            val current = decodeConfig(prefs[configKey] ?: defaultKSafeConfigJson)
+            val updated = transform(current)
+            if (updated != current) prefs[configKey] = jsonForStorage.encodeToString(listOf(updated))
+        }
+    }
+
+    /**
      * Shared, process-wide flow of the latest decoded [KSafeConfig]. Backed by the
      * companion's [sharedConfigStateFlow] so every caller — currently 10+ tappable
      * DataTypes plus KSafeExtension — observes the SAME decoded value. Before this

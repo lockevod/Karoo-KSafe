@@ -1056,10 +1056,12 @@ class KSafeExtension : KarooExtension("ksafe", BuildConfig.VERSION_NAME), Corout
                     .collect { profile ->
                         crashManager.updateRideProfile(profile.routingPreference)
                         activeProfileId = profile.id
-                        val latest = configManager.loadConfigFlow().first()
-                        val learned = learnProfile(latest.crashProfileSettings, profile.id, profile.name)
-                        if (learned != latest.crashProfileSettings) {
-                            configManager.saveConfig(latest.copy(crashProfileSettings = learned))
+                        // Atomic read-modify-write (see ConfigurationManager.updateConfig):
+                        // profile-learning runs from the service process and must not clobber a
+                        // concurrent UI settings save. updateConfig skips the write when nothing
+                        // was learned, so this stays a no-op on every unchanged profile emission.
+                        configManager.updateConfig { latest ->
+                            latest.copy(crashProfileSettings = learnProfile(latest.crashProfileSettings, profile.id, profile.name))
                         }
                         reapplyEffectiveCrash()
                     }

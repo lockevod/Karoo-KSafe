@@ -628,8 +628,10 @@ private fun CrashProfileCard(
                         value = profileMinSpeed,
                         onValueChange = { v ->
                             if (v.all { c -> c.isDigit() }) {
-                                profileMinSpeed = v
-                                onChange(setting.copy(minSpeedForCrashKmh = v.toIntOrNull() ?: setting.minSpeedForCrashKmh))
+                                profileMinSpeed = v   // allow blank as an intermediate UI state
+                                // Only commit a real number — otherwise clearing the field would
+                                // leave it blank while silently writing the OLD value back.
+                                v.toIntOrNull()?.let { onChange(setting.copy(minSpeedForCrashKmh = it)) }
                             }
                         },
                         label = { Text(stringResource(R.string.min_speed_label)) },
@@ -655,8 +657,8 @@ private fun CrashProfileCard(
                         value = profileConfirmSpeed,
                         onValueChange = { v ->
                             if (v.all { c -> c.isDigit() }) {
-                                profileConfirmSpeed = v
-                                onChange(setting.copy(crashConfirmSpeedKmh = v.toIntOrNull() ?: setting.crashConfirmSpeedKmh))
+                                profileConfirmSpeed = v   // allow blank as an intermediate UI state
+                                v.toIntOrNull()?.let { onChange(setting.copy(crashConfirmSpeedKmh = it)) }
                             }
                         },
                         label = { Text(stringResource(R.string.crash_confirm_speed_label)) },
