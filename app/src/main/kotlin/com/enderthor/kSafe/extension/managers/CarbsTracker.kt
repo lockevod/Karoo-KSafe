@@ -428,7 +428,12 @@ class CarbsTracker(
         return grams
     }
 
-    /** Reverse a previous [logAmount] of exactly [grams]. Clamps the total at >= 0. */
+    /** Reverse a previous [logAmount] of exactly [grams]. Clamps the total at >= 0.
+     *  By design this rolls back only [cumLoggedG] (the deficit-relevant total), NOT
+     *  [lastRealLogMs] / [lastLogMs]: after a rare log-then-undo the `{elapsed}` token may
+     *  read from the undone tap until the next real log. We deliberately do not restore the
+     *  timestamps — the alternative (not bumping them on [logAmount]) would fire a false
+     *  "you haven't fueled" alert right after a genuine combined log, which is worse. */
     fun undoAmount(grams: Int) {
         if (grams <= 0) return
         cumLoggedG = (cumLoggedG - grams).coerceAtLeast(0)

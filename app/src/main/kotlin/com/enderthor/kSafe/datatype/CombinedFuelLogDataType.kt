@@ -68,13 +68,18 @@ class CombinedFuelLogDataType(
     private fun carbsFromConfig(c: KSafeConfig): Int = if (slot == 2) c.combined2Carbs else c.combined1Carbs
     private fun idleColorFromConfig(c: KSafeConfig): Int = if (slot == 2) c.combined2Color else c.combined1Color
 
-    /** "250ml · 30g" / "250ml" / "30g" depending on which trackers are on. */
+    /** Idle hint. Compact "250/30" (ml/carbs) when both sides are on so it always fits the
+     *  field's ~9-char budget; "250ml" / "30g" when only one tracker is active (worst case
+     *  both on = "1000/999" = 8 chars). */
     private fun amountsHint(c: KSafeConfig): String {
-        val parts = buildList {
-            if (c.hydrationTrackerEnabled) add("${mlFromConfig(c)}ml")
-            if (c.carbsTrackerEnabled) add("${carbsFromConfig(c)}g")
+        val ml = mlFromConfig(c)
+        val g = carbsFromConfig(c)
+        return when {
+            c.hydrationTrackerEnabled && c.carbsTrackerEnabled -> "$ml/$g"
+            c.hydrationTrackerEnabled -> "${ml}ml"
+            c.carbsTrackerEnabled -> "${g}g"
+            else -> ""
         }
-        return parts.joinToString(" · ")
     }
 
     private fun buildView(
@@ -152,13 +157,23 @@ class CombinedFuelLogDataType(
         }
     }
 
-    private fun loggedText(ml: Int, grams: Int): String = listOfNotNull(
-        if (ml > 0) "+${ml}ml" else null, if (grams > 0) "+${grams}g" else null
-    ).joinToString(" ").ifBlank { "+" }
+    // Compact so BOTH values fit the field's char budget — "+250ml +30g" (11) would be clipped
+    // to "+250ml +3" by buildView's safeTake(9), silently dropping the carbs. "+250/30" (ml/carbs)
+    // fits for every config (worst case "+1000/999" = 9). The green/red background already
+    // signals add vs undo; single-side taps keep their unit for clarity.
+    private fun loggedText(ml: Int, grams: Int): String = when {
+        ml > 0 && grams > 0 -> "+$ml/$grams"
+        ml > 0 -> "+${ml}ml"
+        grams > 0 -> "+${grams}g"
+        else -> "+"
+    }
 
-    private fun undoneText(ml: Int, grams: Int): String = listOfNotNull(
-        if (ml > 0) "−${ml}ml" else null, if (grams > 0) "−${grams}g" else null
-    ).joinToString(" ").ifBlank { "−" }
+    private fun undoneText(ml: Int, grams: Int): String = when {
+        ml > 0 && grams > 0 -> "−$ml/$grams"
+        ml > 0 -> "−${ml}ml"
+        grams > 0 -> "−${grams}g"
+        else -> "−"
+    }
 
     private data class Frame(val bgColor: Int, val main: String, val hint: String, val clickable: Boolean, val leftDrawableRes: Int)
 }

@@ -2304,8 +2304,13 @@ class KSafeExtension : KarooExtension("ksafe", BuildConfig.VERSION_NAME), Corout
         val St = com.enderthor.kSafe.datatype.CombinedFuelLogState
         val state = St.flowForSlot(slot).value
         if (state is com.enderthor.kSafe.datatype.CombinedFuelLogState.LOGGED) {
-            if (state.grams > 0 && carbsOn) carbsTracker.undoAmount(state.grams)
-            if (state.ml > 0 && hydOn) hydrationTracker.undoAmount(state.ml)
+            // Reverse exactly what THIS log added (carried in the state), not what the live
+            // toggles say now. If the rider disables a tracker during the 6 s undo window,
+            // re-checking carbsOn/hydOn here would skip the reversal and leave that amount
+            // stuck in the cumulative total. state.grams>0 already implies it was logged, so
+            // undoAmount (clamped at 0) is safe; the isInitialized guard is belt-and-braces.
+            if (state.grams > 0 && this::carbsTracker.isInitialized) carbsTracker.undoAmount(state.grams)
+            if (state.ml > 0 && this::hydrationTracker.isInitialized) hydrationTracker.undoAmount(state.ml)
             St.update(slot, com.enderthor.kSafe.datatype.CombinedFuelLogState.UNDONE(state.ml, state.grams))
             combinedTapRevertJobs[slot] = launch {
                 kotlinx.coroutines.delay(1_500L)

@@ -394,7 +394,10 @@ class HydrationTracker(
         return ml
     }
 
-    /** Reverse a previous [logAmount] of exactly [ml]. Clamps the total at >= 0. */
+    /** Reverse a previous [logAmount] of exactly [ml]. Clamps the total at >= 0.
+     *  Rolls back only [cumLoggedMl] (the deficit-relevant total), NOT the log timestamps —
+     *  see CarbsTracker.undoAmount for the rationale (not bumping on log would fire a false
+     *  "you haven't drunk" alert right after a genuine combined log). */
     fun undoAmount(ml: Int) {
         if (ml <= 0) return
         cumLoggedMl = (cumLoggedMl - ml).coerceAtLeast(0)
