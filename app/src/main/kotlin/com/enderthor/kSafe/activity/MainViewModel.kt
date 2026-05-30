@@ -97,8 +97,6 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         recipient2Alerts: RecipientAlertScope = RecipientAlertScope.ALL,
         recipient3Alerts: RecipientAlertScope = RecipientAlertScope.ALL,
     ) {
-        val updated = senderConfigs.value.toMutableList()
-        val idx = updated.indexOfFirst { it.provider == provider }
         val newConfig = SenderConfig(
             provider = provider,
             apiKey = apiKey,
@@ -114,12 +112,27 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             recipient2Alerts = recipient2Alerts,
             recipient3Alerts = recipient3Alerts,
         )
-        if (idx >= 0) updated[idx] = newConfig else updated.add(newConfig)
-        saveSenderConfigs(updated)
+        // Read-modify-write against the freshly persisted list, NOT senderConfigs.value:
+        // the StateFlow uses WhileSubscribed(5000), so if no UI is collecting when this
+        // fires .value hands back emptyList() and we'd drop every OTHER provider's saved
+        // config. Same guard as exportToJson.
+        viewModelScope.launch {
+            val current = configManager.loadSenderConfigFlow().first().toMutableList()
+            val idx = current.indexOfFirst { it.provider == provider }
+            if (idx >= 0) current[idx] = newConfig else current.add(newConfig)
+            configManager.saveSenderConfigs(current)
+        }
     }
 
     fun setActiveProvider(provider: ProviderType) {
-        saveConfig(config.value.copy(activeProvider = provider))
+        // Read-modify-write against the freshly persisted config, NOT config.value: with
+        // WhileSubscribed(5000), if no UI is collecting when this fires .value is the
+        // KSafeConfig() seed and we'd save a defaults-only config, wiping every other field.
+        // Same guard as exportToJson.
+        viewModelScope.launch {
+            val current = configManager.loadConfigFlow().first()
+            configManager.saveConfig(current.copy(activeProvider = provider))
+        }
     }
 
     // ─── Backup / Restore ─────────────────────────────────────────────────────

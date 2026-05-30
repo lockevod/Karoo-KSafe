@@ -117,6 +117,18 @@ fun ProviderScreen(vm: MainViewModel) {
         )
     }
 
+    // N4 — auto-dismiss the "must keep an emergency contact" banner. A rejected tap leaves the
+    // chip on its previous (valid) value, and a SegmentedButton does NOT re-fire onScopeChange
+    // when the rider taps the already-selected segment — so without a timeout the only way to
+    // clear the banner is to edit another field. Clearing it on a valid scope change still
+    // happens immediately (setScope / the auto-save effect above); this only bounds the error.
+    LaunchedEffect(scopeErrorSlot) {
+        if (scopeErrorSlot != null) {
+            delay(4000)
+            scopeErrorSlot = null
+        }
+    }
+
     // Apply a new alert scope to one recipient slot, enforcing the invariant that — for the
     // active provider's configured recipients — at least one still accepts emergency alerts.
     // Rejecting (rather than silently allowing) avoids a config where a crash reaches nobody.
