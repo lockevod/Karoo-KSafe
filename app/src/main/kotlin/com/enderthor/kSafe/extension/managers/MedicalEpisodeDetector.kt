@@ -106,6 +106,13 @@ class MedicalEpisodeDetector(
     @Volatile private var lastSpeedKmh        = 0.0
     @Volatile private var lastSpeedAboveActiveMs = 0L
     @Volatile private var flatlineSinceMs     = 0L
+    /** Recovery latch: set true when FLATLINE fires, cleared only when HR rises back to/above
+     *  [HR_FLATLINE_MAX_BPM]. While set, FLATLINE cannot re-fire — so a stuck/dead HR strap
+     *  reading <30 bpm raises ONE SOS, not a fresh one every [HR_FLATLINE_DURATION_SEC].
+     *  Enforces the intent the "re-arm requires HR to rise" comment only documented. (COLLAPSE
+     *  uses a time cooldown instead — see [collapseCooldownUntilMs] — because its trigger is a
+     *  relative drop vs a rolling baseline, not an absolute sustained-low level.) */
+    @Volatile private var flatlineFiredAwaitingRecovery = false
     @Volatile private var collapseCooldownUntilMs = 0L
     @Volatile private var lastHrStaleState    = false
     @Volatile private var lastPeriodicLogMs   = 0L
@@ -234,6 +241,7 @@ class MedicalEpisodeDetector(
      */
     private fun resetSessionState() {
         flatlineSinceMs = 0L
+        flatlineFiredAwaitingRecovery = false
         collapseCooldownUntilMs = 0L
         lastPeriodicLogMs = 0L
         lastHrStaleState = false
@@ -463,6 +471,14 @@ class MedicalEpisodeDetector(
             return
         }
         if (currentHrBpm < HR_FLATLINE_MAX_BPM) {
+            // Recovery latch — already fired for this sustained-low episode. Don't re-arm or
+            // re-fire until HR climbs back to/above the threshold (the else branch clears it).
+            // Without this a stuck/dead strap stuck <30 bpm fires a fresh EMERGENCY SOS every
+            // HR_FLATLINE_DURATION_SEC for the rest of the ride.
+            if (flatlineFiredAwaitingRecovery) {
+                flatlineSinceMs = 0L
+                return
+            }
             if (flatlineSinceMs == 0L) flatlineSinceMs = now
             val durationMs = (now - flatlineSinceMs)
             if (durationMs >= HR_FLATLINE_DURATION_SEC * 1000L) {
@@ -516,11 +532,17 @@ class MedicalEpisodeDetector(
                 calibLogger?.log(CalibrationLogger.Event.HR_FLATLINE) {
                     "bpm=$currentHrBpm,duration_s=${durationMs / 1000},speed=%.1f,threshold=$HR_FLATLINE_MAX_BPM,cadence=%.0f,power=$currentPowerW,cadence_data=$cadenceDataReceived,power_data=$powerDataReceived".formatUs(lastSpeedKmh, currentCadenceRpm)
                 }
-                flatlineSinceMs = 0L  // re-arm: requires HR to rise above threshold then fall again
+                flatlineSinceMs = 0L
+                // Latch until HR recovers above threshold (enforced in the else branch below)
+                // so this sustained-low episode raises exactly ONE SOS, not one per window.
+                flatlineFiredAwaitingRecovery = true
                 onIncident(EmergencyReason.MEDICAL_FLATLINE, mapOf("bpm" to currentHrBpm.toString()))
             }
         } else {
+            // HR is at/above threshold → genuine recovery. Reset the timer AND clear the latch
+            // so a subsequent real drop can fire a new episode.
             flatlineSinceMs = 0L
+            flatlineFiredAwaitingRecovery = false
         }
     }
 

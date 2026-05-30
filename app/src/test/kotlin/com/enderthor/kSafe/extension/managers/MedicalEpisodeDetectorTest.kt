@@ -86,6 +86,41 @@ class MedicalEpisodeDetectorTest {
     }
 
     @Test
+    fun `flatline fires only ONCE while HR stays low — recovery latch blocks re-fire until HR rises`() {
+        val f = Fixture()
+        // Keep the rider continuously active with a fresh, changing speed signal (>= 5 km/h)
+        // throughout, so re-firing is governed by the recovery latch, not the activity gate.
+        fun feed(seconds: Int, bpm: Int) {
+            for (sec in 0 until seconds) {
+                f.clock.nowMs += 1_000L
+                f.hr(bpm)
+                f.speed(if (sec % 2 == 0) 20.0 else 21.0)
+                f.detector.tick()
+            }
+        }
+
+        // Episode 1: HR <30 sustained for 30 s → fires once.
+        feed(35, 20)
+        assertEquals(EmergencyReason.MEDICAL_FLATLINE, f.captured?.first)
+
+        // HR stays stuck low for another 90 s (a dead/loose strap) → must NOT re-fire.
+        f.captured = null
+        feed(90, 20)
+        assertNull("stuck-low HR must not re-fire FLATLINE while the recovery latch is held", f.captured)
+
+        // HR recovers to/above the threshold → latch clears.
+        feed(5, 70)
+
+        // A genuine NEW drop after recovery → must fire again.
+        f.captured = null
+        feed(35, 20)
+        assertEquals(
+            "a new sustained drop after HR recovery must fire again",
+            EmergencyReason.MEDICAL_FLATLINE, f.captured?.first,
+        )
+    }
+
+    @Test
     fun `flatline does NOT fire when HR is fresh but rider has been idle longer than ACTIVE_RECENT_MS`() {
         val f = Fixture()
         // Brief activity to seed lastSpeedAboveActiveMs, then idle out beyond the 60 s window.
