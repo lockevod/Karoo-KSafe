@@ -1232,16 +1232,31 @@ fun KSafeConfig.migrateToLatest(): KSafeConfig {
         // changed critical away from 175 keep their choice (the customised value signals
         // "I'm tuning this tier, don't touch") even if it leaves critical ≤ sustained — at
         // that point it's an intentional setup we shouldn't second-guess.
+        val oldCritical = c.wellnessCriticalThresholdBpm
+        // Strict `<` is DELIBERATE (locked by the `v14 with customised sustained keeps both
+        // unchanged` migration test): a rider who lowered sustained to 175 so that
+        // critical == sustained == 175 has signalled an intentional tight setup — we don't
+        // second-guess it. We only repair the genuine broken-default case where critical is
+        // stuck at 175 strictly BELOW sustained, bumping it to max(185, sustained + 5) so the
+        // critical tier regains headroom above sustained.
         val newCritical =
-            if (c.wellnessCriticalThresholdBpm == 175 &&
-                c.wellnessCriticalThresholdBpm < c.wellnessHighHrThreshold) {
+            if (oldCritical == 175 && oldCritical < c.wellnessHighHrThreshold) {
                 maxOf(185, c.wellnessHighHrThreshold + 5)
-            } else c.wellnessCriticalThresholdBpm
+            } else oldCritical
         c = c.copy(wellnessCriticalThresholdBpm = newCritical, configVersion = 15)
-        Timber.i(
-            "KSafeConfig migrated v%d→v15 (wellness critical default; critical 175→%d, sustained=%d)",
-            originalVersion, newCritical, c.wellnessHighHrThreshold,
-        )
+        if (newCritical != oldCritical) {
+            Timber.i(
+                "KSafeConfig migrated v%d→v15 (wellness critical %d→%d, sustained=%d)",
+                originalVersion, oldCritical, newCritical, c.wellnessHighHrThreshold,
+            )
+        } else {
+            // No change — critical was customised away from the broken default, or it already
+            // sits at/below a deliberately-lowered sustained. Don't imply a value changed.
+            Timber.d(
+                "KSafeConfig migrated v%d→v15 (version stamp; critical=%d unchanged vs sustained=%d)",
+                originalVersion, newCritical, c.wellnessHighHrThreshold,
+            )
+        }
     }
 
     if (c.configVersion < 16) {

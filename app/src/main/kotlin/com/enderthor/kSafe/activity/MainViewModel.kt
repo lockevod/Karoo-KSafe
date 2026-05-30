@@ -184,8 +184,17 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             // layout; without this the read path eventually migrates it, but persisting the
             // un-migrated blob is a latent footgun (e.g. a version-0 stamp re-runs the v0→v2
             // crash-speed rewrite on every read). migrateToLatest() is idempotent.
-            saveConfig(config.migrateToLatest())
-            saveSenderConfigs(senderConfigs)
+            val migrated = config.migrateToLatest()
+            // Persist both blobs in ONE coroutine, sequentially, instead of two independent
+            // viewModelScope.launch calls (saveConfig + saveSenderConfigs). DataStore can't
+            // write two keys atomically, but a single ordered launch removes the interleave
+            // window where an import left the config blob saved and the sender blob unsaved
+            // (or vice versa) on a process kill — and guarantees the sender configs are never
+            // written before the config they belong to.
+            viewModelScope.launch {
+                configManager.saveConfig(migrated)
+                configManager.saveSenderConfigs(senderConfigs)
+            }
             true
         } catch (e: Exception) {
             Timber.e(e, "Failed to import config from JSON")

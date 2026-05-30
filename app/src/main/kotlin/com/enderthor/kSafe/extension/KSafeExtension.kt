@@ -1900,9 +1900,14 @@ class KSafeExtension : KarooExtension("ksafe", BuildConfig.VERSION_NAME), Corout
         val config = activeConfig
         if (!config.karooLiveEnabled) return "Karoo Live is disabled — enable it in Settings first."
         if (config.karooLiveKey.isBlank()) return "No Karoo Live key configured."
-        val liveLink = com.enderthor.kSafe.data.KAROO_LIVE_BASE_URL + config.karooLiveKey.trim()
-        val message = config.karooLiveStartMessage.replace("{livetrack}", liveLink)
         Timber.d("Sending test ride start notification via ${config.activeProvider}")
+        // Route through the shared token substitution (same as sendRideStartNotification)
+        // so {location}, {livetrack} etc. are resolved — the test must exercise the exact
+        // message the rider's contacts would receive, not a literal-token preview.
+        val message = emergencyManager.substituteTokens(
+            template = config.karooLiveStartMessage,
+            config = config,
+        )
         val ok = sender.sendInfo(message, config.activeProvider)
         return if (ok) "Ride start message sent successfully! Check your device."
                else "Send failed — check your provider configuration."
@@ -1917,7 +1922,13 @@ class KSafeExtension : KarooExtension("ksafe", BuildConfig.VERSION_NAME), Corout
         if (!config.karooLiveEndEnabled) return "Ride end notification is disabled — enable it in Settings first."
         if (config.karooLiveEndMessage.isBlank()) return "No ride end message configured."
         Timber.d("Sending test ride end notification via ${config.activeProvider}")
-        val ok = sender.sendInfo(config.karooLiveEndMessage, config.activeProvider)
+        // Route through the shared token substitution (same as sendRideEndNotification)
+        // so {location} / {livetrack} are resolved instead of sent literally.
+        val message = emergencyManager.substituteTokens(
+            template = config.karooLiveEndMessage,
+            config = config,
+        )
+        val ok = sender.sendInfo(message, config.activeProvider)
         return if (ok) "Ride end message sent successfully! Check your device."
                else "Send failed — check your provider configuration."
     }

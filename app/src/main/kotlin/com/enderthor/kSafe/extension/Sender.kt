@@ -282,9 +282,16 @@ class Sender(
 
         return try {
             while (currentCycle < maxCycles) {
-                repeat(attemptsPerCycle) { _ ->
+                repeat(attemptsPerCycle) { attemptInCycle ->
                     totalAttempts++
-                    if (totalAttempts > 1) {
+                    // Inter-attempt wait applies WITHIN a cycle only. The first attempt of
+                    // each cycle must not pre-delay: cycle 0's first attempt fires
+                    // immediately, and cycles 1/2's first attempt already waited the
+                    // cycleDelayMinutes gap below. Guarding on the global totalAttempts
+                    // counter (instead of this per-cycle index) double-charged that first
+                    // attempt an extra delaySeconds[cycle] — worst case ~41 min vs the
+                    // intended ~30.
+                    if (attemptInCycle > 0) {
                         val waitSeconds = delaySeconds[currentCycle]
                         Timber.d("Retry attempt $totalAttempts, waiting ${waitSeconds}s")
                         delay(waitSeconds * 1000L)
