@@ -85,6 +85,17 @@ class CalibrationLogger(
          */
         CRASH_CANCELLED("CRASH_NO"),
         /**
+         * GAP-regime confirm vetoed by the upright orientation cross-check (R6-F).
+         * Fires INSTEAD of CRASH_OK when a delayed stop (`gap_ms > delayedStopGapMs`)
+         * reached the 20 s confirm gate but the silence-window orientation showed the
+         * bike decisively upright (`0 ≤ angle < uprightAngleThresholdDegrees`) → benign
+         * stop, not a crash. Counting these vs CRASH_OK measures how often the veto
+         * avoids an FP; a `MANUAL_SOS` shortly after a GAP_VETO would flag the rare FN
+         * (real crash that left the bike upright). The gap value is recoverable from the
+         * preceding SIL_IN / IMPACT_IN rows.
+         */
+        GAP_UPRIGHT_VETO("GAP_VETO"),
+        /**
          * SILENCE_CHECK timed out — device entered the silence phase but never achieved
          * uninterrupted stillness within the double-window period → false alarm at stage 3.
          * Distinct from IMPACT_TMO (which fires before entering SILENCE_CHECK at all).

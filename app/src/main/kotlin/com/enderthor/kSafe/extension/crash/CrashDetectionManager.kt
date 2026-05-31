@@ -566,6 +566,19 @@ class CrashDetectionManager(
             }
         }
 
+        // ─── Diagnostic: GAP-regime upright veto (R6-F, FP #2 fix) ──────────
+        // A delayed stop reached the 20 s confirm gate but orientation showed the
+        // bike decisively upright → the gap regime's confirm was vetoed (benign
+        // stop, not a crash). Logged once per occurrence so calibration data can
+        // count vetoes vs CRASH_OK and catch any real-crash FN (paired MANUAL_SOS).
+        if (stateMachine.lastGapUprightVeto) {
+            calibLogger?.log(CalibrationLogger.Event.GAP_UPRIGHT_VETO) {
+                val dev = abs(sample.rawMagnitude - GRAVITY)
+                "angle=%.1f,upright_thr=${stateMachine.thresholds.uprightAngleThresholdDegrees},speed=%.1f,deviation=%.2f,cadence=%.0f,grade=%.1f,preset=${config.crashSensitivity}".formatUs(
+                    stateMachine.lastGapUprightVetoAngleDeg, currentSpeedKmh, dev, currentCadence, currentGrade)
+            }
+        }
+
         // ─── Window-progress accumulators ───────────────────────────────────
         if (stateMachine.state == CrashStateMachine.State.IMPACT) {
             val deviation = abs(sample.rawMagnitude - GRAVITY)
@@ -774,6 +787,14 @@ class CrashDetectionManager(
                     "cadence=%.0f,speed=%.1f,deviation=%.2f,grade=%.1f".formatUs(
                         currentCadence, currentSpeedKmh, deviation, currentGrade)
                 }
+            } else if (stateMachine.lastGapUprightVeto) {
+                // R6-F: the 20 s silence WAS achieved — the confirm was vetoed on
+                // upright orientation (benign delayed stop), NOT a timeout. The
+                // GAP_UPRIGHT_VETO row was already emitted this tick; suppress the
+                // misleading SILENCE_TIMEOUT but still snapshot 2 s later so the
+                // calibration trail shows whether the bike stayed upright/still.
+                Timber.d("GAP-regime upright veto → benign delayed stop, resetting")
+                schedulePostResetSnapshot("GAP_VETO")
             } else {
                 Timber.d("Silence never achieved → false alarm, resetting")
                 calibLogger?.log(CalibrationLogger.Event.SILENCE_TIMEOUT) {

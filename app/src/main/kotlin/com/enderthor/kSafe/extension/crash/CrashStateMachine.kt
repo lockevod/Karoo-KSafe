@@ -333,6 +333,36 @@ class CrashStateMachine(
     @Volatile var lastCadenceGateSuppressedAngleDeg: Double = -1.0
         private set
 
+    /**
+     * Set to `true` on the most recent [onSample] call when a GAP-regime confirm
+     * (`firstSilenceGapMs > delayedStopGapMs`) reached the 20 s confirm gate but
+     * was **vetoed** because the silence-window orientation shows the device is
+     * decisively upright (`0 ≤ angle < uprightAngleThresholdDegrees`) — a benign
+     * delayed stop, not a crash. The state machine returns
+     * [Decision.ReturnToMonitoring] instead of [Decision.Confirm] in that case.
+     *
+     * The gap regime otherwise confirms on stillness ALONE
+     * ([computeEffectiveSilenceMs] returns the upright window before
+     * [currentOrientationAngleDeg] is ever consulted), which produced FP #2
+     * (2026-05-31, session `9e5679`): a gravel bump → coast to a stop → stand
+     * motionless and upright for 20 s confirmed as a crash. A real crash
+     * reorients the bike; a stop-and-stand leaves it ≈ as upright as the
+     * pre-impact reference. R6-F.
+     *
+     * Read once per [onSample] by the facade to emit a `GAP_UPRIGHT_VETO`
+     * calibration row. Per-sample edge — cleared at the top of [onSample].
+     */
+    @Volatile var lastGapUprightVeto: Boolean = false
+        private set
+
+    /**
+     * Orientation angle (degrees vs the pre-impact reference) at the moment the
+     * GAP-regime upright veto fired. `-1.0` when no veto fired this tick. Read by
+     * the facade only when [lastGapUprightVeto] is `true`.
+     */
+    @Volatile var lastGapUprightVetoAngleDeg: Double = -1.0
+        private set
+
     /** Snapshot of the current pre-impact reference. For calibration logging. */
     val preImpactReference: PreImpactRef get() = preImpactRef
 
@@ -351,6 +381,8 @@ class CrashStateMachine(
         // triggers; if no handler sets them, they stay false for this tick.
         lastCadenceGateSuppressed = false
         lastCadenceGateSuppressedAngleDeg = -1.0
+        lastGapUprightVeto = false
+        lastGapUprightVetoAngleDeg = -1.0
 
         return when (state) {
             State.MONITORING -> handleMonitoring(sample, now)
@@ -839,6 +871,31 @@ class CrashStateMachine(
 
         return when {
             isStill && (now - silenceStartedMs) >= effectiveSilenceMs -> {
+                // R6-F — GAP-regime upright veto (FP #2, 2026-05-31 session 9e5679).
+                // The gap regime (firstSilenceGapMs > delayedStopGapMs) is the ONLY
+                // confirm path that ignores orientation: computeEffectiveSilenceMs
+                // returns the 20 s upright window before currentOrientationAngleDeg()
+                // is consulted, so a gravel bump → coast to a stop → stand motionless
+                // and UPRIGHT for 20 s confirmed as a crash. A real crash reorients
+                // the bike (it falls over); a stop-and-stand leaves it ≈ as upright as
+                // the pre-impact reference. So in the gap regime ONLY, if orientation
+                // is now computable AND decisively upright (0 ≤ angle <
+                // uprightAngleThresholdDegrees), treat it as a benign delayed stop and
+                // return to MONITORING. When the angle is non-upright (on side, ≥ the
+                // threshold) OR not computable (-1.0: invalid ref / too few samples)
+                // we confirm exactly as before — the orientation regime, the on-side
+                // paths, and the no-orientation-data safety net are all untouched.
+                if (firstSilenceGapMs > thresholds.delayedStopGapMs) {
+                    val gapAngle = currentOrientationAngleDeg()
+                    if (gapAngle >= 0.0 && gapAngle < thresholds.uprightAngleThresholdDegrees) {
+                        lastGapUprightVeto = true
+                        lastGapUprightVetoAngleDeg = gapAngle
+                        resetTimers()
+                        resetSilenceWindow()
+                        state = State.MONITORING
+                        return Decision.ReturnToMonitoring
+                    }
+                }
                 // CONFIRMED. Capture the actual silence window that fired
                 // before resetSilenceWindow() clears the latch — the facade
                 // reads this for CRASH_CONFIRMED diagnostic logging.

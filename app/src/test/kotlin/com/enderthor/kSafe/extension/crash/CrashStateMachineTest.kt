@@ -566,6 +566,82 @@ class CrashStateMachineTest {
         assertEquals(4_500L, sm.lastConfirmedSilenceMs)
     }
 
+    // ── R6-F: GAP-regime upright veto (FP #2, 2026-05-31 session 9e5679) ─────
+    // A gravel bump → coast to a stop (gap > delayedStopGapMs) → stand motionless
+    // and UPRIGHT for 20 s. The gap regime confirms on stillness alone (it never
+    // consults orientation); the upright veto must suppress that confirm. Non-
+    // upright (on-side) and no-orientation-data stops must still confirm.
+
+    @Test
+    fun `R6-F gap regime upright stop is vetoed and does NOT confirm`() {
+        val (sm, _) = smEnteringSilence(
+            gapMs = 12_000L,
+            preRef = PreImpactRef(0.0, 0.0, 9.81, valid = true),
+            silenceAz = 9.81, silenceAx = 0.0,   // upright, matches the reference → angle ~0°
+        )
+        assertEquals(CrashStateMachine.State.SILENCE_CHECK, sm.state)
+        // Feed >20 s of continuous upright stillness. Must NEVER confirm; the veto
+        // must instead return to MONITORING with the diagnostic flag set.
+        var t = 1_012_000L
+        var sawConfirm = false
+        var sawVeto = false
+        repeat(25) {
+            t += 1000L
+            val d = sm.onSample(sample(time = t, raw = 9.81, smoothed = 9.81, az = 9.81, ax = 0.0))
+            if (d is CrashStateMachine.Decision.Confirm) sawConfirm = true
+            if (d is CrashStateMachine.Decision.ReturnToMonitoring && !sawVeto) {
+                sawVeto = true
+                assertTrue("veto flag must be set for the GAP_VETO calibration row",
+                    sm.lastGapUprightVeto)
+                assertTrue("veto angle must be upright (0 ≤ angle < 45°), was ${sm.lastGapUprightVetoAngleDeg}",
+                    sm.lastGapUprightVetoAngleDeg >= 0.0 &&
+                    sm.lastGapUprightVetoAngleDeg < 45.0)
+            }
+        }
+        assertFalse("upright delayed stop must NOT confirm (R6-F veto)", sawConfirm)
+        assertTrue("veto must fire and return to MONITORING", sawVeto)
+        assertEquals(CrashStateMachine.State.MONITORING, sm.state)
+    }
+
+    @Test
+    fun `R6-F gap regime on-side stop still confirms (veto does not engage)`() {
+        val (sm, _) = smEnteringSilence(
+            gapMs = 12_000L,
+            preRef = PreImpactRef(0.0, 0.0, 9.81, valid = true),
+            silenceAz = 0.0, silenceAx = 9.81,   // on-side, ~90° from the reference
+        )
+        var t = 1_012_000L
+        var confirmed = false
+        repeat(25) {
+            t += 1000L
+            if (sm.onSample(sample(time = t, raw = 9.81, smoothed = 9.81, az = 0.0, ax = 9.81))
+                    is CrashStateMachine.Decision.Confirm) confirmed = true
+        }
+        assertTrue("on-side delayed stop must still confirm at 20 s", confirmed)
+        assertEquals(20_000L, sm.lastConfirmedSilenceMs)
+        assertFalse("veto must NOT fire on an on-side stop", sm.lastGapUprightVeto)
+    }
+
+    @Test
+    fun `R6-F gap regime with invalid reference still confirms (no orientation data)`() {
+        // Fallback safety net: when orientation is not computable the gap regime
+        // keeps its original confirm-on-stillness behaviour.
+        val (sm, _) = smEnteringSilence(
+            gapMs = 12_000L,
+            preRef = PreImpactRef.INVALID,
+            silenceAz = 9.81, silenceAx = 0.0,
+        )
+        var t = 1_012_000L
+        var confirmed = false
+        repeat(25) {
+            t += 1000L
+            if (sm.onSample(sample(time = t, raw = 9.81, smoothed = 9.81, az = 9.81, ax = 0.0))
+                    is CrashStateMachine.Decision.Confirm) confirmed = true
+        }
+        assertTrue("invalid-ref gap stop must still confirm (orientation unavailable)", confirmed)
+        assertEquals(20_000L, sm.lastConfirmedSilenceMs)
+    }
+
     // ── Regression: silence-window accumulator resets on silence-break ───────
 
     @Test
@@ -1017,7 +1093,11 @@ class CrashStateMachineTest {
     @Test
     fun `still rider in late-entry long-gap scenario still confirms with the 20s window`() {
         // Test B — the genuine crash. Same gap-regime setup; a still rider must still
-        // CONFIRM, with the 20 s upright/gap window recorded.
+        // CONFIRM, with the 20 s gap window recorded. The silence orientation is ON-SIDE
+        // (az≈0, ax≈9.81 vs the upright pre-impact reference → ~90°): a real crash leaves
+        // the bike down, which the R6-F upright veto allows to confirm. The benign
+        // UPRIGHT delayed-stop (the FP R6-F suppresses) is covered separately by
+        // `R6-F gap regime upright stop is vetoed and does NOT confirm`.
         val (sm, base) = smEnteringSilenceGapRegime(gapMs = 2_000L)
         assertEquals(CrashStateMachine.State.SILENCE_CHECK, sm.state)
         // SILENCE_CHECK entered at base + 2_000; 20 s window → confirm at >= base + 22_000.
@@ -1025,10 +1105,10 @@ class CrashStateMachineTest {
         var t = base + 2_000L
         while (!confirmed && t < base + 30_000L) {
             t += 1_000L
-            val d = sm.onSample(sample(time = t, raw = 9.81, smoothed = 9.81, az = 9.81))
+            val d = sm.onSample(sample(time = t, raw = 9.81, smoothed = 9.81, az = 0.0, ax = 9.81))
             if (d == CrashStateMachine.Decision.Confirm) confirmed = true
         }
-        assertTrue("a continuously-still rider must still confirm in the gap regime", confirmed)
+        assertTrue("a continuously-still on-side rider must still confirm in the gap regime", confirmed)
         assertEquals(20_000L, sm.lastConfirmedSilenceMs)
     }
 

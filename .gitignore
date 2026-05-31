@@ -19,6 +19,11 @@ actual*.json
 # Internal planning / design notes — kept local, not part of the public repo
 /docs/superpowers/
 
+# Crash-detection calibration ground-truth labels. Kept local only — Sergi's
+# personal calibration data (rider reports + per-session FN/FP labels), not
+# redistributed. Untracked 2026-05-31; the file stays on disk.
+/docs/calibration-annotations.md
+
 # macOS Finder cruft
 .DS_Store
 **/.DS_Store
