@@ -32,7 +32,8 @@ class FuelingOverlayManager(private val context: Context) {
                     Timber.w("FuelingOverlay: SYSTEM_ALERT_WINDOW not granted — skipped")
                     return@post
                 }
-                removeInternal()
+                // best-effort remove of any prior view, always clearing the ref so we never stack overlays
+                view?.let { old -> runCatching { windowManager.removeView(old) }; view = null }
                 val v = LayoutInflater.from(context).inflate(R.layout.overlay_fueling_prompt, null, false)
                 val params = WindowManager.LayoutParams(
                     WindowManager.LayoutParams.MATCH_PARENT,

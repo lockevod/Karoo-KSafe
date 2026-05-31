@@ -2282,6 +2282,7 @@ class KSafeExtension : KarooExtension("ksafe", BuildConfig.VERSION_NAME), Corout
             com.enderthor.kSafe.extension.util.FuelingPresentation.OVERLAY_LOG_UNDO ->
                 fuelingOverlay.showPrompt(req.title, req.detail, getString(R.string.fueling_overlay_log), 15_000L) {
                     req.onLog()
+                    fuelingOverlay.remove()
                     fuelingOverlay.showPrompt(req.title, req.detail, getString(R.string.fueling_overlay_undo), 4_000L) {
                         req.onUndo(); fuelingOverlay.remove()
                     }
