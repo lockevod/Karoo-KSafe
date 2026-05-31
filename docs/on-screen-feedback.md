@@ -47,7 +47,7 @@ falls back to the SDK path, so emergency beeps then also respect mute — i.e. w
 | **Medical collapse → 10 s mini-confirm** | Same **system overlay** countdown (10 s) + beeps, before escalating to the full emergency. |
 | **Alert firing (`ALERTING`)** | Beep `EMERGENCY_PATTERN` (rising, "sending now", **bypass**). SOS field turns red (`ALERTING`). |
 | **Delivery FAILED** (SOS reached nobody, after all retries) | Beep `DELIVERY_FAILED` (descending, **bypass**) + **exactly one** visual channel by ride state: **InRideAlert** (red) if on the ride screen, **system overlay** (info mode, Dismiss) if off it, **SystemNotification** if overlay permission is missing. |
-| **Delivery PARTIAL** (some but not all contacts reached) | Beep `PARTIAL` (two-tone, **bypass**) + **InRideAlert** (amber) **and** **SystemNotification** (both, regardless of ride state). |
+| **Delivery PARTIAL** (some but not all contacts reached) | Beep `PARTIAL` (two-tone, **bypass**) + **exactly one** visual channel by ride state (same routing as Delivery FAILED): **InRideAlert** (amber) if on the ride screen, **system overlay** (info mode) if off it, **SystemNotification** if overlay permission is missing. |
 
 > Cancelling: the countdown overlay's Cancel button (and a tap on the SOS / Timer field)
 > aborts the emergency, including during `ALERTING` (cancels the in-flight retry job).

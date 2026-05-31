@@ -100,6 +100,7 @@
     <string name="fueling_slot_label_label">Etiqueta</string>
     <string name="fueling_slot_grams_label">g</string>
     <string name="fueling_slot_ml_label">ml</string>
+    <string name="fueling_color_label">Color</string>
     <string name="fueling_combined_section">Registro combinado</string>
     <string name="fueling_combined_concentration_label">Carbos por 500 ml (g)</string>
     <string name="fueling_combined_hint">Un toque registra una bebida + sus carbohidratos. Fija la concentración una vez; los carbos de cada botón se autocompletan según su volumen (editable). Activo cuando el seguimiento de carbos y/o hidratación está ON.</string>

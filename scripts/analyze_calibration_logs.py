@@ -12,6 +12,9 @@ Event catalogue understood by this script:
     PERIODIC, HIGH_MAG, IMPACT_IN, IMPACT_TMO, CRASH_OK (CRASH_CONFIRMED),
     CRASH_NO (CRASH_CANCELLED), RST_SNAP, CAD_GATE,
     CAD_GATE_SUPPRESSED (diagnostic — cadence gate suppressed by on-side angle),
+    GAP_VETO (GAP_UPRIGHT_VETO — R6-F: gap-regime confirm vetoed because the
+    bike was within the tight upright cone; `angle` is the measured silence
+    orientation, a potential FN if closely followed by EMERG_TRIG/MANUAL_SOS),
     GYRO_BLK, GPS_STALE, TERRAIN_CLUST, SIL_IN, SIL_TMO, SIL_BRK, SPD_REJECT,
     POST_TMO_BOOST, CRASH_SUPPRESSED (gate suppressed inside cooldown)
 
@@ -198,6 +201,10 @@ class FileSummary:
         # The dev's first-resort fields when triaging a "what happened" report.
         # Each list stores the full payload + elapsed_min for verbatim printing.
         self.crash_cancelled_payloads: list[dict[str, str | float]] = []
+        # R6-F: gap-regime confirms vetoed by the tight upright cone. Each is a
+        # potential FP AVOIDED; one closely followed by EMERG_TRIG/MANUAL_SOS is
+        # a potential FALSE NEGATIVE. `angle` is the measured silence orientation.
+        self.gap_upright_veto_payloads: list[dict[str, str | float]] = []
         self.medical_cancelled_payloads: list[dict[str, str | float]] = []
         # Non-crash/medical cancels (wellness / SOS / check-in / speed-drop).
         # `subkind` payload field carries the EmergencyReason.name.
@@ -362,6 +369,13 @@ class FileSummary:
                 self.hydration_periodic_count += 1
             elif ev == "CAD_GATE_SUPPRESSED" or ev == "CADENCE_GATE_SUPPRESSED":
                 self.cadence_gate_suppressed_count += 1
+            elif ev == "GAP_VETO" or ev == "GAP_UPRIGHT_VETO":
+                # R6-F: gap-regime confirm vetoed because the bike was within the
+                # tight upright cone. `angle` is the measured silence orientation
+                # (the old gap regime logged pre_impact_angle=-1.0). Surfaced
+                # verbatim: a veto is a potential FP avoided, but one closely
+                # followed by EMERG_TRIG / MANUAL_SOS is a potential FALSE NEGATIVE.
+                self.gap_upright_veto_payloads.append({"elapsed_min": el_s / 60.0, **p})
             elif ev == "HR_FLAT" or ev == "HR_COLLAPSE":
                 # Medical detector fired. May or may not have reached the
                 # alert path depending on response-level config.
@@ -520,6 +534,13 @@ def _print_per_file(summaries: list[FileSummary]):
         _print_payload_block(
             "CRASH CANCELLED by rider", fs.crash_cancelled_payloads,
             fields=("how_long_ms", "reason"),
+        )
+        _print_payload_block(
+            "GAP-UPRIGHT VETO (R6-F: upright delayed-stop confirm suppressed — "
+            "check for a following EMERG_TRIG/MANUAL_SOS = potential FN)",
+            fs.gap_upright_veto_payloads,
+            fields=("angle", "veto_thr", "speed", "deviation", "cadence"),
+            highlight=True,
         )
         _print_payload_block(
             "MEDICAL CANCELLED by rider", fs.medical_cancelled_payloads,

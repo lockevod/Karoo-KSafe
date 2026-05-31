@@ -704,9 +704,9 @@ private fun CrashProfileCard(
                             modifier = Modifier.fillMaxWidth(),
                             horizontalArrangement = Arrangement.SpaceBetween
                         ) {
-                            Text("20 m/s² (very sensitive)", style = MaterialTheme.typography.labelSmall,
+                            Text(stringResource(R.string.sensitivity_scale_min), style = MaterialTheme.typography.labelSmall,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant)
-                            Text("70 m/s² (hard impacts only)", style = MaterialTheme.typography.labelSmall,
+                            Text(stringResource(R.string.sensitivity_scale_max), style = MaterialTheme.typography.labelSmall,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant)
                         }
                     }

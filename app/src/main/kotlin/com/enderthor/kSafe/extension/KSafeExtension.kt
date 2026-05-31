@@ -1684,14 +1684,25 @@ class KSafeExtension : KarooExtension("ksafe", BuildConfig.VERSION_NAME), Corout
             scheduleCustomRevert(slot, 4_000L)
             return "Message resolved to empty — check tokens (e.g. {livetrack} requires a Karoo Live key)."
         }
-        val ok = sender.sendInfo(resolved, config.activeProvider)
-        return if (ok) {
-            CustomMessageState.update(slot, CustomMessageState.SENT)
-            scheduleCustomRevert(slot, 4_000L)
-            "Custom message sent! ✓"
-        } else {
-            CustomMessageState.update(slot, CustomMessageState.ERROR)
-            "Send failed — check your provider configuration."
+        val outcome = sender.sendInfoOutcome(resolved, config.activeProvider)
+        return when {
+            outcome.delivered > 0 -> {
+                CustomMessageState.update(slot, CustomMessageState.SENT)
+                scheduleCustomRevert(slot, 4_000L)
+                "Custom message sent! ✓"
+            }
+            // Deliverable config but the per-contact alert scopes filtered every recipient
+            // out (e.g. all set to Emergency-only). Nobody received it — do NOT flash "sent ✓".
+            outcome.infoSuccess -> {
+                Timber.w("Custom message slot $slot: no recipients (all scopes exclude info messages)")
+                CustomMessageState.update(slot, CustomMessageState.ERROR)
+                scheduleCustomRevert(slot, 4_000L)
+                "No recipients for this message — check each contact's alert scope (set to Emergency-only?)."
+            }
+            else -> {
+                CustomMessageState.update(slot, CustomMessageState.ERROR)
+                "Send failed — check your provider configuration."
+            }
         }
     }
 

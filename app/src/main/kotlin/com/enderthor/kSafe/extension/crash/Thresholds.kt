@@ -87,6 +87,23 @@ data class Thresholds(
      */
     val uprightAngleThresholdDegrees: Double = 45.0,
     /**
+     * Angle (degrees) below which the GAP-regime confirm is VETOED (R6-F).
+     *
+     * Deliberately MUCH tighter than [uprightAngleThresholdDegrees] (45°): that
+     * one is a *timing* threshold (how long to wait before confirming — both
+     * sides still confirm), whereas this one is a *fire / don't-fire* threshold
+     * that SUPPRESSES an SOS. A false negative (missing a real crash) is far
+     * worse than a false positive, so the veto only engages when the bike is
+     * almost identical to its pre-impact orientation (a rider who coasted to a
+     * stop and stands motionless and upright — the session 9e5679 FP measured
+     * ≈0°). A bike merely tilted/knocked to 15–45° is left to confirm: that
+     * posture is consistent with a real crash and must NOT be vetoed.
+     *
+     * Only consulted in the gap regime (`firstSilenceGapMs > delayedStopGapMs`);
+     * the prompt-stop orientation regime is unaffected.
+     */
+    val gapVetoUprightAngleDeg: Double = 15.0,
+    /**
      * Angle (degrees) from the pre-impact reference above which the bike is
      * considered "decisively on the ground" — used to gate the speed-rise
      * relaxation in SILENCE_CHECK. Stricter than [uprightAngleThresholdDegrees]
