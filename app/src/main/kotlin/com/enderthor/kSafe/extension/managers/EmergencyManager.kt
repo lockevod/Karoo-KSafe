@@ -1094,14 +1094,11 @@ class EmergencyManager(
             )),
             halPattern = BuzzerClient.DELIVERY_FAILED_PATTERN,
         )
-        // Unique-per-fire suffix on both ids (InRideAlert AND SystemNotification):
-        // the sender's retry loop can call notifyDeliveryFailure multiple times for
-        // the same provider+reason across its ~30 min retry window. Re-dispatching
-        // the same id has been observed to crash the Karoo ride app's overlay
-        // tracker.
-        // Unique-per-fire suffix on the ids: the sender's retry loop can call this multiple
-        // times for the same provider+reason across its ~30 min window; re-dispatching the
-        // same id has crashed the Karoo ride app's overlay tracker.
+        // Unique-per-fire suffix on the ids. notifyDeliveryFailure fires ONCE per emergency
+        // (sender.sendAlert runs all retry cycles internally and returns a single outcome),
+        // but a *separate* later emergency with the same provider+reason would reuse a stable
+        // id — and re-dispatching a duplicate id to the host has crashed the Karoo ride app's
+        // overlay/notification tracker. The timestamp suffix keeps every fire distinct.
         val failureDispatchedAtMs = System.currentTimeMillis()
         // ONE channel, picked by ride state — never two at once. On the ride screen the
         // InRideAlert is the visible native channel, so the overlay would just stack a sticky
