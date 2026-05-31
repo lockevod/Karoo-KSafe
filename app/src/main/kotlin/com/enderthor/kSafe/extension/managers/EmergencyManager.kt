@@ -340,19 +340,19 @@ class EmergencyManager(
             checkinIntervalMinutes = config.checkinIntervalMinutes
         )
 
-        // Escalating pre-expiry warnings. A single -10 min beep was being missed on long
-        // rides — field data showed one rider let the check-in expire 4× in a single ride,
-        // each time landing in a live SOS COUNTDOWN they had to scramble to cancel (one with
-        // only ~24 s of margin). Re-warn at -5 and -1 min, escalating BEEP_LONG → BEEP_URGENT,
-        // and wake the screen on the final nudge. Audio-only by design: the rider resets by
-        // tapping the Timer field. The warning is deliberately NOT a cancellable alert — that
-        // gesture would mimic the crash-cancel flow and blur two distinct interactions.
+        // Escalating pre-expiry warnings at -5 and -1 min. The original single -10 min beep
+        // was being missed on long rides — field data showed one rider let the check-in expire
+        // 4× in a single ride, each time landing in a live SOS COUNTDOWN they had to scramble
+        // to cancel (one with only ~24 s of margin). Both nudges use the urgent beep; the -1
+        // min one also wakes the screen. Audio-only by design: the rider resets by tapping the
+        // Timer field. The warning is deliberately NOT a cancellable alert — that gesture would
+        // mimic the crash-cancel flow and blur two distinct interactions.
         //
         // halPattern != null ⇒ route through playEmergencyBeep so it pierces a muted Karoo
         // when the rider enabled the buzzer override. Only the -1 min stage does this: it is
         // the LAST audible heads-up before CHECKIN_EXPIRED turns into a live SOS countdown, so
-        // a muted rider must hear it or they're blindsided by the countdown itself. The -10/-5
-        // stages stay mute-respecting (raw dispatch), matching the documented "check-in beeps
+        // a muted rider must hear it or they're blindsided by the countdown itself. The -5 min
+        // stage stays mute-respecting (raw dispatch), matching the documented "check-in beeps
         // respect mute" contract. Riders without the override fall back to SDK dispatch on
         // every stage (playEmergencyBeep handles that internally) — behaviour unchanged.
         data class WarnStage(
@@ -362,7 +362,6 @@ class EmergencyManager(
             val halPattern: List<BuzzerClient.Tone>?,
         )
         val warnStages = listOf(
-            WarnStage(10, BEEP_LONG, wakeScreen = true, halPattern = null),
             WarnStage(5, BEEP_URGENT, wakeScreen = false, halPattern = null),
             WarnStage(1, BEEP_URGENT, wakeScreen = true, halPattern = BuzzerClient.COUNTDOWN_TICK),
         )

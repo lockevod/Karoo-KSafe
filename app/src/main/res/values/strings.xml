@@ -281,7 +281,7 @@
     <string name="checkin_interval_label">Check-in interval (minutes)</string>
     <string name="checkin_warning_title">Check-in in %1$d min</string>
     <string name="checkin_warning_detail">Tap the Check-in field to confirm you\'re OK</string>
-    <string name="checkin_hint">Add the \"KSafe Check-in\" field to a data page: tap it during the ride to confirm you\'re OK and reset the timer. You\'ll be reminded with beeps 10, 5 and 1 min before it expires. If the timer runs out without a tap, your contacts are alerted automatically — so reset it well before it expires.</string>
+    <string name="checkin_hint">Add the \"KSafe Check-in\" field to a data page: tap it during the ride to confirm you\'re OK and reset the timer. You\'ll be reminded with beeps 5 and 1 min before it expires. If the timer runs out without a tap, your contacts are alerted automatically — so reset it well before it expires.</string>
     <string name="active_label">Extension active</string>
     <string name="karoo_live_label">Notify contacts on ride start</string>
     <string name="karoo_live_hint">Sends a message when the ride starts (first start only — resuming after a pause does NOT send it again). Requires a Karoo Live key to include the tracking link; leave the key empty to send a plain message without a link.</string>
