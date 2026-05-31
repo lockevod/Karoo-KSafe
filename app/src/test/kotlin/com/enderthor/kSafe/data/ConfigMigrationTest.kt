@@ -204,4 +204,12 @@ class ConfigMigrationTest {
         assertEquals(500, migrated.combined2Ml)
         assertEquals(60, migrated.combined2Carbs)
     }
+
+    @Test
+    fun `v21 migrates to 22 with fueling alert button mode defaulting to OFF`() {
+        val old = KSafeConfig(configVersion = 21)
+        val migrated = old.migrateToLatest()
+        assertEquals(CONFIG_VERSION, migrated.configVersion)
+        assertEquals(FuelingAlertButtonMode.OFF, migrated.fuelingAlertButtonMode)
+    }
 }

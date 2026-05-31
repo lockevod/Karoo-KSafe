@@ -114,8 +114,10 @@ const val KAROO_LIVE_BASE_URL = "https://dashboard.hammerhead.io/live/"
  *  v20 → v21: combined fuel-log fields added (combinedCarbConcentrationPer500ml + the
  *             combined1/2 Label/Ml/Carbs/Color set) for the combined drink+carbs tap field.
  *             Pure version stamp; all fields have defaults, so existing installs are unaffected.
+ *  v21 → v22: fuelingAlertButtonMode added (in-alert fueling logging button).
+ *             Pure version stamp; default OFF preserves existing no-button behaviour.
  */
-const val CONFIG_VERSION = 21
+const val CONFIG_VERSION = 22
 
 /**
  * Canonical minSpeedForCrashKmh value per preset.
@@ -258,6 +260,9 @@ val FIELD_COLOR_PALETTE: List<Int> = listOf(
 
 @Serializable
 enum class ProviderType { CALLMEBOT, PUSHOVER, NTFY, TELEGRAM }
+
+@Serializable
+enum class FuelingAlertButtonMode { OFF, LOG, LOG_UNDO }
 
 /**
  * Which alert categories a single configured contact receives.
@@ -594,6 +599,9 @@ data class KSafeConfig(
     val hydBeepPattern: BeepPattern = BeepPattern.SINGLE_LONG,
     /** Background colour for the hydration InRideAlert overlay. Default = blue (water). */
     val hydrationAlertBgColor: Int = FUELING_ALERT_COLOR_BLUE,
+    /** Controls the action button shown on fueling in-ride alerts.
+     *  OFF = no button; LOG = one-tap log the alerted item; LOG_UNDO = log + undo. */
+    val fuelingAlertButtonMode: FuelingAlertButtonMode = FuelingAlertButtonMode.OFF,
     val drink1Label: String = "Sip",     val drink1Ml: Int = 100,    val drink1Color: Int = FIELD_COLOR_AUTO,    val drink1Icon: String = "💧",
     val drink2Label: String = "Bottle",  val drink2Ml: Int = 500,    val drink2Color: Int = FIELD_COLOR_AUTO,    val drink2Icon: String = FUEL_BOTTLE_DRAWABLE,
     /** Carbs per 500 ml of the rider's drink mix — used by the Fueling screen to auto-fill
@@ -1338,6 +1346,11 @@ fun KSafeConfig.migrateToLatest(): KSafeConfig {
         // existing installs behave identically until the rider places a combined field.
         c = c.copy(configVersion = 21)
         Timber.i("KSafeConfig migrated v%d→v21 (combined fuel-log fields)", originalVersion)
+    }
+
+    if (c.configVersion < 22) {
+        c = c.copy(configVersion = 22)
+        Timber.i("KSafeConfig migrated v%d→v22 (in-alert fueling logging mode)", originalVersion)
     }
 
     return c
