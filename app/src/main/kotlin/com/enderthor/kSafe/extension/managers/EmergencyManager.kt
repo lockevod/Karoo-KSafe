@@ -377,7 +377,7 @@ class EmergencyManager(
             WarnStage(1, BEEP_URGENT, wakeScreen = true, halPattern = BuzzerClient.COUNTDOWN_TICK),
         )
         checkinWarningJob = scope.launch {
-            // Delays are cumulative from job start. Offsets are descending (10,5,1) so the
+            // Delays are cumulative from job start. Offsets are descending (5,1) so the
             // targets are ascending; a stage whose target is already behind us (interval
             // shorter than the offset, or a resume past that milestone) is skipped without
             // disturbing the cumulative clock.

@@ -336,9 +336,10 @@ class CrashStateMachine(
     /**
      * Set to `true` on the most recent [onSample] call when a GAP-regime confirm
      * (`firstSilenceGapMs > delayedStopGapMs`) reached the 20 s confirm gate but
-     * was **vetoed** because the silence-window orientation shows the device is
-     * decisively upright (`0 ≤ angle < uprightAngleThresholdDegrees`) — a benign
-     * delayed stop, not a crash. The state machine returns
+     * was **vetoed** because the silence-window orientation shows the device within
+     * the tight upright cone (`0 ≤ angle < gapVetoUprightAngleDeg`, 15° by default —
+     * NOT the 45° uprightAngleThresholdDegrees) — a benign delayed stop, not a crash.
+     * The state machine returns
      * [Decision.ReturnToMonitoring] instead of [Decision.Confirm] in that case.
      *
      * The gap regime otherwise confirms on stillness ALONE

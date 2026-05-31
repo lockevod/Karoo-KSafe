@@ -288,7 +288,7 @@ fun FuelingScreen(vm: MainViewModel) {
                     onAmountText = { carb1Grams = it },
                 )
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    FieldColorPicker(label = "Colour", selected = carb1Color, modifier = Modifier.weight(1f),
+                    FieldColorPicker(label = stringResource(R.string.fueling_color_label), selected = carb1Color, modifier = Modifier.weight(1f),
                         onSelected = { v -> carb1Color = v; vm.updateConfig { cfg -> cfg.copy(carb1Color = v) } })
                     FieldEmojiPicker(label = "Icon", selected = carb1Icon, emojis = com.enderthor.kSafe.data.FUEL_EMOJI_CARB, modifier = Modifier.weight(1f),
                         onSelected = { v -> carb1Icon = v; vm.updateConfig { cfg -> cfg.copy(carb1Icon = v) } })
@@ -299,7 +299,7 @@ fun FuelingScreen(vm: MainViewModel) {
                     onAmountText = { carb2Grams = it },
                 )
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    FieldColorPicker(label = "Colour", selected = carb2Color, modifier = Modifier.weight(1f),
+                    FieldColorPicker(label = stringResource(R.string.fueling_color_label), selected = carb2Color, modifier = Modifier.weight(1f),
                         onSelected = { v -> carb2Color = v; vm.updateConfig { cfg -> cfg.copy(carb2Color = v) } })
                     FieldEmojiPicker(label = "Icon", selected = carb2Icon, emojis = com.enderthor.kSafe.data.FUEL_EMOJI_CARB, modifier = Modifier.weight(1f),
                         onSelected = { v -> carb2Icon = v; vm.updateConfig { cfg -> cfg.copy(carb2Icon = v) } })
@@ -310,7 +310,7 @@ fun FuelingScreen(vm: MainViewModel) {
                     onAmountText = { carb3Grams = it },
                 )
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    FieldColorPicker(label = "Colour", selected = carb3Color, modifier = Modifier.weight(1f),
+                    FieldColorPicker(label = stringResource(R.string.fueling_color_label), selected = carb3Color, modifier = Modifier.weight(1f),
                         onSelected = { v -> carb3Color = v; vm.updateConfig { cfg -> cfg.copy(carb3Color = v) } })
                     FieldEmojiPicker(label = "Icon", selected = carb3Icon, emojis = com.enderthor.kSafe.data.FUEL_EMOJI_CARB, modifier = Modifier.weight(1f),
                         onSelected = { v -> carb3Icon = v; vm.updateConfig { cfg -> cfg.copy(carb3Icon = v) } })
@@ -469,7 +469,7 @@ fun FuelingScreen(vm: MainViewModel) {
                     onAmountText = { drink1Ml = it },
                 )
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    FieldColorPicker(label = "Colour", selected = drink1Color, modifier = Modifier.weight(1f),
+                    FieldColorPicker(label = stringResource(R.string.fueling_color_label), selected = drink1Color, modifier = Modifier.weight(1f),
                         onSelected = { v -> drink1Color = v; vm.updateConfig { cfg -> cfg.copy(drink1Color = v) } })
                     FieldEmojiPicker(label = "Icon", selected = drink1Icon, emojis = com.enderthor.kSafe.data.FUEL_EMOJI_DRINK, modifier = Modifier.weight(1f),
                         onSelected = { v -> drink1Icon = v; vm.updateConfig { cfg -> cfg.copy(drink1Icon = v) } })
@@ -480,7 +480,7 @@ fun FuelingScreen(vm: MainViewModel) {
                     onAmountText = { drink2Ml = it },
                 )
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    FieldColorPicker(label = "Colour", selected = drink2Color, modifier = Modifier.weight(1f),
+                    FieldColorPicker(label = stringResource(R.string.fueling_color_label), selected = drink2Color, modifier = Modifier.weight(1f),
                         onSelected = { v -> drink2Color = v; vm.updateConfig { cfg -> cfg.copy(drink2Color = v) } })
                     FieldEmojiPicker(label = "Icon", selected = drink2Icon, emojis = com.enderthor.kSafe.data.FUEL_EMOJI_DRINK, modifier = Modifier.weight(1f),
                         onSelected = { v -> drink2Icon = v; vm.updateConfig { cfg -> cfg.copy(drink2Icon = v) } })
@@ -537,7 +537,7 @@ fun FuelingScreen(vm: MainViewModel) {
                 val combinedMlLabel = stringResource(R.string.fueling_slot_ml_label)
                 val combinedGLabel = stringResource(R.string.fueling_slot_grams_label)
                 // Button 1
-                SlotRow(label = "Button 1", labelText = combined1Label, amountText = combined1Ml, unitLabel = combinedMlLabel, range = 0..1000,
+                SlotRow(label = "Slot 1", labelText = combined1Label, amountText = combined1Ml, unitLabel = combinedMlLabel, range = 0..1000,
                     onLabel = { v -> combined1Label = v.safeTake(8); vm.updateConfig { cfg -> cfg.copy(combined1Label = v.safeTake(8)) } },
                     onAmountCommit = { v ->
                         combined1Ml = v
@@ -555,10 +555,10 @@ fun FuelingScreen(vm: MainViewModel) {
                     onCommit = { v -> combined1Carbs = v; vm.updateConfig { it.copy(combined1Carbs = (v.toIntOrNull() ?: 0).coerceIn(0, 999)) } },
                     onTextChange = { combined1Carbs = it },
                 )
-                FieldColorPicker(label = "Colour", selected = combined1Color,
+                FieldColorPicker(label = stringResource(R.string.fueling_color_label), selected = combined1Color,
                     onSelected = { v -> combined1Color = v; vm.updateConfig { it.copy(combined1Color = v) } })
                 // Button 2
-                SlotRow(label = "Button 2", labelText = combined2Label, amountText = combined2Ml, unitLabel = combinedMlLabel, range = 0..1000,
+                SlotRow(label = "Slot 2", labelText = combined2Label, amountText = combined2Ml, unitLabel = combinedMlLabel, range = 0..1000,
                     onLabel = { v -> combined2Label = v.safeTake(8); vm.updateConfig { cfg -> cfg.copy(combined2Label = v.safeTake(8)) } },
                     onAmountCommit = { v ->
                         combined2Ml = v
@@ -576,7 +576,7 @@ fun FuelingScreen(vm: MainViewModel) {
                     onCommit = { v -> combined2Carbs = v; vm.updateConfig { it.copy(combined2Carbs = (v.toIntOrNull() ?: 0).coerceIn(0, 999)) } },
                     onTextChange = { combined2Carbs = it },
                 )
-                FieldColorPicker(label = "Colour", selected = combined2Color,
+                FieldColorPicker(label = stringResource(R.string.fueling_color_label), selected = combined2Color,
                     onSelected = { v -> combined2Color = v; vm.updateConfig { it.copy(combined2Color = v) } })
             }
         }
