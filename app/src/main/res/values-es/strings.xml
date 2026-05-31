@@ -283,8 +283,8 @@
     <!-- Estados del campo SOS (cortos para caber en el campo estrecho) -->
     <string name="sos_safe">BIEN</string>
     <string name="sos_countdown">SOS %1$ds</string>
-    <string name="sos_alerting">ALERTA\nENVIADA</string>
-    <string name="sos_tap_cancel">toca=anular</string>
+    <string name="sos_alerting">ENVIADA</string>
+    <string name="sos_tap_cancel">cancelar</string>
 
     <!-- Literales compartidos de estado de campo (carbo/bebida/mensaje/SOS) -->
     <string name="field_state_off">OFF</string>
@@ -297,7 +297,7 @@
     <string name="msg_default_title_3">MSG3</string>
     <string name="field_state_msg_sending">Enviando…</string>
     <string name="field_state_msg_sent">HECHO ✓</string>
-    <string name="field_state_msg_tap_send">toca=envía</string>
+    <string name="field_state_msg_tap_send">enviar</string>
 
     <!-- DataType Webhook -->
     <string name="field_state_webhook_tap">toca</string>
@@ -306,10 +306,10 @@
     <string name="field_state_webhook_ok">OK ✓</string>
 
     <!-- Error compartido "toca para reintentar" -->
-    <string name="field_state_err_retry">ERR reint.</string>
+    <string name="field_state_err_retry">ERR reint</string>
 
     <!-- DataType SafetyTimer -->
-    <string name="timer_cancel_countdown">CANCELA\n%1$ds</string>
+    <string name="timer_cancel_countdown">ANULA\n%1$ds</string>
 
     <!-- Motivos del consejo de forma. Args: %1$.0f, %1$d. -->
     <string name="readiness_reason_cardiac_drift">Deriva cardíaca %1$.0f%% en la última ruta</string>
