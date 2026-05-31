@@ -125,6 +125,12 @@
     <string name="fueling_hyd_alert_title">Bebe algo</string>
     <string name="fueling_hyd_alert_detail_deficit">Bebe ya — {deficit} ml de retraso</string>
     <string name="fueling_hyd_alert_detail_time">Bebe ya — {elapsed} min desde la última</string>
+    <string name="fueling_alert_button_mode_label">Registrar fueling desde la alerta</string>
+    <string name="fueling_alert_button_off">Off</string>
+    <string name="fueling_alert_button_log">Un toque</string>
+    <string name="fueling_alert_button_log_undo">Registrar + deshacer</string>
+    <string name="fueling_overlay_log">✓ Registrar</string>
+    <string name="fueling_overlay_undo">↶ Deshacer</string>
 
     <!-- BonusActions de Nutrición -->
     <string name="action_log_carb_1">KSafe: Registrar carbo 1</string>

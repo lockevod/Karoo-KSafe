@@ -134,6 +134,12 @@
     <string name="fueling_hyd_alert_title">Drink something</string>
     <string name="fueling_hyd_alert_detail_deficit">Drink now — behind {deficit} ml</string>
     <string name="fueling_hyd_alert_detail_time">Drink now — {elapsed} min since last</string>
+    <string name="fueling_alert_button_mode_label">Log fueling from the alert</string>
+    <string name="fueling_alert_button_off">Off</string>
+    <string name="fueling_alert_button_log">One tap</string>
+    <string name="fueling_alert_button_log_undo">Log + undo</string>
+    <string name="fueling_overlay_log">✓ Log</string>
+    <string name="fueling_overlay_undo">↶ Undo</string>
 
     <!-- Fueling BonusActions -->
     <string name="action_log_carb_1">KSafe: Log Carb 1</string>
