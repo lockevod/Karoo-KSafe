@@ -29,4 +29,8 @@ class FuelItemSelectorTest {
         assertNull(pickFuelItem(40, emptyList()))
         assertNull(pickFuelItem(40, listOf(FuelSlot(1, "X", 0))))
     }
+
+    @Test fun `zero deficit picks the smallest item`() {
+        assertEquals(3, pickFuelItem(0, slots)?.slot)
+    }
 }

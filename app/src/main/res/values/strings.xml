@@ -140,6 +140,7 @@
     <string name="fueling_alert_button_log_undo">Log + undo</string>
     <string name="fueling_overlay_log">✓ Log</string>
     <string name="fueling_overlay_undo">↶ Undo</string>
+    <string name="fueling_overlay_icon" translatable="false">🍫</string>
 
     <!-- Fueling BonusActions -->
     <string name="action_log_carb_1">KSafe: Log Carb 1</string>

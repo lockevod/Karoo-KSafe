@@ -490,25 +490,15 @@ fun FuelingScreen(vm: MainViewModel) {
             }
         }
 
-        // Combined logging card. One tap logs a drink + its carbs together. The carb
-        // concentration is set once; each button's carbs auto-fill from its volume via
-        // carbsFromVolume but stay editable as a manual override. No icon picker — the
-        // combined field's icon is fixed.
+        // Alert-mode card. Controls whether fueling alerts (carbs + hydration) show a
+        // one-tap log button, a log+undo pair, or no button at all. Placed here so it
+        // reads as "global fueling-alert behaviour" and is not buried inside the Combined
+        // logging section where it would appear to only affect combined entries.
         Card(elevation = CardDefaults.cardElevation(defaultElevation = 2.dp)) {
             Column(
                 modifier = Modifier.padding(10.dp),
                 verticalArrangement = Arrangement.spacedBy(8.dp),
             ) {
-                Text(
-                    text = stringResource(R.string.fueling_combined_section),
-                    style = MaterialTheme.typography.titleSmall,
-                    fontWeight = FontWeight.Bold,
-                )
-                Text(
-                    text = stringResource(R.string.fueling_combined_hint),
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
                 Column(verticalArrangement = Arrangement.spacedBy(4.dp), modifier = Modifier.fillMaxWidth()) {
                     Text(
                         text = stringResource(R.string.fueling_alert_button_mode_label),
@@ -547,6 +537,28 @@ fun FuelingScreen(vm: MainViewModel) {
                         }
                     }
                 }
+            }
+        }
+
+        // Combined logging card. One tap logs a drink + its carbs together. The carb
+        // concentration is set once; each button's carbs auto-fill from its volume via
+        // carbsFromVolume but stay editable as a manual override. No icon picker — the
+        // combined field's icon is fixed.
+        Card(elevation = CardDefaults.cardElevation(defaultElevation = 2.dp)) {
+            Column(
+                modifier = Modifier.padding(10.dp),
+                verticalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                Text(
+                    text = stringResource(R.string.fueling_combined_section),
+                    style = MaterialTheme.typography.titleSmall,
+                    fontWeight = FontWeight.Bold,
+                )
+                Text(
+                    text = stringResource(R.string.fueling_combined_hint),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
                 IntField(
                     label = stringResource(R.string.fueling_combined_concentration_label),
                     text = combinedConcentration,
