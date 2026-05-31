@@ -620,6 +620,11 @@ class CrashStateMachineTest {
         assertTrue("on-side delayed stop must still confirm at 20 s", confirmed)
         assertEquals(20_000L, sm.lastConfirmedSilenceMs)
         assertFalse("veto must NOT fire on an on-side stop", sm.lastGapUprightVeto)
+        // Blind-spot fix: a gap-regime confirm must now record the REAL measured
+        // silence angle (~90° on-side), not the -1.0 sentinel the old gap regime
+        // logged (the FP that motivated R6-F had pre_impact_angle=-1.0).
+        assertTrue("gap-regime confirm must record the measured angle (~90°), was ${sm.lastConfirmedAngleDeg}",
+            sm.lastConfirmedAngleDeg in 80.0..100.0)
     }
 
     @Test

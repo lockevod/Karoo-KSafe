@@ -895,16 +895,23 @@ class CrashStateMachine(
                 // samples (≥60°), so the live read returns well above the veto cone and
                 // a genuine on-side rolling crash is NOT vetoed. That safety depends on
                 // the CR3 entry NOT resetting the accumulator — do not change that.
-                if (firstSilenceGapMs > thresholds.delayedStopGapMs) {
-                    val gapAngle = currentOrientationAngleDeg()
-                    if (gapAngle >= 0.0 && gapAngle < thresholds.gapVetoUprightAngleDeg) {
-                        lastGapUprightVeto = true
-                        lastGapUprightVetoAngleDeg = gapAngle
-                        resetTimers()
-                        resetSilenceWindow()
-                        state = State.MONITORING
-                        return Decision.ReturnToMonitoring
-                    }
+                //
+                // Measure the gap-regime angle ONCE here. computeEffectiveSilenceMs
+                // never consults orientation in the gap regime, so lastOrientationAngleDeg
+                // is still the -1.0 sentinel — which is why the FP that motivated R6-F
+                // logged pre_impact_angle=-1.0. The measured angle drives the veto AND is
+                // recorded on the confirm path below, so a gap-regime CRASH_OK now logs
+                // the real silence orientation too (not -1.0) — closing the blind spot on
+                // BOTH terminal decisions, not just the veto.
+                val gapRegime = firstSilenceGapMs > thresholds.delayedStopGapMs
+                val gapAngle = if (gapRegime) currentOrientationAngleDeg() else -1.0
+                if (gapRegime && gapAngle >= 0.0 && gapAngle < thresholds.gapVetoUprightAngleDeg) {
+                    lastGapUprightVeto = true
+                    lastGapUprightVetoAngleDeg = gapAngle
+                    resetTimers()
+                    resetSilenceWindow()
+                    state = State.MONITORING
+                    return Decision.ReturnToMonitoring
                 }
                 // CONFIRMED. Capture the actual silence window that fired
                 // before resetSilenceWindow() clears the latch — the facade
@@ -912,8 +919,10 @@ class CrashStateMachine(
                 lastConfirmedSilenceMs = effectiveSilenceMs
                 // Snapshot gap and angle BEFORE resetTimers()/resetSilenceWindow() zero them,
                 // so the facade reads the values that were in force at confirmation time.
+                // In the gap regime use the angle just measured at the gate (the latched
+                // lastOrientationAngleDeg is -1.0 there); elsewhere use the latched value.
                 lastConfirmedGapMs = firstSilenceGapMs
-                lastConfirmedAngleDeg = lastOrientationAngleDeg
+                lastConfirmedAngleDeg = if (gapRegime) gapAngle else lastOrientationAngleDeg
                 resetTimers()
                 resetSilenceWindow()
                 state = State.MONITORING
