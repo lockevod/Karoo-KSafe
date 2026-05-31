@@ -639,7 +639,7 @@ private fun IntField(
         label = { Text(label) },
         isError = outOfRange,
         supportingText = if (outOfRange) {
-            { Text("Allowed range: ${range.first}..${range.last}") }
+            { Text(stringResource(R.string.fueling_allowed_range, range.first, range.last)) }
         } else null,
         // Numeric keypad on the Karoo's soft keyboard with an explicit Done action so the
         // rider can dismiss the IME with one tap instead of swiping it away. Done also

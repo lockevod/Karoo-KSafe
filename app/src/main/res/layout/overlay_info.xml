@@ -71,7 +71,7 @@
             android:background="@drawable/bg_cancel_button"
             android:clipToOutline="true"
             android:gravity="center"
-            android:text="DISMISS"
+            android:text="@string/overlay_dismiss"
             android:textColor="#CC0000"
             android:textSize="14sp"
             android:textStyle="bold"

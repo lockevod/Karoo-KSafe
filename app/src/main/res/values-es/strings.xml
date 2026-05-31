@@ -1,0 +1,429 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Traducción al español (es). Android la usa automáticamente cuando el Karoo está en
+     español; cualquier otro idioma cae a values/strings.xml (inglés) por defecto.
+     Reglas: longitud equivalente o más corta que el inglés (la pantalla del Karoo es
+     estrecha); tokens {…}, especificadores %1$d/%1$s/%% y \n se conservan exactos; marcas
+     y términos técnicos (KSafe, Karoo, Strava, Pushover, ntfy, Telegram, GPS, FIT, HAL,
+     wellness, Check-in, Keytel, Swain…) no se traducen. -->
+<resources>
+    <string name="app_name">KSafe</string>
+    <string name="extension_name">KSafe</string>
+
+    <!-- Títulos/detalles de incidentes nivel Aviso. Tokens: {bpm}, {minutes}, {drift}. -->
+    <string name="warning_wellness_high_hr_title">Pulso alto</string>
+    <string name="warning_wellness_high_hr_detail">FC {bpm} alta {minutes} min — afloja</string>
+    <string name="warning_wellness_critical_hr_title">FC crítica — frena</string>
+    <string name="warning_wellness_critical_hr_detail">FC {bpm} — frena ya</string>
+    <string name="warning_wellness_decoupling_title">Deriva de FC detectada</string>
+    <string name="warning_wellness_decoupling_detail">Deriva FC {drift}% — relaja</string>
+    <string name="warning_medical_title">Alerta médica</string>
+    <string name="warning_medical_detail">FC {bpm} bpm — revisa al ciclista</string>
+
+    <!-- Etiquetas de BonusAction -->
+    <string name="action_cancel_emergency">KSafe: Cancelar emergencia</string>
+    <string name="action_send_custom_message">KSafe: Enviar mensaje</string>
+    <string name="action_webhook_1">KSafe: Webhook 1</string>
+    <string name="action_webhook_2">KSafe: Webhook 2</string>
+
+    <!-- Etiquetas de DataType -->
+    <string name="sos_datatype_name">KSafe SOS</string>
+    <string name="sos_datatype_desc">Botón SOS de emergencia. Tócalo para iniciar una cuenta atrás de 30 s antes de avisar a tus contactos de emergencia.</string>
+    <string name="timer_datatype_name">KSafe Check-in</string>
+    <string name="timer_datatype_desc">Temporizador de check-in. Tócalo para reiniciar. Si expira sin check-in, se avisará a tus contactos.</string>
+    <string name="custom_message_datatype_name">KSafe Mensaje 1</string>
+    <string name="custom_message_datatype_desc">Botón de mensaje personalizado. Tócalo para enviar al instante tu mensaje configurado a tus contactos.</string>
+    <string name="webhook_1_datatype_name">KSafe Webhook 1</string>
+    <string name="webhook_2_datatype_name">KSafe Webhook 2</string>
+    <string name="webhook_datatype_desc">Botón de acción webhook. Tócalo para lanzar la petición HTTP configurada (puerta de garaje, domótica, etc.).</string>
+    <string name="custom_message_2_datatype_name">KSafe Mensaje 2</string>
+    <string name="custom_message_3_datatype_name">KSafe Mensaje 3</string>
+
+    <!-- Pestañas -->
+    <string name="tab_provider">Proveedor</string>
+    <string name="tab_safety">Seguridad</string>
+    <string name="tab_settings">Ajustes</string>
+    <string name="tab_actions">Acciones</string>
+    <string name="tab_health">Salud</string>
+    <string name="tab_fueling">Nutrición</string>
+
+    <!-- Pantalla de Ajustes -->
+    <string name="settings_screen_title">Ajustes</string>
+    <string name="settings_section_master">Interruptor general</string>
+    <string name="settings_section_tests">Probar alertas</string>
+    <string name="settings_section_fit">Exportar FIT</string>
+    <string name="settings_section_backup">Copia y restauración</string>
+    <string name="settings_master_hint">Cuando está OFF la extensión deja de monitorizar todo — choque, parada prolongada, check-in, Salud (FC), Nutrición. Las notificaciones ya configuradas (inicio/fin de ruta, mensajes, webhooks) también se silencian. Déjalo ON salvo que quieras una parada total.</string>
+    <string name="actions_section_karoo_live">Notificaciones Karoo Live</string>
+    <string name="actions_section_karoo_live_tests">Probar notificaciones de ruta</string>
+    <string name="fueling_fit_export_hint">Escribe los datos de KSafe en el FIT grabado para que Strava / Intervals.icu / TrainingPeaks los muestren junto a FC y potencia. Incluye carbohidratos acumulados (g), carbohidratos quemados (g), tasa actual de quema (g/h) e hidratación (ml); y, con wellness activo, la deriva de FC actual (%), la deriva máxima de la ruta y el nº de alertas de wellness.</string>
+    <string name="simulate_crash_label">Simular choque (enviar alerta ya)</string>
+    <string name="simulate_crash_confirm_title">¿Enviar una alerta real?</string>
+    <string name="simulate_crash_confirm_body">Esto envía el mensaje de emergencia configurado por tu proveedor activo — sin cuenta atrás, sin cancelar. Úsalo solo para verificar que el canal funciona de principio a fin.</string>
+    <string name="dialog_confirm_send">Enviar ya</string>
+    <string name="dialog_cancel">Cancelar</string>
+
+    <!-- Pantalla de Nutrición -->
+    <string name="fueling_title">Nutrición</string>
+    <string name="fueling_info_banner">Los carbohidratos usan zonas de FC/potencia si están disponibles para un objetivo según intensidad; sin sensores el objetivo es proporcional al tiempo. La hidratación siempre es proporcional al tiempo — ajusta el objetivo a mano en días calurosos.</string>
+    <string name="fueling_carb_section">Carbohidratos</string>
+    <string name="fueling_hyd_section">Hidratación</string>
+    <string name="fueling_physiology_hint">La quema de carbohidratos se estima con tu potenciómetro (lo más preciso) o FC + edad + sexo (Keytel) o FC + FC máx/reposo (Swain).</string>
+    <string name="fueling_rider_age_label">Edad (años)</string>
+    <string name="fueling_rider_sex_label">Sexo (para el cálculo Keytel solo con FC)</string>
+    <string name="fueling_rider_sex_male">Hombre</string>
+    <string name="fueling_rider_sex_female">Mujer</string>
+    <string name="fueling_rider_sex_unset">Sin definir</string>
+    <string name="fueling_target_hyd_label">Objetivo (ml/h)</string>
+    <string name="fueling_target_hyd_hint">Típico: 500–750 ml/h. Calor, humedad o rutas largas: 1000+ ml/h.</string>
+    <string name="fueling_alert_deficit_label">Avisar por déficit</string>
+    <string name="fueling_alert_time_label">Avisar por tiempo</string>
+    <string name="fueling_deficit_threshold_g_label">Umbral (g)</string>
+    <string name="fueling_deficit_threshold_ml_label">Umbral (ml)</string>
+    <string name="fueling_time_interval_label">Recordar cada (min)</string>
+    <string name="fueling_initial_delay_label">Saltar primeros (min, 0 = off)</string>
+    <string name="fueling_deficit_initial_delay_label">Saltar primeros (min, 0 = off)</string>
+    <string name="fueling_deficit_reminder_interval_label">Repetir cada (min)</string>
+    <string name="fueling_deficit_reminder_interval_hint">Se repite solo mientras el ciclista mantiene el déficit. La primera alerta de déficit la regula el retardo inicial de arriba.</string>
+    <string name="fueling_alert_bg_color_label">Color de fondo de la alerta</string>
+    <string name="fueling_enabled_label">Activado</string>
+    <string name="fueling_items_section">Elementos</string>
+    <string name="fueling_beep_pattern_label">Sonido</string>
+    <string name="beep_pattern_off">Off (solo visual)</string>
+    <string name="beep_pattern_single_long">Un pitido largo</string>
+    <string name="beep_pattern_double_short">Doble pitido corto</string>
+    <string name="beep_pattern_rising_triple">Triple ascendente</string>
+    <string name="beep_pattern_urgent_pulse">Pulso urgente</string>
+    <string name="beep_pattern_done">Listo</string>
+    <string name="health_warning_sound_label">Sonido de aviso</string>
+    <string name="health_emergency_sound_hint">El nivel emergencia usa el pitido urgente de la cuenta atrás de choque — no configurable por diseño.</string>
+    <string name="health_medical_sound_hint_warning">En modo Aviso esta alerta reproduce el sonido de abajo (compartido con wellness — un solo sonido para todas las alertas de nivel Aviso).</string>
+    <string name="fueling_slot_label_label">Etiqueta</string>
+    <string name="fueling_slot_grams_label">g</string>
+    <string name="fueling_slot_ml_label">ml</string>
+    <string name="fueling_combined_section">Registro combinado</string>
+    <string name="fueling_combined_concentration_label">Carbos por 500 ml (g)</string>
+    <string name="fueling_combined_hint">Un toque registra una bebida + sus carbohidratos. Fija la concentración una vez; los carbos de cada botón se autocompletan según su volumen (editable). Activo cuando el seguimiento de carbos y/o hidratación está ON.</string>
+    <string name="fueling_fit_export_label">Escribir datos KSafe en FIT (Strava / Intervals.icu)</string>
+
+    <!-- Consejo de forma al inicio -->
+    <string name="readiness_at_ride_start_label">Consejo de forma al iniciar la ruta</string>
+    <string name="readiness_at_ride_start_hint">Lee los resúmenes de wellness de las últimas 10 rutas y muestra un breve InRideAlert al empezar la siguiente si conviene tomárselo con calma. Silencioso si estás recuperado — sin spam por ruta. ON por defecto.</string>
+    <string name="readiness_alert_caution_title">Precaución hoy</string>
+    <string name="readiness_alert_take_easy_title">Tómatelo con calma hoy</string>
+
+    <!-- Pie con enlace a la documentación -->
+    <string name="fueling_full_guide_hint">Más consejos y guía completa: github.com/lockevod/Karoo-KSafe → docs/health-fueling.md</string>
+    <string name="settings_docs_footer">Ayuda y documentación: github.com/lockevod/Karoo-KSafe → docs/</string>
+
+    <!-- Hidratación dinámica -->
+    <string name="fueling_hyd_dynamic_label">Estimar el objetivo de hidratación dinámicamente</string>
+    <string name="fueling_hyd_dynamic_hint_on">Ahora el objetivo varía con FC / potencia, peso corporal, temperatura ambiente y humedad. Usa datos meteo de karoo-headwind si la extensión está instalada; si no, el sensor de temperatura del Karoo (sesgo +3-8 °C) y 50 %% de humedad supuesta. Espera ±25-35 %% de precisión con FC + sensor interno; cerca de ±20 %% con potenciómetro + Headwind.</string>
+    <string name="fueling_hyd_dynamic_hint_off">Ahora se usa el objetivo fijo por hora de abajo.</string>
+    <string name="fueling_carb_alert_title">Come algo</string>
+    <string name="fueling_carb_alert_detail_deficit">Come ya — {deficit} g de retraso</string>
+    <string name="fueling_carb_alert_detail_time">Come ya — {elapsed} min desde la última</string>
+    <string name="fueling_hyd_alert_title">Bebe algo</string>
+    <string name="fueling_hyd_alert_detail_deficit">Bebe ya — {deficit} ml de retraso</string>
+    <string name="fueling_hyd_alert_detail_time">Bebe ya — {elapsed} min desde la última</string>
+
+    <!-- BonusActions de Nutrición -->
+    <string name="action_log_carb_1">KSafe: Registrar carbo 1</string>
+    <string name="action_log_carb_2">KSafe: Registrar carbo 2</string>
+    <string name="action_log_carb_3">KSafe: Registrar carbo 3</string>
+    <string name="action_log_drink_1">KSafe: Registrar bebida 1</string>
+    <string name="action_log_drink_2">KSafe: Registrar bebida 2</string>
+
+    <!-- Etiquetas de DataType de Nutrición -->
+    <string name="carb_log_1_datatype_name">KSafe Carbo 1</string>
+    <string name="carb_log_2_datatype_name">KSafe Carbo 2</string>
+    <string name="carb_log_3_datatype_name">KSafe Carbo 3</string>
+    <string name="carb_log_datatype_desc">Toca para registrar un carbohidrato configurado (p. ej. gel, barrita). Cuenta para tu objetivo por hora.</string>
+    <string name="carb_status_datatype_name">KSafe Estado carbos</string>
+    <string name="carb_status_datatype_desc">Muestra el déficit actual de carbohidratos respecto al objetivo. Color según urgencia.</string>
+    <string name="carb_burn_rate_datatype_name">KSafe Tasa quema</string>
+    <string name="carb_burn_rate_datatype_desc">Tasa actual de quema de carbohidratos en g/h, calculada con potencia (Nivel 1), FC + edad + sexo (Nivel 2 Keytel) o FC + FCmáx + FCreposo (Nivel 3 Swain). Muestra «Empareja FC» si no hay sensor emparejado.</string>
+    <string name="carb_avg_burn_rate_datatype_name">KSafe Quema media</string>
+    <string name="carb_avg_burn_rate_datatype_desc">Tasa media de quema de la sesión (g/h), promediada solo sobre el tiempo en movimiento (paradas excluidas). Mismos requisitos de sensor que la tasa instantánea.</string>
+    <string name="carbs_burned_datatype_name">KSafe Carbos quemados</string>
+    <string name="carbs_burned_datatype_desc">Carbohidratos quemados acumulados esta sesión en gramos, del estimador fisiológico de quema. Complemento del campo Estado carbos (déficit).</string>
+    <string name="carb_no_sensor_label">Empareja FC</string>
+    <string name="hyd_log_1_datatype_name">KSafe Bebida 1</string>
+    <string name="hyd_log_2_datatype_name">KSafe Bebida 2</string>
+    <string name="hyd_log_datatype_desc">Toca para registrar una bebida configurada (p. ej. trago, botella). Cuenta para tu objetivo por hora.</string>
+    <string name="combined_log_1_datatype_name">Combo 1</string>
+    <string name="combined_log_2_datatype_name">Combo 2</string>
+    <string name="combined_log_datatype_desc">Toca para registrar una bebida + carbos combinados de una vez. Cuenta para tus objetivos de hidratación y carbos.</string>
+    <string name="hyd_status_datatype_name">KSafe Estado hidratación</string>
+    <string name="hyd_status_datatype_desc">Muestra el déficit actual de hidratación respecto al objetivo. Color según urgencia. Un «~» inicial indica que la estimación de sudor va sin sensor FC/potencia (aproximada, según temperatura) — los recordatorios funcionan igual, el número es solo orientativo.</string>
+
+    <!-- Pantalla de Salud -->
+    <string name="health_title">Monitorización de salud</string>
+    <string name="health_no_hr_warning_title">Se requiere sensor de FC</string>
+    <string name="health_no_hr_warning_body">Empareja un sensor de FC para activar la detección médica y de wellness. Sin datos de FC estos detectores quedan inactivos.</string>
+    <string name="health_medical_section">Detección de episodio médico</string>
+    <string name="health_wellness_section">Monitor de wellness</string>
+    <string name="health_enabled_label">Activado</string>
+    <string name="health_response_warning">Aviso</string>
+    <string name="health_response_emergency">Emergencia</string>
+    <string name="health_wellness_threshold_label">Umbral de FC (bpm)</string>
+    <string name="health_wellness_threshold_pct_label">Umbral de FC (% de FC máx)</string>
+    <string name="health_wellness_use_pct_label">Usar % de FC máx (del perfil Karoo)</string>
+    <string name="health_wellness_duration_label">Minutos sostenidos</string>
+    <string name="health_wellness_tier_critical">FC crítica (aviso temprano)</string>
+    <string name="health_wellness_tier_sustained">FC sostenida (fatiga larga)</string>
+    <string name="health_wellness_tier_decoupling">Desacople cardíaco (calor / hidratación)</string>
+    <string name="health_wellness_critical_threshold_bpm_label">Umbral crítico (bpm)</string>
+    <string name="health_wellness_critical_threshold_pct_label">Umbral crítico (% de FC máx)</string>
+    <string name="health_wellness_critical_duration_label">Minutos sostenidos</string>
+    <string name="health_wellness_decoupling_threshold_label">Umbral de deriva (%)</string>
+    <string name="health_wellness_decoupling_duration_label">Minutos sostenidos</string>
+    <string name="health_wellness_decoupling_hint">Requiere un potenciómetro emparejado. Compara la relación FC/W actual con la base establecida en los primeros 10 min de cada ruta.</string>
+
+    <!-- Pantalla de Proveedor -->
+    <string name="provider_title">Proveedor de mensajes</string>
+    <string name="provider_active_hint">Las credenciales se guardan por proveedor. Solo el proveedor seleccionado se usará para enviar alertas.</string>
+    <string name="callmebot_phone_hint">Teléfono destinatario 1 (con prefijo, p. ej. +34612345678)</string>
+    <string name="callmebot_apikey_hint">API Key destinatario 1</string>
+    <string name="callmebot_phone2_hint">Teléfono destinatario 2 — opcional</string>
+    <string name="callmebot_apikey2_hint">API Key destinatario 2 — opcional</string>
+    <string name="callmebot_phone3_hint">Teléfono destinatario 3 — opcional</string>
+    <string name="callmebot_apikey3_hint">API Key destinatario 3 — opcional</string>
+    <string name="callmebot_description">WhatsApp vía CallMeBot. Gratis — hasta 3 destinatarios; cada uno debe activar su propia API key desde su teléfono. Los destinatarios 2 y 3 son opcionales.</string>
+    <string name="pushover_app_token_hint">App Token</string>
+    <string name="pushover_user_key_hint">User Key (destinatario 1)</string>
+    <string name="pushover_user_key2_hint">User Key — destinatario 2 (opcional)</string>
+    <string name="pushover_user_key3_hint">User Key — destinatario 3 (opcional)</string>
+    <string name="pushover_description">Notificación push vía Pushover. Prueba gratis 30 días, luego ~5 $ pago único. Introduce tu app token y user key.</string>
+    <string name="ntfy_topic_hint">Topic</string>
+    <string name="ntfy_description">Push ilimitado y gratis vía ntfy.sh. Sin cuenta — elige un nombre de topic único y suscríbete en la app ntfy.</string>
+    <string name="telegram_bot_token_hint">Bot Token</string>
+    <string name="telegram_chat_id_hint">Chat ID (destinatario 1)</string>
+    <string name="telegram_chat_id2_hint">Chat ID — destinatario 2 (opcional)</string>
+    <string name="telegram_chat_id3_hint">Chat ID — destinatario 3 (opcional)</string>
+    <string name="telegram_description">Mensajes gratis de Telegram vía un bot. Crea un bot con @BotFather, copia el token e introduce tu Chat ID.</string>
+    <string name="recipient_alerts_all">Todas</string>
+    <string name="recipient_alerts_emergency">Emergencia</string>
+    <string name="recipient_alerts_info">Info</string>
+    <string name="recipient_alerts_label">Este contacto recibe</string>
+    <string name="recipient_alerts_need_emergency">Al menos un contacto debe recibir alertas de emergencia</string>
+    <string name="section_safety">Configuración de seguridad</string>
+    <string name="backup_export">Exportar</string>
+    <string name="backup_import">Importar</string>
+    <string name="backup_path_hint">Exportar → /sdcard/KSafe/ksafe_export.json  |  Importar ← /sdcard/KSafe/ksafe_import.json</string>
+    <string name="backup_needs_access">La copia necesita acceso a archivos. Concédelo y vuelve a tocar.</string>
+    <string name="backup_grant_opening">Abriendo ajustes de acceso a archivos — concédelo y vuelve a tocar.</string>
+    <string name="backup_grant_adb">Este Karoo no puede abrir la pantalla de acceso a archivos. Concédelo vía adb:\nadb shell appops set com.enderthor.kSafe MANAGE_EXTERNAL_STORAGE allow</string>
+    <string name="test_send">Probar envío</string>
+
+    <!-- Pantalla de Ajustes (seguridad) -->
+    <string name="settings_title">Ajustes de seguridad</string>
+    <string name="countdown_seconds_label">Cuenta atrás antes de alertar (segundos)</string>
+    <string name="emergency_message_label">Mensaje de emergencia</string>
+    <string name="emergency_message_hint">Usa {location} para el enlace GPS y {reason} para la causa</string>
+    <string name="crash_detection_label">Detección automática de choque</string>
+    <string name="safety_buzzer_mute_title">Si tu Karoo está silenciado, las alertas no urgentes no suenan</string>
+    <string name="safety_buzzer_mute_hint">Los sonidos de emergencia (cuenta atrás de choque, SOS y el aviso final de check-in a 1 min) siguen sonando por el override del buzzer de abajo. Otros pitidos (inicio de ruta, avisos de check-in anteriores, wellness) respetan el silencio del dispositivo. Las alertas se disparan y los mensajes se envían con normalidad igualmente.</string>
+    <string name="health_maxhr_not_loaded">FC máx del perfil Karoo aún no cargada — configúrala en el perfil de usuario del Karoo.</string>
+    <string name="health_pct_enter_range">Introduce 60–100 para ver el umbral en bpm (tu FC máx = %1$d).</string>
+    <string name="health_pct_resolved_bpm">= %1$d bpm (tu FC máx = %2$d)</string>
+    <string name="health_custom_title_label">Título personalizado</string>
+    <string name="health_custom_detail_label">Detalle personalizado</string>
+    <string name="health_critical_title_label">Título alerta crítica</string>
+    <string name="health_critical_detail_label">Detalle alerta crítica</string>
+    <string name="health_sustained_title_label">Título alerta sostenida</string>
+    <string name="health_sustained_detail_label">Detalle alerta sostenida</string>
+    <string name="health_decoupling_title_label">Título alerta desacople</string>
+    <string name="health_decoupling_detail_label">Detalle alerta desacople</string>
+    <string name="custom_alert_using_default">Usando el predeterminado — edita para cambiarlo</string>
+    <string name="custom_alert_length_counter">%1$d / %2$d — mantenlo corto para que entre en la alerta</string>
+    <string name="crash_sensitivity_label">Sensibilidad de detección de choque</string>
+    <string name="sensitivity_low">Baja</string>
+    <string name="sensitivity_medium">Med</string>
+    <string name="sensitivity_high">Alta</string>
+    <string name="sensitivity_custom">Umbral personalizado</string>
+    <string name="sensitivity_low_desc">⛰ MTB · Gravel · Enduro. Requiere un impacto muy fuerte (~5,5g) para dispararse. Los aterrizajes y drops de MTB rara vez lo superan, así que los falsos positivos en terreno irregular son mínimos. Úsalo si tienes alertas no deseadas en terreno técnico o pedregoso.</string>
+    <string name="sensitivity_medium_desc">🚴 Carretera + MTB mixto (recomendado por defecto). Umbral equilibrado (~4,5g) — detecta la mayoría de choques reales tolerando baches normales de carretera e impactos moderados de trail. Buen punto de partida para cualquier disciplina. Vel. mín. 10 km/h.</string>
+    <string name="sensitivity_high_desc">🏁 Solo carretera lisa (velódromo, circuito cerrado, carril bici). Umbral más bajo (~3,5g) — más sensible, detecta choques más leves. Seguro en superficies perfectamente lisas donde el pedaleo normal nunca genera grandes impactos. NO lo uses en MTB ni carreteras malas — falsos positivos frecuentes. Vel. mín. 15 km/h.</string>
+    <string name="sensitivity_custom_desc">🔧 Umbral personalizado. Fija el valor exacto de impacto con el control de abajo.\n• Valor más alto → requiere impacto más fuerte → menos falsos positivos\n• Valor más bajo → detecta impactos más leves → más sensible\nÚtil si ningún preajuste encaja con tu estilo (p. ej. enduro agresivo, triatlón en carretera lisa).</string>
+    <string name="sensitivity_custom_threshold">Umbral de impacto: %1$d m/s²</string>
+    <string name="min_speed_label">Vel. mín. para detectar choque (km/h, 0 = siempre)</string>
+    <string name="min_speed_hint_low">MTB/gravel: 3 km/h recomendado — los choques en subidas técnicas pueden ocurrir a paso de marcha. Pon 0 para detectar a cualquier velocidad (más falsos positivos al manejar la bici).</string>
+    <string name="min_speed_hint_medium">Carretera + MTB: 10 km/h recomendado — ignora impactos casi parado (p. ej. al poner la bici en el coche). Baja a 3 km/h para tramos técnicos de MTB.</string>
+    <string name="min_speed_hint_high">Carretera lisa: 15 km/h recomendado — los choques en carretera a muy baja velocidad son rarísimos. Pon 0 solo para pruebas.</string>
+    <string name="min_speed_hint_custom">Elige según tu estilo. 0 = detectar a cualquier velocidad (útil para pruebas). Valores más altos reducen falsos positivos al manejar la bici parado.</string>
+    <string name="crash_confirm_speed_label">Vel. máx. para confirmar choque (km/h)</string>
+    <string name="crash_confirm_speed_hint">Velocidad por debajo de la cual se considera al ciclista parado tras un impacto. Por defecto 5 km/h. Súbela a 8 km/h para MTB/gravel donde es común deslizar tras caer. Valores bajos (3) son más estrictos y reducen falsos positivos en subidas lentas.</string>
+    <string name="crash_outside_ride_label">Vigilar choque sin estar pedaleando</string>
+    <string name="crash_outside_ride_desc">Mantiene la detección de choque activa aunque no se esté grabando una ruta. Usa la velocidad mínima configurada arriba. Útil si quieres protección durante un calentamiento o una vuelta rápida sin grabar.</string>
+    <string name="crash_outside_ride_any_speed_label">Vigilar choque sin pedalear — cualquier velocidad</string>
+    <string name="crash_outside_ride_any_speed_desc">Igual que arriba pero detecta choques a cualquier velocidad, incluso parado (se ignora la velocidad mínima). ⚠ Puede producir más falsos positivos — coger o soltar el dispositivo parado puede disparar una alerta.</string>
+    <string name="crash_outside_ride_warning">⚠ La vigilancia de choque está activa fuera de una ruta grabada. El dispositivo debe moverse a la velocidad mínima configurada arriba (%1$d km/h).</string>
+    <string name="speed_drop_label">Detectar parada prolongada en ruta</string>
+    <string name="speed_drop_minutes_label">Minutos parado antes de alertar</string>
+    <string name="checkin_timer_label">Temporizador de check-in</string>
+    <string name="checkin_interval_label">Intervalo de check-in (minutos)</string>
+    <string name="checkin_warning_title">Check-in en %1$d min</string>
+    <string name="checkin_warning_detail">Toca el campo Check-in para confirmar que estás bien</string>
+    <string name="checkin_hint">Añade el campo «KSafe Check-in» a una página de datos: tócalo durante la ruta para confirmar que estás bien y reiniciar el temporizador. Se te avisará con pitidos 5 y 1 min antes de que expire. Si expira sin tocarlo, se avisa automáticamente a tus contactos — reinícialo bastante antes de que expire.</string>
+    <string name="active_label">Extensión activa</string>
+    <string name="karoo_live_label">Avisar a contactos al iniciar ruta</string>
+    <string name="karoo_live_hint">Envía un mensaje al iniciar la ruta (solo el primer inicio — reanudar tras una pausa NO lo reenvía). Requiere una clave Karoo Live para incluir el enlace de seguimiento; déjala vacía para enviar un mensaje sin enlace.</string>
+    <string name="karoo_live_key_label">Clave Karoo Live (opcional)</string>
+    <string name="karoo_live_supporting">Solo la parte de la clave de la URL — p. ej. de https://dashboard.hammerhead.io/live/3738Ag introduce 3738Ag. Déjalo vacío para enviar sin enlace de seguimiento.</string>
+    <string name="karoo_live_message_label">Mensaje de inicio de ruta</string>
+    <string name="karoo_live_message_hint">Usa {livetrack} para insertar el enlace de seguimiento en vivo (solo se incluye si hay clave configurada). También puedes usar {livetrack} en tu mensaje de emergencia.</string>
+    <string name="karoo_live_end_label">Avisar a contactos al terminar ruta</string>
+    <string name="karoo_live_end_message_label">Mensaje de fin de ruta</string>
+    <string name="karoo_live_end_message_hint">Mensaje enviado cuando la grabación de la ruta se detiene del todo. No requiere clave Karoo Live.</string>
+    <string name="test_ride_end_notification">Probar notificación de fin de ruta</string>
+
+    <!-- Alertas y notificaciones -->
+    <string name="location_unavailable">Ubicación no disponible</string>
+
+    <!-- Estados del campo SOS (cortos para caber en el campo estrecho) -->
+    <string name="sos_safe">BIEN</string>
+    <string name="sos_countdown">SOS %1$ds</string>
+    <string name="sos_alerting">ALERTA\nENVIADA</string>
+    <string name="sos_tap_cancel">toca=anular</string>
+
+    <!-- Literales compartidos de estado de campo (carbo/bebida/mensaje/SOS) -->
+    <string name="field_state_off">OFF</string>
+    <string name="field_state_tap_undo">DESHACER</string>
+    <string name="sos_field_tap_sos">toca=SOS</string>
+
+    <!-- DataType de Mensaje (slot 1/2/3) -->
+    <string name="msg_default_title_1">MSG</string>
+    <string name="msg_default_title_2">MSG2</string>
+    <string name="msg_default_title_3">MSG3</string>
+    <string name="field_state_msg_sending">Enviando…</string>
+    <string name="field_state_msg_sent">HECHO ✓</string>
+    <string name="field_state_msg_tap_send">toca=envía</string>
+
+    <!-- DataType Webhook -->
+    <string name="field_state_webhook_tap">toca</string>
+    <string name="field_state_webhook_disabled">off</string>
+    <string name="field_state_webhook_firing">lanzando…</string>
+    <string name="field_state_webhook_ok">OK ✓</string>
+
+    <!-- Error compartido "toca para reintentar" -->
+    <string name="field_state_err_retry">ERR reint.</string>
+
+    <!-- DataType SafetyTimer -->
+    <string name="timer_cancel_countdown">CANCELA\n%1$ds</string>
+
+    <!-- Motivos del consejo de forma. Args: %1$.0f, %1$d. -->
+    <string name="readiness_reason_cardiac_drift">Deriva cardíaca %1$.0f%% en la última ruta</string>
+    <string name="readiness_reason_wellness_alerts">%1$d alertas de wellness en la última ruta</string>
+    <string name="readiness_reason_minutes_critical">%1$d min sobre la FC crítica en tu última ruta</string>
+    <string name="readiness_reason_rides_72h">%1$d rutas en las últimas 72 h</string>
+
+    <!-- Botón y diagnóstico de prueba del buzzer. %1$s = contexto dinámico. -->
+    <string name="settings_buzzer_bypass_label">Buzzer en emergencia (ignora silencio)</string>
+    <string name="settings_buzzer_bypass_hint">Hace sonar el buzzer del Karoo en la cuenta atrás de choque, el envío del SOS y el aviso final de check-in a 1 min, aunque tu Karoo esté silenciado. Otros pitidos no urgentes (inicio de ruta, avisos de check-in anteriores, wellness) siguen respetando el silencio.</string>
+    <string name="settings_buzzer_test_label">Probar buzzer (sonda HAL)</string>
+    <string name="settings_buzzer_test_running">Conectando…</string>
+    <string name="settings_buzzer_test_bind_failed">Conexión fallida: %1$s — KSafe usará el pitido del SDK en emergencias.</string>
+    <string name="settings_buzzer_test_beep_ok">Pitido enviado — ¿lo has oído? El bypass funciona.</string>
+    <string name="settings_buzzer_test_gated">Bypass BLOQUEADO por una OTA del Karoo (SecurityException). KSafe usará el pitido del SDK en emergencias — igual que sin bypass.</string>
+    <string name="settings_buzzer_test_transact_failed">Bypass FALLÓ (la transacción lanzó excepción — ¿cambio de descriptor/ID en una OTA del Karoo?). KSafe usará el pitido del SDK en emergencias.</string>
+    <string name="settings_buzzer_test_failed_other">Bypass FALLÓ (%1$s). KSafe usará el pitido del SDK en emergencias. Revisa logcat.</string>
+
+    <!-- Aviso de permiso de superposición -->
+    <string name="overlay_permission_title">⚠ Se requiere permiso de superposición</string>
+    <string name="overlay_permission_body">KSafe necesita el permiso «Mostrar sobre otras apps» para mostrar el overlay de cancelar SOS sobre la pantalla de ruta. Sin él, no verás el botón de cancelar durante la cuenta atrás de emergencia.</string>
+    <string name="overlay_permission_button">Activar ahora</string>
+
+    <!-- Estados del campo Temporizador -->
+    <string name="timer_off">Timer\nOFF</string>
+    <string name="timer_checkin">CHECK\nIN!</string>
+    <string name="timer_ok">toca=ok</string>
+
+    <string name="custom_message_section">Mensajes personalizados</string>
+    <string name="custom_message_label">Activar mensaje 1</string>
+    <string name="custom_message_title_hint">Etiqueta del botón (máx 5 car.)</string>
+    <string name="custom_message_title_desc">Nombre corto mostrado en el botón del campo Karoo (p. ej. «OK👍», «CASA», «BIEN»)</string>
+    <string name="custom_message_hint">Texto del mensaje 1 (se envía al tocar)</string>
+    <string name="custom_message_send_label">Enviar mensaje 1</string>
+    <string name="custom_message_send_hint">Toca los campos en la pantalla del Karoo para enviar cada mensaje al instante (sin cuenta atrás). El mensaje 1 también se puede asignar a un botón físico.</string>
+    <string name="custom_message_2_label">Activar mensaje 2</string>
+    <string name="custom_message_2_hint">Texto del mensaje 2 (se envía al tocar)</string>
+    <string name="custom_message_2_send_label">Enviar mensaje 2</string>
+    <string name="custom_message_3_label">Activar mensaje 3</string>
+    <string name="custom_message_3_hint">Texto del mensaje 3 (se envía al tocar)</string>
+    <string name="custom_message_3_send_label">Enviar mensaje 3</string>
+
+    <!-- Registro de calibración -->
+    <string name="section_calibration">🔬 Ayuda a mejorar KSafe</string>
+
+    <!-- Acciones webhook -->
+    <string name="webhook_section">⚡ Acciones webhook</string>
+    <string name="webhook_hint">Lanza cualquier endpoint HTTP desde un botón físico del Karoo. Funciona con Home Assistant, ntfy, IFTTT, n8n, Make o cualquier webhook. La petición se envía por el puente de red del Karoo — funciona por tether Bluetooth cuando no hay Wi-Fi.</string>
+    <string name="webhook_1_label">Activar Webhook 1</string>
+    <string name="webhook_2_label">Activar Webhook 2</string>
+    <string name="webhook_label_hint">Etiqueta de acción (en alertas)</string>
+    <string name="webhook_url_hint">URL</string>
+    <string name="webhook_url_example">p. ej. https://ha.example.com/api/services/cover/toggle</string>
+    <string name="webhook_headers_hint">Cabecera (opcional)</string>
+    <string name="webhook_headers_example">p. ej. Authorization: Bearer tu_token_de_larga_duración</string>
+    <string name="webhook_body_hint">Cuerpo (opcional, solo POST)</string>
+    <string name="webhook_body_example">p. ej. {\"entity_id\":\"cover.garage_door\"}</string>
+    <string name="webhook_test">Probar</string>
+    <string name="webhook_geo_label">Solo lanzar cerca de una ubicación</string>
+    <string name="webhook_geo_hint">La acción se bloqueará si el dispositivo está más lejos del radio configurado respecto al punto objetivo. Útil para no abrir la puerta del garaje cuando estás fuera de casa.</string>
+    <string name="webhook_geo_use_current">📍 Usar la ubicación GPS actual como objetivo</string>
+    <string name="webhook_geo_lat">Lat</string>
+    <string name="webhook_geo_lon">Lon</string>
+    <string name="webhook_geo_lat_placeholder">p. ej. 40.4168</string>
+    <string name="webhook_geo_lon_placeholder">p. ej. -3.7038</string>
+    <string name="webhook_geo_radius">Distancia máx (metros)</string>
+    <string name="webhook_geo_radius_hint">Acción bloqueada si el dispositivo está más lejos de esta distancia del objetivo</string>
+    <string name="webhook_alert_label">Mostrar alerta en ruta al lanzarse</string>
+    <string name="webhook_alert_text_hint">Texto de la alerta</string>
+    <string name="webhook_alert_text_example">p. ej. ¡Puerta del garaje abierta!</string>
+    <string name="webhook_alert_text_desc">Este mensaje aparecerá como notificación en pantalla cada vez que se lance la acción</string>
+    <string name="calibration_desc">Cuando está activo, KSafe registra datos anónimos de sensores (valores del acelerómetro, lecturas de velocidad, estados de detección) para ayudar al desarrollador a calibrar el algoritmo de detección de choque. Nunca se incluyen coordenadas GPS, ni mensajes, ni información personal de ningún tipo. Los datos se envían automáticamente al desarrollador cuando desactivas esta opción o terminas una ruta. Desactivado por defecto — totalmente opcional.</string>
+    <string name="calibration_logging_label">Enviar datos de calibración anónimos</string>
+    <string name="calibration_send">Enviar ya</string>
+    <string name="calibration_clear">Borrar registro</string>
+    <string name="calibration_adb_hint">Descargar CSV completo: adb pull /sdcard/Android/data/com.enderthor.kSafe/files/ksafe_calibration.csv</string>
+    <string name="calibration_install_id_label">Etiqueta anón: %1$s (aleatoria, sin datos personales — inclúyela en cualquier informe de fallo)</string>
+
+    <!-- Selector de color de campo -->
+    <string name="field_color_label">Color del campo</string>
+    <string name="sos_field_color_label">Color del campo SOS</string>
+    <string name="timer_field_color_label">Color del campo temporizador</string>
+
+    <!-- Detección de choque por perfil -->
+    <string name="crash_per_profile_title">Detección de choque por perfil</string>
+    <string name="crash_per_profile_empty">Aún no hay perfiles — inicia una ruta con un perfil de Karoo y aparecerá aquí para personalizarlo.</string>
+    <string name="crash_per_profile_hint">Cada perfil de Karoo aparece aquí después de iniciar una ruta con él. Los ajustes que guardes se aplican al inicio de tu próxima ruta con ese perfil.</string>
+    <string name="crash_per_profile_active">● activo ahora</string>
+    <string name="crash_per_profile_use_global">Usar global</string>
+    <string name="crash_per_profile_custom">Personalizado</string>
+    <string name="crash_per_profile_summary_global">Ajustes globales</string>
+    <string name="crash_per_profile_summary_off">Detección de choque off</string>
+    <string name="crash_per_profile_summary_custom">Personalizado · %1$s</string>
+    <string name="crash_per_profile_global_group">Perfiles con ajustes globales (%1$d)</string>
+    <string name="crash_per_profile_remove">Quitar</string>
+
+    <!-- Fallo de entrega de la alerta saliente -->
+    <string name="alert_delivery_failed_title">Alerta NO entregada</string>
+    <string name="alert_delivery_failed_detail">%1$s no pudo enviar. Revisa cobertura / credenciales.</string>
+    <!-- Entrega parcial -->
+    <string name="alert_delivery_partial_title">Alerta parcialmente entregada</string>
+    <string name="alert_delivery_partial_detail">Llegó a %1$d de %2$d contactos vía %3$s. Revisa la config de los demás.</string>
+
+    <!-- B27 — literales extraídos de Kotlin / XML -->
+    <string name="dialog_close">Cerrar</string>
+    <string name="fueling_allowed_range">Rango permitido: %1$d..%2$d</string>
+    <string name="sensitivity_scale_min">20 m/s² (muy sensible)</string>
+    <string name="sensitivity_scale_max">70 m/s² (solo impactos fuertes)</string>
+    <string name="overlay_cancel">CANCELAR</string>
+    <string name="overlay_dismiss">DESCARTAR</string>
+    <string name="webhook_blocked_master_off">Extensión desactivada — actívala en Ajustes primero.</string>
+    <string name="webhook_blocked_disabled">Webhook desactivado — actívalo en la pestaña Acciones</string>
+    <string name="webhook_blocked_no_url">Sin URL configurada — pon una en la pestaña Acciones</string>
+    <string name="webhook_blocked_no_gps">Bloqueado — aún sin señal GPS</string>
+    <string name="webhook_blocked_no_target">Bloqueado — sin ubicación objetivo configurada</string>
+    <string name="webhook_blocked_too_far">Bloqueado — a %1$dm (máx %2$dm)</string>
+</resources>

@@ -449,4 +449,19 @@
     <!-- Outbound alert reached some but not all emergency contacts (partial delivery). -->
     <string name="alert_delivery_partial_title">Alert partly delivered</string>
     <string name="alert_delivery_partial_detail">Reached %1$d of %2$d contacts via %3$s. Check the others\' setup.</string>
+
+    <!-- B27 — literals pulled out of inline Kotlin / layout XML so they localise. -->
+    <string name="dialog_close">Close</string>
+    <string name="fueling_allowed_range">Allowed range: %1$d..%2$d</string>
+    <string name="sensitivity_scale_min">20 m/s² (very sensitive)</string>
+    <string name="sensitivity_scale_max">70 m/s² (hard impacts only)</string>
+    <string name="overlay_cancel">CANCEL</string>
+    <string name="overlay_dismiss">DISMISS</string>
+    <!-- Webhook tap rejection feedback (InRideAlert / SystemNotification). -->
+    <string name="webhook_blocked_master_off">Extension is disabled — enable it in Settings first.</string>
+    <string name="webhook_blocked_disabled">Webhook disabled — enable it in the Actions tab</string>
+    <string name="webhook_blocked_no_url">No URL configured — set one in the Actions tab</string>
+    <string name="webhook_blocked_no_gps">Blocked — no GPS fix yet</string>
+    <string name="webhook_blocked_no_target">Blocked — no target location configured</string>
+    <string name="webhook_blocked_too_far">Blocked — %1$dm away (max %2$dm)</string>
 </resources>

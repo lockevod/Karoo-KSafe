@@ -2085,7 +2085,7 @@ class KSafeExtension : KarooExtension("ksafe", BuildConfig.VERSION_NAME), Corout
                 dispatchWebhookFeedback(
                     id = "ksafe-webhook-$slot-master-off",
                     header = label,
-                    message = "Extension is disabled — enable it in Settings first.",
+                    message = getString(R.string.webhook_blocked_master_off),
                     bgColorRes = R.color.alert_red,
                 )
                 return
@@ -2100,7 +2100,7 @@ class KSafeExtension : KarooExtension("ksafe", BuildConfig.VERSION_NAME), Corout
                 dispatchWebhookFeedback(
                     id = "ksafe-webhook-$slot-disabled",
                     header = label,
-                    message = "Webhook disabled — enable it in the Actions tab",
+                    message = getString(R.string.webhook_blocked_disabled),
                     bgColorRes = R.color.alert_red,
                 )
                 return
@@ -2115,7 +2115,7 @@ class KSafeExtension : KarooExtension("ksafe", BuildConfig.VERSION_NAME), Corout
                 dispatchWebhookFeedback(
                     id = "ksafe-webhook-$slot-nourl",
                     header = label,
-                    message = "No URL configured — set one in the Actions tab",
+                    message = getString(R.string.webhook_blocked_no_url),
                     bgColorRes = R.color.alert_red,
                 )
                 return
@@ -2149,7 +2149,7 @@ class KSafeExtension : KarooExtension("ksafe", BuildConfig.VERSION_NAME), Corout
                     dispatchWebhookFeedback(
                         id = "ksafe-webhook-$slot-geo-nofix",
                         header = label,
-                        message = "Blocked — no GPS fix yet",
+                        message = getString(R.string.webhook_blocked_no_gps),
                         bgColorRes = R.color.alert_orange,
                     )
                     return
@@ -2162,7 +2162,7 @@ class KSafeExtension : KarooExtension("ksafe", BuildConfig.VERSION_NAME), Corout
                     dispatchWebhookFeedback(
                         id = "ksafe-webhook-$slot-geo-nocfg",
                         header = label,
-                        message = "Blocked — no target location configured",
+                        message = getString(R.string.webhook_blocked_no_target),
                         bgColorRes = R.color.alert_orange,
                     )
                     return
@@ -2175,7 +2175,7 @@ class KSafeExtension : KarooExtension("ksafe", BuildConfig.VERSION_NAME), Corout
                     dispatchWebhookFeedback(
                         id = "ksafe-webhook-$slot-geo-far",
                         header = label,
-                        message = "Blocked — ${distance.toInt()}m away (max ${radiusM}m)",
+                        message = getString(R.string.webhook_blocked_too_far, distance.toInt(), radiusM),
                         bgColorRes = R.color.alert_orange,
                     )
                     Timber.d("Webhook $slot geo-fenced: ${distance.toInt()}m > ${radiusM}m")
