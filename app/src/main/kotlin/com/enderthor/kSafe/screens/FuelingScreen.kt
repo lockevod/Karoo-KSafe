@@ -43,6 +43,7 @@ import androidx.compose.material3.OutlinedButton
 import com.enderthor.kSafe.R
 import com.enderthor.kSafe.activity.MainViewModel
 import com.enderthor.kSafe.data.FUELING_ALERT_COLORS
+import com.enderthor.kSafe.data.FuelingAlertButtonMode
 import com.enderthor.kSafe.data.RiderSex
 import com.enderthor.kSafe.data.fuelingAlertColorRes
 import com.enderthor.kSafe.extension.util.ALERT_DETAIL_MAX_CHARS
@@ -508,6 +509,44 @@ fun FuelingScreen(vm: MainViewModel) {
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
+                Column(verticalArrangement = Arrangement.spacedBy(4.dp), modifier = Modifier.fillMaxWidth()) {
+                    Text(
+                        text = stringResource(R.string.fueling_alert_button_mode_label),
+                        style = MaterialTheme.typography.bodySmall,
+                        fontWeight = FontWeight.Bold,
+                    )
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(4.dp),
+                    ) {
+                        for (mode in FuelingAlertButtonMode.entries) {
+                            val label = when (mode) {
+                                FuelingAlertButtonMode.OFF      -> stringResource(R.string.fueling_alert_button_off)
+                                FuelingAlertButtonMode.LOG      -> stringResource(R.string.fueling_alert_button_log)
+                                FuelingAlertButtonMode.LOG_UNDO -> stringResource(R.string.fueling_alert_button_log_undo)
+                            }
+                            val selected = config.fuelingAlertButtonMode == mode
+                            val onClick = { vm.updateConfig { it.copy(fuelingAlertButtonMode = mode) } }
+                            if (selected) {
+                                Button(
+                                    onClick = onClick,
+                                    modifier = Modifier.weight(1f),
+                                    contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 4.dp, vertical = 6.dp),
+                                ) {
+                                    Text(label, style = MaterialTheme.typography.labelSmall)
+                                }
+                            } else {
+                                OutlinedButton(
+                                    onClick = onClick,
+                                    modifier = Modifier.weight(1f),
+                                    contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 4.dp, vertical = 6.dp),
+                                ) {
+                                    Text(label, style = MaterialTheme.typography.labelSmall)
+                                }
+                            }
+                        }
+                    }
+                }
                 IntField(
                     label = stringResource(R.string.fueling_combined_concentration_label),
                     text = combinedConcentration,
