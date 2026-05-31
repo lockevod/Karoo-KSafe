@@ -2868,6 +2868,7 @@ class KSafeExtension : KarooExtension("ksafe", BuildConfig.VERSION_NAME), Corout
         hydrationTracker.stop()
         locationManager.stop()
         emergencyManager.stopAll()
+        runCatching { fuelingOverlay.remove() }
         calibLogger.disable()
         // Unbind the HAL service before the karooSystem disconnect so we don't leak a
         // ServiceConnection across extension restarts. Safe to call even if connect()
