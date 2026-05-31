@@ -879,15 +879,25 @@ class CrashStateMachine(
                 // and UPRIGHT for 20 s confirmed as a crash. A real crash reorients
                 // the bike (it falls over); a stop-and-stand leaves it ≈ as upright as
                 // the pre-impact reference. So in the gap regime ONLY, if orientation
-                // is now computable AND decisively upright (0 ≤ angle <
-                // uprightAngleThresholdDegrees), treat it as a benign delayed stop and
-                // return to MONITORING. When the angle is non-upright (on side, ≥ the
-                // threshold) OR not computable (-1.0: invalid ref / too few samples)
-                // we confirm exactly as before — the orientation regime, the on-side
-                // paths, and the no-orientation-data safety net are all untouched.
+                // is now computable AND almost identical to the pre-impact reference
+                // (0 ≤ angle < gapVetoUprightAngleDeg — a TIGHT 15° cone, NOT the 45°
+                // timing threshold: a veto suppresses an SOS, and a false negative is
+                // far worse than a false positive, so a bike merely tilted to 15–45°
+                // is left to confirm). When the angle is non-upright (≥ the veto cone)
+                // OR not computable (-1.0: invalid ref / too few samples) we confirm
+                // exactly as before — the orientation regime, the on-side paths, and
+                // the no-orientation-data safety net are all untouched.
+                //
+                // currentOrientationAngleDeg() reads the LIVE silence-window
+                // accumulator (not the latched lastOrientationAngleDeg). On the CR3
+                // IMPACT-relax→gap path the accumulator is deliberately carried forward
+                // (see handleImpact's onSideRelaxed branch) and is dominated by on-side
+                // samples (≥60°), so the live read returns well above the veto cone and
+                // a genuine on-side rolling crash is NOT vetoed. That safety depends on
+                // the CR3 entry NOT resetting the accumulator — do not change that.
                 if (firstSilenceGapMs > thresholds.delayedStopGapMs) {
                     val gapAngle = currentOrientationAngleDeg()
-                    if (gapAngle >= 0.0 && gapAngle < thresholds.uprightAngleThresholdDegrees) {
+                    if (gapAngle >= 0.0 && gapAngle < thresholds.gapVetoUprightAngleDeg) {
                         lastGapUprightVeto = true
                         lastGapUprightVetoAngleDeg = gapAngle
                         resetTimers()

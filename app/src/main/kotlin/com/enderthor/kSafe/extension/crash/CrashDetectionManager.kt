@@ -139,6 +139,11 @@ class CrashDetectionManager(
          *  (long window). Matches [Thresholds.uprightAngleThresholdDegrees]. */
         const val UPRIGHT_ANGLE_THRESHOLD_DEGREES = 45.0
 
+        /** Angle (deg) below which the GAP-regime confirm is vetoed (R6-F). A tight
+         *  cone — a veto suppresses an SOS, and an FN is worse than an FP. Matches
+         *  [Thresholds.gapVetoUprightAngleDeg]. */
+        const val GAP_VETO_UPRIGHT_ANGLE_DEG = 15.0
+
         /** Angle (deg) above which the SILENCE_CHECK speed-rise relaxation engages. */
         const val ON_SIDE_RELAXATION_ANGLE_DEG = 60.0
 
@@ -574,7 +579,7 @@ class CrashDetectionManager(
         if (stateMachine.lastGapUprightVeto) {
             calibLogger?.log(CalibrationLogger.Event.GAP_UPRIGHT_VETO) {
                 val dev = abs(sample.rawMagnitude - GRAVITY)
-                "angle=%.1f,upright_thr=${stateMachine.thresholds.uprightAngleThresholdDegrees},speed=%.1f,deviation=%.2f,cadence=%.0f,grade=%.1f,preset=${config.crashSensitivity}".formatUs(
+                "angle=%.1f,veto_thr=${stateMachine.thresholds.gapVetoUprightAngleDeg},speed=%.1f,deviation=%.2f,cadence=%.0f,grade=%.1f,preset=${config.crashSensitivity}".formatUs(
                     stateMachine.lastGapUprightVetoAngleDeg, currentSpeedKmh, dev, currentCadence, currentGrade)
             }
         }
@@ -928,6 +933,7 @@ class CrashDetectionManager(
             delayedStopGapMs = DELAYED_STOP_GAP_MS,
             silenceDurationUprightMs = SILENCE_DURATION_UPRIGHT_MS,
             uprightAngleThresholdDegrees = UPRIGHT_ANGLE_THRESHOLD_DEGREES,
+            gapVetoUprightAngleDeg = GAP_VETO_UPRIGHT_ANGLE_DEG,
             onSideRelaxationAngleDeg = ON_SIDE_RELAXATION_ANGLE_DEG,
             onSideRelaxationMaxSpeedKmh = ON_SIDE_RELAXATION_MAX_SPEED_KMH,
         )

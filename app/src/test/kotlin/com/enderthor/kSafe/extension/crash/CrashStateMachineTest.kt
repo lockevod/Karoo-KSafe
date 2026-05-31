@@ -593,9 +593,9 @@ class CrashStateMachineTest {
                 sawVeto = true
                 assertTrue("veto flag must be set for the GAP_VETO calibration row",
                     sm.lastGapUprightVeto)
-                assertTrue("veto angle must be upright (0 ≤ angle < 45°), was ${sm.lastGapUprightVetoAngleDeg}",
+                assertTrue("veto angle must be within the tight cone (0 ≤ angle < 15°), was ${sm.lastGapUprightVetoAngleDeg}",
                     sm.lastGapUprightVetoAngleDeg >= 0.0 &&
-                    sm.lastGapUprightVetoAngleDeg < 45.0)
+                    sm.lastGapUprightVetoAngleDeg < 15.0)
             }
         }
         assertFalse("upright delayed stop must NOT confirm (R6-F veto)", sawConfirm)
@@ -623,6 +623,31 @@ class CrashStateMachineTest {
     }
 
     @Test
+    fun `R6-F gap regime tilted-but-not-flat stop still confirms (tighter than the 45 timing cone)`() {
+        // A bike tilted ~30° from the riding orientation: OUTSIDE the 15° veto cone but
+        // INSIDE the old 45° timing threshold. The veto must NOT fire here — a 30° posture
+        // is consistent with a real crash (knocked over, not held upright), so it must
+        // still confirm. This pins the deliberate FN-safety choice: the veto only suppresses
+        // a near-identical-to-riding orientation, never a clearly-displaced one.
+        // Silence vector (ax=4.9, az=8.5): angle from upright ref (0,0,9.81) = acos(8.5/9.81) ≈ 30°.
+        val (sm, _) = smEnteringSilence(
+            gapMs = 12_000L,
+            preRef = PreImpactRef(0.0, 0.0, 9.81, valid = true),
+            silenceAz = 8.5, silenceAx = 4.9,
+        )
+        var t = 1_012_000L
+        var confirmed = false
+        repeat(25) {
+            t += 1000L
+            if (sm.onSample(sample(time = t, raw = 9.81, smoothed = 9.81, az = 8.5, ax = 4.9))
+                    is CrashStateMachine.Decision.Confirm) confirmed = true
+        }
+        assertTrue("a ~30° tilted delayed stop must still confirm (outside the 15° veto cone)", confirmed)
+        assertEquals(20_000L, sm.lastConfirmedSilenceMs)
+        assertFalse("veto must NOT fire at ~30° (only the tight upright cone is vetoed)", sm.lastGapUprightVeto)
+    }
+
+    @Test
     fun `R6-F gap regime with invalid reference still confirms (no orientation data)`() {
         // Fallback safety net: when orientation is not computable the gap regime
         // keeps its original confirm-on-stillness behaviour.
@@ -640,6 +665,62 @@ class CrashStateMachineTest {
         }
         assertTrue("invalid-ref gap stop must still confirm (orientation unavailable)", confirmed)
         assertEquals(20_000L, sm.lastConfirmedSilenceMs)
+    }
+
+    @Test
+    fun `R6-F real-data replay - FP session 9e5679 gravel-bump delayed upright stop is vetoed`() {
+        // Faithful replay of the field FALSE POSITIVE that motivated R6-F.
+        // Source: calibration log session 9e5679 (install f5ca95), 2026-05-31, GRAVEL/MEDIUM.
+        //   IMPACT_IN @4384.4s  source=PEAK raw=67.1 speed=25.0  pre=(-0.64, 4.37, 8.94) valid
+        //   SIL_IN    @4394.3s  deviation=0.13 gyro=0.11 speed=0  gap_ms=9906
+        //   CRASH_OK  @4414.3s  deviation=0.07 silence_path=UPRIGHT decided_by=GAP pre_impact_angle=-1.0
+        //   → EMERG_TRIG CRASH_DETECTED → CRASH_NO @4416.4s (rider cancelled in 2.17 s)
+        //
+        // LIMITATION (and the reason R6-F also adds the GAP_VETO event): the old gap
+        // regime never computed orientation, so the log records NO silence-phase gravity
+        // vector — only the pre-impact reference. The rider coasted to a stop and stood
+        // motionless (speed=0, deviation≈0.1, gyro≈0.1), so the physically-faithful
+        // reconstruction is that the bike held its pre-impact orientation through the
+        // silence window → silence gravity vector == pre-impact reference → angle ≈ 0°.
+        // Under that reconstruction the veto must fire (no CRASH_OK). The angle assertion
+        // (≈0°) shows the FP is caught with a wide margin — it would still be vetoed by a
+        // much tighter cone than the current 45° threshold.
+        val (sm, h) = newSm()
+        sm.onSpeedUpdate(25.0)                                   // real IMPACT speed
+        val base = 1_000_000L
+        sm.onSample(sample(time = base, peak = 67.1, smoothed = 31.3, gyro = 0.31))  // real PEAK impact
+        assertEquals(CrashStateMachine.State.IMPACT, sm.state)
+        sm.setPreImpactReference(PreImpactRef(-0.64, 4.37, 8.94, valid = true))       // real pre-impact ref
+        // Keep moving for the real 9906 ms impact→stillness gap (speed high → gate blocked).
+        var t = base + 1000L
+        while (t < base + 9906L) {
+            sm.onSample(sample(time = t, raw = 9.81, smoothed = 9.81, gyro = 0.1))
+            t += 1000L
+        }
+        // Coast to a full stop; bike keeps the pre-impact orientation (rider stands still).
+        // raw magnitude 9.97 = |(-0.64,4.37,8.94)| → deviation 0.16, matching the real ~0.1.
+        sm.onSpeedUpdate(0.0)
+        sm.onSample(sample(time = base + 9906L, raw = 9.97, smoothed = 9.97, gyro = 0.11,
+            ax = -0.64, ay = 4.37, az = 8.94))
+        assertEquals(CrashStateMachine.State.SILENCE_CHECK, sm.state)
+        // Stand motionless and upright for the full 20 s window.
+        var confirmed = false
+        var vetoed = false
+        t = base + 9906L
+        repeat(22) {
+            t += 1000L
+            val d = sm.onSample(sample(time = t, raw = 9.97, smoothed = 9.97, gyro = 0.11,
+                ax = -0.64, ay = 4.37, az = 8.94))
+            if (d is CrashStateMachine.Decision.Confirm) confirmed = true
+            if (d is CrashStateMachine.Decision.ReturnToMonitoring && !vetoed) {
+                vetoed = true
+                assertTrue("real-data silence orientation must read upright (angle≈0°, was ${sm.lastGapUprightVetoAngleDeg})",
+                    sm.lastGapUprightVetoAngleDeg in 0.0..5.0)
+            }
+        }
+        assertFalse("FP session 9e5679 must NOT confirm under R6-F", confirmed)
+        assertTrue("the veto must fire on the reconstructed real-data scenario", vetoed)
+        assertEquals(CrashStateMachine.State.MONITORING, sm.state)
     }
 
     // ── Regression: silence-window accumulator resets on silence-break ───────
