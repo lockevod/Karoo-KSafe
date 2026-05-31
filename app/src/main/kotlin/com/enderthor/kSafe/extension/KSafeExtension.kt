@@ -166,6 +166,10 @@ class KSafeExtension : KarooExtension("ksafe", BuildConfig.VERSION_NAME), Corout
     private lateinit var wellnessMonitor: WellnessMonitor
     private lateinit var carbsTracker: com.enderthor.kSafe.extension.managers.CarbsTracker
     private lateinit var hydrationTracker: com.enderthor.kSafe.extension.managers.HydrationTracker
+    /** On-screen fueling-alert overlay (SYSTEM_ALERT_WINDOW). Lazy because it needs the
+     *  Application context and is only touched when a fueling alert is presented as an
+     *  overlay (mode != OFF + overlay permission + no active emergency). */
+    private val fuelingOverlay by lazy { com.enderthor.kSafe.extension.managers.FuelingOverlayManager(applicationContext) }
 
     private var activeConfig = KSafeConfig()
     /** Completed on the first config emission from DataStore so the ride-state collector
@@ -445,12 +449,14 @@ class KSafeExtension : KarooExtension("ksafe", BuildConfig.VERSION_NAME), Corout
             scope = this,
             karooSystem = karooSystem,
             context = applicationContext,
+            onFuelingAlert = ::presentFuelingAlert,
             calibLogger = calibLogger,
         )
         hydrationTracker = com.enderthor.kSafe.extension.managers.HydrationTracker(
             scope = this,
             karooSystem = karooSystem,
             context = applicationContext,
+            onFuelingAlert = ::presentFuelingAlert,
             calibLogger = calibLogger,
         )
         // Publish tracker references so the status DataTypes can suspend on the flow
@@ -458,6 +464,15 @@ class KSafeExtension : KarooExtension("ksafe", BuildConfig.VERSION_NAME), Corout
         // docs for the rationale.
         carbsTrackerFlow.value = carbsTracker
         hydrationTrackerFlow.value = hydrationTracker
+
+        // Emergency priority: a fueling overlay must never obscure a crash / SOS
+        // countdown or alert. The moment the emergency state leaves IDLE, tear down
+        // any fueling overlay on screen so the SOS Cancel overlay is unobstructed.
+        launch {
+            com.enderthor.kSafe.extension.managers.EmergencyManager.uiState.collect { st ->
+                if (st.status != com.enderthor.kSafe.data.EmergencyStatus.IDLE) fuelingOverlay.remove()
+            }
+        }
 
         // Publish the singleton ONLY after every lateinit manager is constructed.
         // getInstance() is reached from FieldTapReceiver taps and DataType callbacks;
@@ -2242,6 +2257,37 @@ class KSafeExtension : KarooExtension("ksafe", BuildConfig.VERSION_NAME), Corout
     /** Returns the wellness monitor, or null if not yet initialised (called from FIT writer). */
     fun wellnessMonitorOrNull(): com.enderthor.kSafe.extension.managers.WellnessMonitor? =
         if (this::wellnessMonitor.isInitialized) wellnessMonitor else null
+
+    /**
+     * Present a fueling alert through the channel chosen by [decideFuelingPresentation]:
+     *  - OFF mode → plain [InRideAlert] (behaviour preserved from before this feature).
+     *  - LOG / LOG_UNDO mode (with overlay permission + no active emergency) → on-screen
+     *    overlay with a one-tap LOG button (and, in LOG_UNDO mode, a brief UNDO follow-up).
+     * Called by the carb / hydration trackers via their `onFuelingAlert` callback; the beep
+     * has already fired inside the tracker by the time we get here, so all paths stay audible.
+     */
+    private fun presentFuelingAlert(req: com.enderthor.kSafe.extension.util.FuelingAlertRequest) {
+        val mode = activeConfig.fuelingAlertButtonMode
+        val canOverlay = android.provider.Settings.canDrawOverlays(applicationContext)
+        val emergencyIdle =
+            com.enderthor.kSafe.extension.managers.EmergencyManager.uiState.value.status ==
+                com.enderthor.kSafe.data.EmergencyStatus.IDLE
+        when (com.enderthor.kSafe.extension.util.decideFuelingPresentation(mode, canOverlay, emergencyIdle)) {
+            com.enderthor.kSafe.extension.util.FuelingPresentation.INRIDE_ALERT ->
+                karooSystem.dispatch(req.inRideAlert)
+            com.enderthor.kSafe.extension.util.FuelingPresentation.OVERLAY_LOG ->
+                fuelingOverlay.showPrompt(req.title, req.detail, getString(R.string.fueling_overlay_log), 15_000L) {
+                    req.onLog(); fuelingOverlay.remove()
+                }
+            com.enderthor.kSafe.extension.util.FuelingPresentation.OVERLAY_LOG_UNDO ->
+                fuelingOverlay.showPrompt(req.title, req.detail, getString(R.string.fueling_overlay_log), 15_000L) {
+                    req.onLog()
+                    fuelingOverlay.showPrompt(req.title, req.detail, getString(R.string.fueling_overlay_undo), 4_000L) {
+                        req.onUndo(); fuelingOverlay.remove()
+                    }
+                }
+        }
+    }
 
     fun handleCarbLogTap(slot: Int) {
         Timber.d("handleCarbLogTap slot=$slot")

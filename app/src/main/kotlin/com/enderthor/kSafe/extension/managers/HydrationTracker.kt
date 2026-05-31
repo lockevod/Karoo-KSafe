@@ -40,6 +40,7 @@ class HydrationTracker(
     private val scope: CoroutineScope,
     private val karooSystem: KarooSystemService,
     private val context: Context,
+    private val onFuelingAlert: (com.enderthor.kSafe.extension.util.FuelingAlertRequest) -> Unit,
     private val calibLogger: CalibrationLogger? = null,
 ) {
 
@@ -659,7 +660,12 @@ class HydrationTracker(
             maxLength = ALERT_TITLE_MAX_CHARS,
         )
         config.hydBeepPattern.toPlayBeepPattern()?.let { karooSystem.dispatch(it) }
-        karooSystem.dispatch(InRideAlert(
+        val slots = listOf(
+            com.enderthor.kSafe.extension.util.FuelSlot(1, config.drink1Label, config.drink1Ml),
+            com.enderthor.kSafe.extension.util.FuelSlot(2, config.drink2Label, config.drink2Ml),
+        )
+        val slot = com.enderthor.kSafe.extension.util.pickFuelItem(if (source == "deficit") deficitMl else null, slots)?.slot ?: 1
+        val alert = InRideAlert(
             // Unique-per-fire ID — see CarbsTracker.fireAlert for the rationale.
             id = "ksafe-hyd-alert-$source-$dispatchedAtMs",
             icon = R.drawable.ic_ksafe,
@@ -668,6 +674,10 @@ class HydrationTracker(
             autoDismissMs = AUTO_DISMISS_MS,
             backgroundColor = fuelingAlertColorRes(config.hydrationAlertBgColor),
             textColor = ALERT_TX_COLOR,
+        )
+        onFuelingAlert(com.enderthor.kSafe.extension.util.FuelingAlertRequest(
+            title = title, detail = detail, inRideAlert = alert,
+            onLog = { logEntry(slot) }, onUndo = { undoLastForSlot(slot) },
         ))
         calibLogger?.log(CalibrationLogger.Event.FUELING_HYDRATION_FIRED) {
             "source=$source,deficit_ml=$deficitMl,since_log_min=$elapsedMin,cum_target=${cumTargetMl.toInt()},cum_logged=$cumLoggedMl,beep=${config.hydBeepPattern}"

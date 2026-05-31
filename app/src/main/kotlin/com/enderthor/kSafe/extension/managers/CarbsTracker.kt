@@ -42,6 +42,7 @@ class CarbsTracker(
     private val scope: CoroutineScope,
     private val karooSystem: KarooSystemService,
     private val context: Context,
+    private val onFuelingAlert: (com.enderthor.kSafe.extension.util.FuelingAlertRequest) -> Unit,
     private val calibLogger: CalibrationLogger? = null,
 ) {
 
@@ -798,7 +799,13 @@ class CarbsTracker(
             maxLength = ALERT_TITLE_MAX_CHARS,
         )
         config.carbBeepPattern.toPlayBeepPattern()?.let { karooSystem.dispatch(it) }
-        karooSystem.dispatch(InRideAlert(
+        val slots = listOf(
+            com.enderthor.kSafe.extension.util.FuelSlot(1, config.carb1Label, config.carb1Grams),
+            com.enderthor.kSafe.extension.util.FuelSlot(2, config.carb2Label, config.carb2Grams),
+            com.enderthor.kSafe.extension.util.FuelSlot(3, config.carb3Label, config.carb3Grams),
+        )
+        val slot = com.enderthor.kSafe.extension.util.pickFuelItem(if (source == "deficit") deficit else null, slots)?.slot ?: 1
+        val alert = InRideAlert(
             // Unique-per-fire ID: re-dispatching an InRideAlert with the same id while
             // the host still has the previous overlay tracked has been observed to crash
             // the Karoo ride app when the alert re-fires after the per-source cooldown. Appending
@@ -810,6 +817,10 @@ class CarbsTracker(
             autoDismissMs = AUTO_DISMISS_MS,
             backgroundColor = fuelingAlertColorRes(config.carbAlertBgColor),
             textColor = ALERT_TX_COLOR,
+        )
+        onFuelingAlert(com.enderthor.kSafe.extension.util.FuelingAlertRequest(
+            title = title, detail = detail, inRideAlert = alert,
+            onLog = { logEntry(slot) }, onUndo = { undoLastForSlot(slot) },
         ))
         val burn = currentBurnEstimate()
         val burnRateGph = burn.gph.coerceAtMost(ABSORPTION_CAP_GPH.toDouble()).toInt()
