@@ -347,11 +347,24 @@ class EmergencyManager(
         // and wake the screen on the final nudge. Audio-only by design: the rider resets by
         // tapping the Timer field. The warning is deliberately NOT a cancellable alert — that
         // gesture would mimic the crash-cancel flow and blur two distinct interactions.
-        //   Triple(minutesBefore, beep, wakeScreen)
+        //
+        // halPattern != null ⇒ route through playEmergencyBeep so it pierces a muted Karoo
+        // when the rider enabled the buzzer override. Only the -1 min stage does this: it is
+        // the LAST audible heads-up before CHECKIN_EXPIRED turns into a live SOS countdown, so
+        // a muted rider must hear it or they're blindsided by the countdown itself. The -10/-5
+        // stages stay mute-respecting (raw dispatch), matching the documented "check-in beeps
+        // respect mute" contract. Riders without the override fall back to SDK dispatch on
+        // every stage (playEmergencyBeep handles that internally) — behaviour unchanged.
+        data class WarnStage(
+            val minutesBefore: Int,
+            val beep: PlayBeepPattern,
+            val wakeScreen: Boolean,
+            val halPattern: List<BuzzerClient.Tone>?,
+        )
         val warnStages = listOf(
-            Triple(10, BEEP_LONG, true),
-            Triple(5, BEEP_URGENT, false),
-            Triple(1, BEEP_URGENT, true),
+            WarnStage(10, BEEP_LONG, wakeScreen = true, halPattern = null),
+            WarnStage(5, BEEP_URGENT, wakeScreen = false, halPattern = null),
+            WarnStage(1, BEEP_URGENT, wakeScreen = true, halPattern = BuzzerClient.COUNTDOWN_TICK),
         )
         checkinWarningJob = scope.launch {
             // Delays are cumulative from job start. Offsets are descending (10,5,1) so the
@@ -359,23 +372,34 @@ class EmergencyManager(
             // shorter than the offset, or a resume past that milestone) is skipped without
             // disturbing the cumulative clock.
             var firedDelay = 0L
-            for ((minutesBefore, beep, wakeScreen) in warnStages) {
-                val target = (intervalMs - minutesBefore * 60_000L) - elapsed
+            for (stage in warnStages) {
+                val target = (intervalMs - stage.minutesBefore * 60_000L) - elapsed
                 if (target <= firedDelay) continue
                 delay(target - firedDelay)
                 firedDelay = target
                 if (currentStatus != EmergencyStatus.IDLE) continue  // a countdown/alert owns the buzzer
-                if (wakeScreen) karooSystem.dispatch(TurnScreenOn)
-                karooSystem.dispatch(beep)
+                if (stage.wakeScreen) karooSystem.dispatch(TurnScreenOn)
+                if (stage.halPattern != null) playEmergencyBeep(config, stage.beep, stage.halPattern)
+                else karooSystem.dispatch(stage.beep)
+                // InRideAlert, NOT SystemNotification: the warning only ever fires while the
+                // ride is Recording, and a SystemNotification does not surface over the Karoo
+                // ride screen — the rider would never see it. InRideAlert overlays the data
+                // screen. Amber (warning, not the red emergency hue); display-only is fine —
+                // the rider resets by tapping the Timer field, never this popup. Colours are
+                // @ColorRes (the SDK resolves them via getColor) — a packed ARGB int crashes
+                // the host ride app; see res/values/colors.xml.
                 karooSystem.dispatch(
-                    SystemNotification(
-                        // Unique-per-fire suffix: a rider who restarts the check-in
-                        // countdown twice in quick succession (e.g. test mode) would
-                        // otherwise re-dispatch the same id and risk crashing the
-                        // host's notification tracker.
+                    InRideAlert(
+                        // Unique-per-fire suffix: a rider who restarts the check-in countdown
+                        // twice in quick succession (e.g. test mode) would otherwise re-dispatch
+                        // the same id and risk crashing the host's overlay tracker.
                         id = "ksafe-checkin-warn-${System.currentTimeMillis()}",
-                        message = context.getString(R.string.checkin_warning_message, minutesBefore),
-                        header = context.getString(R.string.app_name),
+                        icon = com.enderthor.kSafe.R.drawable.ic_ksafe,
+                        title = context.getString(R.string.checkin_warning_title, stage.minutesBefore),
+                        detail = context.getString(R.string.checkin_warning_detail),
+                        autoDismissMs = 15_000L,
+                        backgroundColor = com.enderthor.kSafe.R.color.alert_orange,
+                        textColor = com.enderthor.kSafe.R.color.alert_text_white,
                     )
                 )
             }

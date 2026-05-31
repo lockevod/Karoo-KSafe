@@ -237,7 +237,7 @@
     <string name="emergency_message_hint">Use {location} for GPS link and {reason} for cause</string>
     <string name="crash_detection_label">Automatic crash detection</string>
     <string name="safety_buzzer_mute_title">If your Karoo is muted, non-emergency alerts make no sound</string>
-    <string name="safety_buzzer_mute_hint">Emergency sounds (crash countdown, SOS) still play via the buzzer override below. Other beeps (ride start, check-in, wellness) respect the device mute. Alerts still fire and messages are sent normally regardless.</string>
+    <string name="safety_buzzer_mute_hint">Emergency sounds (crash countdown, SOS, and the final 1-min check-in reminder) still play via the buzzer override below. Other beeps (ride start, earlier check-in reminders, wellness) respect the device mute. Alerts still fire and messages are sent normally regardless.</string>
     <string name="health_maxhr_not_loaded">Karoo profile maxHr not loaded yet — set it in Karoo\'s User Profile.</string>
     <string name="health_pct_enter_range">Enter 60–100 to see the resolved bpm threshold (your maxHr = %1$d).</string>
     <string name="health_pct_resolved_bpm">= %1$d bpm (your maxHr = %2$d)</string>
@@ -279,7 +279,8 @@
     <string name="speed_drop_minutes_label">Minutes stopped before alert</string>
     <string name="checkin_timer_label">Check-in timer</string>
     <string name="checkin_interval_label">Check-in interval (minutes)</string>
-    <string name="checkin_warning_message">Tap the Check-in field to confirm (%1$d min)</string>
+    <string name="checkin_warning_title">Check-in in %1$d min</string>
+    <string name="checkin_warning_detail">Tap the Check-in field to confirm you\'re OK</string>
     <string name="checkin_hint">Add the \"KSafe Check-in\" field to a data page: tap it during the ride to confirm you\'re OK and reset the timer. You\'ll be reminded with beeps 10, 5 and 1 min before it expires. If the timer runs out without a tap, your contacts are alerted automatically — so reset it well before it expires.</string>
     <string name="active_label">Extension active</string>
     <string name="karoo_live_label">Notify contacts on ride start</string>
@@ -352,7 +353,7 @@
          source of truth. The %1$s args are dynamic diagnostic context
          (bind error message, BeepResult enum name). -->
     <string name="settings_buzzer_bypass_label">Buzzer on emergency (overrides mute)</string>
-    <string name="settings_buzzer_bypass_hint">Plays the Karoo buzzer on crash countdown and SOS firing, even if your Karoo is muted. Non-emergency beeps (ride start, check-in, wellness warnings) still respect mute as usual.</string>
+    <string name="settings_buzzer_bypass_hint">Plays the Karoo buzzer on crash countdown, SOS firing, and the final 1-min check-in reminder, even if your Karoo is muted. Other non-emergency beeps (ride start, earlier check-in reminders, wellness warnings) still respect mute as usual.</string>
     <string name="settings_buzzer_test_label">Test buzzer (HAL probe)</string>
     <string name="settings_buzzer_test_running">Binding…</string>
     <string name="settings_buzzer_test_bind_failed">Bind failed: %1$s — KSafe will fall back to SDK beep on emergencies.</string>
