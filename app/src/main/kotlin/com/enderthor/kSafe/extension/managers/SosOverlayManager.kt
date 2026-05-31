@@ -30,6 +30,9 @@ class SosOverlayManager(private val context: Context) {
     private val mainHandler = Handler(Looper.getMainLooper())
     private val windowManager = context.getSystemService(Context.WINDOW_SERVICE) as WindowManager
     private var overlayView: View? = null
+    /** Separate reference from [overlayView] so the static info overlay and the live SOS
+     *  countdown overlay never clobber each other's WindowManager view. */
+    private var infoView: View? = null
 
     /**
      * Shows the overlay (first call) or updates the countdown text (subsequent calls).
@@ -95,9 +98,79 @@ class SosOverlayManager(private val context: Context) {
         }
     }
 
-    /** Removes the overlay. Safe to call from any thread. */
+    /**
+     * Shows a static, dismissable info overlay (no countdown, no auto-dismiss) over any
+     * screen — launcher, Settings or the ride screen. Used for the "SOS delivery failed"
+     * alarm where a drawer [android.app.Notification] is too easy to miss, especially after
+     * the ride has ended (which is exactly when the sender's ~30-min retry loop tends to give
+     * up). Stays until the rider taps Dismiss (or [removeInfoOverlay] / teardown clears it) —
+     * sticky on purpose, because "your SOS reached nobody" must not be dismissable by simply
+     * looking away. Safe to call from any thread. No-op (logs) if SYSTEM_ALERT_WINDOW isn't
+     * granted — the caller is expected to have already checked [Settings.canDrawOverlays] to
+     * decide whether to use this or fall back to a notification.
+     */
+    fun showInfo(title: String, message: String, onDismiss: () -> Unit = {}) {
+        mainHandler.post {
+            try {
+                if (!Settings.canDrawOverlays(context)) {
+                    Timber.w("SosOverlay: SYSTEM_ALERT_WINDOW not granted — info overlay skipped")
+                    return@post
+                }
+                // One-shot overlay: always rebuild. Reusing a possibly-detached view (left by a
+                // removeView that threw) would risk a silent no-show on the most critical alert.
+                infoView?.let { runCatching { windowManager.removeView(it) } }
+                infoView = null
+
+                val view = LayoutInflater.from(context).inflate(R.layout.overlay_info, null, false)
+                val params = WindowManager.LayoutParams(
+                    WindowManager.LayoutParams.MATCH_PARENT,
+                    WindowManager.LayoutParams.WRAP_CONTENT,
+                    WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY,
+                    WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE
+                            or WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL
+                            or WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN,
+                    PixelFormat.TRANSLUCENT
+                ).apply {
+                    gravity = Gravity.TOP
+                    y = 0
+                }
+
+                view.findViewById<TextView>(R.id.tv_info_title)?.text = title
+                view.findViewById<TextView>(R.id.tv_info_message)?.text = message
+                view.findViewById<View>(R.id.btn_dismiss_info)?.setOnClickListener {
+                    Timber.d("SosOverlay: info Dismiss tapped")
+                    removeInfoInternal()
+                    onDismiss()
+                }
+
+                windowManager.addView(view, params)
+                infoView = view
+                Timber.d("SosOverlay: info overlay added")
+            } catch (e: Exception) {
+                Timber.e(e, "SosOverlay: info overlay error")
+            }
+        }
+    }
+
+    /** Removes the countdown overlay. Safe to call from any thread. */
     fun removeOverlay() {
         mainHandler.post { removeOverlayInternal() }
+    }
+
+    /** Removes the info overlay. Safe to call from any thread. */
+    fun removeInfoOverlay() {
+        mainHandler.post { removeInfoInternal() }
+    }
+
+    private fun removeInfoInternal() {
+        infoView?.let { view ->
+            try {
+                windowManager.removeView(view)
+                infoView = null
+            } catch (e: Exception) {
+                Timber.w(e, "SosOverlay: info removeView threw — keeping reference for next show")
+            }
+        }
     }
 
     private fun removeOverlayInternal() {

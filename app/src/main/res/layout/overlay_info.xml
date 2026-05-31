@@ -1,0 +1,83 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Static, dismissable info overlay (no countdown). Used for the post-ride
+     "SOS delivery failed" alarm, where a drawer SystemNotification is too easy
+     to miss. Mirrors overlay_sos_cancel.xml so the two read as the same family. -->
+<FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content"
+    android:paddingStart="5dp"
+    android:paddingEnd="5dp"
+    android:paddingTop="6dp"
+    android:paddingBottom="3dp">
+
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:background="@drawable/bg_sos_overlay"
+        android:clipToOutline="true"
+        android:elevation="12dp"
+        android:gravity="center_vertical"
+        android:orientation="horizontal"
+        android:paddingStart="14dp"
+        android:paddingEnd="10dp"
+        android:paddingTop="10dp"
+        android:paddingBottom="10dp">
+
+        <!-- Warning icon -->
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginEnd="10dp"
+            android:text="⚠"
+            android:textColor="#FFFF99"
+            android:textSize="28sp" />
+
+        <!-- Info column: title + message -->
+        <LinearLayout
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:orientation="vertical">
+
+            <TextView
+                android:id="@+id/tv_info_title"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:textColor="#FFFFFF"
+                android:textSize="18sp"
+                android:textStyle="bold"
+                android:letterSpacing="0.05"
+                android:maxLines="2"
+                android:ellipsize="end" />
+
+            <TextView
+                android:id="@+id/tv_info_message"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:textColor="#FFCCCC"
+                android:textSize="13sp"
+                android:layout_marginTop="2dp"
+                android:maxLines="4"
+                android:ellipsize="end" />
+
+        </LinearLayout>
+
+        <!-- Dismiss button with rounded corners -->
+        <TextView
+            android:id="@+id/btn_dismiss_info"
+            android:layout_width="100dp"
+            android:layout_height="62dp"
+            android:layout_marginStart="8dp"
+            android:background="@drawable/bg_cancel_button"
+            android:clipToOutline="true"
+            android:gravity="center"
+            android:text="DISMISS"
+            android:textColor="#CC0000"
+            android:textSize="14sp"
+            android:textStyle="bold"
+            android:clickable="true"
+            android:focusable="true" />
+
+    </LinearLayout>
+
+</FrameLayout>

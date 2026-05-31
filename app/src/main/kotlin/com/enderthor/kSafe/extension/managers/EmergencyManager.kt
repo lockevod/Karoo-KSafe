@@ -1,6 +1,7 @@
 package com.enderthor.kSafe.extension.managers
 
 import android.content.Context
+import android.provider.Settings
 import com.enderthor.kSafe.R
 import com.enderthor.kSafe.data.EmergencyReason
 import com.enderthor.kSafe.data.EmergencyState
@@ -465,6 +466,10 @@ class EmergencyManager(
         currentReason = null
         countdownStartedAt = 0L
         sosOverlay.removeOverlay()
+        // Clear any lingering "SOS delivery failed" info overlay on full teardown / ride end
+        // so a previous ride's alarm can't bleed into the next session. (A failure that fires
+        // AFTER stopAll, post-ride, still shows and stays sticky until the rider dismisses it.)
+        sosOverlay.removeInfoOverlay()
         _uiState.value = EmergencyState()
         scope.launch {
             // H1 — wrap the persist (matches every other saveEmergencyState site): a DataStore
@@ -1094,17 +1099,25 @@ class EmergencyManager(
             backgroundColor = com.enderthor.kSafe.R.color.alert_red,
             textColor = com.enderthor.kSafe.R.color.alert_text_white,
         ))
-        // SystemNotification fallback — InRideAlert only renders inside the Karoo
-        // ride app. The sender's retry loop runs up to ~30 min, so the failure
-        // notification can fire LONG after the rider has ended the ride and the
-        // device is on the launcher / Settings / off. Without the system-tray
-        // fallback, a rider in a tunnel whose ride ends before the sender gives
-        // up would just hear an unfamiliar beep with no on-screen explanation.
-        karooSystem.dispatch(SystemNotification(
-            id = "ksafe-alert-delivery-failed-sys-${reason.name.lowercase()}-$failureDispatchedAtMs",
-            message = context.getString(R.string.alert_delivery_failed_detail, provider.name),
-            header = context.getString(R.string.alert_delivery_failed_title),
-        ))
+        // Always-visible channel for the most critical event in the app — the SOS reached
+        // NOBODY. InRideAlert only renders inside the ride app, and the sender's retry loop
+        // runs up to ~30 min, so the failure often surfaces LONG after the ride ended and the
+        // device is on the launcher / Settings. A drawer SystemNotification there is too easy
+        // to miss. Prefer a system overlay (same WindowManager path as the SOS countdown) that
+        // draws over any screen with a Dismiss button; fall back to the drawer notification
+        // only when SYSTEM_ALERT_WINDOW wasn't granted.
+        if (Settings.canDrawOverlays(context)) {
+            sosOverlay.showInfo(
+                title = context.getString(R.string.alert_delivery_failed_title),
+                message = context.getString(R.string.alert_delivery_failed_detail, provider.name),
+            )
+        } else {
+            karooSystem.dispatch(SystemNotification(
+                id = "ksafe-alert-delivery-failed-sys-${reason.name.lowercase()}-$failureDispatchedAtMs",
+                message = context.getString(R.string.alert_delivery_failed_detail, provider.name),
+                header = context.getString(R.string.alert_delivery_failed_title),
+            ))
+        }
     }
 
     /**
