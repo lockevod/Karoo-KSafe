@@ -19,6 +19,9 @@ It also sends ride-start / ride-end notifications with an optional Karoo Live tr
 > [!NOTE]
 > To help improve crash detection, enable the **anonymous calibration data** toggle in the Settings tab and send the log after your rides. No GPS, no messages, no identifiers — see [docs/calibration-logging.md](docs/calibration-logging.md).
 
+> [!NOTE]
+> **Languages.** The KSafe interface is localised to **English** and **Spanish**. It follows your Karoo's system language automatically and falls back to English for any other language — there is no in-app language switch. The default message templates (emergency / ride-start / ride-end / custom messages) ship in English; edit them to your language in the relevant tab.
+
 ## Messaging providers
 
 | Provider | Cost | Notes |
@@ -144,6 +147,7 @@ Detailed field references:
 - 📘 [Health & Fueling — full reference](docs/health-fueling.md) (tier thresholds, FIT schema, alert tokens)
 - 📘 [Setting your initial fueling targets](docs/health-fueling.md#how-to-pick-your-per-hour-targets) — g/h by ride duration, ml/h by temperature, pre/post-ride weigh-in formula, ACSM / Jeukendrup / Sawka references
 - 📘 [What KSafe does in each ride state](docs/ride-state-behavior.md) — Idle / Recording / Paused: which subsystems run, what the status fields show, day/night theme handling
+- 📘 [On-screen feedback, notifications & sounds](docs/on-screen-feedback.md) — every moment KSafe shows/sounds something (alerts, overlay, beeps, field colours), the channel used, and the mute contract
 
 ## Testing
 
