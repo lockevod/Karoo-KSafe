@@ -1135,9 +1135,10 @@ class EmergencyManager(
      * Fires when [Sender.sendAlert] reached at least one but not every emergency contact
      * (e.g. 1 of 3 — a contact in a coverage gap or with an expired key). Distinct from
      * [notifyDeliveryFailure]: the SOS DID get out, so this is an amber "heads-up", not the
-     * red total-failure alarm. A two-tone "partial" beep plus a 15-s InRideAlert (and a
-     * system-notification fallback for after the ride) tells the rider that some contacts
-     * may not have been alerted, without implying the alert failed outright.
+     * red total-failure alarm. A two-tone "partial" beep plus ONE visual channel picked by
+     * ride state (InRideAlert on the ride screen, else the system overlay, else a drawer
+     * notification — same single-channel routing as [notifyDeliveryFailure]) tells the rider
+     * that some contacts may not have been alerted, without implying the alert failed outright.
      */
     private fun notifyPartialDelivery(
         config: KSafeConfig,
@@ -1160,22 +1161,33 @@ class EmergencyManager(
             )),
             halPattern = BuzzerClient.PARTIAL_DELIVERY_PATTERN,
         )
-        // Unique-per-fire suffix on both ids — same rationale as notifyDeliveryFailure
+        // Unique-per-fire suffix on the ids — same rationale as notifyDeliveryFailure
         // (re-dispatching a duplicate id has crashed the ride app's overlay tracker).
+        // ONE channel, picked by ride state — mirrors notifyDeliveryFailure so the partial
+        // notice never stacks an overlay/notification on top of the InRideAlert on the ride
+        // screen, and still reaches the rider off-screen (overlay, or drawer fallback).
         val dispatchedAtMs = System.currentTimeMillis()
-        karooSystem.dispatch(InRideAlert(
-            id = "ksafe-alert-delivery-partial-${reason.name.lowercase()}-$dispatchedAtMs",
-            icon = com.enderthor.kSafe.R.drawable.ic_ksafe,
-            title = context.getString(R.string.alert_delivery_partial_title),
-            detail = context.getString(R.string.alert_delivery_partial_detail, reached, total, provider.name),
-            autoDismissMs = 15_000L,
-            backgroundColor = com.enderthor.kSafe.R.color.alert_orange,
-            textColor = com.enderthor.kSafe.R.color.alert_text_white,
-        ))
-        karooSystem.dispatch(SystemNotification(
-            id = "ksafe-alert-delivery-partial-sys-${reason.name.lowercase()}-$dispatchedAtMs",
-            message = context.getString(R.string.alert_delivery_partial_detail, reached, total, provider.name),
-            header = context.getString(R.string.alert_delivery_partial_title),
-        ))
+        if (isOnRideScreen()) {
+            karooSystem.dispatch(InRideAlert(
+                id = "ksafe-alert-delivery-partial-${reason.name.lowercase()}-$dispatchedAtMs",
+                icon = com.enderthor.kSafe.R.drawable.ic_ksafe,
+                title = context.getString(R.string.alert_delivery_partial_title),
+                detail = context.getString(R.string.alert_delivery_partial_detail, reached, total, provider.name),
+                autoDismissMs = 15_000L,
+                backgroundColor = com.enderthor.kSafe.R.color.alert_orange,
+                textColor = com.enderthor.kSafe.R.color.alert_text_white,
+            ))
+        } else if (Settings.canDrawOverlays(context)) {
+            sosOverlay.showInfo(
+                title = context.getString(R.string.alert_delivery_partial_title),
+                message = context.getString(R.string.alert_delivery_partial_detail, reached, total, provider.name),
+            )
+        } else {
+            karooSystem.dispatch(SystemNotification(
+                id = "ksafe-alert-delivery-partial-sys-${reason.name.lowercase()}-$dispatchedAtMs",
+                message = context.getString(R.string.alert_delivery_partial_detail, reached, total, provider.name),
+                header = context.getString(R.string.alert_delivery_partial_title),
+            ))
+        }
     }
 }

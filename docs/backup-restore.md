@@ -12,6 +12,9 @@
 > ```
 > The grant persists across app updates.
 
+> [!WARNING]
+> **The backup is stored in clear text in shared storage.** `/sdcard/KSafe/ksafe_export.json` holds your messaging credentials (CallMeBot API keys, Pushover app token + user keys, ntfy topic, Telegram bot token) **and your emergency-contact phone numbers / chat IDs**, all unencrypted. Any app on the Karoo with storage access can read it, and the folder deliberately persists after uninstall. This is an intentional trade-off: the backup must survive a clean reinstall **and** stay editable on your computer (the whole point of the export-edit-import workflow below), both of which encryption would break. The Karoo is a closed cycling computer where you typically install very few apps, so real-world exposure is low — but treat `ksafe_export.json` like a password file: don't share it, and delete it from any shared computer after you finish migrating.
+
 ## Exporting your configuration
 
 Tap **Export** in the Settings tab. KSafe writes your configuration to:

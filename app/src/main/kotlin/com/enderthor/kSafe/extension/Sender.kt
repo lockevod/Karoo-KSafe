@@ -90,13 +90,20 @@ class Sender(
      *  momentarily-unbound KarooSystemService) — map that to a clean `false` instead of
      *  letting it crash the caller (ride-start/end + custom-message paths). */
     suspend fun sendInfo(message: String, provider: ProviderType): Boolean =
+        sendInfoOutcome(message, provider).infoSuccess
+
+    /** Like [sendInfo] but returns the full [SendOutcome] so a rider-initiated path (e.g. a
+     *  custom-message tap) can distinguish a real delivery (`delivered > 0`) from a legitimate
+     *  zero-recipient scope no-op (`eligible == 0`, not `hardFail`) — the latter must NOT be
+     *  reported to the rider as "sent ✓". A thrown exception maps to [SendOutcome.HARD_FAIL]. */
+    suspend fun sendInfoOutcome(message: String, provider: ProviderType): SendOutcome =
         try {
-            attemptSend(message, provider, isEmergency = false).infoSuccess
+            attemptSend(message, provider, isEmergency = false)
         } catch (e: kotlinx.coroutines.CancellationException) {
             throw e
         } catch (e: Exception) {
             Timber.w(e, "sendInfo failed for $provider — treating as not delivered")
-            false
+            SendOutcome.HARD_FAIL
         }
 
     /**
