@@ -410,6 +410,12 @@ class KSafeExtension : KarooExtension("ksafe", BuildConfig.VERSION_NAME), Corout
             calibLogger,
             buzzerClient = buzzerClient,
             onCrashEmergencyCancelled = { crashManager.clearCrashCooldown() },
+            // Recording OR Paused = rider is on the ride screen (autopause keeps it up), so a
+            // delivery-failure InRideAlert is visible there; off it, EmergencyManager uses the
+            // overlay instead. Same predicate as dispatchWebhookFeedback's channel switch.
+            isOnRideScreen = {
+                currentRideState is RideState.Recording || currentRideState is RideState.Paused
+            },
         )
         crashManager = CrashDetectionManager(applicationContext, this, {
             Timber.d("Crash detected by sensor!")

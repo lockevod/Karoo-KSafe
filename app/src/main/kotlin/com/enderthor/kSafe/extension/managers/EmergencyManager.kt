@@ -84,6 +84,16 @@ class EmergencyManager(
      * alert, so crash detection must be fully re-armed.
      */
     private val onCrashEmergencyCancelled: (() -> Unit)? = null,
+    /**
+     * Tells the manager whether the rider is currently on the Karoo ride screen
+     * (RideState.Recording OR Paused — autopause at a light/café keeps the data screen up).
+     * Wired by KSafeExtension to its live ride-state. Used by [notifyDeliveryFailure] to pick
+     * a single feedback channel: InRideAlert on the ride screen, system overlay off it.
+     * Evaluated lazily at failure time (which can be ~30 min after the alert started, often
+     * post-ride), not captured at construction. Defaults to false so unit tests / standalone
+     * construction route to the overlay/notification path.
+     */
+    private val isOnRideScreen: () -> Boolean = { false },
 ) {
     companion object {
 
@@ -1089,24 +1099,28 @@ class EmergencyManager(
         // the same provider+reason across its ~30 min retry window. Re-dispatching
         // the same id has been observed to crash the Karoo ride app's overlay
         // tracker.
+        // Unique-per-fire suffix on the ids: the sender's retry loop can call this multiple
+        // times for the same provider+reason across its ~30 min window; re-dispatching the
+        // same id has crashed the Karoo ride app's overlay tracker.
         val failureDispatchedAtMs = System.currentTimeMillis()
-        karooSystem.dispatch(InRideAlert(
-            id = "ksafe-alert-delivery-failed-${reason.name.lowercase()}-$failureDispatchedAtMs",
-            icon = com.enderthor.kSafe.R.drawable.ic_ksafe,
-            title = context.getString(R.string.alert_delivery_failed_title),
-            detail = context.getString(R.string.alert_delivery_failed_detail, provider.name),
-            autoDismissMs = 20_000L,
-            backgroundColor = com.enderthor.kSafe.R.color.alert_red,
-            textColor = com.enderthor.kSafe.R.color.alert_text_white,
-        ))
-        // Always-visible channel for the most critical event in the app — the SOS reached
-        // NOBODY. InRideAlert only renders inside the ride app, and the sender's retry loop
-        // runs up to ~30 min, so the failure often surfaces LONG after the ride ended and the
-        // device is on the launcher / Settings. A drawer SystemNotification there is too easy
-        // to miss. Prefer a system overlay (same WindowManager path as the SOS countdown) that
-        // draws over any screen with a Dismiss button; fall back to the drawer notification
-        // only when SYSTEM_ALERT_WINDOW wasn't granted.
-        if (Settings.canDrawOverlays(context)) {
+        // ONE channel, picked by ride state — never two at once. On the ride screen the
+        // InRideAlert is the visible native channel, so the overlay would just stack a sticky
+        // duplicate over it. Off the ride screen (launcher / Settings — the common case, since
+        // the ~30 min retry loop usually gives up after the ride) the InRideAlert renders
+        // nowhere, so use the system overlay that draws over any screen; fall back to the drawer
+        // notification only when SYSTEM_ALERT_WINDOW wasn't granted. Either way the descending
+        // beep above is the cross-state attention signal.
+        if (isOnRideScreen()) {
+            karooSystem.dispatch(InRideAlert(
+                id = "ksafe-alert-delivery-failed-${reason.name.lowercase()}-$failureDispatchedAtMs",
+                icon = com.enderthor.kSafe.R.drawable.ic_ksafe,
+                title = context.getString(R.string.alert_delivery_failed_title),
+                detail = context.getString(R.string.alert_delivery_failed_detail, provider.name),
+                autoDismissMs = 20_000L,
+                backgroundColor = com.enderthor.kSafe.R.color.alert_red,
+                textColor = com.enderthor.kSafe.R.color.alert_text_white,
+            ))
+        } else if (Settings.canDrawOverlays(context)) {
             sosOverlay.showInfo(
                 title = context.getString(R.string.alert_delivery_failed_title),
                 message = context.getString(R.string.alert_delivery_failed_detail, provider.name),
