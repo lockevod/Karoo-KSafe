@@ -13,9 +13,15 @@ class FuelingPresentationTest {
         assertEquals(FuelingPresentation.INRIDE_ALERT,
             decideFuelingPresentation(FuelingAlertButtonMode.LOG, canDrawOverlays = false, emergencyIdle = true))
     }
-    @Test fun `active emergency falls back to inride alert`() {
-        assertEquals(FuelingPresentation.INRIDE_ALERT,
+    @Test fun `active emergency suppresses the fueling alert entirely`() {
+        // No overlay AND no InRideAlert during an emergency — must not compete with the SOS.
+        assertEquals(FuelingPresentation.SUPPRESS,
             decideFuelingPresentation(FuelingAlertButtonMode.LOG_UNDO, canDrawOverlays = true, emergencyIdle = false))
+    }
+    @Test fun `active emergency suppresses even in OFF mode (no InRideAlert)`() {
+        // Emergency takes priority over the OFF-mode InRideAlert fallback too.
+        assertEquals(FuelingPresentation.SUPPRESS,
+            decideFuelingPresentation(FuelingAlertButtonMode.OFF, canDrawOverlays = false, emergencyIdle = false))
     }
     @Test fun `log mode with permission and idle uses overlay log`() {
         assertEquals(FuelingPresentation.OVERLAY_LOG,

@@ -168,8 +168,11 @@ class KSafeExtension : KarooExtension("ksafe", BuildConfig.VERSION_NAME), Corout
     private lateinit var hydrationTracker: com.enderthor.kSafe.extension.managers.HydrationTracker
     /** On-screen fueling-alert overlay (SYSTEM_ALERT_WINDOW). Lazy because it needs the
      *  Application context and is only touched when a fueling alert is presented as an
-     *  overlay (mode != OFF + overlay permission + no active emergency). */
-    private val fuelingOverlay by lazy { com.enderthor.kSafe.extension.managers.FuelingOverlayManager(applicationContext) }
+     *  overlay (mode != OFF + overlay permission + no active emergency). The [Lazy] handle
+     *  is kept so teardown/emergency paths can check [Lazy.isInitialized] and avoid
+     *  instantiating a WindowManager-holding manager that was never used this session. */
+    private val fuelingOverlayLazy = lazy { com.enderthor.kSafe.extension.managers.FuelingOverlayManager(applicationContext) }
+    private val fuelingOverlay by fuelingOverlayLazy
 
     private var activeConfig = KSafeConfig()
     /** Completed on the first config emission from DataStore so the ride-state collector
@@ -468,9 +471,15 @@ class KSafeExtension : KarooExtension("ksafe", BuildConfig.VERSION_NAME), Corout
         // Emergency priority: a fueling overlay must never obscure a crash / SOS
         // countdown or alert. The moment the emergency state leaves IDLE, tear down
         // any fueling overlay on screen so the SOS Cancel overlay is unobstructed.
+        // Only touch the overlay if it was ever instantiated — otherwise the first
+        // emergency would needlessly build a WindowManager-holding manager that has
+        // no overlay to remove. (presentFuelingAlert already suppresses new fueling
+        // overlays while non-IDLE; this collector is the belt-and-suspenders teardown
+        // for one shown in the instant before the transition.)
         launch {
             com.enderthor.kSafe.extension.managers.EmergencyManager.uiState.collect { st ->
-                if (st.status != com.enderthor.kSafe.data.EmergencyStatus.IDLE) fuelingOverlay.remove()
+                if (st.status != com.enderthor.kSafe.data.EmergencyStatus.IDLE &&
+                    fuelingOverlayLazy.isInitialized()) fuelingOverlay.remove()
             }
         }
 
@@ -2269,32 +2278,46 @@ class KSafeExtension : KarooExtension("ksafe", BuildConfig.VERSION_NAME), Corout
     fun wellnessMonitorOrNull(): com.enderthor.kSafe.extension.managers.WellnessMonitor? =
         if (this::wellnessMonitor.isInitialized) wellnessMonitor else null
 
+    /** True while a crash / SOS / check-in is in progress. Canonical in-memory source —
+     *  [EmergencyManager.uiState], NOT DataStore (which is async and racy with the ticks). */
+    private fun emergencyActive(): Boolean =
+        com.enderthor.kSafe.extension.managers.EmergencyManager.uiState.value.status !=
+            com.enderthor.kSafe.data.EmergencyStatus.IDLE
+
     /**
      * Present a fueling alert through the channel chosen by [decideFuelingPresentation]:
+     *  - Active emergency → SUPPRESS: present nothing (no overlay, no InRideAlert) so the
+     *    fueling alert can never compete with the SOS countdown/alert on any surface.
      *  - OFF mode → plain [InRideAlert] (behaviour preserved from before this feature).
      *  - LOG / LOG_UNDO mode (with overlay permission + no active emergency) → on-screen
      *    overlay with a one-tap LOG button (and, in LOG_UNDO mode, a brief UNDO follow-up).
      * Called by the carb / hydration trackers via their `onFuelingAlert` callback; the beep
      * has already fired inside the tracker by the time we get here, so all paths stay audible.
+     *
+     * The overlay paths pass `abortIf = ::emergencyActive`: the SUPPRESS check above is a
+     * synchronous snapshot, but showPrompt defers the addView to a later main-loop turn, so
+     * the guard is re-checked there to catch an emergency that starts in that gap.
      */
     private fun presentFuelingAlert(req: com.enderthor.kSafe.extension.util.FuelingAlertRequest) {
         val mode = activeConfig.fuelingAlertButtonMode
         val canOverlay = android.provider.Settings.canDrawOverlays(applicationContext)
-        val emergencyIdle =
-            com.enderthor.kSafe.extension.managers.EmergencyManager.uiState.value.status ==
-                com.enderthor.kSafe.data.EmergencyStatus.IDLE
-        when (com.enderthor.kSafe.extension.util.decideFuelingPresentation(mode, canOverlay, emergencyIdle)) {
+        when (com.enderthor.kSafe.extension.util.decideFuelingPresentation(mode, canOverlay, !emergencyActive())) {
+            com.enderthor.kSafe.extension.util.FuelingPresentation.SUPPRESS ->
+                Timber.d("Fueling alert suppressed — emergency active")
             com.enderthor.kSafe.extension.util.FuelingPresentation.INRIDE_ALERT ->
                 karooSystem.dispatch(req.inRideAlert)
             com.enderthor.kSafe.extension.util.FuelingPresentation.OVERLAY_LOG ->
-                fuelingOverlay.showPrompt(req.title, req.detail, getString(R.string.fueling_overlay_log), 15_000L) {
+                fuelingOverlay.showPrompt(req.title, req.detail, getString(R.string.fueling_overlay_log), 15_000L,
+                    abortIf = ::emergencyActive) {
                     req.onLog(); fuelingOverlay.remove()
                 }
             com.enderthor.kSafe.extension.util.FuelingPresentation.OVERLAY_LOG_UNDO ->
-                fuelingOverlay.showPrompt(req.title, req.detail, getString(R.string.fueling_overlay_log), 15_000L) {
+                fuelingOverlay.showPrompt(req.title, req.detail, getString(R.string.fueling_overlay_log), 15_000L,
+                    abortIf = ::emergencyActive) {
                     req.onLog()
                     fuelingOverlay.remove()
-                    fuelingOverlay.showPrompt(req.title, req.detail, getString(R.string.fueling_overlay_undo), 4_000L) {
+                    fuelingOverlay.showPrompt(req.title, req.detail, getString(R.string.fueling_overlay_undo), 4_000L,
+                        abortIf = ::emergencyActive) {
                         req.onUndo(); fuelingOverlay.remove()
                     }
                 }
@@ -2880,7 +2903,8 @@ class KSafeExtension : KarooExtension("ksafe", BuildConfig.VERSION_NAME), Corout
         hydrationTracker.stop()
         locationManager.stop()
         emergencyManager.stopAll()
-        runCatching { fuelingOverlay.remove() }
+        // Only if it was ever shown — avoids instantiating the lazy manager at teardown.
+        if (fuelingOverlayLazy.isInitialized()) runCatching { fuelingOverlay.remove() }
         calibLogger.disable()
         // Unbind the HAL service before the karooSystem disconnect so we don't leak a
         // ServiceConnection across extension restarts. Safe to call even if connect()

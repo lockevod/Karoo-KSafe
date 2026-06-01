@@ -24,10 +24,31 @@ class FuelingOverlayManager(private val context: Context) {
     private val windowManager = context.getSystemService(Context.WINDOW_SERVICE) as WindowManager
     private var view: View? = null
 
-    /** Shows the prompt with a single action button. Safe to call from any thread. */
-    fun showPrompt(title: String, detail: String, buttonLabel: String, autoDismissMs: Long, onButton: () -> Unit) {
+    /**
+     * Shows the prompt with a single action button. Safe to call from any thread.
+     *
+     * [abortIf] is re-evaluated on the main thread INSIDE the posted runnable, immediately
+     * before the window is added. The caller's own pre-check (e.g. "no active emergency")
+     * runs synchronously when it decides to call this, but the actual addView is deferred to
+     * a later main-loop turn — so an emergency that starts in that gap would otherwise let a
+     * fueling overlay surface on top of the SOS screen. Re-checking here closes that race and
+     * also covers the nested LOG→UNDO follow-up, which is posted at button-tap time.
+     */
+    fun showPrompt(
+        title: String,
+        detail: String,
+        buttonLabel: String,
+        autoDismissMs: Long,
+        abortIf: () -> Boolean = { false },
+        onButton: () -> Unit,
+    ) {
         mainHandler.post {
             try {
+                if (abortIf()) {
+                    Timber.d("FuelingOverlay: aborted before show (guard tripped, e.g. emergency active)")
+                    removeInternal()   // clear any prior view so nothing lingers over the SOS screen
+                    return@post
+                }
                 if (!Settings.canDrawOverlays(context)) {
                     Timber.w("FuelingOverlay: SYSTEM_ALERT_WINDOW not granted — skipped")
                     return@post
