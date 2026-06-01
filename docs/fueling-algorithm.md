@@ -389,6 +389,31 @@ Tap behaviour: a `PendingIntent` fires a unique broadcast action (`com.enderthor
 
 Two BonusActions registered: *"KSafe: Log Carb"* and *"KSafe: Log Drink"*, both wired to **slot 1** of each category. The rider maps them to AXS shifter buttons. Logging without looking at the screen.
 
+### In-alert logging button (overlay)
+
+A fueling alert can optionally surface as a **tappable overlay** with a one-tap **LOG** button (and an optional **UNDO** follow-up), so the rider logs the suggested item straight from the alert without finding its field. Controlled by `KSafeConfig.fuelingAlertButtonMode` (`OFF` / `LOG` / `LOG_UNDO`; default `OFF`, which preserves the legacy InRideAlert-only behaviour — added in config **v22**).
+
+Wiring: each tracker's `fireAlert` builds a `FuelingAlertRequest` (title, detail, a **lazy** `inRideAlert` factory, the `FuelingChannel`, and the suggested `slot`) and hands it to `KSafeExtension.presentFuelingAlert` via the `onFuelingAlert` callback. The suggested slot comes from `util/FuelItemSelector.pickFuelItem` — the enabled slot whose size is closest to the current deficit (lowest index on ties), or the first usable slot for a time-based alert; `null` when no slot has size > 0.
+
+`util/FuelingPresentation.decideFuelingPresentation(mode, canDrawOverlays, emergencyIdle, hasUsableSlot)` (pure, unit-tested) picks the channel:
+
+| Condition | Result |
+|---|---|
+| `!emergencyIdle` (a crash / SOS countdown / alert is active) | **`SUPPRESS`** — present nothing |
+| `!canDrawOverlays` **or** `!hasUsableSlot` (no overlay permission / no loggable slot) | `INRIDE_ALERT` |
+| `mode == OFF` | `INRIDE_ALERT` |
+| `mode == LOG` | `OVERLAY_LOG` |
+| `mode == LOG_UNDO` | `OVERLAY_LOG_UNDO` |
+
+Key behaviours:
+
+- **Emergency priority.** While `EmergencyManager.uiState.status != IDLE` the alert is `SUPPRESS`ed entirely (no overlay, no InRideAlert) so it can never compete with the SOS on any surface. `FuelingOverlayManager.showPrompt` additionally re-checks `emergencyActive()` inside its deferred main-thread post (`abortIf`), and a `uiState` collector tears down any overlay shown in the instant before the transition. (The beep, already dispatched by the tracker before `presentFuelingAlert`, is not suppressed; a suppressed alert's cooldown still advances, so that one reminder is dropped — the deficit re-triggers it next cycle.)
+- **Field state stays in sync.** The overlay LOG/UNDO routes through the **same** helpers as a field tap (`logCarbSlot` / `undoCarbSlot` and the hydration equivalents), so the on-ride `CarbLog`/`HydrationLog` field flashes `LOGGED`/`UNDONE` and the 6 s / 1.5 s revert jobs are managed (pending one cancelled first) identically whether the rider logged from the field or the overlay.
+- **Named item.** The overlay detail leads with the exact item the button will record (e.g. *"Gel 25 g — <reason>"*, `fueling_overlay_log_detail`), and the `LOG_UNDO` follow-up confirms it (*"Logged Gel 25 g"*, `fueling_overlay_logged`), so the rider is never tapping a blind "Log".
+- **No phantom log.** When `pickFuelItem` returns `null` (all slots size 0) the alert falls back to a plain `InRideAlert` with no button, instead of logging a 0 g/ml entry into slot 1.
+
+`FuelingOverlayManager` is a standalone `SYSTEM_ALERT_WINDOW` overlay, deliberately separate from `SosOverlayManager` so the safety-critical SOS overlay cannot be affected by changes here.
+
 ---
 
 ## Post-Ride Summary
@@ -589,6 +614,7 @@ Riders who don't fill these in still get a useful carb estimate via Swain. Both 
 | Field | Default | UI exposed |
 |---|---|---|
 | `carbsTrackerEnabled` | `false` (opt-in master — gates all sub-fields and collapses them when off) | ✅ |
+| `fuelingAlertButtonMode` | `OFF` (**global** — applies to carb **and** hydration alerts; `OFF` / `LOG` / `LOG_UNDO`; added v22) | ✅ — Fueling tab, own card. See [In-alert logging button](#in-alert-logging-button-overlay). |
 | `carbDeficitAlertEnabled` | `true` | ✅ |
 | `carbDeficitThresholdG` | 25 g | ✅ |
 | `carbDeficitInitialDelayMin` | 30 | ✅ (0 = off — fire as soon as threshold crossed) |

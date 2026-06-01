@@ -135,6 +135,8 @@
     <!-- Detalle del overlay con botón LOG: nombra el ítem exacto que registrará el toque
          (ítem primero para que no se recorte), luego el motivo. p.ej. "Gel 25 g — …" -->
     <string name="fueling_overlay_log_detail">%1$s — %2$s</string>
+    <!-- Detalle del breve prompt de DESHACER tras registrar: confirma qué se registró. -->
+    <string name="fueling_overlay_logged">Registrado %1$s</string>
 
     <!-- BonusActions de Nutrición -->
     <string name="action_log_carb_1">KSafe: Registrar carbo 1</string>

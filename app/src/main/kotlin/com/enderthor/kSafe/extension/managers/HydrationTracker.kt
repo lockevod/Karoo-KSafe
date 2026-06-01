@@ -667,18 +667,21 @@ class HydrationTracker(
         // null when no slot is usable (all drink sizes 0) — the presenter then shows no LOG
         // button (a plain InRideAlert) instead of a button that would log a phantom 0 ml entry.
         val slot = com.enderthor.kSafe.extension.util.pickFuelItem(if (source == "deficit") deficitMl else null, slots)?.slot
-        val alert = InRideAlert(
-            // Unique-per-fire ID — see CarbsTracker.fireAlert for the rationale.
-            id = "ksafe-hyd-alert-$source-$dispatchedAtMs",
-            icon = R.drawable.ic_ksafe,
-            title = title,
-            detail = detail,
-            autoDismissMs = AUTO_DISMISS_MS,
-            backgroundColor = fuelingAlertColorRes(config.hydrationAlertBgColor),
-            textColor = ALERT_TX_COLOR,
-        )
         onFuelingAlert(com.enderthor.kSafe.extension.util.FuelingAlertRequest(
-            title = title, detail = detail, inRideAlert = alert,
+            title = title, detail = detail,
+            // Factory — only built if the presenter takes the InRideAlert branch.
+            inRideAlert = {
+                InRideAlert(
+                    // Unique-per-fire ID — see CarbsTracker.fireAlert for the rationale.
+                    id = "ksafe-hyd-alert-$source-$dispatchedAtMs",
+                    icon = R.drawable.ic_ksafe,
+                    title = title,
+                    detail = detail,
+                    autoDismissMs = AUTO_DISMISS_MS,
+                    backgroundColor = fuelingAlertColorRes(config.hydrationAlertBgColor),
+                    textColor = ALERT_TX_COLOR,
+                )
+            },
             channel = com.enderthor.kSafe.extension.util.FuelingChannel.HYDRATION, slot = slot,
         ))
         calibLogger?.log(CalibrationLogger.Event.FUELING_HYDRATION_FIRED) {

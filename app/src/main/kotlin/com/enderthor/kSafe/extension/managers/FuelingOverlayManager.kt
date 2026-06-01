@@ -53,8 +53,14 @@ class FuelingOverlayManager(private val context: Context) {
                     Timber.w("FuelingOverlay: SYSTEM_ALERT_WINDOW not granted — skipped")
                     return@post
                 }
-                // best-effort remove of any prior view, always clearing the ref so we never stack overlays
-                view?.let { old -> runCatching { windowManager.removeView(old) }; view = null }
+                // Remove any prior view before adding a fresh one so overlays never stack.
+                // Guard on isAttachedToWindow: calling removeView on a view already detached
+                // (e.g. a previous removeView that threw, or a host teardown) itself throws —
+                // skipping it avoids the exception. Always clear the ref regardless.
+                view?.let { old ->
+                    if (old.isAttachedToWindow) runCatching { windowManager.removeView(old) }
+                    view = null
+                }
                 val v = LayoutInflater.from(context).inflate(R.layout.overlay_fueling_prompt, null, false)
                 val params = WindowManager.LayoutParams(
                     WindowManager.LayoutParams.MATCH_PARENT,
@@ -86,8 +92,14 @@ class FuelingOverlayManager(private val context: Context) {
 
     private fun removeInternal() {
         view?.let { v ->
-            try { windowManager.removeView(v); view = null }
-            catch (e: Exception) { Timber.w(e, "FuelingOverlay: removeView threw") }
+            // Only remove an attached view — removeView on a detached one throws. Unlike the
+            // SOS overlay (which keeps a stale ref to update in place), the fueling prompt
+            // always rebuilds on the next show, so the ref is cleared unconditionally here.
+            if (v.isAttachedToWindow) {
+                try { windowManager.removeView(v) }
+                catch (e: Exception) { Timber.w(e, "FuelingOverlay: removeView threw") }
+            }
+            view = null
         }
     }
 }

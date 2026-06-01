@@ -144,6 +144,8 @@
     <!-- Overlay detail when a LOG button is shown: names the exact item the tap will log
          (item first so it is never ellipsized), then the alert rationale. e.g. "Gel 25 g — …" -->
     <string name="fueling_overlay_log_detail">%1$s — %2$s</string>
+    <!-- Detail of the brief UNDO follow-up prompt after a log: confirms what was recorded. -->
+    <string name="fueling_overlay_logged">Logged %1$s</string>
     <string name="fueling_overlay_icon" translatable="false">🍫</string>
 
     <!-- Fueling BonusActions -->

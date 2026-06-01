@@ -18,7 +18,9 @@ enum class FuelingChannel { CARB, HYDRATION }
 data class FuelingAlertRequest(
     val title: String,
     val detail: String,
-    val inRideAlert: InRideAlert,
+    /** Builds the legacy InRideAlert. A factory (not a built object) so it is only materialised
+     *  on the INRIDE_ALERT branch — the overlay and SUPPRESS paths never pay for it. */
+    val inRideAlert: () -> InRideAlert,
     val channel: FuelingChannel,
     /** Slot (1-based) the alert suggests logging, or null when no slot is usable (all sizes 0)
      *  — then no LOG button is shown and the alert is presented as a plain InRideAlert. */

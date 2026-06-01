@@ -807,21 +807,24 @@ class CarbsTracker(
         // null when no slot is usable (all carb sizes 0) — the presenter then shows no LOG
         // button (a plain InRideAlert) instead of a button that would log a phantom 0 g entry.
         val slot = com.enderthor.kSafe.extension.util.pickFuelItem(if (source == "deficit") deficit else null, slots)?.slot
-        val alert = InRideAlert(
-            // Unique-per-fire ID: re-dispatching an InRideAlert with the same id while
-            // the host still has the previous overlay tracked has been observed to crash
-            // the Karoo ride app when the alert re-fires after the per-source cooldown. Appending
-            // the wall-clock timestamp guarantees a fresh id per fire.
-            id = "ksafe-carb-alert-$source-$dispatchedAtMs",
-            icon = R.drawable.ic_ksafe,
-            title = title,
-            detail = detail,
-            autoDismissMs = AUTO_DISMISS_MS,
-            backgroundColor = fuelingAlertColorRes(config.carbAlertBgColor),
-            textColor = ALERT_TX_COLOR,
-        )
         onFuelingAlert(com.enderthor.kSafe.extension.util.FuelingAlertRequest(
-            title = title, detail = detail, inRideAlert = alert,
+            title = title, detail = detail,
+            // Factory — only built if the presenter takes the InRideAlert branch.
+            inRideAlert = {
+                InRideAlert(
+                    // Unique-per-fire ID: re-dispatching an InRideAlert with the same id while
+                    // the host still has the previous overlay tracked has been observed to crash
+                    // the Karoo ride app when the alert re-fires after the per-source cooldown.
+                    // Appending the wall-clock timestamp guarantees a fresh id per fire.
+                    id = "ksafe-carb-alert-$source-$dispatchedAtMs",
+                    icon = R.drawable.ic_ksafe,
+                    title = title,
+                    detail = detail,
+                    autoDismissMs = AUTO_DISMISS_MS,
+                    backgroundColor = fuelingAlertColorRes(config.carbAlertBgColor),
+                    textColor = ALERT_TX_COLOR,
+                )
+            },
             channel = com.enderthor.kSafe.extension.util.FuelingChannel.CARB, slot = slot,
         ))
         val burn = currentBurnEstimate()
