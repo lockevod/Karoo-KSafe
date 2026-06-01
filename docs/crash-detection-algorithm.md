@@ -646,7 +646,9 @@ Two signals decide the silence-window duration, each authoritative in its own re
 
 ```
 gap > 8 s  (rider kept moving after impact — delayed stop):
-    → 20 s  [gap regime; orientation ignored]
+    → 20 s window  [gap regime; orientation NOT used to pick the window]
+       · but at the 20 s confirm gate, the R6-F upright veto applies
+         (orientation < 15° → suppress confirm) — see "Two uses of orientation" below
 
 gap ≤ 8 s  (stopped with the impact — prompt stop):
     angle ≥ 45°  (on-side or significantly tilted)  → 4.5 s  [clear crash, fast alert]
@@ -657,6 +659,23 @@ gap ≤ 8 s  (stopped with the impact — prompt stop):
 - The **gap** regime does the heavy false-positive lifting. A bump+brake+stop FP has a long gap (10–20 s of continued riding) → 20 s window, with no dependency on orientation or terrain. A real crash always has a short gap (1–4 s) so the gap rule never delays a genuine emergency.
 - The **orientation** regime does scoped work among prompt stops: a crash lays the bike on its side (angle ≥ 45° → fast 4.5 s alert); an ambiguous upright stop at a traffic light or after a non-crash bump requires 20 s.
 - The 20 s window only costs a delay if an event is ambiguous; for a true false positive the rider rides off and nothing fires — zero cost. The 20 s value is unchanged from the earlier orientation attempt.
+
+#### Two uses of orientation — window choice (timing) vs confirm veto (R6-F)
+
+Orientation degrees feed **two distinct decisions**, and conflating them causes confusion ("didn't we already handle tilt?"):
+
+1. **Window duration — *timing* (R6-C, the decision table above).** In the **prompt-stop** regime (gap ≤ 8 s) the angle picks *how long to wait*: ≥ 45° (on-side) → 4.5 s fast alert, < 45° (upright) → 20 s. **Both outcomes still CONFIRM.** Orientation here never suppresses an alert — it only chooses the window. The **gap regime does not use orientation for the window** (always 20 s).
+
+2. **Confirm veto — *fire / no-fire* (R6-F, gap regime only).** At the 20 s confirm gate of the **gap** regime, if the silence-window orientation is within a **tight, dedicated 15° cone** (`gapVetoUprightAngleDeg`, **not** the 45° timing threshold) of the pre-impact reference, the confirm is **vetoed** → return to MONITORING, no alert. This is the first and only place orientation *suppresses* a confirm.
+
+**Why the veto is scoped to the gap regime only** (and the prompt-stop upright path still does "20 s then confirm"):
+
+| Regime | What it means physically | Upright + still 20 s → |
+|--------|--------------------------|------------------------|
+| **Gap > 8 s** | Rider kept riding ~10 s after the bump, *then* stopped | **Vetoed** — you do not keep riding for 10 s after crashing, so a delayed upright stop is almost certainly a benign rest. A bike held < 15°-upright and motionless for 20 s is being balanced by a conscious rider. |
+| **Gap ≤ 8 s** | Stopped abruptly, coincident with the impact | **Still confirms** (by design) — an abrupt stop is far more crash-consistent (you go down *with* the impact). A real fall can leave the bike briefly upright-ish while the downed rider is still in contact, so this path keeps the conservative 20 s-then-confirm. FN ≫ FP. |
+
+So the older 45° handling (R6-C) and the R6-F veto are **not redundant**: R6-C *times* the confirm using orientation in the prompt-stop regime; R6-F *suppresses* the confirm using a tighter cone in the gap regime — the one place where an upright, perfectly-still stop is provably benign. If a "hard-brake → track-stand upright 20 s" FP (gap ≤ 8 s) is ever observed in the field, extending the veto to that path is the lever to revisit — but it is intentionally left conservative today.
 
 ### Pre-impact reference capture (`SensorReader` + `PreImpactReference`)
 
