@@ -728,6 +728,132 @@ class CrashStateMachineTest {
         assertEquals(CrashStateMachine.State.MONITORING, sm.state)
     }
 
+    // ── R6-F: exact 15° veto-cone boundary (just-below vetoes / just-above confirms) ──
+    // The veto cone is gapVetoUprightAngleDeg = 15°. The existing R6-F tests bracket it
+    // only loosely (0° vetoes, 30° confirms — 15° away on each side). These two pin the
+    // EXACT edge so a future change to the constant, or to currentOrientationAngleDeg's
+    // geometry, cannot drift it unnoticed — the single most important regression guard for
+    // a check that SUPPRESSES an SOS.
+
+    @Test
+    fun `R6-F gap regime just below the 15 degree cone is vetoed`() {
+        // Silence vector (ax=2.37, az=9.52): angle from the upright ref (0,0,9.81)
+        // = acos(9.52/|v|) ≈ 14.0° — just INSIDE the 15° cone → must veto.
+        val (sm, _) = smEnteringSilence(
+            gapMs = 12_000L,
+            preRef = PreImpactRef(0.0, 0.0, 9.81, valid = true),
+            silenceAz = 9.52, silenceAx = 2.37,
+        )
+        var t = 1_012_000L
+        var sawConfirm = false
+        var sawVeto = false
+        repeat(25) {
+            t += 1000L
+            val d = sm.onSample(sample(time = t, raw = 9.81, smoothed = 9.81, az = 9.52, ax = 2.37))
+            if (d is CrashStateMachine.Decision.Confirm) sawConfirm = true
+            if (d is CrashStateMachine.Decision.ReturnToMonitoring && !sawVeto) {
+                sawVeto = true
+                assertTrue("veto angle must sit just below the 15° cone, was ${sm.lastGapUprightVetoAngleDeg}",
+                    sm.lastGapUprightVetoAngleDeg in 13.0..15.0)
+            }
+        }
+        assertFalse("a ~14° delayed stop is inside the cone → must NOT confirm", sawConfirm)
+        assertTrue("the veto must fire just below 15°", sawVeto)
+        assertEquals(CrashStateMachine.State.MONITORING, sm.state)
+    }
+
+    @Test
+    fun `R6-F gap regime just above the 15 degree cone still confirms`() {
+        // Silence vector (ax=2.70, az=9.43): angle ≈ 16.0° — just OUTSIDE the cone → must
+        // still confirm at 20 s. A posture displaced > 15° is consistent with a real crash
+        // (knocked over, not held upright) and must never be vetoed.
+        val (sm, _) = smEnteringSilence(
+            gapMs = 12_000L,
+            preRef = PreImpactRef(0.0, 0.0, 9.81, valid = true),
+            silenceAz = 9.43, silenceAx = 2.70,
+        )
+        var t = 1_012_000L
+        var confirmed = false
+        repeat(25) {
+            t += 1000L
+            if (sm.onSample(sample(time = t, raw = 9.81, smoothed = 9.81, az = 9.43, ax = 2.70))
+                    is CrashStateMachine.Decision.Confirm) confirmed = true
+        }
+        assertTrue("a ~16° delayed stop is outside the 15° cone → must still confirm", confirmed)
+        assertEquals(20_000L, sm.lastConfirmedSilenceMs)
+        assertFalse("veto must NOT fire just above 15°", sm.lastGapUprightVeto)
+    }
+
+    // ── R6-F: the veto is gap-regime-only — a non-gap (prompt) stop is never vetoed ──
+
+    @Test
+    fun `R6-F prompt stop upright confirms at 20s and is never vetoed (non-gap regime)`() {
+        // gap = 2 s < delayedStopGapMs (8 s) → orientation regime, NOT the gap regime.
+        // An upright orientation-regime stop takes the full 20 s window; the existing
+        // prompt-stop test only proves it does not confirm EARLY (6 s). Here we run PAST
+        // 20 s and prove it (a) DOES confirm and (b) the gap-veto never engages — if a
+        // regression let the veto fire outside the gap regime, this catches it.
+        val (sm, _) = smEnteringSilence(
+            gapMs = 2_000L,
+            preRef = PreImpactRef(0.0, 0.0, 9.81, valid = true),
+            silenceAz = 9.81, silenceAx = 0.0,   // upright, matches the reference → angle ~0°
+        )
+        var t = 1_002_000L
+        var confirmed = false
+        repeat(25) {
+            t += 1000L
+            val d = sm.onSample(sample(time = t, raw = 9.81, smoothed = 9.81, az = 9.81, ax = 0.0))
+            if (d is CrashStateMachine.Decision.Confirm) confirmed = true
+            assertFalse("the gap-veto must NEVER fire in the prompt-stop (non-gap) regime",
+                sm.lastGapUprightVeto)
+        }
+        assertTrue("an upright prompt stop must confirm once the 20 s window elapses", confirmed)
+        assertEquals(20_000L, sm.lastConfirmedSilenceMs)
+    }
+
+    // ── R6-F: on-side IMPACT-relaxation (CR3) carry-forward must not be vetoed ──
+
+    @Test
+    fun `R6-F on-side relaxation carry-forward into the gap regime still confirms (CR3 not vetoed)`() {
+        // Enters SILENCE_CHECK via the IMPACT on-side relaxation path (NOT the speed-drop
+        // path the other R6-F tests use), which DELIBERATELY carries the IMPACT orientation
+        // accumulator forward. With a long impact→stillness gap the gap regime applies, so
+        // the veto's currentOrientationAngleDeg() reads the carried-forward + silence
+        // accumulator. A genuine on-side rolling crash keeps that average on-side (~90°), so
+        // the veto must NOT engage and the SOS confirms. Guards the "do not reset the
+        // accumulator on the CR3 entry" invariant the state-machine comment warns about.
+        val (sm, _) = newSm()
+        sm.onSpeedUpdate(25.0)                        // ≥ minSpeedForCrashKmh at impact entry
+        val base = 1_000_000L
+        sm.onSample(sample(time = base, peak = 60.0, smoothed = 30.0, gyro = 0.5))
+        assertEquals(CrashStateMachine.State.IMPACT, sm.state)
+        sm.setPreImpactReference(PreImpactRef(0.0, 0.0, 9.81, valid = true))
+        sm.onSpeedUpdate(10.0)                         // rolling: 5 (crashConfirm) < 10 < 25 (ceiling)
+        // Feed on-side accel-still samples at a coarse 400 ms cadence so the 25-sample
+        // relaxation threshold is crossed only after ~10 s → firstSilenceGapMs > 8 s (the
+        // gap regime), while staying inside the 20 s impact window.
+        var t = base + 1000L
+        var entered = false
+        repeat(40) {
+            if (!entered) {
+                t += 400L
+                sm.onSample(sample(time = t, raw = 9.81, smoothed = 9.81, gyro = 0.5, az = 0.0, ax = 9.81))
+                if (sm.state == CrashStateMachine.State.SILENCE_CHECK) entered = true
+            }
+        }
+        assertTrue("IMPACT on-side relaxation must reach SILENCE_CHECK", entered)
+        // Stand on-side and still for the full 20 s window.
+        var confirmed = false
+        repeat(25) {
+            t += 1000L
+            if (sm.onSample(sample(time = t, raw = 9.81, smoothed = 9.81, az = 0.0, ax = 9.81))
+                    is CrashStateMachine.Decision.Confirm) confirmed = true
+        }
+        assertTrue("an on-side rolling crash (carry-forward, gap regime) must still confirm", confirmed)
+        assertEquals("gap regime must drive the 20 s window", 20_000L, sm.lastConfirmedSilenceMs)
+        assertFalse("the veto must NOT engage on a genuine on-side crash", sm.lastGapUprightVeto)
+    }
+
     // ── Regression: silence-window accumulator resets on silence-break ───────
 
     @Test
