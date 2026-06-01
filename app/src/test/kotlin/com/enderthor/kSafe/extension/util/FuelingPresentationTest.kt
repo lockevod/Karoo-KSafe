@@ -7,28 +7,34 @@ import org.junit.Test
 class FuelingPresentationTest {
     @Test fun `off mode always uses inride alert`() {
         assertEquals(FuelingPresentation.INRIDE_ALERT,
-            decideFuelingPresentation(FuelingAlertButtonMode.OFF, canDrawOverlays = true, emergencyIdle = true))
+            decideFuelingPresentation(FuelingAlertButtonMode.OFF, canDrawOverlays = true, emergencyIdle = true, hasUsableSlot = true))
     }
     @Test fun `no overlay permission falls back to inride alert`() {
         assertEquals(FuelingPresentation.INRIDE_ALERT,
-            decideFuelingPresentation(FuelingAlertButtonMode.LOG, canDrawOverlays = false, emergencyIdle = true))
+            decideFuelingPresentation(FuelingAlertButtonMode.LOG, canDrawOverlays = false, emergencyIdle = true, hasUsableSlot = true))
+    }
+    @Test fun `no usable slot falls back to inride alert (no phantom log button)`() {
+        // All slots empty → pickFuelItem returned null. A LOG button would log a 0 g/ml
+        // phantom entry, so present a plain InRideAlert with no button instead.
+        assertEquals(FuelingPresentation.INRIDE_ALERT,
+            decideFuelingPresentation(FuelingAlertButtonMode.LOG, canDrawOverlays = true, emergencyIdle = true, hasUsableSlot = false))
     }
     @Test fun `active emergency suppresses the fueling alert entirely`() {
         // No overlay AND no InRideAlert during an emergency — must not compete with the SOS.
         assertEquals(FuelingPresentation.SUPPRESS,
-            decideFuelingPresentation(FuelingAlertButtonMode.LOG_UNDO, canDrawOverlays = true, emergencyIdle = false))
+            decideFuelingPresentation(FuelingAlertButtonMode.LOG_UNDO, canDrawOverlays = true, emergencyIdle = false, hasUsableSlot = true))
     }
     @Test fun `active emergency suppresses even in OFF mode (no InRideAlert)`() {
         // Emergency takes priority over the OFF-mode InRideAlert fallback too.
         assertEquals(FuelingPresentation.SUPPRESS,
-            decideFuelingPresentation(FuelingAlertButtonMode.OFF, canDrawOverlays = false, emergencyIdle = false))
+            decideFuelingPresentation(FuelingAlertButtonMode.OFF, canDrawOverlays = false, emergencyIdle = false, hasUsableSlot = false))
     }
     @Test fun `log mode with permission and idle uses overlay log`() {
         assertEquals(FuelingPresentation.OVERLAY_LOG,
-            decideFuelingPresentation(FuelingAlertButtonMode.LOG, canDrawOverlays = true, emergencyIdle = true))
+            decideFuelingPresentation(FuelingAlertButtonMode.LOG, canDrawOverlays = true, emergencyIdle = true, hasUsableSlot = true))
     }
     @Test fun `log_undo mode with permission and idle uses overlay log_undo`() {
         assertEquals(FuelingPresentation.OVERLAY_LOG_UNDO,
-            decideFuelingPresentation(FuelingAlertButtonMode.LOG_UNDO, canDrawOverlays = true, emergencyIdle = true))
+            decideFuelingPresentation(FuelingAlertButtonMode.LOG_UNDO, canDrawOverlays = true, emergencyIdle = true, hasUsableSlot = true))
     }
 }

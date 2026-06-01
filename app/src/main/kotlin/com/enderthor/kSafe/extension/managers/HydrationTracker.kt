@@ -664,7 +664,9 @@ class HydrationTracker(
             com.enderthor.kSafe.extension.util.FuelSlot(1, config.drink1Label, config.drink1Ml),
             com.enderthor.kSafe.extension.util.FuelSlot(2, config.drink2Label, config.drink2Ml),
         )
-        val slot = com.enderthor.kSafe.extension.util.pickFuelItem(if (source == "deficit") deficitMl else null, slots)?.slot ?: 1
+        // null when no slot is usable (all drink sizes 0) — the presenter then shows no LOG
+        // button (a plain InRideAlert) instead of a button that would log a phantom 0 ml entry.
+        val slot = com.enderthor.kSafe.extension.util.pickFuelItem(if (source == "deficit") deficitMl else null, slots)?.slot
         val alert = InRideAlert(
             // Unique-per-fire ID — see CarbsTracker.fireAlert for the rationale.
             id = "ksafe-hyd-alert-$source-$dispatchedAtMs",
@@ -677,7 +679,7 @@ class HydrationTracker(
         )
         onFuelingAlert(com.enderthor.kSafe.extension.util.FuelingAlertRequest(
             title = title, detail = detail, inRideAlert = alert,
-            onLog = { logEntry(slot) }, onUndo = { undoLastForSlot(slot) },
+            channel = com.enderthor.kSafe.extension.util.FuelingChannel.HYDRATION, slot = slot,
         ))
         calibLogger?.log(CalibrationLogger.Event.FUELING_HYDRATION_FIRED) {
             "source=$source,deficit_ml=$deficitMl,since_log_min=$elapsedMin,cum_target=${cumTargetMl.toInt()},cum_logged=$cumLoggedMl,beep=${config.hydBeepPattern}"

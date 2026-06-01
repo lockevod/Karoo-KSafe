@@ -804,7 +804,9 @@ class CarbsTracker(
             com.enderthor.kSafe.extension.util.FuelSlot(2, config.carb2Label, config.carb2Grams),
             com.enderthor.kSafe.extension.util.FuelSlot(3, config.carb3Label, config.carb3Grams),
         )
-        val slot = com.enderthor.kSafe.extension.util.pickFuelItem(if (source == "deficit") deficit else null, slots)?.slot ?: 1
+        // null when no slot is usable (all carb sizes 0) — the presenter then shows no LOG
+        // button (a plain InRideAlert) instead of a button that would log a phantom 0 g entry.
+        val slot = com.enderthor.kSafe.extension.util.pickFuelItem(if (source == "deficit") deficit else null, slots)?.slot
         val alert = InRideAlert(
             // Unique-per-fire ID: re-dispatching an InRideAlert with the same id while
             // the host still has the previous overlay tracked has been observed to crash
@@ -820,7 +822,7 @@ class CarbsTracker(
         )
         onFuelingAlert(com.enderthor.kSafe.extension.util.FuelingAlertRequest(
             title = title, detail = detail, inRideAlert = alert,
-            onLog = { logEntry(slot) }, onUndo = { undoLastForSlot(slot) },
+            channel = com.enderthor.kSafe.extension.util.FuelingChannel.CARB, slot = slot,
         ))
         val burn = currentBurnEstimate()
         val burnRateGph = burn.gph.coerceAtMost(ABSORPTION_CAP_GPH.toDouble()).toInt()

@@ -5,16 +5,24 @@ import io.hammerhead.karooext.models.InRideAlert
 
 enum class FuelingPresentation { OVERLAY_LOG, OVERLAY_LOG_UNDO, INRIDE_ALERT, SUPPRESS }
 
+/** Which tracker an alert belongs to — lets the presenter route the LOG/UNDO action to the
+ *  right tracker AND through the matching on-ride field-state machine. */
+enum class FuelingChannel { CARB, HYDRATION }
+
 /**
- * One fueling alert, built by a tracker. The closures capture the tracker + selected slot,
- * so the presenter (KSafeExtension) never needs a tracker reference.
+ * One fueling alert, built by a tracker. Carries the [channel] + suggested [slot] (rather than
+ * pre-bound log/undo closures) so the presenter (KSafeExtension) — which OWNS the on-ride
+ * CarbLog/HydrationLog field-state machine — performs the log/undo itself and keeps that field
+ * in sync with the tracker's accounting, exactly as a field tap does.
  */
 data class FuelingAlertRequest(
     val title: String,
     val detail: String,
     val inRideAlert: InRideAlert,
-    val onLog: () -> Unit,
-    val onUndo: () -> Unit,
+    val channel: FuelingChannel,
+    /** Slot (1-based) the alert suggests logging, or null when no slot is usable (all sizes 0)
+     *  — then no LOG button is shown and the alert is presented as a plain InRideAlert. */
+    val slot: Int?,
 )
 
 /** Pure decision: suppress entirely (active emergency), overlay (and which mode), or the
@@ -23,11 +31,14 @@ fun decideFuelingPresentation(
     mode: FuelingAlertButtonMode,
     canDrawOverlays: Boolean,
     emergencyIdle: Boolean,
+    hasUsableSlot: Boolean,
 ): FuelingPresentation {
     // An active emergency owns the screen — a fueling alert must add NOTHING (no overlay,
     // no InRideAlert) so it can never compete with the SOS countdown/alert on any surface.
     if (!emergencyIdle) return FuelingPresentation.SUPPRESS
-    if (!canDrawOverlays) return FuelingPresentation.INRIDE_ALERT
+    // No overlay permission, or nothing concrete to log (no usable slot) → no LOG button:
+    // a button wired to a non-existent item would log a phantom 0 g/ml entry.
+    if (!canDrawOverlays || !hasUsableSlot) return FuelingPresentation.INRIDE_ALERT
     return when (mode) {
         FuelingAlertButtonMode.OFF -> FuelingPresentation.INRIDE_ALERT
         FuelingAlertButtonMode.LOG -> FuelingPresentation.OVERLAY_LOG
