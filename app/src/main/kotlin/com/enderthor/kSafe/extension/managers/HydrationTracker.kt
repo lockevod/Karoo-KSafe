@@ -41,6 +41,10 @@ class HydrationTracker(
     private val karooSystem: KarooSystemService,
     private val context: Context,
     private val onFuelingAlert: (com.enderthor.kSafe.extension.util.FuelingAlertRequest) -> Unit,
+    /** True while a crash / SOS / check-in is active. A fueling alert that comes due then is
+     *  DEFERRED (not fired, cooldown not consumed) so it doesn't beep over the SOS and re-fires
+     *  once the emergency clears. Injected so the tracker stays decoupled from EmergencyManager. */
+    private val isEmergencyActive: () -> Boolean,
     private val calibLogger: CalibrationLogger? = null,
 ) {
 
@@ -569,6 +573,12 @@ class HydrationTracker(
             now                    = now,
         )
         if (!fire) return false
+        // Defer during an emergency: don't beep over the SOS, and DON'T stamp the cooldown,
+        // so the alert re-fires on the next tick once the emergency clears (not lost).
+        if (isEmergencyActive()) {
+            Timber.d("Hydration deficit alert due but emergency active — deferring (not fired, cooldown intact)")
+            return false
+        }
         fireAlert("deficit", deficit, elapsedMinutesSinceRealLog(now))
         lastDeficitAlertFireMs = now
         return true
@@ -618,6 +628,11 @@ class HydrationTracker(
     /** See [evaluateDeficitAlert] return-value note — same contract on the time side. */
     private fun evaluateTimeAlert(now: Long): Boolean {
         if (currentDueTimeTick(now) == 0L) return false
+        // Defer during an emergency (see evaluateDeficitAlert) — not fired, tick not consumed.
+        if (isEmergencyActive()) {
+            Timber.d("Hydration time alert due but emergency active — deferring")
+            return false
+        }
         // See CarbsTracker.evaluateTimeAlert — time alert is interval-driven,
         // so `{elapsed}` measures since the last reminder, not since last log.
         fireAlert("time", (cumTargetMl - cumLoggedMl).toInt(), elapsedMinutesSinceLastTimeAlert(now))

@@ -453,6 +453,7 @@ class KSafeExtension : KarooExtension("ksafe", BuildConfig.VERSION_NAME), Corout
             karooSystem = karooSystem,
             context = applicationContext,
             onFuelingAlert = ::presentFuelingAlert,
+            isEmergencyActive = ::emergencyActive,
             calibLogger = calibLogger,
         )
         hydrationTracker = com.enderthor.kSafe.extension.managers.HydrationTracker(
@@ -460,6 +461,7 @@ class KSafeExtension : KarooExtension("ksafe", BuildConfig.VERSION_NAME), Corout
             karooSystem = karooSystem,
             context = applicationContext,
             onFuelingAlert = ::presentFuelingAlert,
+            isEmergencyActive = ::emergencyActive,
             calibLogger = calibLogger,
         )
         // Publish tracker references so the status DataTypes can suspend on the flow
