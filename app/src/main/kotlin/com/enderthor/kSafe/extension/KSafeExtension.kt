@@ -2301,6 +2301,11 @@ class KSafeExtension : KarooExtension("ksafe", BuildConfig.VERSION_NAME), Corout
     private fun presentFuelingAlert(req: com.enderthor.kSafe.extension.util.FuelingAlertRequest) {
         val mode = activeConfig.fuelingAlertButtonMode
         val canOverlay = android.provider.Settings.canDrawOverlays(applicationContext)
+        // Detail shown on an overlay LOG prompt: leads with the exact item the button will log
+        // (#3) so the rider isn't tapping a blind "Log", then the alert rationale. Item-first so
+        // it survives the 2-line ellipsize. Unused on the non-overlay branches.
+        val logDetail = getString(R.string.fueling_overlay_log_detail,
+            fuelingItemLabel(req.channel, req.slot), req.detail)
         when (com.enderthor.kSafe.extension.util.decideFuelingPresentation(
                 mode, canOverlay, !emergencyActive(), hasUsableSlot = req.slot != null)) {
             com.enderthor.kSafe.extension.util.FuelingPresentation.SUPPRESS ->
@@ -2308,12 +2313,12 @@ class KSafeExtension : KarooExtension("ksafe", BuildConfig.VERSION_NAME), Corout
             com.enderthor.kSafe.extension.util.FuelingPresentation.INRIDE_ALERT ->
                 karooSystem.dispatch(req.inRideAlert)
             com.enderthor.kSafe.extension.util.FuelingPresentation.OVERLAY_LOG ->
-                fuelingOverlay.showPrompt(req.title, req.detail, getString(R.string.fueling_overlay_log), 15_000L,
+                fuelingOverlay.showPrompt(req.title, logDetail, getString(R.string.fueling_overlay_log), 15_000L,
                     abortIf = ::emergencyActive) {
                     logFuelingSlot(req.channel, req.slot); fuelingOverlay.remove()
                 }
             com.enderthor.kSafe.extension.util.FuelingPresentation.OVERLAY_LOG_UNDO ->
-                fuelingOverlay.showPrompt(req.title, req.detail, getString(R.string.fueling_overlay_log), 15_000L,
+                fuelingOverlay.showPrompt(req.title, logDetail, getString(R.string.fueling_overlay_log), 15_000L,
                     abortIf = ::emergencyActive) {
                     logFuelingSlot(req.channel, req.slot)
                     fuelingOverlay.remove()
@@ -2322,6 +2327,25 @@ class KSafeExtension : KarooExtension("ksafe", BuildConfig.VERSION_NAME), Corout
                         undoFuelingSlot(req.channel, req.slot); fuelingOverlay.remove()
                     }
                 }
+        }
+    }
+
+    /** Human-readable name of the slot an overlay LOG/UNDO will record — e.g. "Gel 25 g" /
+     *  "Bottle 500 ml" — read from activeConfig so the rider sees exactly what the button logs
+     *  (#3). Empty when [slot] is null (the non-overlay branches never use it). */
+    private fun fuelingItemLabel(channel: com.enderthor.kSafe.extension.util.FuelingChannel, slot: Int?): String {
+        if (slot == null) return ""
+        val c = activeConfig
+        return when (channel) {
+            com.enderthor.kSafe.extension.util.FuelingChannel.CARB -> when (slot) {
+                1 -> "${c.carb1Label} ${c.carb1Grams} g"
+                2 -> "${c.carb2Label} ${c.carb2Grams} g"
+                else -> "${c.carb3Label} ${c.carb3Grams} g"
+            }
+            com.enderthor.kSafe.extension.util.FuelingChannel.HYDRATION -> when (slot) {
+                1 -> "${c.drink1Label} ${c.drink1Ml} ml"
+                else -> "${c.drink2Label} ${c.drink2Ml} ml"
+            }
         }
     }
 
