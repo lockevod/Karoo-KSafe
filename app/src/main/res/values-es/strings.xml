@@ -55,7 +55,7 @@
     <string name="settings_master_hint">Cuando está OFF la extensión deja de monitorizar todo — choque, parada prolongada, check-in, Salud (FC), Nutrición. Las notificaciones ya configuradas (inicio/fin de ruta, mensajes, webhooks) también se silencian. Déjalo ON salvo que quieras una parada total.</string>
     <string name="actions_section_karoo_live">Notificaciones Karoo Live</string>
     <string name="actions_section_karoo_live_tests">Probar notificaciones de ruta</string>
-    <string name="fueling_fit_export_hint">Escribe los datos de KSafe en el FIT grabado para que Strava / Intervals.icu / TrainingPeaks los muestren junto a FC y potencia. Incluye carbohidratos acumulados (g), carbohidratos quemados (g), tasa actual de quema (g/h) e hidratación (ml); y, con wellness activo, la deriva de FC actual (%), la deriva máxima de la ruta y el nº de alertas de wellness.</string>
+    <string name="fueling_fit_export_hint">Desactivado por defecto — actívalo antes de la ruta. Escribe los datos de KSafe en el FIT grabado como developer fields. Intervals.icu y TrainingPeaks los muestran junto a FC y potencia; Strava NO muestra campos de datos personalizados y los ignora. Incluye carbohidratos acumulados (g), carbohidratos quemados (g), tasa actual de quema (g/h) e hidratación (ml); y, con wellness activo, la deriva de FC actual (%), la deriva máxima de la ruta y el nº de alertas de wellness.</string>
     <string name="simulate_crash_label">Simular choque (enviar alerta ya)</string>
     <string name="simulate_crash_confirm_title">¿Enviar una alerta real?</string>
     <string name="simulate_crash_confirm_body">Esto envía el mensaje de emergencia configurado por tu proveedor activo — sin cuenta atrás, sin cancelar. Úsalo solo para verificar que el canal funciona de principio a fin.</string>
@@ -104,7 +104,7 @@
     <string name="fueling_combined_section">Registro combinado</string>
     <string name="fueling_combined_concentration_label">Carbos por 500 ml (g)</string>
     <string name="fueling_combined_hint">Un toque registra una bebida + sus carbohidratos. Fija la concentración una vez; los carbos de cada botón se autocompletan según su volumen (editable). Activo cuando el seguimiento de carbos y/o hidratación está ON.</string>
-    <string name="fueling_fit_export_label">Escribir datos KSafe en FIT (Strava / Intervals.icu)</string>
+    <string name="fueling_fit_export_label">Escribir datos KSafe en FIT (Intervals.icu / TrainingPeaks)</string>
 
     <!-- Consejo de forma al inicio -->
     <string name="readiness_at_ride_start_label">Consejo de forma al iniciar la ruta</string>

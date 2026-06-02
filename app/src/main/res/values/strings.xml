@@ -52,7 +52,7 @@
     <string name="settings_master_hint">When OFF the extension stops monitoring everything — crash, speed-drop, check-in, Health (HR), Fueling. Notifications already configured (ride start/end, custom messages, webhooks) are also suppressed. Leave ON unless you want a hard stop.</string>
     <string name="actions_section_karoo_live">Karoo Live notifications</string>
     <string name="actions_section_karoo_live_tests">Test ride notifications</string>
-    <string name="fueling_fit_export_hint">Writes KSafe data into the recorded FIT so Strava / Intervals.icu / TrainingPeaks can plot it alongside HR and power. Includes cumulative carbs logged (g), cumulative carbs burned (g), current carb burn rate (g/h) and hydration (ml); plus, when wellness is enabled, current HR drift (%), max drift this ride, and wellness alert count.</string>
+    <string name="fueling_fit_export_hint">Off by default — turn it on before the ride. Writes KSafe data into the recorded FIT as developer fields. Intervals.icu and TrainingPeaks can plot these alongside HR and power; Strava does NOT display custom data fields and will ignore them. Includes cumulative carbs logged (g), cumulative carbs burned (g), current carb burn rate (g/h) and hydration (ml); plus, when wellness is enabled, current HR drift (%), max drift this ride, and wellness alert count.</string>
     <string name="simulate_crash_label">Simulate Crash (send alert now)</string>
     <string name="simulate_crash_confirm_title">Send a real alert?</string>
     <string name="simulate_crash_confirm_body">This sends the configured emergency message through your active provider — no countdown, no cancel. Use this only to verify the channel works end-to-end.</string>
@@ -112,7 +112,7 @@
     <string name="fueling_combined_section">Combined logging</string>
     <string name="fueling_combined_concentration_label">Carbs per 500 ml (g)</string>
     <string name="fueling_combined_hint">One tap logs a drink + its carbs. Set the carb concentration once; each button\'s carbs auto-fill from its volume (still editable). Active when carbs and/or hydration tracking is on.</string>
-    <string name="fueling_fit_export_label">Write KSafe data to FIT (Strava / Intervals.icu)</string>
+    <string name="fueling_fit_export_label">Write KSafe data to FIT (Intervals.icu / TrainingPeaks)</string>
 
     <!-- Readiness at ride start -->
     <string name="readiness_at_ride_start_label">Readiness advice at ride start</string>
