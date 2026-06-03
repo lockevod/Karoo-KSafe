@@ -942,7 +942,11 @@ class EmergencyManager(
                     // `superseded` marker so analysers can distinguish the two paths.
                     val supersededByNewer = alertJob !== myJob
                     calibLogger?.log(CalibrationLogger.Event.ALERT_DELIVERY_FAILED) {
-                        "provider=${config.activeProvider},reason=${reason.label},superseded=$supersededByNewer"
+                        // `cause` (R6 calib follow-up, 2026-06-03) lets post-incident audit tell
+                        // a fail-fast misconfiguration (NO_CREDENTIALS/NO_CONFIG, row lands ~1 s
+                        // after countdown) apart from a genuine retry-exhaustion (TIMEOUT/EXHAUSTED,
+                        // ~30 min later) WITHOUT inferring it from the timestamp.
+                        "provider=${config.activeProvider},reason=${reason.label},cause=${outcome.cause},superseded=$supersededByNewer"
                     }
                     // G6 — only fire the rider-facing failure notification when WE
                     // are still the registered alertJob. A previous emergency that

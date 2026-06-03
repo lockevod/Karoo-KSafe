@@ -144,6 +144,11 @@ class CrashDetectionManager(
          *  [Thresholds.gapVetoUprightAngleDeg]. */
         const val GAP_VETO_UPRIGHT_ANGLE_DEG = 15.0
 
+        /** Peak gyro (rad/s) below which the non-gap (prompt-stop) upright veto (R6-G)
+         *  may engage — distinguishes a benign stand from an endo that ends upright.
+         *  Matches [Thresholds.nonGapUprightVetoMaxGyroRadS]. */
+        const val NON_GAP_UPRIGHT_VETO_MAX_GYRO_RAD_S = 3.0
+
         /** Angle (deg) above which the SILENCE_CHECK speed-rise relaxation engages. */
         const val ON_SIDE_RELAXATION_ANGLE_DEG = 60.0
 
@@ -579,8 +584,12 @@ class CrashDetectionManager(
         if (stateMachine.lastGapUprightVeto) {
             calibLogger?.log(CalibrationLogger.Event.GAP_UPRIGHT_VETO) {
                 val dev = abs(sample.rawMagnitude - GRAVITY)
-                "angle=%.1f,veto_thr=${stateMachine.thresholds.gapVetoUprightAngleDeg},speed=%.1f,deviation=%.2f,cadence=%.0f,grade=%.1f,preset=${config.crashSensitivity}".formatUs(
-                    stateMachine.lastGapUprightVetoAngleDeg, currentSpeedKmh, dev, currentCadence, currentGrade)
+                // regime=GAP (R6-F delayed stop) vs PROMPT (R6-G prompt stop). gyro_peak is
+                // the impact→silence rotation that passed the PROMPT gyro gate (gyro_thr);
+                // on a GAP veto it is informational only (the gap regime ignores rotation).
+                val regime = if (stateMachine.lastUprightVetoGapRegime) "GAP" else "PROMPT"
+                "angle=%.1f,veto_thr=${stateMachine.thresholds.gapVetoUprightAngleDeg},regime=$regime,gyro_peak=%.2f,gyro_thr=${stateMachine.thresholds.nonGapUprightVetoMaxGyroRadS},speed=%.1f,deviation=%.2f,cadence=%.0f,grade=%.1f,preset=${config.crashSensitivity}".formatUs(
+                    stateMachine.lastGapUprightVetoAngleDeg, stateMachine.peakGyroSinceImpactRadS, currentSpeedKmh, dev, currentCadence, currentGrade)
             }
         }
 
@@ -934,6 +943,7 @@ class CrashDetectionManager(
             silenceDurationUprightMs = SILENCE_DURATION_UPRIGHT_MS,
             uprightAngleThresholdDegrees = UPRIGHT_ANGLE_THRESHOLD_DEGREES,
             gapVetoUprightAngleDeg = GAP_VETO_UPRIGHT_ANGLE_DEG,
+            nonGapUprightVetoMaxGyroRadS = NON_GAP_UPRIGHT_VETO_MAX_GYRO_RAD_S,
             onSideRelaxationAngleDeg = ON_SIDE_RELAXATION_ANGLE_DEG,
             onSideRelaxationMaxSpeedKmh = ON_SIDE_RELAXATION_MAX_SPEED_KMH,
         )

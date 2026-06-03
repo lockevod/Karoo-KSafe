@@ -21,7 +21,7 @@ android {
         applicationId = "com.enderthor.kSafe"
         minSdk = 23
         targetSdk = 34
-        versionCode = 202605311
+        versionCode = 202606031
         versionName = "2.2.0"
 
         // Calibration log delivery credentials — injected from local.properties at compile time.

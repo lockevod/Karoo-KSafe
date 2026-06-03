@@ -12,8 +12,10 @@ Event catalogue understood by this script:
     PERIODIC, HIGH_MAG, IMPACT_IN, IMPACT_TMO, CRASH_OK (CRASH_CONFIRMED),
     CRASH_NO (CRASH_CANCELLED), RST_SNAP, CAD_GATE,
     CAD_GATE_SUPPRESSED (diagnostic — cadence gate suppressed by on-side angle),
-    GAP_VETO (GAP_UPRIGHT_VETO — R6-F: gap-regime confirm vetoed because the
-    bike was within the tight upright cone; `angle` is the measured silence
+    GAP_VETO (GAP_UPRIGHT_VETO — upright confirm vetoed because the bike was
+    within the tight upright cone. `regime=GAP` (R6-F, delayed stop) or
+    `regime=PROMPT` (R6-G, prompt stop — additionally gated on `gyro_peak` <
+    gyro_thr so a tumble/endo is not vetoed); `angle` is the measured silence
     orientation, a potential FN if closely followed by EMERG_TRIG/MANUAL_SOS),
     GYRO_BLK, GPS_STALE, TERRAIN_CLUST, SIL_IN, SIL_TMO, SIL_BRK, SPD_REJECT,
     POST_TMO_BOOST, CRASH_SUPPRESSED (gate suppressed inside cooldown)
@@ -330,11 +332,15 @@ class FileSummary:
                 # was a false positive. Subkind field separates the two.
                 self.medical_cancelled_payloads.append({"elapsed_min": el_s / 60.0, **p})
             elif ev == "ALERT_FAIL" or ev == "ALERT_DELIVERY_FAILED":
-                # Outbound alert exhausted every retry cycle. The `superseded`
-                # field distinguishes "this emergency was orphaned by a newer
-                # one" from "the rider's contacts truly were never reached".
-                # CRITICAL for "my contacts didn't get the alert" support
-                # tickets — this is the smoking gun.
+                # Outbound alert reached nobody. The `superseded` field distinguishes
+                # "this emergency was orphaned by a newer one" from "the rider's
+                # contacts truly were never reached". The `cause` field (added
+                # 2026-06-03) classifies WHY without inferring it from the timestamp:
+                # NO_CREDENTIALS/NO_CONFIG = fail-fast misconfiguration (row ~1 s after
+                # the countdown); TIMEOUT/EXHAUSTED = genuine retry exhaustion (~30 min).
+                # Pre-2026-06-03 logs have no `cause` key — it renders blank, as on
+                # session 27baa0 whose immediate ALERT_FAIL we had to date-diff by hand.
+                # CRITICAL for "my contacts didn't get the alert" support tickets.
                 self.alert_delivery_failed_payloads.append({"elapsed_min": el_s / 60.0, **p})
             elif ev == "EMERG_TRIG" or ev == "EMERGENCY_TRIGGERED":
                 # Captures what KIND of event triggered the countdown (crash,
@@ -523,7 +529,7 @@ def _print_per_file(summaries: list[FileSummary]):
         )
         _print_payload_block(
             "ALERT DELIVERY FAILED", fs.alert_delivery_failed_payloads,
-            fields=("provider", "reason", "superseded"),
+            fields=("provider", "reason", "cause", "superseded"),
             highlight=True,
         )
         _print_payload_block(
@@ -536,10 +542,10 @@ def _print_per_file(summaries: list[FileSummary]):
             fields=("how_long_ms", "reason"),
         )
         _print_payload_block(
-            "GAP-UPRIGHT VETO (R6-F: upright delayed-stop confirm suppressed — "
+            "UPRIGHT VETO (R6-F gap / R6-G prompt: upright confirm suppressed — "
             "check for a following EMERG_TRIG/MANUAL_SOS = potential FN)",
             fs.gap_upright_veto_payloads,
-            fields=("angle", "veto_thr", "speed", "deviation", "cadence"),
+            fields=("regime", "angle", "veto_thr", "gyro_peak", "gyro_thr", "speed", "deviation", "cadence"),
             highlight=True,
         )
         _print_payload_block(

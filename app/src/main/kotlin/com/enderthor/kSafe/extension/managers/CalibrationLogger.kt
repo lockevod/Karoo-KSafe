@@ -192,7 +192,9 @@ class CalibrationLogger(
         /** Outbound emergency alert delivery failed across every retry cycle (no coverage,
          *  blank/expired credentials, provider down). The rider-facing fallback InRideAlert
          *  fires alongside this row. Critical for post-incident audit when contacts report
-         *  they never received an alert. */
+         *  they never received an alert. Payload carries `cause=` ([com.enderthor.kSafe.extension.FailureCause]):
+         *  NO_CREDENTIALS/NO_CONFIG = fail-fast misconfiguration (row ~1 s after countdown);
+         *  TIMEOUT/EXHAUSTED = genuine retry exhaustion (~30 min later). */
         ALERT_DELIVERY_FAILED("ALERT_FAIL"),
         /** Outbound emergency alert reached at least one but NOT every eligible contact
          *  (e.g. 1 of 3 — a contact in a coverage gap or with an expired key). The amber
