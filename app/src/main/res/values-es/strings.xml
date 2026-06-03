@@ -214,7 +214,7 @@
     <string name="telegram_chat_id3_hint">Chat ID — destinatario 3 (opcional)</string>
     <string name="telegram_description">Mensajes gratis de Telegram vía un bot. Crea un bot con @BotFather, copia el token e introduce tu Chat ID.</string>
     <string name="recipient_alerts_all">Todas</string>
-    <string name="recipient_alerts_emergency">Emergencia</string>
+    <string name="recipient_alerts_emergency">SOS</string>
     <string name="recipient_alerts_info">Info</string>
     <string name="recipient_alerts_label">Este contacto recibe</string>
     <string name="recipient_alerts_need_emergency">Al menos un contacto debe recibir alertas de emergencia</string>
