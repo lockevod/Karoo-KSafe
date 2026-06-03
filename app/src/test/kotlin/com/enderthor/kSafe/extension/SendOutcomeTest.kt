@@ -64,4 +64,38 @@ class SendOutcomeTest {
         assertTrue(SendOutcome.NO_OP.infoSuccess)
         assertFalse(SendOutcome.HARD_FAIL.infoSuccess)
     }
+
+    // ── FailureCause (added 2026-06-03 — ALERT_FAIL payload discriminator) ──
+
+    @Test
+    fun `cause defaults to NONE on delivered, partial, no-op and bare hard fail`() {
+        assertEquals(FailureCause.NONE, SendOutcome(3, 3).cause)
+        assertEquals(FailureCause.NONE, SendOutcome(1, 3).cause)
+        assertEquals(FailureCause.NONE, SendOutcome.NO_OP.cause)
+        // The bare HARD_FAIL constant is unclassified — the retry loop's terminal
+        // mapping is what tags a real failure; an untagged one must read as NONE.
+        assertEquals(FailureCause.NONE, SendOutcome.HARD_FAIL.cause)
+    }
+
+    @Test
+    fun `hardFail factory tags the cause and stays a genuine failure`() {
+        val o = SendOutcome.hardFail(FailureCause.NO_CREDENTIALS)
+        assertTrue(o.hardFail)
+        assertFalse(o.anyOk)
+        assertFalse(o.partial)
+        assertFalse(o.infoSuccess)
+        assertEquals(FailureCause.NO_CREDENTIALS, o.cause)
+    }
+
+    @Test
+    fun `copy re-tags the terminal cause without disturbing the counts`() {
+        // Mirrors sendWithRetry's exhaustion path: a provider-rejected attempt
+        // (delivered=0, eligible>0, cause NONE) is re-tagged EXHAUSTED on the way out.
+        val rejected = SendOutcome(0, 3)
+        val tagged = rejected.copy(cause = FailureCause.EXHAUSTED)
+        assertEquals(0, tagged.delivered)
+        assertEquals(3, tagged.eligible)
+        assertFalse(tagged.anyOk)
+        assertEquals(FailureCause.EXHAUSTED, tagged.cause)
+    }
 }

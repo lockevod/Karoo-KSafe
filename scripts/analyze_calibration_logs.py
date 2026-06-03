@@ -330,11 +330,15 @@ class FileSummary:
                 # was a false positive. Subkind field separates the two.
                 self.medical_cancelled_payloads.append({"elapsed_min": el_s / 60.0, **p})
             elif ev == "ALERT_FAIL" or ev == "ALERT_DELIVERY_FAILED":
-                # Outbound alert exhausted every retry cycle. The `superseded`
-                # field distinguishes "this emergency was orphaned by a newer
-                # one" from "the rider's contacts truly were never reached".
-                # CRITICAL for "my contacts didn't get the alert" support
-                # tickets — this is the smoking gun.
+                # Outbound alert reached nobody. The `superseded` field distinguishes
+                # "this emergency was orphaned by a newer one" from "the rider's
+                # contacts truly were never reached". The `cause` field (added
+                # 2026-06-03) classifies WHY without inferring it from the timestamp:
+                # NO_CREDENTIALS/NO_CONFIG = fail-fast misconfiguration (row ~1 s after
+                # the countdown); TIMEOUT/EXHAUSTED = genuine retry exhaustion (~30 min).
+                # Pre-2026-06-03 logs have no `cause` key — it renders blank, as on
+                # session 27baa0 whose immediate ALERT_FAIL we had to date-diff by hand.
+                # CRITICAL for "my contacts didn't get the alert" support tickets.
                 self.alert_delivery_failed_payloads.append({"elapsed_min": el_s / 60.0, **p})
             elif ev == "EMERG_TRIG" or ev == "EMERGENCY_TRIGGERED":
                 # Captures what KIND of event triggered the countdown (crash,
@@ -523,7 +527,7 @@ def _print_per_file(summaries: list[FileSummary]):
         )
         _print_payload_block(
             "ALERT DELIVERY FAILED", fs.alert_delivery_failed_payloads,
-            fields=("provider", "reason", "superseded"),
+            fields=("provider", "reason", "cause", "superseded"),
             highlight=True,
         )
         _print_payload_block(

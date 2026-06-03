@@ -15,6 +15,38 @@ import kotlinx.serialization.json.put
 import timber.log.Timber
 
 /**
+ * Why an emergency send reached nobody. Recorded verbatim on the `ALERT_FAIL`
+ * calibration row (see [com.enderthor.kSafe.extension.managers.EmergencyManager])
+ * so a post-incident audit can tell apart the failure modes WITHOUT reverse-
+ * engineering them from the `ALERT_FAIL` timestamp:
+ *
+ *  - [NO_CREDENTIALS] / [NO_CONFIG] fail FAST (pre-flight, ~no time) — the row lands
+ *    ~1 s after the countdown ends. This is a rider misconfiguration (provider
+ *    selected but token/contact blank), NOT a connectivity problem.
+ *  - [TIMEOUT] / [EXHAUSTED] land ~30 min later — the full 3×3 retry budget ran.
+ *    [TIMEOUT] = no usable connection (every attempt hit the block timeout);
+ *    [EXHAUSTED] = the provider was reachable but rejected every attempt
+ *    (e.g. 401 invalid token, chat-not-found).
+ *
+ * The 2026-06-03 calibration session `27baa0` showed the original `ALERT_FAIL`
+ * (`provider,reason,superseded` only) forced exactly that timestamp guesswork.
+ */
+enum class FailureCause {
+    /** Not a failure — success / partial / legitimate scope no-op. */
+    NONE,
+    /** No [SenderConfig] found for the active provider. */
+    NO_CONFIG,
+    /** Blank/missing credentials — failed the pre-flight before any network attempt. */
+    NO_CREDENTIALS,
+    /** Retries exhausted; the final attempt hit the block-level timeout (no usable connection). */
+    TIMEOUT,
+    /** Retries exhausted; provider reachable but rejected every attempt. */
+    EXHAUSTED,
+    /** Failure of an unexpected/defensive path that could not be classified. */
+    UNKNOWN,
+}
+
+/**
  * Result of a send across a provider's eligible recipients.
  *
  * - [delivered] — recipients that returned success.
@@ -25,11 +57,16 @@ import timber.log.Timber
  *   loop). Its only job is to stop [infoSuccess] from treating a zero-recipient FAILURE like a
  *   zero-recipient no-op. `eligible` is not read on any failure path (only [partial] reads it,
  *   and that requires `delivered >= 1`), so the timeout case carrying `eligible == 0` is benign.
+ * - [cause]     — for a failure (`!anyOk`), WHY it reached nobody. [FailureCause.NONE] on any
+ *   delivered/partial/no-op outcome. Only [Sender.sendWithRetry] classifies it (the terminal
+ *   emergency path); [attemptSend]'s internal HARD_FAIL returns keep NONE and are reclassified
+ *   by the retry loop's terminal mapping.
  */
 data class SendOutcome(
     val delivered: Int,
     val eligible: Int,
     val hardFail: Boolean = false,
+    val cause: FailureCause = FailureCause.NONE,
 ) {
     /** At least one recipient was reached. */
     val anyOk: Boolean get() = delivered > 0
@@ -43,6 +80,8 @@ data class SendOutcome(
         /** Reached nobody, GENUINE failure (not a no-op): blank/missing credentials, no
          *  configured contact, or a transient total failure (timeout / unexpected exception). */
         val HARD_FAIL = SendOutcome(0, 0, hardFail = true)
+        /** A [HARD_FAIL] tagged with a specific [FailureCause] for the calibration audit trail. */
+        fun hardFail(cause: FailureCause) = SendOutcome(0, 0, hardFail = true, cause = cause)
         /** Deliverable but scope-filtered to zero recipients (legitimate info no-op). */
         val NO_OP = SendOutcome(0, 0)
     }
@@ -282,7 +321,7 @@ class Sender(
         val configs = configManager.loadSenderConfigFlow().first()
         val config  = configs.find { it.provider == provider } ?: run {
             Timber.e("sendWithRetry: no config found for $provider")
-            return SendOutcome.HARD_FAIL
+            return SendOutcome.hardFail(FailureCause.NO_CONFIG)
         }
 
         // Pre-flight credential validation — every provider's attemptSend short-circuits
@@ -292,7 +331,7 @@ class Sender(
         // immediately instead of after half an hour.
         if (!hasUsableCredentials(provider, config)) {
             Timber.e("sendWithRetry: blank/missing credentials for $provider — failing fast without retries")
-            return SendOutcome.HARD_FAIL
+            return SendOutcome.hardFail(FailureCause.NO_CREDENTIALS)
         }
 
         var totalAttempts = 0
@@ -327,7 +366,7 @@ class Sender(
                     val outcome = try {
                         withTimeoutOrNull(ATTEMPT_BLOCK_TIMEOUT_MS) {
                             attemptSend(message, provider, isEmergency, config)
-                        } ?: SendOutcome.HARD_FAIL   // block-level timeout
+                        } ?: SendOutcome.hardFail(FailureCause.TIMEOUT)   // block-level timeout
                     } catch (e: kotlinx.coroutines.CancellationException) {
                         // Cancellation must still propagate (caller scope tear-down).
                         throw e
@@ -351,7 +390,16 @@ class Sender(
                 currentCycle++
             }
             Timber.e("Message failed after $totalAttempts attempts")
-            lastOutcome
+            // Tag the terminal failure cause for the post-incident calibration trail
+            // (ALERT_FAIL payload). A block-level timeout on the FINAL attempt → TIMEOUT
+            // (no usable connection); any other non-OK terminal outcome → EXHAUSTED (the
+            // provider was reachable but rejected every attempt — e.g. 401 / chat-not-found,
+            // or a per-attempt exception). Reaching here always means delivered == 0 (the
+            // loop returns early on anyOk), so copying cause onto lastOutcome is safe.
+            val terminalCause =
+                if (lastOutcome.cause == FailureCause.TIMEOUT) FailureCause.TIMEOUT
+                else FailureCause.EXHAUSTED
+            lastOutcome.copy(cause = terminalCause)
         } catch (e: kotlinx.coroutines.CancellationException) {
             // Cancellation must propagate (caller scope tear-down). Swallowing here
             // would leave the parent coroutine running past the cancellation point.
@@ -361,7 +409,7 @@ class Sender(
             // throw path; this remains for any unexpected exception escaping the
             // surrounding control flow (delay between cycles, config load, etc.).
             Timber.e(e, "Retry error: ${e.message}")
-            SendOutcome.HARD_FAIL
+            SendOutcome.hardFail(FailureCause.UNKNOWN)
         }
     }
 
