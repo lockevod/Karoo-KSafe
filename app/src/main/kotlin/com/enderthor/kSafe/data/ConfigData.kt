@@ -264,7 +264,7 @@ enum class ProviderType { CALLMEBOT, PUSHOVER, NTFY, TELEGRAM }
  *  - [ALL]            both emergencies (Sender.sendAlert) and info (Sender.sendInfo).
  *  - [EMERGENCY_ONLY] only emergencies (crash/SOS/check-in/speed-drop/medical).
  *  - [INFO_ONLY]      only info (ride start/end + custom messages).
- * See docs/superpowers/specs/2026-05-29-per-contact-alert-filtering-design.md.
+ * See docs/messaging-providers.md.
  */
 @Serializable
 enum class RecipientAlertScope { ALL, EMERGENCY_ONLY, INFO_ONLY }
@@ -625,7 +625,7 @@ data class KSafeConfig(
  * (one entry per profile KSafe has seen active). [useGlobal] = true means "inherit the
  * global crash config"; false means this profile defines its own complete set (all-or-
  * nothing). The custom fields are ignored while [useGlobal] is true; their defaults mirror
- * the global crash defaults. See docs/superpowers/specs/2026-05-29-per-profile-crash-thresholds-design.md.
+ * the global crash defaults. See docs/crash-detection-algorithm.md.
  */
 @Serializable
 data class CrashProfileSetting(
