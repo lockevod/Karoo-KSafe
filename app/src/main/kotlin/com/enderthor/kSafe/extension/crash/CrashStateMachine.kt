@@ -364,6 +364,28 @@ class CrashStateMachine(
     @Volatile var lastGapUprightVetoAngleDeg: Double = -1.0
         private set
 
+    /**
+     * Regime in which the most recent upright veto ([lastGapUprightVeto]) fired:
+     * `true` = gap regime (R6-F, delayed stop), `false` = prompt-stop / non-gap
+     * regime (R6-G, the `effa0e` class). Read by the facade when
+     * [lastGapUprightVeto] is `true` so the `GAP_VETO` calibration row records
+     * WHICH regime suppressed the confirm. Meaningless when no veto fired.
+     */
+    @Volatile var lastUprightVetoGapRegime: Boolean = false
+        private set
+
+    /**
+     * Peak gyroscope magnitude (rad/s) seen from the moment IMPACT was entered
+     * through the current SILENCE_CHECK window. Reset to the impact sample's
+     * gyro on IMPACT entry, then `max`-accumulated every IMPACT / SILENCE_CHECK
+     * sample. Used by the R6-G non-gap upright veto to distinguish a benign
+     * stand (no rotation) from an over-the-bars / endo crash that ends upright
+     * (a violent rotation spike). Also surfaced on the `GAP_VETO` calibration
+     * row so a post-incident audit can see the rotation that passed the gate.
+     */
+    @Volatile var peakGyroSinceImpactRadS: Double = 0.0
+        private set
+
     /** Snapshot of the current pre-impact reference. For calibration logging. */
     val preImpactReference: PreImpactRef get() = preImpactRef
 
@@ -457,6 +479,7 @@ class CrashStateMachine(
         firstSilenceGapMs = 0L
         silenceCheckEnteredMs = 0L
         lastOrientationAngleDeg = -1.0
+        peakGyroSinceImpactRadS = 0.0
     }
 
     fun reset() {
@@ -481,6 +504,7 @@ class CrashStateMachine(
         firstSilenceGapMs = 0L
         silenceCheckEnteredMs = 0L
         lastOrientationAngleDeg = -1.0
+        peakGyroSinceImpactRadS = 0.0
     }
 
     /**
@@ -516,6 +540,7 @@ class CrashStateMachine(
         firstSilenceGapMs = 0L
         silenceCheckEnteredMs = 0L
         lastOrientationAngleDeg = -1.0
+        peakGyroSinceImpactRadS = 0.0
     }
 
     // ── State handlers ───────────────────────────────────────────────────────
@@ -551,6 +576,11 @@ class CrashStateMachine(
         state = State.IMPACT
         impactStartedMs = now
         silenceStartedMs = 0L
+        // Seed the peak-gyro tracker with the impact sample itself — a tumbling
+        // crash spikes the gyro right here (this sample is handled by MONITORING,
+        // not IMPACT, so it would otherwise be missed). handleImpact /
+        // handleSilenceCheck max-accumulate the rest of the event.
+        peakGyroSinceImpactRadS = sample.gyroMag
 
         val reason = when {
             sample.peakMagnitude > thresholds.peakImpactThreshold &&
@@ -576,6 +606,7 @@ class CrashStateMachine(
      * Times out to MONITORING when `timeSinceImpact > impactWindowMs`.
      */
     private fun handleImpact(sample: SensorSample, now: Long): Decision {
+        if (sample.gyroMag > peakGyroSinceImpactRadS) peakGyroSinceImpactRadS = sample.gyroMag
         val timeSinceImpact = now - impactStartedMs
         val gpsStale = lastSpeedGpsStale
         val deviationMax = if (gpsStale) thresholds.gpsStaleSilenceDeviationMax
@@ -760,6 +791,7 @@ class CrashStateMachine(
      * instant false-alarm exit (an unconscious rider cannot pedal).
      */
     private fun handleSilenceCheck(sample: SensorSample, now: Long): Decision {
+        if (sample.gyroMag > peakGyroSinceImpactRadS) peakGyroSinceImpactRadS = sample.gyroMag
         // Cadence gate (instant false-alarm exit): only when cadence sensor present + active.
         //
         // FN-fix (2026-05-25): suppress CAD_GATE when the live orientation evidence
@@ -905,10 +937,33 @@ class CrashStateMachine(
                 // the real silence orientation too (not -1.0) — closing the blind spot on
                 // BOTH terminal decisions, not just the veto.
                 val gapRegime = firstSilenceGapMs > thresholds.delayedStopGapMs
-                val gapAngle = if (gapRegime) currentOrientationAngleDeg() else -1.0
-                if (gapRegime && gapAngle >= 0.0 && gapAngle < thresholds.gapVetoUprightAngleDeg) {
+                // Live silence-window orientation. In the gap regime
+                // computeEffectiveSilenceMs never consulted it (lastOrientationAngleDeg
+                // == -1.0), so read it live here; in the prompt-stop regime it equals
+                // the latched angle that chose the window. currentOrientationAngleDeg()
+                // is a pure read; -1.0 (invalid ref / too few samples) → not upright →
+                // no veto → confirm (the no-orientation-data safety net is preserved).
+                val vetoAngle = currentOrientationAngleDeg()
+                val upright = vetoAngle >= 0.0 && vetoAngle < thresholds.gapVetoUprightAngleDeg
+                // R6-G (2026-06-03) — extend the upright veto to the PROMPT-STOP
+                // (non-gap) regime to kill the bump→brake→stand-still-upright FP
+                // (session effa0e). The gap regime (R6-F) vetoes an upright stop on
+                // orientation ALONE — the >8 s impact→stillness gap already proves the
+                // rider kept riding, incompatible with an at-impact knockout. The
+                // prompt stop is the MORE crash-like regime, so its veto demands an
+                // EXTRA proof of benignity: the impact produced no violent rotation
+                // (peakGyroSinceImpactRadS < nonGapUprightVetoMaxGyroRadS). An
+                // over-the-bars / endo that ends wheels-up (≈ upright) spikes the gyro
+                // and is left to confirm; a toppled on-side crash is already excluded
+                // by the 15° upright cone. An incapacitated rider cannot balance a
+                // laterally-unstable bike inside that cone — it topples or tumbles —
+                // so the only thing suppressed here is the balanced-conscious stand.
+                val vetoNow = upright &&
+                    (gapRegime || peakGyroSinceImpactRadS < thresholds.nonGapUprightVetoMaxGyroRadS)
+                if (vetoNow) {
                     lastGapUprightVeto = true
-                    lastGapUprightVetoAngleDeg = gapAngle
+                    lastGapUprightVetoAngleDeg = vetoAngle
+                    lastUprightVetoGapRegime = gapRegime
                     resetTimers()
                     resetSilenceWindow()
                     state = State.MONITORING
@@ -923,7 +978,7 @@ class CrashStateMachine(
                 // In the gap regime use the angle just measured at the gate (the latched
                 // lastOrientationAngleDeg is -1.0 there); elsewhere use the latched value.
                 lastConfirmedGapMs = firstSilenceGapMs
-                lastConfirmedAngleDeg = if (gapRegime) gapAngle else lastOrientationAngleDeg
+                lastConfirmedAngleDeg = if (gapRegime) vetoAngle else lastOrientationAngleDeg
                 resetTimers()
                 resetSilenceWindow()
                 state = State.MONITORING

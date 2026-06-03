@@ -475,12 +475,16 @@ class CrashStateMachineTest {
         preRef: PreImpactRef,
         silenceAz: Double = 9.81,
         silenceAx: Double = 0.0,
+        impactGyro: Double = 0.5,   // R6-G: peak gyro at the impact sample. Default (0.5, low)
+                                    // models a benign jolt; pass > nonGapUprightVetoMaxGyroRadS
+                                    // (3.0) to model a tumble/endo (a non-gap upright confirm is
+                                    // then NOT vetoed by R6-G).
     ): Pair<CrashStateMachine, ClockHandle> {
         val (sm, h) = newSm()
         sm.onSpeedUpdate(20.0)
         // Impact at t=0 (relative); use a high base time to clear the cold-start guard.
         val base = 1_000_000L
-        sm.onSample(sample(time = base, peak = 60.0, smoothed = 30.0, gyro = 0.5))
+        sm.onSample(sample(time = base, peak = 60.0, smoothed = 30.0, gyro = impactGyro))
         sm.setPreImpactReference(preRef)
         // Stay in IMPACT until `gapMs` has elapsed: speed still high → speed gate blocks.
         var t = base + 1000L
@@ -787,28 +791,88 @@ class CrashStateMachineTest {
     // ── R6-F: the veto is gap-regime-only — a non-gap (prompt) stop is never vetoed ──
 
     @Test
-    fun `R6-F prompt stop upright confirms at 20s and is never vetoed (non-gap regime)`() {
-        // gap = 2 s < delayedStopGapMs (8 s) → orientation regime, NOT the gap regime.
-        // An upright orientation-regime stop takes the full 20 s window; the existing
-        // prompt-stop test only proves it does not confirm EARLY (6 s). Here we run PAST
-        // 20 s and prove it (a) DOES confirm and (b) the gap-veto never engages — if a
-        // regression let the veto fire outside the gap regime, this catches it.
+    fun `R6-G non-gap upright stop with low rotation is vetoed (effa0e FP)`() {
+        // 2026-06-03 session effa0e: bump at 12 km/h → coast to a stop in ~7 s (gap <
+        // delayedStopGapMs → prompt-stop / non-gap regime) → stand motionless and UPRIGHT
+        // (~2°) for the full 20 s window, no pedalling, peak gyro ≈ 1.7 rad/s (no tumble).
+        // Pre-R6-G this confirmed (FP — the rider cancelled in 3.5 s). R6-G now vetoes it:
+        // an upright prompt stop with no violent rotation is a balanced-conscious stand.
         val (sm, _) = smEnteringSilence(
-            gapMs = 2_000L,
+            gapMs = 7_000L,
             preRef = PreImpactRef(0.0, 0.0, 9.81, valid = true),
-            silenceAz = 9.81, silenceAx = 0.0,   // upright, matches the reference → angle ~0°
+            silenceAz = 9.81, silenceAx = 0.0,   // upright, ≈ pre-impact reference → angle ~0°
+            impactGyro = 1.7,                     // benign jolt — below the 3.0 veto gate
         )
-        var t = 1_002_000L
+        var t = 1_007_000L
+        var decision: CrashStateMachine.Decision? = null
+        var vetoFired = false
+        var vetoRegimeGap = true
+        repeat(25) {
+            // lastGapUprightVeto is a per-sample edge cleared at the top of each onSample,
+            // so snapshot it AT the firing sample, not after the loop. Stop feeding once the
+            // terminal decision lands (the veto returns to MONITORING).
+            if (decision == null) {
+                t += 1000L
+                val d = sm.onSample(sample(time = t, raw = 9.81, smoothed = 9.81, az = 9.81, ax = 0.0))
+                if (d != CrashStateMachine.Decision.None) {
+                    decision = d
+                    vetoFired = sm.lastGapUprightVeto
+                    vetoRegimeGap = sm.lastUprightVetoGapRegime
+                }
+            }
+        }
+        assertEquals("low-rotation upright prompt stop must be vetoed, not confirmed",
+            CrashStateMachine.Decision.ReturnToMonitoring, decision)
+        assertTrue("the upright veto must have fired", vetoFired)
+        assertFalse("veto regime must be PROMPT (non-gap), not GAP", vetoRegimeGap)
+    }
+
+    @Test
+    fun `R6-G non-gap upright stop with high rotation still confirms (endo not vetoed)`() {
+        // FN protection: a real over-the-bars / endo that ends wheels-up (≈ upright) spikes
+        // the gyro. The veto must NOT engage — the SOS must fire. Same geometry as the FP
+        // above; only the impact rotation differs (9.0 vs 1.7 rad/s).
+        val (sm, _) = smEnteringSilence(
+            gapMs = 7_000L,
+            preRef = PreImpactRef(0.0, 0.0, 9.81, valid = true),
+            silenceAz = 9.81, silenceAx = 0.0,
+            impactGyro = 9.0,                     // tumble — above the 3.0 veto gate
+        )
+        var t = 1_007_000L
         var confirmed = false
         repeat(25) {
             t += 1000L
             val d = sm.onSample(sample(time = t, raw = 9.81, smoothed = 9.81, az = 9.81, ax = 0.0))
             if (d is CrashStateMachine.Decision.Confirm) confirmed = true
-            assertFalse("the gap-veto must NEVER fire in the prompt-stop (non-gap) regime",
+            assertFalse("a high-rotation (endo) upright stop must NOT be vetoed", sm.lastGapUprightVeto)
+        }
+        assertTrue("high-rotation upright prompt stop must confirm at the 20 s window", confirmed)
+        assertEquals(20_000L, sm.lastConfirmedSilenceMs)
+    }
+
+    @Test
+    fun `R6-G non-gap on-side stop with low rotation still confirms (cone protects on-side)`() {
+        // FN protection (load-bearing): a real crash that ends ON ITS SIDE (~90°) must confirm
+        // even with a calm post-impact (low gyro). The 15° upright cone excludes it from the
+        // veto BEFORE the gyro gate is even consulted — on-side is the most common real-crash
+        // orientation, so this is the primary guard that R6-G did not narrow real-crash coverage.
+        val (sm, _) = smEnteringSilence(
+            gapMs = 2_000L,                       // prompt stop — non-gap regime
+            preRef = PreImpactRef(0.0, 0.0, 9.81, valid = true),
+            silenceAz = 0.0, silenceAx = 9.81,    // on-side ≈ 90° → outside the 15° veto cone
+            impactGyro = 0.5,                      // low rotation — must NOT rescue it from confirming
+        )
+        var t = 1_002_000L
+        var confirmed = false
+        repeat(7) {
+            t += 1000L
+            val d = sm.onSample(sample(time = t, raw = 9.81, smoothed = 9.81, az = 0.0, ax = 9.81))
+            if (d is CrashStateMachine.Decision.Confirm) confirmed = true
+            assertFalse("an on-side stop must NEVER be vetoed, regardless of rotation",
                 sm.lastGapUprightVeto)
         }
-        assertTrue("an upright prompt stop must confirm once the 20 s window elapses", confirmed)
-        assertEquals(20_000L, sm.lastConfirmedSilenceMs)
+        assertTrue("on-side prompt stop must confirm at the 4.5 s window", confirmed)
+        assertEquals(4_500L, sm.lastConfirmedSilenceMs)
     }
 
     // ── R6-F: on-side IMPACT-relaxation (CR3) carry-forward must not be vetoed ──
@@ -1434,10 +1498,16 @@ class CrashStateMachineTest {
         // 5th qualifying still sample lands, computeEffectiveSilenceMs computes the angle
         // and latches the chosen window. This test drives well past that boundary to confirm
         // the latch holds the 20s window for the full silence period.
+        // R6-G: a HIGH-rotation impact (endo/tumble that ends wheels-up ≈ upright) — so the
+        // non-gap upright veto does NOT engage and the window-selection observable (confirm at
+        // 20s) still holds. This doubles as an FN-protection test: a real over-the-bars crash
+        // ending upright must still confirm. The low-rotation (benign-stand) counterpart is
+        // vetoed — see the dedicated R6-G tests below.
         val (sm, _) = smEnteringSilence(
             gapMs = 2_000L,                                 // prompt stop — orientation regime
             preRef = PreImpactRef(0.0, 0.0, 9.81, valid = true),
             silenceAz = 9.81, silenceAx = 0.0,              // upright → angle ≈ 0° < 45° → 20s
+            impactGyro = 9.0,                               // tumble → above the 3.0 veto gate
         )
         assertEquals(CrashStateMachine.State.SILENCE_CHECK, sm.state)
 
@@ -1508,7 +1578,9 @@ class CrashStateMachineTest {
         sm.onSpeedUpdate(20.0)
         val base2 = 5_000L    // fresh time domain for the second event
 
-        sm.onSample(sample(time = base2, peak = 60.0, smoothed = 30.0, gyro = 0.5))
+        // R6-G: high-rotation impact so the upright prompt-stop confirm is NOT vetoed — this
+        // test asserts the 20s window-SELECTION reached via the fresh reference, not the veto.
+        sm.onSample(sample(time = base2, peak = 60.0, smoothed = 30.0, gyro = 9.0))
         assertEquals(CrashStateMachine.State.IMPACT, sm.state)
 
         // Inject a FRESH valid UPRIGHT reference AFTER onPause — this is what must take effect.

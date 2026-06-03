@@ -12,8 +12,10 @@ Event catalogue understood by this script:
     PERIODIC, HIGH_MAG, IMPACT_IN, IMPACT_TMO, CRASH_OK (CRASH_CONFIRMED),
     CRASH_NO (CRASH_CANCELLED), RST_SNAP, CAD_GATE,
     CAD_GATE_SUPPRESSED (diagnostic — cadence gate suppressed by on-side angle),
-    GAP_VETO (GAP_UPRIGHT_VETO — R6-F: gap-regime confirm vetoed because the
-    bike was within the tight upright cone; `angle` is the measured silence
+    GAP_VETO (GAP_UPRIGHT_VETO — upright confirm vetoed because the bike was
+    within the tight upright cone. `regime=GAP` (R6-F, delayed stop) or
+    `regime=PROMPT` (R6-G, prompt stop — additionally gated on `gyro_peak` <
+    gyro_thr so a tumble/endo is not vetoed); `angle` is the measured silence
     orientation, a potential FN if closely followed by EMERG_TRIG/MANUAL_SOS),
     GYRO_BLK, GPS_STALE, TERRAIN_CLUST, SIL_IN, SIL_TMO, SIL_BRK, SPD_REJECT,
     POST_TMO_BOOST, CRASH_SUPPRESSED (gate suppressed inside cooldown)
@@ -540,10 +542,10 @@ def _print_per_file(summaries: list[FileSummary]):
             fields=("how_long_ms", "reason"),
         )
         _print_payload_block(
-            "GAP-UPRIGHT VETO (R6-F: upright delayed-stop confirm suppressed — "
+            "UPRIGHT VETO (R6-F gap / R6-G prompt: upright confirm suppressed — "
             "check for a following EMERG_TRIG/MANUAL_SOS = potential FN)",
             fs.gap_upright_veto_payloads,
-            fields=("angle", "veto_thr", "speed", "deviation", "cadence"),
+            fields=("regime", "angle", "veto_thr", "gyro_peak", "gyro_thr", "speed", "deviation", "cadence"),
             highlight=True,
         )
         _print_payload_block(

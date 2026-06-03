@@ -73,9 +73,16 @@ data class Thresholds(
      * bump+brake+stop false positive: a rider who stops upright at a light
      * will almost always shift weight, tilt the bike to put a foot down, or
      * interact with the device within this window — any motion >
-     * [silenceDeviationMax] resets the silence clock. An unconscious rider
-     * with the bike pinned upright still confirms, just delayed by ~15s vs
-     * the on-side path.
+     * [silenceDeviationMax] resets the silence clock.
+     *
+     * Residual FP coverage (R6-G, 2026-06-03): a rider who instead stands
+     * perfectly motionless and upright for the full window slips through the
+     * "they'll move" assumption (session `effa0e`). That case is now vetoed —
+     * see [nonGapUprightVetoMaxGyroRadS]. This does NOT weaken real-crash
+     * coverage: an incapacitated rider cannot keep a laterally-unstable bike
+     * balanced within the 15° [gapVetoUprightAngleDeg] cone — it topples
+     * on-side (≥ cone → confirms) or tumbles (high gyro → confirms). Only the
+     * balanced-conscious upright stand (low gyro, ≈0° tilt) is suppressed.
      */
     val silenceDurationUprightMs: Long = 20_000L,
     /**
@@ -103,6 +110,28 @@ data class Thresholds(
      * the prompt-stop orientation regime is unaffected.
      */
     val gapVetoUprightAngleDeg: Double = 15.0,
+    /**
+     * Peak gyroscope magnitude (rad/s, measured from the impact through the
+     * silence window) below which the **non-gap (prompt-stop) upright veto**
+     * (R6-G) may engage. The gap-regime veto (R6-F) ignores this — there the
+     * >8 s impact→stillness gap already proves the rider kept riding, so an
+     * upright stop is benign regardless of rotation.
+     *
+     * R6-G extends the upright veto to the prompt-stop regime (gap ≤
+     * [delayedStopGapMs]) to kill the bump→brake→stand-still-upright FP
+     * (2026-06-03 session `effa0e`, peak gyro ≈ 1.7 rad/s). The prompt stop is
+     * the more crash-like regime, so the veto here demands an EXTRA proof of
+     * benignity: no violent rotation. A real over-the-bars / endo that happens
+     * to leave the bike wheels-down (≈ upright) spikes the gyro well above this
+     * (the 2026-06-03 on-side crash `27baa0` hit 9.65 rad/s) and is therefore
+     * NOT vetoed. A toppled-on-side crash is already excluded by the 15°
+     * [gapVetoUprightAngleDeg] cone. Set below the tumble range and above the
+     * benign-stop range; a false negative is far worse than a false positive,
+     * so keep it low (veto only when rotation was clearly minimal).
+     *
+     * Only consulted in the prompt-stop regime; the gap regime is unaffected.
+     */
+    val nonGapUprightVetoMaxGyroRadS: Double = 3.0,
     /**
      * Angle (degrees) from the pre-impact reference above which the bike is
      * considered "decisively on the ground" — used to gate the speed-rise
