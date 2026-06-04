@@ -334,6 +334,37 @@ class CalibrationLogger(
     val fileNameForSession: String
         get() = "ksafe_v${BuildConfig.VERSION_NAME}_${installId}_${sessionId}_${DEVICE_LABEL}.csv"
 
+    /** Monotonic count of calibration-log chunks successfully uploaded in THIS
+     *  session, driving [chunkFileName] so each chunk lands under a unique,
+     *  lexically-sortable Telegram filename. Incremented by
+     *  [truncateAfterSuccessfulSend] (called once per successful chunk).
+     *  In-memory only: a process restart resets it, but a restart also begins a
+     *  fresh session with a new [sessionId], so post-restart numbering cannot
+     *  collide with the pre-restart files. */
+    @Volatile
+    private var uploadedChunkCount: Int = 0
+    /** Read-only view of [uploadedChunkCount] for the send loop to name the next chunk. */
+    val uploadedChunks: Int get() = uploadedChunkCount
+
+    /** Same scheme for the recovered previous-session drain — see [uploadedChunks]. */
+    @Volatile
+    private var uploadedPreviousChunkCount: Int = 0
+    val uploadedPreviousChunks: Int get() = uploadedPreviousChunkCount
+
+    /**
+     * Per-chunk Telegram filename. Every uploaded chunk gets a distinct,
+     * zero-padded, lexically-sortable name so the receiving inbox keeps the
+     * pieces orderable and groupable without opening them — Telegram Desktop
+     * otherwise auto-renames identically-named downloads to "(2)", "(3)" … in
+     * ARRIVAL order (not logical order), which is what made multi-chunk sessions
+     * painful to reassemble.
+     * Format: `ksafe_v{version}_{installId}_{sessionId}_c{seq}_{deviceLabel}.csv`
+     * with `seq` = [uploadedChunks] at send time (3-digit zero-padded; values
+     * past 999 still sort correctly). E.g. `ksafe_v2.0.0_a3f9c2_b4e8d1_c000_k24.csv`.
+     */
+    fun chunkFileName(seq: Int): String =
+        "ksafe_v${BuildConfig.VERSION_NAME}_${installId}_${sessionId}_c${"%03d".format(seq)}_${DEVICE_LABEL}.csv"
+
     /**
      * Returns a short plain-text caption for the Telegram `sendDocument` call.
      * Shown as the message text alongside the file in the chat — immediately identifies
@@ -818,6 +849,9 @@ class CalibrationLogger(
                     Timber.i("CalibrationLogger: truncated previous session (sent=$uploadedLineCount, kept_tail=${keptTail.size})")
                 }
             }
+            // Advance the recovered-session chunk counter so the next previous-file
+            // chunk gets a unique, sortable filename via [previousChunkFileName].
+            uploadedPreviousChunkCount++
             dropped
         } catch (e: Exception) {
             Timber.w(e, "CalibrationLogger: truncatePreviousAfterSuccessfulSend failed")
@@ -836,6 +870,12 @@ class CalibrationLogger(
      * one currently being recorded.
      */
     fun previousFileNameForSession(): String = "ksafe_v${BuildConfig.VERSION_NAME}_${installId}_previous_${DEVICE_LABEL}.csv"
+
+    /** Per-chunk variant of [previousFileNameForSession] — same unique/sortable
+     *  scheme as [chunkFileName] so a multi-chunk recovered-session drain doesn't
+     *  collide on arrival. `seq` = [uploadedPreviousChunks] at send time. */
+    fun previousChunkFileName(seq: Int): String =
+        "ksafe_v${BuildConfig.VERSION_NAME}_${installId}_previous_c${"%03d".format(seq)}_${DEVICE_LABEL}.csv"
 
     /** Deletes the preserved previous-session file. Called by the Settings "Send" path
      *  after a successful upload so the rider doesn't see "previous: ✓" forever. */
@@ -986,10 +1026,14 @@ class CalibrationLogger(
                         "(uploaded=$uploadedLineCount lines, file_was=$before, kept_tail=${keptTail.size})"
                 )
             }
+            // This chunk has been uploaded — advance the per-session chunk counter so
+            // the NEXT chunk (this drain or a later periodic cycle) gets a fresh,
+            // sortable filename via [chunkFileName].
+            uploadedChunkCount++
             // Log a marker row so the next chunk's CSV self-identifies as a continuation.
             // Done OUTSIDE the fileLock — addEntryDirect only touches the in-memory buffer.
             addEntryDirect(Event.LOGGER_START,
-                "logging_resumed_after_periodic_send,install_id=$installId,session=$sessionId,uploaded_lines=$uploadedLineCount")
+                "logging_resumed_after_periodic_send,install_id=$installId,session=$sessionId,uploaded_lines=$uploadedLineCount,uploaded_chunks=$uploadedChunkCount")
             dropped
         } catch (e: Exception) {
             Timber.w(e, "CalibrationLogger: truncate after send failed")

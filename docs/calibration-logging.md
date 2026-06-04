@@ -47,10 +47,18 @@ The CSV file is sent automatically to the developer via Telegram (a private bot)
 
 You can also tap **Send now** to transmit the current log immediately. The file is typically 50–400 KB for a 2–4 hour ride session.
 
-Each file arrives in the developer's Telegram with:
+A long ride is uploaded in several **size-capped chunks** (and periodically during the
+ride, so a flat battery or a crash mid-ride can't lose the data already recorded). Each
+file arrives in the developer's Telegram with:
 
-- A **descriptive filename** — e.g. `ksafe_v1.5.3_a3f9c2_Karoo-3.csv`
-- A **caption** in Telegram — e.g. `📊 kSafe Calibration Log | Session: a3f9c2 | Karoo 3 | v1.5.3 | 1247 rows`
+- A **descriptive filename** — e.g. `ksafe_v2.0.0_a3f9c2_b4e8d1_c000_Karoo-3.csv`. The
+  parts are: app version, an opaque per-install grouping tag, the random session ID, an
+  incrementing **chunk index** (`c000`, `c001`, …) and the device model. The chunk index
+  keeps the pieces ordered and prevents the chat from collapsing them onto one repeated
+  name. There is deliberately **no date, time or location** in the name (see "What is NOT
+  collected") — Telegram's own per-message arrival time already orders them, with nothing
+  about *when* you rode embedded in the file.
+- A **caption** in Telegram — e.g. `📊 kSafe Calibration Log | Session: a3f9c2 | Karoo 3 | v2.0.0 | 1247 rows`
 
 This makes it easy for the developer to identify and organise logs from multiple testers without any personal information.
 
