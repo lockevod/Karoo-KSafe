@@ -1802,9 +1802,12 @@ class KSafeExtension : KarooExtension("ksafe", BuildConfig.VERSION_NAME), Corout
                 if (chunk.hasMore) append(" (chunk ${chunksSent + 1}, more pending)")
                 else if (chunksSent > 0) append(" (chunk ${chunksSent + 1}, final)")
             }
+            // Name each chunk uniquely + sortably (…_c000_, _c001_, …) so the
+            // receiving inbox keeps multi-chunk / multi-cycle sessions orderable
+            // instead of collapsing them onto one repeated "(2)(3)…" filename.
             val result = LogReporter.sendLogFile(
                 content = chunk.content,
-                fileName = calibLogger.fileNameForSession,
+                fileName = calibLogger.chunkFileName(calibLogger.uploadedChunks),
                 caption = caption,
                 karooSystem = karooSystem,
             )
@@ -1908,7 +1911,7 @@ class KSafeExtension : KarooExtension("ksafe", BuildConfig.VERSION_NAME), Corout
             }
             val result = LogReporter.sendLogFile(
                 content = chunk.content,
-                fileName = calibLogger.previousFileNameForSession(),
+                fileName = calibLogger.previousChunkFileName(calibLogger.uploadedPreviousChunks),
                 caption = caption,
                 karooSystem = karooSystem,
             )
