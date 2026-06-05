@@ -52,6 +52,17 @@ class MedicalEpisodeDetector(
     private val HR_FLATLINE_MAX_BPM        = 30
     private val HR_FLATLINE_DURATION_SEC   = 30
     private val HR_COLLAPSE_DROP_FRACTION  = 0.40f
+    /** H4 fix — absolute floor for the collapse detector. The % drop alone is artefact-prone:
+     *  field FP 2026-06-04 (install 68c6ea) fired MEDICAL_COLLAPSE on a 158 → ~91 bpm chest-strap
+     *  dropout (42 % drop) while the rider was sprinting at 50.7 km/h, then HR recovered to 110+
+     *  seconds later. A genuine collapse leaves the recent HR ABSOLUTELY low, not merely lower than
+     *  a high effort baseline. Require the recent-window average to be ≤ this floor in addition to
+     *  the % drop. 55 bpm sits around the upper edge of an athlete's active resting HR yet above
+     *  the FLATLINE band (< 30 bpm), so COLLAPSE owns the 30–55 bpm bradycardia window and FLATLINE
+     *  owns < 30 — a clean hand-off. Set to 55 (not 50): 50 was too aggressive a suppression — a
+     *  real collapse that bottoms at 51–54 must still fire, and 55 still rejects the field FP
+     *  (recent ≈ 91). Raising further (more permissive) re-admits high-effort strap artefacts. */
+    private val HR_COLLAPSE_MAX_RECENT_BPM = 55
     /** Recent window for the collapse detector. 15 s (was 10 s) — extending this requires the
      *  drop to be sustained for the full window before triggering, which filters out brief
      *  HR-strap artefacts (1–3 bad readings due to sweat / contact loss) that would otherwise
@@ -579,6 +590,15 @@ class MedicalEpisodeDetector(
             now,
         )
         if (baseline <= 0 || recent <= 0) return
+
+        // H4 fix — absolute floor. A 40 % drop off a high effort baseline is not a collapse if the
+        // recent HR is still well within the active range (158 → 91 at 50 km/h was a strap dropout,
+        // not asystole). A genuine collapse drives the recent HR absolutely low. Gate on `recent`
+        // (the windowed average that the drop is computed from) so a single noisy sample can't flip it.
+        if (recent > HR_COLLAPSE_MAX_RECENT_BPM) {
+            Timber.d(">>> HR_COLLAPSE suppressed: recent=$recent above floor $HR_COLLAPSE_MAX_RECENT_BPM (baseline=$baseline) — likely HR-strap artifact")
+            return
+        }
 
         val drop = (baseline - recent).toFloat() / baseline.toFloat()
         if (drop >= HR_COLLAPSE_DROP_FRACTION) {
