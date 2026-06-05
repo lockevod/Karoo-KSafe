@@ -2,6 +2,8 @@ package com.enderthor.kSafe.extension.managers
 
 import android.content.Context
 import androidx.datastore.preferences.core.edit
+import androidx.datastore.preferences.core.intPreferencesKey
+import androidx.datastore.preferences.core.longPreferencesKey
 import androidx.datastore.preferences.core.stringPreferencesKey
 import com.enderthor.kSafe.activity.dataStore
 import com.enderthor.kSafe.data.EmergencyState
@@ -44,6 +46,8 @@ class ConfigurationManager(private val context: Context) {
     private val wellnessHistoryKey = stringPreferencesKey("wellnesshistory")
     private val fuelingStateKey = stringPreferencesKey("fuelingstate")
     private val installIdKey = stringPreferencesKey("install_id")
+    private val updateRestartCountKey = intPreferencesKey("update_restart_count")
+    private val updateNoticeEpochDayKey = longPreferencesKey("update_notice_epoch_day")
 
     // ─── Install ID ───────────────────────────────────────────────────────────
 
@@ -72,6 +76,29 @@ class ConfigurationManager(private val context: Context) {
             .take(6)
         context.dataStore.edit { it[installIdKey] = fresh }
         return fresh
+    }
+
+    /**
+     * Increments and returns the persisted count of extension-service starts.
+     * Drives the update-notice cadence (show on every Nth restart). Stored as a
+     * scalar pref, outside the KSafeConfig JSON blob, so config resets don't reset it.
+     */
+    suspend fun incrementUpdateRestartCount(): Int {
+        var next = 1
+        context.dataStore.edit { prefs ->
+            next = (prefs[updateRestartCountKey] ?: 0) + 1
+            prefs[updateRestartCountKey] = next
+        }
+        return next
+    }
+
+    /** Epoch-day (LocalDate.toEpochDay) of the last update notice shown, or 0 if never. */
+    suspend fun getUpdateNoticeEpochDay(): Long =
+        context.dataStore.data.first()[updateNoticeEpochDayKey] ?: 0L
+
+    /** Records that the update notice was shown on [epochDay] (caps it to ≤1/day). */
+    suspend fun setUpdateNoticeEpochDay(epochDay: Long) {
+        context.dataStore.edit { it[updateNoticeEpochDayKey] = epochDay }
     }
 
     // ─── KSafeConfig ──────────────────────────────────────────────────────────
