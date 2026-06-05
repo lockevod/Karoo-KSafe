@@ -92,7 +92,7 @@ class ConfigurationManager(private val context: Context) {
         return next
     }
 
-    /** Epoch-day (LocalDate.toEpochDay) of the last update notice shown, or 0 if never. */
+    /** Epoch-day (UTC; currentTimeMillis / 86_400_000) of the last update notice shown, or 0 if never. */
     suspend fun getUpdateNoticeEpochDay(): Long =
         context.dataStore.data.first()[updateNoticeEpochDayKey] ?: 0L
 

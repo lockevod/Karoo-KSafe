@@ -2861,7 +2861,9 @@ class KSafeExtension : KarooExtension("ksafe", BuildConfig.VERSION_NAME), Corout
             val restartCount = configManager.incrementUpdateRestartCount()
             if (!activeConfig.updateCheckEnabled) return
             if (UPDATE_CHECK_EVERY_N_RESTARTS <= 0 || restartCount % UPDATE_CHECK_EVERY_N_RESTARTS != 0) return
-            val today = java.time.LocalDate.now().toEpochDay()
+            // Epoch-day (UTC). Uses System.currentTimeMillis() to match the codebase convention
+            // and avoid java.time (API 26) on minSdk 23 — a UTC day boundary is fine for a ≤1/day cap.
+            val today = System.currentTimeMillis() / 86_400_000L
             if (configManager.getUpdateNoticeEpochDay() == today) return  // ≤1 notice/day
 
             // Only now is a network round-trip worth it.
