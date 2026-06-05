@@ -115,7 +115,7 @@ const val KAROO_LIVE_BASE_URL = "https://dashboard.hammerhead.io/live/"
  *             combined1/2 Label/Ml/Carbs/Color set) for the combined drink+carbs tap field.
  *             Pure version stamp; all fields have defaults, so existing installs are unaffected.
  */
-const val CONFIG_VERSION = 21
+const val CONFIG_VERSION = 22
 
 /**
  * Canonical minSpeedForCrashKmh value per preset.
@@ -438,6 +438,8 @@ data class KSafeConfig(
     val buzzerOnEmergencyEnabled: Boolean = true,
     // Calibration logging — writes detailed sensor events to CSV for threshold tuning
     val calibrationLoggingEnabled: Boolean = false,
+    // Update-availability notice — show a brief overlay when a newer KSafe build is published
+    val updateCheckEnabled: Boolean = true,
     // Field colours — idle/ready background for each ride-screen widget
     // Defaults are FIELD_COLOR_AUTO — fresh installs render in native Karoo theme
     // (auto day/night, theme-driven text). Riders who prefer a coloured tap target
@@ -1338,6 +1340,14 @@ fun KSafeConfig.migrateToLatest(): KSafeConfig {
         // existing installs behave identically until the rider places a combined field.
         c = c.copy(configVersion = 21)
         Timber.i("KSafeConfig migrated v%d→v21 (combined fuel-log fields)", originalVersion)
+    }
+
+    if (c.configVersion < 22) {
+        // v21 → v22: updateCheckEnabled added (default ON). Pure version stamp — the field is
+        // additive and absent in old blobs decodes to its `true` default, so existing installs
+        // get the update notice enabled, matching new installs. Nothing to rewrite.
+        c = c.copy(configVersion = 22)
+        Timber.i("KSafeConfig migrated v%d→v22 (update-availability check)", originalVersion)
     }
 
     return c
