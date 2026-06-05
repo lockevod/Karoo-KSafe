@@ -59,6 +59,7 @@ fun SettingsScreen(vm: MainViewModel) {
     var isActive          by remember(config.isActive)                  { mutableStateOf(config.isActive) }
     var fitExportEnabled  by remember(config.fuelingFitExportEnabled)   { mutableStateOf(config.fuelingFitExportEnabled) }
     var calibrationLogging by remember(config.calibrationLoggingEnabled) { mutableStateOf(config.calibrationLoggingEnabled) }
+    var updateCheck       by remember(config.updateCheckEnabled)        { mutableStateOf(config.updateCheckEnabled) }
     var buzzerOnEmergency by remember(config.buzzerOnEmergencyEnabled)  { mutableStateOf(config.buzzerOnEmergencyEnabled) }
     var calibLogInfo       by remember { mutableStateOf("") }
     var calibLogNote       by remember { mutableStateOf("") }
@@ -182,6 +183,20 @@ fun SettingsScreen(vm: MainViewModel) {
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant
         )
+
+        // Update-availability notice — opt-out toggle (default on). Gates the periodic,
+        // ride-idle overlay that tells the rider a newer KSafe build is published.
+        SettingRow(label = stringResource(R.string.update_check_label)) {
+            Switch(
+                checked = updateCheck,
+                onCheckedChange = { newValue ->
+                    updateCheck = newValue
+                    // Merge onto the latest config (not the captured snapshot) so this
+                    // immediate save can't clobber the debounced batch save.
+                    vm.updateConfig { it.copy(updateCheckEnabled = newValue) }
+                },
+            )
+        }
 
         // Diagnostic button — binds the HAL service and plays a short test tone. Useful
         // for confirming the bypass works after a Karoo OTA (Hammerhead can gate the
