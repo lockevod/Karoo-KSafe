@@ -211,6 +211,7 @@
     <string name="backup_export">Exportar</string>
     <string name="backup_import">Importar</string>
     <string name="backup_path_hint">Exportar → /sdcard/KSafe/ksafe_export.json  |  Importar ← /sdcard/KSafe/ksafe_import.json</string>
+    <string name="backup_secrets_warning">⚠ El archivo de exportación guarda tus credenciales de mensajería (bot tokens, API keys) y los números de los destinatarios en texto plano. Mantenlo privado y bórralo tras restaurar.</string>
     <string name="backup_needs_access">La copia necesita acceso a archivos. Concédelo y vuelve a tocar.</string>
     <string name="backup_grant_opening">Abriendo ajustes de acceso a archivos — concédelo y vuelve a tocar.</string>
     <string name="backup_grant_adb">Este Karoo no puede abrir la pantalla de acceso a archivos. Concédelo vía adb:\nadb shell appops set com.enderthor.kSafe MANAGE_EXTERNAL_STORAGE allow</string>

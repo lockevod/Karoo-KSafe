@@ -22,6 +22,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
@@ -36,6 +37,7 @@ import com.enderthor.kSafe.activity.MainViewModel
 import com.enderthor.kSafe.extension.KSafeExtension
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
 /**
@@ -55,6 +57,7 @@ import kotlinx.coroutines.withContext
 fun SettingsScreen(vm: MainViewModel) {
     val config by vm.config.collectAsState()
     val context = LocalContext.current
+    val scope = rememberCoroutineScope()
 
     var isActive          by remember(config.isActive)                  { mutableStateOf(config.isActive) }
     var fitExportEnabled  by remember(config.fuelingFitExportEnabled)   { mutableStateOf(config.fuelingFitExportEnabled) }
@@ -328,10 +331,9 @@ fun SettingsScreen(vm: MainViewModel) {
         if (calibrationLogging) {
             LaunchedEffect(calibrationLogging) {
                 while (calibrationLogging) {
-                    // Off-Main: getCalibrationLogInfo() reads whole files (line scan + readText).
-                    calibLogInfo = withContext(Dispatchers.IO) {
-                        KSafeExtension.getInstance()?.getCalibrationLogInfo() ?: ""
-                    }
+                    // getCalibrationLogInfo() is suspend + hops to Dispatchers.IO internally
+                    // (it scans the whole CSV + reads the previous file) — safe to call here.
+                    calibLogInfo = KSafeExtension.getInstance()?.getCalibrationLogInfo() ?: ""
                     delay(5_000L)
                 }
             }
@@ -360,10 +362,14 @@ fun SettingsScreen(vm: MainViewModel) {
                 }
                 Button(
                     onClick = {
-                        KSafeExtension.getInstance()?.clearCalibrationLog()
-                        calibLogInfo = ""
-                        calibLogNote = "Log cleared."
-                        calibLogNoteIsError = false
+                        // clearCalibrationLog() is suspend (deletes files on Dispatchers.IO);
+                        // launch off the Main onClick so the delete never janks the UI.
+                        scope.launch {
+                            KSafeExtension.getInstance()?.clearCalibrationLog()
+                            calibLogInfo = ""
+                            calibLogNote = "Log cleared."
+                            calibLogNoteIsError = false
+                        }
                     },
                     modifier = Modifier.weight(1f),
                     colors = ButtonDefaults.buttonColors(
@@ -401,6 +407,13 @@ fun SettingsScreen(vm: MainViewModel) {
             text = stringResource(R.string.backup_path_hint),
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant
+        )
+        // Privacy notice: the export is a plaintext credential dump (bot tokens, API keys,
+        // recipient numbers). Surfaced in error colour so the rider knows to keep it private.
+        Text(
+            text = stringResource(R.string.backup_secrets_warning),
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.error
         )
 
         Row(

@@ -114,6 +114,9 @@ private const val UPDATE_CHECK_STARTUP_DELAY_MS: Long = 45_000L
 private const val UPDATE_CHECK_EVERY_N_RESTARTS: Int = 3
 /** Auto-dismiss the update overlay after this long (rider may also tap to close). */
 private const val UPDATE_NOTICE_AUTODISMISS_MS: Long = 10_000L
+/** Hard cap on the manifest GET so a hung tethered link can't leave the check
+ *  coroutine suspended until service teardown. */
+private const val UPDATE_CHECK_HTTP_TIMEOUT_MS: Long = 15_000L
 /** OTA manifest describing the latest published build. */
 private const val UPDATE_MANIFEST_URL: String =
     "https://github.com/lockevod/Karoo-KSafe/releases/latest/download/manifest.json"
@@ -190,6 +193,13 @@ class KSafeExtension : KarooExtension("ksafe", BuildConfig.VERSION_NAME), Corout
      *  never runs [handleRideState] against KSafeConfig() defaults (isActive / crash /
      *  medical all ON) when the extension (re)connects while the Karoo is already Recording. */
     private val configSeeded = CompletableDeferred<Unit>()
+    /** Completed once the persisted fueling snapshot has been loaded into
+     *  [pendingFuelingRestore] (or determined absent/stale). The ride-state collector waits
+     *  on this before handling the first transition so a mid-ride (re)connect that emits
+     *  Recording quickly can't take the fresh-start branch and silently drop an interrupted
+     *  ride's accumulated carbs/hydration. Like [configSeeded], the wait is bounded — this is
+     *  an optimisation, never a hard block. Completed in a finally so a failed load can't hang it. */
+    private val fuelingRestoreLoaded = CompletableDeferred<Unit>()
     private var currentRideState: RideState? = null
     @Volatile private var activeProfileId: String? = null
     /** Whether the crash detector is currently running under the effective config. Kept in
@@ -635,22 +645,34 @@ class KSafeExtension : KarooExtension("ksafe", BuildConfig.VERSION_NAME), Corout
             // Load persisted fueling snapshot BEFORE we start observing ride state — the
             // first Recording event must see `pendingFuelingRestore` already populated so
             // the restore-vs-fresh-start decision in [handleRideState] picks the right
-            // branch. A snapshot older than FUELING_RESTORE_MAX_AGE_MS is discarded as
-            // stale (rider stopped the ride deliberately, or device sat unused).
-            val persisted = configManager.loadFuelingState()
-            val age = System.currentTimeMillis() - persisted.savedAtMs
-            pendingFuelingRestore = if (persisted.savedAtMs > 0 &&
-                age in 0..com.enderthor.kSafe.data.FUELING_RESTORE_MAX_AGE_MS) {
-                Timber.i("FuelingState eligible for restore: age=${age / 1000}s, " +
-                    "carb_burned=${persisted.carb.cumBurnedG.toInt()}g, " +
-                    "hyd_target=${persisted.hyd.cumTargetMl.toInt()}ml")
-                persisted
-            } else {
-                if (persisted.savedAtMs > 0) {
-                    Timber.i("FuelingState too old to restore: age=${age / 1000}s (max ${com.enderthor.kSafe.data.FUELING_RESTORE_MAX_AGE_MS / 1000}s)")
-                    configManager.clearFuelingState()
+            // branch. The ride-state collector waits on [fuelingRestoreLoaded] (bounded) to
+            // enforce that ordering; without it a fast mid-ride reconnect could take the
+            // fresh-start branch and silently drop the interrupted ride's accumulated fuel.
+            // A snapshot older than FUELING_RESTORE_MAX_AGE_MS is discarded as stale
+            // (rider stopped the ride deliberately, or device sat unused).
+            try {
+                val persisted = configManager.loadFuelingState()
+                val age = System.currentTimeMillis() - persisted.savedAtMs
+                pendingFuelingRestore = if (persisted.savedAtMs > 0 &&
+                    age in 0..com.enderthor.kSafe.data.FUELING_RESTORE_MAX_AGE_MS) {
+                    Timber.i("FuelingState eligible for restore: age=${age / 1000}s, " +
+                        "carb_burned=${persisted.carb.cumBurnedG.toInt()}g, " +
+                        "hyd_target=${persisted.hyd.cumTargetMl.toInt()}ml")
+                    persisted
+                } else {
+                    if (persisted.savedAtMs > 0) {
+                        Timber.i("FuelingState too old to restore: age=${age / 1000}s (max ${com.enderthor.kSafe.data.FUELING_RESTORE_MAX_AGE_MS / 1000}s)")
+                        configManager.clearFuelingState()
+                    }
+                    null
                 }
-                null
+            } catch (e: Exception) {
+                // A failed load (e.g. DataStore IOException at cold boot) means no restore —
+                // leave pendingFuelingRestore null and let the ride start fresh.
+                Timber.w(e, "FuelingState load failed — starting fresh (no restore)")
+            } finally {
+                // Always signal: a hung/failed load must not block ride-state handling forever.
+                fuelingRestoreLoaded.complete(Unit)
             }
         }
 
@@ -845,6 +867,12 @@ class KSafeExtension : KarooExtension("ksafe", BuildConfig.VERSION_NAME), Corout
             // Cap the wait and fall back to the original immediate behaviour on timeout.
             if (withTimeoutOrNull(CONFIG_SEED_TIMEOUT_MS) { configSeeded.await() } == null) {
                 Timber.w("configSeeded not ready after ${CONFIG_SEED_TIMEOUT_MS}ms — proceeding so ride-state/crash handling is never blocked by a stalled config load")
+            }
+            // Same bounded-await contract for the fueling snapshot: a fast mid-ride reconnect
+            // must see pendingFuelingRestore populated before the first Recording transition,
+            // or an interrupted ride's accumulated carbs/hydration are silently dropped.
+            if (withTimeoutOrNull(CONFIG_SEED_TIMEOUT_MS) { fuelingRestoreLoaded.await() } == null) {
+                Timber.w("fuelingRestoreLoaded not ready after ${CONFIG_SEED_TIMEOUT_MS}ms — proceeding; an interrupted ride may start fresh")
             }
             karooSystem.streamRide()
                 .distinctUntilChanged()
@@ -1184,6 +1212,9 @@ class KSafeExtension : KarooExtension("ksafe", BuildConfig.VERSION_NAME), Corout
                     // Resuming from Pause also triggers Recording — we skip it there.
                     if (!rideStartNotificationSent) {
                         rideStartNotificationSent = true
+                        // Clear any sticky SOS delivery-failure/partial overlay left from a
+                        // previous ride so it can't bleed into this one.
+                        emergencyManager.clearDeliveryNotice()
                         sendRideStartNotification()
                         // Readiness advice from the last 10 rides' wellness summaries.
                         // Silent when RECOVERED (decideReadiness returns null) — no per-ride spam.
@@ -1927,28 +1958,31 @@ class KSafeExtension : KarooExtension("ksafe", BuildConfig.VERSION_NAME), Corout
 
     /**
      * Expose the persistent install ID for the Settings UI.
-     * The lazy [CalibrationLogger.installId] is initialised on first access via
-     * a [kotlinx.coroutines.runBlocking] call on Dispatchers.IO — effectively
-     * instant after the first ride-start. Non-suspend because the underlying
-     * value is already a plain [String] once the lazy is resolved.
+     * `suspend` + [Dispatchers.IO]: the lazy [CalibrationLogger.installId] resolves on
+     * first access via a [kotlinx.coroutines.runBlocking] call on Dispatchers.IO, so the
+     * very first read would block whatever thread calls it. Hopping to IO here guarantees
+     * that block never lands on Main even if the warm-up hasn't completed yet.
      */
-    fun getInstallIdForUi(): String = calibLogger.installId
+    suspend fun getInstallIdForUi(): String = withContext(Dispatchers.IO) { calibLogger.installId }
 
     /** Active Karoo ride-profile id for the Settings UI's per-profile crash section. */
     fun getActiveProfileIdForUi(): String? = activeProfileId
 
-    /** Returns a string with file location info for display in the Settings UI. */
-    fun getCalibrationLogInfo(): String {
+    /** Returns a string with file location info for display in the Settings UI.
+     *  `suspend` + [Dispatchers.IO]: scans the whole CSV (line count) and reads the
+     *  previous-session file — never run this on Main. */
+    suspend fun getCalibrationLogInfo(): String = withContext(Dispatchers.IO) {
         val count = calibLogger.getEntryCount()
         val file = calibLogger.getLogFile()
         val previousPending = calibLogger.getPreviousFileContent() != null
         val base = if (file != null) "$count entries | ${file.path}"
                    else "$count entries (not yet flushed to disk)"
-        return if (previousPending) "$base\n⚠ Previous unsent session detected — tap Send to recover."
-               else base
+        if (previousPending) "$base\n⚠ Previous unsent session detected — tap Send to recover."
+        else base
     }
 
-    fun clearCalibrationLog() {
+    /** `suspend` + [Dispatchers.IO]: [CalibrationLogger.clear] deletes the log files. */
+    suspend fun clearCalibrationLog() = withContext(Dispatchers.IO) {
         calibLogger.clear()
     }
 
@@ -2866,8 +2900,11 @@ class KSafeExtension : KarooExtension("ksafe", BuildConfig.VERSION_NAME), Corout
             val today = System.currentTimeMillis() / 86_400_000L
             if (configManager.getUpdateNoticeEpochDay() == today) return  // ≤1 notice/day
 
-            // Only now is a network round-trip worth it.
-            val response = karooSystem.httpRequest("GET", UPDATE_MANIFEST_URL)
+            // Only now is a network round-trip worth it. Bounded so a hung tethered link
+            // can't leave this coroutine suspended until teardown (null → skip silently).
+            val response = kotlinx.coroutines.withTimeoutOrNull(UPDATE_CHECK_HTTP_TIMEOUT_MS) {
+                karooSystem.httpRequest("GET", UPDATE_MANIFEST_URL)
+            } ?: return
             if (response.statusCode !in 200..299) return
             val manifest = UpdateChecker.parseManifest(response.body?.toString(Charsets.UTF_8) ?: "") ?: return
             val isNewer = UpdateChecker.isNewer(manifest.latestVersionCode, BuildConfig.VERSION_CODE)
