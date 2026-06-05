@@ -2703,41 +2703,26 @@ class KSafeExtension : KarooExtension("ksafe", BuildConfig.VERSION_NAME), Corout
             "fields=0,1,2,3,4,5,6"
         }
         val job: Job = launch {
-            // Per-ride caches of the last value written to each FIT field. The FIT
-            // record/session messages are throttled to **write-on-change** so a 5 h
-            // ride doesn't emit 18 000 record-writes per Recording-second on fields
-            // whose underlying source-of-truth changes far less often. Real cadence
-            // post-throttle (post-merge audit Nov 2026):
-            //   - Record-message writes per 5 h ride: ~4 000-8 000 (down from 18 000;
-            //     ~55-78 % saving). Driven mostly by `burnRateGph` and `driftPct`,
-            //     both of which carry per-second noise from live HR/power even at
-            //     "steady" intensity. NOT the ~1 200 originally claimed —
-            //     `burnRateGph.toInt()` rounds at every g/h step which is reached
-            //     several times per minute on a varied ride.
-            //   - Session-message writes per 5 h ride: ~75-100 (down from 18 000)
-            //     thanks to the 5 g deadband on cumBurnedG below.
+            // FIT developer-field writer.
             //
-            // FIT consumer behaviour: Strava / Intervals.icu / TrainingPeaks plot
-            // developer-field time series at the emitted timestamps and interpolate
-            // between them. A sparse series therefore renders identically to a
-            // dense series that repeats values — but the dense series wastes the
-            // FIT file size and the host's per-record allocation budget on the
-            // Karoo (the 2026-05-25 audit quantified ~50K allocations/hour from
-            // this writer pre-throttle, of which ~75 % are now skipped).
+            // RECORD message: written on EVERY ELAPSED_TIME tick (~1/s), carrying the current
+            // cumulative values forward. This is deliberate. An earlier version throttled to
+            // write-on-change on the assumption that hosts "interpolate between emitted
+            // timestamps", so a sparse series would render like a dense one. That assumption is
+            // FALSE for intervals.icu (and others): a host that does NOT interpolate zero-fills
+            // the records lacking the field, so a sparse cumulative series renders as spikes-to-
+            // zero instead of a clean line — and two co-written cumulative fields (e.g.
+            // ksafe_carbs_g and ksafe_hyd_ml) then look identical once the host autoscales each
+            // to its own axis. Writing every record fills every sample, so the curves draw as
+            // clean stepped lines and distinct fields read as distinct. Cost: ~1 write/s
+            // (~18 000 over a 5 h ride) vs the previous ~4 000-8 000; acceptable for legible
+            // graphs — the per-tick reads are cheap volatile .value reads (B29) and each message
+            // is 5 small float fields.
             //
-            // Sentinel: `Double.NaN`. `NaN != NaN` is true in IEEE 754, so the
-            // first comparison after `startFit` is always "changed" and the
-            // first tick always emits. Each subsequent tick compares the new
-            // value to the cached one and only re-emits if any field moved.
-            // Session-message uses the same idiom on its own cache because the
-            // session activity-header contract is "last write wins" — emitting
-            // identical values mid-ride doesn't change what Strava reads at the
-            // end, but it does churn allocations.
-            var lastRecCarbsG       = Double.NaN
-            var lastRecHydMl        = Double.NaN
-            var lastRecCarbsBurnedG = Double.NaN
-            var lastRecBurnRateGph  = Double.NaN
-            var lastRecDriftPct     = Double.NaN
+            // SESSION message: keeps its write-on-change + 5 g cumBurnedG deadband below. It is
+            // "last write wins" — only the value at FIT-close becomes the Strava/Intervals.icu
+            // activity header — so dense session writes would churn allocations for no visible
+            // benefit. Sentinel Double.NaN: NaN != NaN, so the first tick always emits.
             var lastSesCarbsG       = Double.NaN
             var lastSesHydMl        = Double.NaN
             var lastSesCarbsBurnedG = Double.NaN
@@ -2781,26 +2766,16 @@ class KSafeExtension : KarooExtension("ksafe", BuildConfig.VERSION_NAME), Corout
                             // running max — uninteresting as a per-second time series)
                             // and totalFires (just a counter). Both belong in the session
                             // summary only. See FIT-writer audit 2026-05-25.
-                            val recChanged =
-                                carbsG       != lastRecCarbsG       ||
-                                hydMl        != lastRecHydMl        ||
-                                carbsBurnedG != lastRecCarbsBurnedG ||
-                                burnRateGph  != lastRecBurnRateGph  ||
-                                driftPct     != lastRecDriftPct
-                            if (recChanged) {
-                                emitter.onNext(WriteToRecordMesg(listOf(
-                                    FieldValue(carbField,         carbsG),
-                                    FieldValue(hydField,          hydMl),
-                                    FieldValue(carbsBurnedField,  carbsBurnedG),
-                                    FieldValue(burnRateField,     burnRateGph),
-                                    FieldValue(hrDriftField,      driftPct),
-                                )))
-                                lastRecCarbsG       = carbsG
-                                lastRecHydMl        = hydMl
-                                lastRecCarbsBurnedG = carbsBurnedG
-                                lastRecBurnRateGph  = burnRateGph
-                                lastRecDriftPct     = driftPct
-                            }
+                            // Carry-forward: emit every tick (no write-on-change gate) so the
+                            // cumulative curves are present on every record and render as clean
+                            // lines in hosts that don't interpolate sparse fields (see header).
+                            emitter.onNext(WriteToRecordMesg(listOf(
+                                FieldValue(carbField,         carbsG),
+                                FieldValue(hydField,          hydMl),
+                                FieldValue(carbsBurnedField,  carbsBurnedG),
+                                FieldValue(burnRateField,     burnRateGph),
+                                FieldValue(hrDriftField,      driftPct),
+                            )))
                             // Session (single-value activity-header summary): totals at
                             // ride end + ride-max statistics. Each tick overwrites the
                             // running value; whatever is current at FIT-close becomes the
