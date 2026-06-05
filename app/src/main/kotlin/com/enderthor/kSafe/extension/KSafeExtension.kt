@@ -28,6 +28,8 @@ import com.enderthor.kSafe.extension.util.LogReporter
 import com.enderthor.kSafe.extension.util.learnProfile
 import com.enderthor.kSafe.extension.util.resolveEffectiveCrashConfig
 import com.enderthor.kSafe.extension.managers.MedicalEpisodeDetector
+import com.enderthor.kSafe.extension.managers.SosOverlayManager
+import com.enderthor.kSafe.extension.managers.UpdateChecker
 import com.enderthor.kSafe.extension.util.ReadinessAdvice
 import com.enderthor.kSafe.extension.util.ReadinessLevel
 import com.enderthor.kSafe.extension.managers.WebhookManager
@@ -104,6 +106,18 @@ private const val CALIBRATION_HEALTH_CHECK_INTERVAL_MS: Long = 60_000L
  *  caption ≈ 500 bytes) plus Binder buffer pressure from other apps. */
 private const val CALIBRATION_MAX_CHUNK_BYTES: Int = 72_000
 
+/** Wait this long after KarooSystemService connects before checking for updates —
+ *  the Karoo takes ≥30 s to boot and the tethered-phone link lags; 45 s gives
+ *  connectivity time to come up. */
+private const val UPDATE_CHECK_STARTUP_DELAY_MS: Long = 45_000L
+/** Show the update notice on every Nth service start (combined with a ≤1/day cap). */
+private const val UPDATE_CHECK_EVERY_N_RESTARTS: Int = 3
+/** Auto-dismiss the update overlay after this long (rider may also tap to close). */
+private const val UPDATE_NOTICE_AUTODISMISS_MS: Long = 10_000L
+/** OTA manifest describing the latest published build. */
+private const val UPDATE_MANIFEST_URL: String =
+    "https://github.com/lockevod/Karoo-KSafe/releases/latest/download/manifest.json"
+
 /** Per-cycle ceiling on the number of chunks the periodic loop will send back-to-back
  *  when catching up after one or more failed windows. Without a cap a rider whose
  *  Karoo accumulated 10 windows of data while offline would block the periodic
@@ -166,6 +180,10 @@ class KSafeExtension : KarooExtension("ksafe", BuildConfig.VERSION_NAME), Corout
     private lateinit var wellnessMonitor: WellnessMonitor
     private lateinit var carbsTracker: com.enderthor.kSafe.extension.managers.CarbsTracker
     private lateinit var hydrationTracker: com.enderthor.kSafe.extension.managers.HydrationTracker
+    /** Dedicated overlay for the update-availability notice. A separate instance keeps it
+     *  fully isolated from the emergency SOS overlay owned by [emergencyManager]; the two
+     *  never display at the same moment — update fires at idle boot, SOS during an incident. */
+    private val updateOverlay by lazy { SosOverlayManager(applicationContext) }
 
     private var activeConfig = KSafeConfig()
     /** Completed on the first config emission from DataStore so the ride-state collector
@@ -572,6 +590,7 @@ class KSafeExtension : KarooExtension("ksafe", BuildConfig.VERSION_NAME), Corout
             // this block completes quickly on startup before any ride state arrives.
             val initialConfig = configManager.loadConfigFlow().first()
             activeConfig = initialConfig
+            scheduleUpdateCheck()
             val state = configManager.loadEmergencyStateFlow().first()
             val decision = decideResume(state, System.currentTimeMillis())
             // Master switch acts as a hard stop — if the user toggled isActive OFF
@@ -2828,6 +2847,57 @@ class KSafeExtension : KarooExtension("ksafe", BuildConfig.VERSION_NAME), Corout
         }
     }
 
+    /** Schedules the one-shot, delayed update check. Called once from initializeSystem. */
+    private fun scheduleUpdateCheck() {
+        launch {
+            kotlinx.coroutines.delay(UPDATE_CHECK_STARTUP_DELAY_MS)
+            runUpdateCheck()
+        }
+    }
+
+    private suspend fun runUpdateCheck() {
+        try {
+            // Always advance the restart counter (drives the cadence) before the cheap gates.
+            val restartCount = configManager.incrementUpdateRestartCount()
+            if (!activeConfig.updateCheckEnabled) return
+            if (UPDATE_CHECK_EVERY_N_RESTARTS <= 0 || restartCount % UPDATE_CHECK_EVERY_N_RESTARTS != 0) return
+            val today = java.time.LocalDate.now().toEpochDay()
+            if (configManager.getUpdateNoticeEpochDay() == today) return  // ≤1 notice/day
+
+            // Only now is a network round-trip worth it.
+            val response = karooSystem.httpRequest("GET", UPDATE_MANIFEST_URL)
+            if (response.statusCode !in 200..299) return
+            val manifest = UpdateChecker.parseManifest(response.body?.toString(Charsets.UTF_8) ?: "") ?: return
+            val isNewer = UpdateChecker.isNewer(manifest.latestVersionCode, BuildConfig.VERSION_CODE)
+            val rideActive = currentRideState is RideState.Recording || currentRideState is RideState.Paused
+
+            if (!UpdateChecker.shouldNotify(
+                    enabled = activeConfig.updateCheckEnabled,
+                    restartCount = restartCount,
+                    everyN = UPDATE_CHECK_EVERY_N_RESTARTS,
+                    lastNoticeEpochDay = configManager.getUpdateNoticeEpochDay(),
+                    todayEpochDay = today,
+                    isNewer = isNewer,
+                    rideActive = rideActive,
+                )
+            ) return
+
+            configManager.setUpdateNoticeEpochDay(today)
+            updateOverlay.showInfo(
+                title = getString(R.string.update_available_title),
+                message = getString(R.string.update_available_message, manifest.latestVersion),
+            )
+            launch {
+                kotlinx.coroutines.delay(UPDATE_NOTICE_AUTODISMISS_MS)
+                updateOverlay.removeInfoOverlay()
+            }
+            Timber.i("Update notice shown: v${manifest.latestVersion} (code ${manifest.latestVersionCode} > ${BuildConfig.VERSION_CODE})")
+        } catch (e: Exception) {
+            // No connectivity at boot / SDK error → silent; retried next eligible start.
+            Timber.d(e, "Update check skipped (no connectivity or error)")
+        }
+    }
+
     override fun onDestroy() {
         crashManager.stop()
         medicalDetector.stop()
@@ -2837,6 +2907,7 @@ class KSafeExtension : KarooExtension("ksafe", BuildConfig.VERSION_NAME), Corout
         locationManager.stop()
         emergencyManager.stopAll()
         calibLogger.disable()
+        updateOverlay.removeInfoOverlay()
         // Unbind the HAL service before the karooSystem disconnect so we don't leak a
         // ServiceConnection across extension restarts. Safe to call even if connect()
         // failed — disconnect() is a no-op when not bound.
