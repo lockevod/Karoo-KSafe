@@ -139,14 +139,17 @@ private const val CALIBRATION_PERIODIC_MAX_CHUNKS_PER_CYCLE: Int = 6
 private const val SESSION_BURN_DEADBAND_G: Double = 5.0
 
 /** Minimum spacing between FIT RECORD-message writes (carry-forward cadence). The record
- *  dev-fields are re-emitted at this interval regardless of whether the value changed, so
- *  every ~3 s of records carries the current cumulative values. This is the compromise
- *  between a clean graph and write cost on hosts that zero-fill sparse developer fields
- *  (e.g. intervals.icu): smaller = cleaner line / more writes, larger = cheaper / more
- *  "teeth". 3 s ≈ 6 000 writes over a 5 h ride (in the range of the old write-on-change
- *  cost) while bounding gaps to 3 s instead of the old irregular 15 s+ gaps. 1 s would be
- *  perfectly clean (~18 000 writes); raise toward 5-10 s to cut cost further. */
-private const val FIT_RECORD_WRITE_INTERVAL_MS: Long = 3_000L
+ *  dev-fields are re-emitted at this interval regardless of whether the value changed.
+ *
+ *  Default 1 s (≈ every record). Hosts that DON'T interpolate sparse developer fields
+ *  (intervals.icu et al.) zero-fill every record lacking the field, so ANY gap renders as a
+ *  full-depth notch — i.e. a throttle doesn't give "shallow teeth", it gives the same spike
+ *  problem at the throttle interval. Only a gap-free (per-record) series draws as a clean
+ *  cumulative line, which is the whole point of carry-forward. Cost is ~1 Binder write/s
+ *  during recording only (~18 000 over a 5 h ride) — negligible on the Karoo (it already
+ *  records at 1 Hz) and the per-tick reads are cheap (B29). Raise this ONLY if you accept a
+ *  visibly toothed graph in exchange for fewer writes. */
+private const val FIT_RECORD_WRITE_INTERVAL_MS: Long = 1_000L
 
 /** Deadband on `CarbFuelingState.cumBurnedG` for the fueling-persistence loop.
  *  Persisted state is restored after a process kill (FUELING_RESTORE_MAX_AGE_MS).
