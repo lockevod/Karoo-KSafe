@@ -395,6 +395,10 @@
     <string name="webhook_alert_text_desc">Este mensaje aparecerá como notificación en pantalla cada vez que se lance la acción</string>
     <string name="calibration_desc">Cuando está activo, KSafe registra datos anónimos de sensores (valores del acelerómetro, lecturas de velocidad, estados de detección) para ayudar al desarrollador a calibrar el algoritmo de detección de choque. Nunca se incluyen coordenadas GPS, ni mensajes, ni información personal de ningún tipo. Los datos se envían automáticamente al desarrollador cuando desactivas esta opción o terminas una ruta. Desactivado por defecto — totalmente opcional.</string>
     <string name="calibration_logging_label">Enviar datos de calibración anónimos</string>
+    <string name="update_check_label">Avisarme de actualizaciones</string>
+    <string name="update_available_title">Actualización disponible</string>
+    <!-- %1$s es la versión, p.ej. 2.2.0 -->
+    <string name="update_available_message">v%1$s disponible — actualiza desde la tienda de extensiones de Hammerhead</string>
     <string name="calibration_send">Enviar ya</string>
     <string name="calibration_clear">Borrar registro</string>
     <string name="calibration_adb_hint">Descargar CSV completo: adb pull /sdcard/Android/data/com.enderthor.kSafe/files/ksafe_calibration.csv</string>

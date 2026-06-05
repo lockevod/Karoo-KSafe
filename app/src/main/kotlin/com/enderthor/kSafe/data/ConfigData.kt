@@ -117,7 +117,7 @@ const val KAROO_LIVE_BASE_URL = "https://dashboard.hammerhead.io/live/"
  *  v21 → v22: fuelingAlertButtonMode added (in-alert fueling logging button).
  *             Pure version stamp; default OFF preserves existing no-button behaviour.
  */
-const val CONFIG_VERSION = 22
+const val CONFIG_VERSION = 23
 
 /**
  * Canonical minSpeedForCrashKmh value per preset.
@@ -443,6 +443,8 @@ data class KSafeConfig(
     val buzzerOnEmergencyEnabled: Boolean = true,
     // Calibration logging — writes detailed sensor events to CSV for threshold tuning
     val calibrationLoggingEnabled: Boolean = false,
+    // Update-availability notice — show a brief overlay when a newer KSafe build is published
+    val updateCheckEnabled: Boolean = true,
     // Field colours — idle/ready background for each ride-screen widget
     // Defaults are FIELD_COLOR_AUTO — fresh installs render in native Karoo theme
     // (auto day/night, theme-driven text). Riders who prefer a coloured tap target
@@ -1351,6 +1353,14 @@ fun KSafeConfig.migrateToLatest(): KSafeConfig {
     if (c.configVersion < 22) {
         c = c.copy(configVersion = 22)
         Timber.i("KSafeConfig migrated v%d→v22 (in-alert fueling logging mode)", originalVersion)
+    }
+
+    if (c.configVersion < 23) {
+        // v22 → v23: updateCheckEnabled added (default ON). Pure version stamp — the field is
+        // additive and absent in old blobs decodes to its `true` default, so existing installs
+        // get the update notice enabled, matching new installs. Nothing to rewrite.
+        c = c.copy(configVersion = 23)
+        Timber.i("KSafeConfig migrated v%d→v23 (update-availability check)", originalVersion)
     }
 
     return c
