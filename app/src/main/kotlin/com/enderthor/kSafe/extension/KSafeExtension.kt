@@ -145,10 +145,11 @@ private const val SESSION_BURN_DEADBAND_G: Double = 5.0
  *  (intervals.icu et al.) zero-fill every record lacking the field, so ANY gap renders as a
  *  full-depth notch — i.e. a throttle doesn't give "shallow teeth", it gives the same spike
  *  problem at the throttle interval. Only a gap-free (per-record) series draws as a clean
- *  cumulative line, which is the whole point of carry-forward. Cost is ~1 Binder write/s
- *  during recording only (~18 000 over a 5 h ride) — negligible on the Karoo (it already
- *  records at 1 Hz) and the per-tick reads are cheap (B29). Raise this ONLY if you accept a
- *  visibly toothed graph in exchange for fewer writes. */
+ *  cumulative line, which is the whole point of carry-forward. Cost is ~1 write/s during
+ *  recording only (~18 000 over a 5 h ride, ~360-450 KB of dev-field data); each is a blocking
+ *  Binder round-trip but the writer runs on [Dispatchers.IO] (see startFit) so it never blocks
+ *  Main, and the per-tick reads are cheap volatile snapshots (B29). Raise this ONLY if you
+ *  accept a visibly toothed graph in exchange for fewer writes. */
 private const val FIT_RECORD_WRITE_INTERVAL_MS: Long = 1_000L
 
 /** Deadband on `CarbFuelingState.cumBurnedG` for the fueling-persistence loop.
@@ -2715,7 +2716,12 @@ class KSafeExtension : KarooExtension("ksafe", BuildConfig.VERSION_NAME), Corout
             // can be cross-referenced with the developer-field schema in the resulting FIT.
             "fields=0,1,2,3,4,5,6"
         }
-        val job: Job = launch {
+        // Dispatchers.IO: every emit is a karoo-ext `Emitter.onNext`, which serialises the
+        // effect and makes a BLOCKING (non-oneway) Binder round-trip to the Karoo recording
+        // service. At the per-record cadence below that would otherwise run ~1×/s on the Main
+        // thread for the whole ride (where crash detection + the countdown also live). The
+        // collector only reads volatile StateFlow snapshots and emits, so IO is safe.
+        val job: Job = launch(Dispatchers.IO) {
             // FIT developer-field writer.
             //
             // RECORD message: re-emitted on a fixed [FIT_RECORD_WRITE_INTERVAL_MS] cadence
