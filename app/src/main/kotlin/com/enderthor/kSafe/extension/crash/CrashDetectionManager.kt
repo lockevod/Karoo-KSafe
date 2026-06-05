@@ -954,6 +954,12 @@ class CrashDetectionManager(
     private fun isGpsStale(now: Long): Boolean =
         speedLastChangeMs > 0 && (now - speedLastChangeMs) > GPS_STALE_MS
 
+    // AUDIT 2026-06: intentional duplicate of CrashStateMachine.isSpeedDropConfirmed. This
+    // facade copy feeds ONLY the calibration CSV accumulators (speedReachedInWindow / gyro-block
+    // labels), never the live detection decision — the state machine owns that. The two may
+    // differ by a tick on their independent speed snapshots, which is acceptable for an
+    // approximate audit label. Not a bug; do not re-flag. (Only unify if calibration mislabels
+    // start blocking threshold tuning.)
     private fun isSpeedDropConfirmed(now: Long): Boolean {
         if (!speedDataReceived && (now - startTime) < COLD_START_GUARD_MS) return false
         if (isGpsStale(now)) return true

@@ -516,6 +516,11 @@ class KSafeExtension : KarooExtension("ksafe", BuildConfig.VERSION_NAME), Corout
                 // and `while(true)` loop launched inside initializeSystem, doubling
                 // emission handlers + battery cost per reconnect (only onDestroy's
                 // job.cancel() ever releases them).
+                // AUDIT 2026-06: intentional that this flag is write-once and NOT reset in
+                // onDestroy — Android destroys the whole service instance on teardown, so a
+                // fresh onCreate starts a new object with systemInitialized=false. A reconnect
+                // on the SAME instance after job.cancel() doesn't happen in the normal lifecycle.
+                // Not a bug; do not re-flag (re-gate on job.isActive only if that assumption changes).
                 if (systemInitialized) {
                     Timber.d("Karoo reconnect — initializeSystem already running, skipping respawn")
                 } else {
