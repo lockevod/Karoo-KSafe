@@ -98,4 +98,34 @@ class SendOutcomeTest {
         assertFalse(tagged.anyOk)
         assertEquals(FailureCause.EXHAUSTED, tagged.cause)
     }
+
+    // ── timeoutOrNone: no-connection vs rejection discriminator (added 2026-06-05) ──
+    // Tags TIMEOUT only when nothing was delivered AND no server ever responded; if any
+    // recipient got an HTTP response there was a connection → NONE (→ EXHAUSTED terminally).
+
+    @Test
+    fun `timeoutOrNone tags TIMEOUT only when all failures were timeouts with no response`() {
+        // Every recipient timed out, none reached the server → genuine no-connection.
+        assertEquals(FailureCause.TIMEOUT, timeoutOrNone(delivered = 0, anyResponse = false, anyTimeout = true))
+    }
+
+    @Test
+    fun `timeoutOrNone is NONE when a server responded even if some timed out`() {
+        // A 401/chat-not-found alongside a timeout proves a connection existed → rejection.
+        assertEquals(FailureCause.NONE, timeoutOrNone(delivered = 0, anyResponse = true, anyTimeout = true))
+        // All recipients got an (error) response, no timeouts → rejection.
+        assertEquals(FailureCause.NONE, timeoutOrNone(delivered = 0, anyResponse = true, anyTimeout = false))
+    }
+
+    @Test
+    fun `timeoutOrNone is NONE whenever something was delivered`() {
+        // delivered > 0 is never a failure, regardless of timeouts on other recipients.
+        assertEquals(FailureCause.NONE, timeoutOrNone(delivered = 1, anyResponse = true, anyTimeout = true))
+    }
+
+    @Test
+    fun `timeoutOrNone is NONE when nothing happened at all`() {
+        // No timeouts and no responses (e.g. empty recipient set) → not a timeout failure.
+        assertEquals(FailureCause.NONE, timeoutOrNone(delivered = 0, anyResponse = false, anyTimeout = false))
+    }
 }

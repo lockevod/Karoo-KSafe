@@ -109,7 +109,7 @@ class SosOverlayManager(private val context: Context) {
      * granted — the caller is expected to have already checked [Settings.canDrawOverlays] to
      * decide whether to use this or fall back to a notification.
      */
-    fun showInfo(title: String, message: String, onDismiss: () -> Unit = {}) {
+    fun showInfo(title: String, message: String, autoDismissMs: Long = 0L, onDismiss: () -> Unit = {}) {
         mainHandler.post {
             try {
                 if (!Settings.canDrawOverlays(context)) {
@@ -146,6 +146,13 @@ class SosOverlayManager(private val context: Context) {
                 windowManager.addView(view, params)
                 infoView = view
                 Timber.d("SosOverlay: info overlay added")
+                if (autoDismissMs > 0L) {
+                    // Self-remove after the timeout, but only if THIS view is still showing —
+                    // a later showInfo may have replaced it, and we must not yank the new one.
+                    mainHandler.postDelayed({
+                        if (infoView === view) removeInfoInternal()
+                    }, autoDismissMs)
+                }
             } catch (e: Exception) {
                 Timber.e(e, "SosOverlay: info overlay error")
             }

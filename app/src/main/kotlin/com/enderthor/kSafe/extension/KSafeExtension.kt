@@ -114,6 +114,9 @@ private const val UPDATE_CHECK_STARTUP_DELAY_MS: Long = 45_000L
 private const val UPDATE_CHECK_EVERY_N_RESTARTS: Int = 3
 /** Auto-dismiss the update overlay after this long (rider may also tap to close). */
 private const val UPDATE_NOTICE_AUTODISMISS_MS: Long = 10_000L
+/** Hard cap on the manifest GET so a hung tethered link can't leave the check
+ *  coroutine suspended until service teardown. */
+private const val UPDATE_CHECK_HTTP_TIMEOUT_MS: Long = 15_000L
 /** OTA manifest describing the latest published build. */
 private const val UPDATE_MANIFEST_URL: String =
     "https://github.com/lockevod/Karoo-KSafe/releases/latest/download/manifest.json"
@@ -134,6 +137,20 @@ private const val CALIBRATION_PERIODIC_MAX_CHUNKS_PER_CYCLE: Int = 6
  *  most 5 g behind the true total (sub-2 % error on a typical 300 g ride) and
  *  the session-write rate drops ~5× vs writing on every gram increment. */
 private const val SESSION_BURN_DEADBAND_G: Double = 5.0
+
+/** Minimum spacing between FIT RECORD-message writes (carry-forward cadence). The record
+ *  dev-fields are re-emitted at this interval regardless of whether the value changed.
+ *
+ *  Default 1 s (≈ every record). Hosts that DON'T interpolate sparse developer fields
+ *  (intervals.icu et al.) zero-fill every record lacking the field, so ANY gap renders as a
+ *  full-depth notch — i.e. a throttle doesn't give "shallow teeth", it gives the same spike
+ *  problem at the throttle interval. Only a gap-free (per-record) series draws as a clean
+ *  cumulative line, which is the whole point of carry-forward. Cost is ~1 write/s during
+ *  recording only (~18 000 over a 5 h ride, ~360-450 KB of dev-field data); each is a blocking
+ *  Binder round-trip but the writer runs on [Dispatchers.IO] (see startFit) so it never blocks
+ *  Main, and the per-tick reads are cheap volatile snapshots (B29). Raise this ONLY if you
+ *  accept a visibly toothed graph in exchange for fewer writes. */
+private const val FIT_RECORD_WRITE_INTERVAL_MS: Long = 1_000L
 
 /** Deadband on `CarbFuelingState.cumBurnedG` for the fueling-persistence loop.
  *  Persisted state is restored after a process kill (FUELING_RESTORE_MAX_AGE_MS).
@@ -197,6 +214,13 @@ class KSafeExtension : KarooExtension("ksafe", BuildConfig.VERSION_NAME), Corout
      *  never runs [handleRideState] against KSafeConfig() defaults (isActive / crash /
      *  medical all ON) when the extension (re)connects while the Karoo is already Recording. */
     private val configSeeded = CompletableDeferred<Unit>()
+    /** Completed once the persisted fueling snapshot has been loaded into
+     *  [pendingFuelingRestore] (or determined absent/stale). The ride-state collector waits
+     *  on this before handling the first transition so a mid-ride (re)connect that emits
+     *  Recording quickly can't take the fresh-start branch and silently drop an interrupted
+     *  ride's accumulated carbs/hydration. Like [configSeeded], the wait is bounded — this is
+     *  an optimisation, never a hard block. Completed in a finally so a failed load can't hang it. */
+    private val fuelingRestoreLoaded = CompletableDeferred<Unit>()
     private var currentRideState: RideState? = null
     @Volatile private var activeProfileId: String? = null
     /** Whether the crash detector is currently running under the effective config. Kept in
@@ -532,6 +556,11 @@ class KSafeExtension : KarooExtension("ksafe", BuildConfig.VERSION_NAME), Corout
                 // and `while(true)` loop launched inside initializeSystem, doubling
                 // emission handlers + battery cost per reconnect (only onDestroy's
                 // job.cancel() ever releases them).
+                // AUDIT 2026-06: intentional that this flag is write-once and NOT reset in
+                // onDestroy — Android destroys the whole service instance on teardown, so a
+                // fresh onCreate starts a new object with systemInitialized=false. A reconnect
+                // on the SAME instance after job.cancel() doesn't happen in the normal lifecycle.
+                // Not a bug; do not re-flag (re-gate on job.isActive only if that assumption changes).
                 if (systemInitialized) {
                     Timber.d("Karoo reconnect — initializeSystem already running, skipping respawn")
                 } else {
@@ -661,22 +690,34 @@ class KSafeExtension : KarooExtension("ksafe", BuildConfig.VERSION_NAME), Corout
             // Load persisted fueling snapshot BEFORE we start observing ride state — the
             // first Recording event must see `pendingFuelingRestore` already populated so
             // the restore-vs-fresh-start decision in [handleRideState] picks the right
-            // branch. A snapshot older than FUELING_RESTORE_MAX_AGE_MS is discarded as
-            // stale (rider stopped the ride deliberately, or device sat unused).
-            val persisted = configManager.loadFuelingState()
-            val age = System.currentTimeMillis() - persisted.savedAtMs
-            pendingFuelingRestore = if (persisted.savedAtMs > 0 &&
-                age in 0..com.enderthor.kSafe.data.FUELING_RESTORE_MAX_AGE_MS) {
-                Timber.i("FuelingState eligible for restore: age=${age / 1000}s, " +
-                    "carb_burned=${persisted.carb.cumBurnedG.toInt()}g, " +
-                    "hyd_target=${persisted.hyd.cumTargetMl.toInt()}ml")
-                persisted
-            } else {
-                if (persisted.savedAtMs > 0) {
-                    Timber.i("FuelingState too old to restore: age=${age / 1000}s (max ${com.enderthor.kSafe.data.FUELING_RESTORE_MAX_AGE_MS / 1000}s)")
-                    configManager.clearFuelingState()
+            // branch. The ride-state collector waits on [fuelingRestoreLoaded] (bounded) to
+            // enforce that ordering; without it a fast mid-ride reconnect could take the
+            // fresh-start branch and silently drop the interrupted ride's accumulated fuel.
+            // A snapshot older than FUELING_RESTORE_MAX_AGE_MS is discarded as stale
+            // (rider stopped the ride deliberately, or device sat unused).
+            try {
+                val persisted = configManager.loadFuelingState()
+                val age = System.currentTimeMillis() - persisted.savedAtMs
+                pendingFuelingRestore = if (persisted.savedAtMs > 0 &&
+                    age in 0..com.enderthor.kSafe.data.FUELING_RESTORE_MAX_AGE_MS) {
+                    Timber.i("FuelingState eligible for restore: age=${age / 1000}s, " +
+                        "carb_burned=${persisted.carb.cumBurnedG.toInt()}g, " +
+                        "hyd_target=${persisted.hyd.cumTargetMl.toInt()}ml")
+                    persisted
+                } else {
+                    if (persisted.savedAtMs > 0) {
+                        Timber.i("FuelingState too old to restore: age=${age / 1000}s (max ${com.enderthor.kSafe.data.FUELING_RESTORE_MAX_AGE_MS / 1000}s)")
+                        configManager.clearFuelingState()
+                    }
+                    null
                 }
-                null
+            } catch (e: Exception) {
+                // A failed load (e.g. DataStore IOException at cold boot) means no restore —
+                // leave pendingFuelingRestore null and let the ride start fresh.
+                Timber.w(e, "FuelingState load failed — starting fresh (no restore)")
+            } finally {
+                // Always signal: a hung/failed load must not block ride-state handling forever.
+                fuelingRestoreLoaded.complete(Unit)
             }
         }
 
@@ -871,6 +912,12 @@ class KSafeExtension : KarooExtension("ksafe", BuildConfig.VERSION_NAME), Corout
             // Cap the wait and fall back to the original immediate behaviour on timeout.
             if (withTimeoutOrNull(CONFIG_SEED_TIMEOUT_MS) { configSeeded.await() } == null) {
                 Timber.w("configSeeded not ready after ${CONFIG_SEED_TIMEOUT_MS}ms — proceeding so ride-state/crash handling is never blocked by a stalled config load")
+            }
+            // Same bounded-await contract for the fueling snapshot: a fast mid-ride reconnect
+            // must see pendingFuelingRestore populated before the first Recording transition,
+            // or an interrupted ride's accumulated carbs/hydration are silently dropped.
+            if (withTimeoutOrNull(CONFIG_SEED_TIMEOUT_MS) { fuelingRestoreLoaded.await() } == null) {
+                Timber.w("fuelingRestoreLoaded not ready after ${CONFIG_SEED_TIMEOUT_MS}ms — proceeding; an interrupted ride may start fresh")
             }
             karooSystem.streamRide()
                 .distinctUntilChanged()
@@ -1210,6 +1257,9 @@ class KSafeExtension : KarooExtension("ksafe", BuildConfig.VERSION_NAME), Corout
                     // Resuming from Pause also triggers Recording — we skip it there.
                     if (!rideStartNotificationSent) {
                         rideStartNotificationSent = true
+                        // Clear any sticky SOS delivery-failure/partial overlay left from a
+                        // previous ride so it can't bleed into this one.
+                        emergencyManager.clearDeliveryNotice()
                         sendRideStartNotification()
                         // Readiness advice from the last 10 rides' wellness summaries.
                         // Silent when RECOVERED (decideReadiness returns null) — no per-ride spam.
@@ -1953,28 +2003,31 @@ class KSafeExtension : KarooExtension("ksafe", BuildConfig.VERSION_NAME), Corout
 
     /**
      * Expose the persistent install ID for the Settings UI.
-     * The lazy [CalibrationLogger.installId] is initialised on first access via
-     * a [kotlinx.coroutines.runBlocking] call on Dispatchers.IO — effectively
-     * instant after the first ride-start. Non-suspend because the underlying
-     * value is already a plain [String] once the lazy is resolved.
+     * `suspend` + [Dispatchers.IO]: the lazy [CalibrationLogger.installId] resolves on
+     * first access via a [kotlinx.coroutines.runBlocking] call on Dispatchers.IO, so the
+     * very first read would block whatever thread calls it. Hopping to IO here guarantees
+     * that block never lands on Main even if the warm-up hasn't completed yet.
      */
-    fun getInstallIdForUi(): String = calibLogger.installId
+    suspend fun getInstallIdForUi(): String = withContext(Dispatchers.IO) { calibLogger.installId }
 
     /** Active Karoo ride-profile id for the Settings UI's per-profile crash section. */
     fun getActiveProfileIdForUi(): String? = activeProfileId
 
-    /** Returns a string with file location info for display in the Settings UI. */
-    fun getCalibrationLogInfo(): String {
+    /** Returns a string with file location info for display in the Settings UI.
+     *  `suspend` + [Dispatchers.IO]: scans the whole CSV (line count) and reads the
+     *  previous-session file — never run this on Main. */
+    suspend fun getCalibrationLogInfo(): String = withContext(Dispatchers.IO) {
         val count = calibLogger.getEntryCount()
         val file = calibLogger.getLogFile()
         val previousPending = calibLogger.getPreviousFileContent() != null
         val base = if (file != null) "$count entries | ${file.path}"
                    else "$count entries (not yet flushed to disk)"
-        return if (previousPending) "$base\n⚠ Previous unsent session detected — tap Send to recover."
-               else base
+        if (previousPending) "$base\n⚠ Previous unsent session detected — tap Send to recover."
+        else base
     }
 
-    fun clearCalibrationLog() {
+    /** `suspend` + [Dispatchers.IO]: [CalibrationLogger.clear] deletes the log files. */
+    suspend fun clearCalibrationLog() = withContext(Dispatchers.IO) {
         calibLogger.clear()
     }
 
@@ -2803,42 +2856,30 @@ class KSafeExtension : KarooExtension("ksafe", BuildConfig.VERSION_NAME), Corout
             // can be cross-referenced with the developer-field schema in the resulting FIT.
             "fields=0,1,2,3,4,5,6"
         }
-        val job: Job = launch {
-            // Per-ride caches of the last value written to each FIT field. The FIT
-            // record/session messages are throttled to **write-on-change** so a 5 h
-            // ride doesn't emit 18 000 record-writes per Recording-second on fields
-            // whose underlying source-of-truth changes far less often. Real cadence
-            // post-throttle (post-merge audit Nov 2026):
-            //   - Record-message writes per 5 h ride: ~4 000-8 000 (down from 18 000;
-            //     ~55-78 % saving). Driven mostly by `burnRateGph` and `driftPct`,
-            //     both of which carry per-second noise from live HR/power even at
-            //     "steady" intensity. NOT the ~1 200 originally claimed —
-            //     `burnRateGph.toInt()` rounds at every g/h step which is reached
-            //     several times per minute on a varied ride.
-            //   - Session-message writes per 5 h ride: ~75-100 (down from 18 000)
-            //     thanks to the 5 g deadband on cumBurnedG below.
+        // Dispatchers.IO: every emit is a karoo-ext `Emitter.onNext`, which serialises the
+        // effect and makes a BLOCKING (non-oneway) Binder round-trip to the Karoo recording
+        // service. At the per-record cadence below that would otherwise run ~1×/s on the Main
+        // thread for the whole ride (where crash detection + the countdown also live). The
+        // collector only reads volatile StateFlow snapshots and emits, so IO is safe.
+        val job: Job = launch(Dispatchers.IO) {
+            // FIT developer-field writer.
             //
-            // FIT consumer behaviour: Strava / Intervals.icu / TrainingPeaks plot
-            // developer-field time series at the emitted timestamps and interpolate
-            // between them. A sparse series therefore renders identically to a
-            // dense series that repeats values — but the dense series wastes the
-            // FIT file size and the host's per-record allocation budget on the
-            // Karoo (the 2026-05-25 audit quantified ~50K allocations/hour from
-            // this writer pre-throttle, of which ~75 % are now skipped).
+            // RECORD message: re-emitted on a fixed [FIT_RECORD_WRITE_INTERVAL_MS] cadence
+            // (carry-forward of the current cumulative values), NOT write-on-change. An earlier
+            // version throttled to write-on-change on the assumption that hosts "interpolate
+            // between emitted timestamps", so a sparse series would render like a dense one. That
+            // assumption is FALSE for intervals.icu (and others): a host that does NOT interpolate
+            // zero-fills the records lacking the field, so a sparse cumulative series renders as
+            // spikes-to-zero instead of a clean line — and two co-written cumulative fields (e.g.
+            // ksafe_carbs_g and ksafe_hyd_ml) then look identical once the host autoscales each to
+            // its own axis. A fixed cadence bounds the gap (hence the zero-fill "teeth") to the
+            // interval, trading graph cleanliness against write cost — see the constant's doc.
             //
-            // Sentinel: `Double.NaN`. `NaN != NaN` is true in IEEE 754, so the
-            // first comparison after `startFit` is always "changed" and the
-            // first tick always emits. Each subsequent tick compares the new
-            // value to the cached one and only re-emits if any field moved.
-            // Session-message uses the same idiom on its own cache because the
-            // session activity-header contract is "last write wins" — emitting
-            // identical values mid-ride doesn't change what Strava reads at the
-            // end, but it does churn allocations.
-            var lastRecCarbsG       = Double.NaN
-            var lastRecHydMl        = Double.NaN
-            var lastRecCarbsBurnedG = Double.NaN
-            var lastRecBurnRateGph  = Double.NaN
-            var lastRecDriftPct     = Double.NaN
+            // SESSION message: keeps its write-on-change + 5 g cumBurnedG deadband below. It is
+            // "last write wins" — only the value at FIT-close becomes the Strava/Intervals.icu
+            // activity header — so dense session writes would churn allocations for no visible
+            // benefit. Sentinel Double.NaN: NaN != NaN, so the first tick always emits.
+            var lastRecordWriteMs   = 0L
             var lastSesCarbsG       = Double.NaN
             var lastSesHydMl        = Double.NaN
             var lastSesCarbsBurnedG = Double.NaN
@@ -2882,13 +2923,12 @@ class KSafeExtension : KarooExtension("ksafe", BuildConfig.VERSION_NAME), Corout
                             // running max — uninteresting as a per-second time series)
                             // and totalFires (just a counter). Both belong in the session
                             // summary only. See FIT-writer audit 2026-05-25.
-                            val recChanged =
-                                carbsG       != lastRecCarbsG       ||
-                                hydMl        != lastRecHydMl        ||
-                                carbsBurnedG != lastRecCarbsBurnedG ||
-                                burnRateGph  != lastRecBurnRateGph  ||
-                                driftPct     != lastRecDriftPct
-                            if (recChanged) {
+                            // Carry-forward at a fixed cadence: re-emit the current cumulative
+                            // values at most every FIT_RECORD_WRITE_INTERVAL_MS so every ~3 s of
+                            // records carries the field and the curves draw as clean lines on
+                            // zero-filling hosts, while bounding write cost (see header + constant).
+                            val nowMs = System.currentTimeMillis()
+                            if (nowMs - lastRecordWriteMs >= FIT_RECORD_WRITE_INTERVAL_MS) {
                                 emitter.onNext(WriteToRecordMesg(listOf(
                                     FieldValue(carbField,         carbsG),
                                     FieldValue(hydField,          hydMl),
@@ -2896,11 +2936,7 @@ class KSafeExtension : KarooExtension("ksafe", BuildConfig.VERSION_NAME), Corout
                                     FieldValue(burnRateField,     burnRateGph),
                                     FieldValue(hrDriftField,      driftPct),
                                 )))
-                                lastRecCarbsG       = carbsG
-                                lastRecHydMl        = hydMl
-                                lastRecCarbsBurnedG = carbsBurnedG
-                                lastRecBurnRateGph  = burnRateGph
-                                lastRecDriftPct     = driftPct
+                                lastRecordWriteMs = nowMs
                             }
                             // Session (single-value activity-header summary): totals at
                             // ride end + ride-max statistics. Each tick overwrites the
@@ -3006,8 +3042,11 @@ class KSafeExtension : KarooExtension("ksafe", BuildConfig.VERSION_NAME), Corout
             val today = System.currentTimeMillis() / 86_400_000L
             if (configManager.getUpdateNoticeEpochDay() == today) return  // ≤1 notice/day
 
-            // Only now is a network round-trip worth it.
-            val response = karooSystem.httpRequest("GET", UPDATE_MANIFEST_URL)
+            // Only now is a network round-trip worth it. Bounded so a hung tethered link
+            // can't leave this coroutine suspended until teardown (null → skip silently).
+            val response = kotlinx.coroutines.withTimeoutOrNull(UPDATE_CHECK_HTTP_TIMEOUT_MS) {
+                karooSystem.httpRequest("GET", UPDATE_MANIFEST_URL)
+            } ?: return
             if (response.statusCode !in 200..299) return
             val manifest = UpdateChecker.parseManifest(response.body?.toString(Charsets.UTF_8) ?: "") ?: return
             val isNewer = UpdateChecker.isNewer(manifest.latestVersionCode, BuildConfig.VERSION_CODE)
@@ -3025,14 +3064,13 @@ class KSafeExtension : KarooExtension("ksafe", BuildConfig.VERSION_NAME), Corout
             ) return
 
             configManager.setUpdateNoticeEpochDay(today)
+            // Auto-dismiss via showInfo's own guarded timer (removes only if this exact overlay
+            // is still showing) instead of a separate launch{ delay; removeInfoOverlay }.
             updateOverlay.showInfo(
                 title = getString(R.string.update_available_title),
                 message = getString(R.string.update_available_message, manifest.latestVersion),
+                autoDismissMs = UPDATE_NOTICE_AUTODISMISS_MS,
             )
-            launch {
-                kotlinx.coroutines.delay(UPDATE_NOTICE_AUTODISMISS_MS)
-                updateOverlay.removeInfoOverlay()
-            }
             Timber.i("Update notice shown: v${manifest.latestVersion} (code ${manifest.latestVersionCode} > ${BuildConfig.VERSION_CODE})")
         } catch (e: Exception) {
             // No connectivity at boot / SDK error → silent; retried next eligible start.

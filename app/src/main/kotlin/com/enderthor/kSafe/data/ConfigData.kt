@@ -1045,6 +1045,10 @@ val defaultSenderConfigs = listOf(
     SenderConfig(ProviderType.TELEGRAM),
 )
 
+// AUDIT 2026-06: these default-seed strings use the stdlib Json (not jsonForStorage) on purpose.
+// Both are encodeDefaults=false, so output is identical, and these strings are only ever fed
+// back into a decoder — never compared against a jsonForStorage write. Equivalent by design;
+// not a bug, do not re-flag.
 val defaultSenderConfigJson: String = Json.encodeToString(defaultSenderConfigs)
 val defaultKSafeConfigJson: String = Json.encodeToString(listOf(KSafeConfig(configVersion = CONFIG_VERSION)))
 val defaultEmergencyStateJson: String = Json.encodeToString(EmergencyState())

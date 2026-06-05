@@ -260,6 +260,16 @@ class EmergencyManager(
         Timber.d("Emergency cancelled by user (reason=$cancelledReason, after ${howLongMs}ms)")
     }
 
+    /**
+     * Clears any lingering delivery-failure / partial-delivery info overlay left over from a
+     * previous ride. The failure overlay is intentionally sticky (no auto-dismiss) so a rider
+     * can't miss "your SOS reached nobody" — but it must not bleed into the *next* ride. Called
+     * at the start of a fresh recording. Safe/idempotent when no overlay is showing.
+     */
+    fun clearDeliveryNotice() {
+        sosOverlay.removeInfoOverlay()
+    }
+
     fun startCheckinTimer(config: KSafeConfig) {
         if (!config.checkinEnabled) return
         checkinJob?.cancel()
@@ -1182,9 +1192,13 @@ class EmergencyManager(
                 textColor = com.enderthor.kSafe.R.color.alert_text_white,
             ))
         } else if (Settings.canDrawOverlays(context)) {
+            // Auto-dismiss to match the InRideAlert path (15 s). Partial delivery is an amber
+            // heads-up, not the must-not-miss red failure alarm — it should not linger sticky
+            // into the next ride the way the failure overlay deliberately does.
             sosOverlay.showInfo(
                 title = context.getString(R.string.alert_delivery_partial_title),
                 message = context.getString(R.string.alert_delivery_partial_detail, reached, total, provider.name),
+                autoDismissMs = 15_000L,
             )
         } else {
             karooSystem.dispatch(SystemNotification(

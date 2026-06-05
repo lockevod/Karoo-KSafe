@@ -47,6 +47,18 @@ enum class FailureCause {
 }
 
 /**
+ * Classifies a finished provider attempt for the post-incident cause tag (see [FailureCause]).
+ * Returns [FailureCause.TIMEOUT] only when nothing was delivered AND no recipient ever got an
+ * HTTP response (every attempt timed out → genuinely no usable connection, the "rider in a
+ * tunnel / no coverage" case). If any server responded — even with an error code — there *was*
+ * a connection, so the failure is a rejection: return [FailureCause.NONE] and let
+ * [Sender.sendWithRetry]'s terminal mapping record it as EXHAUSTED. Top-level + internal so the
+ * truth table is unit-testable without constructing a [Sender] / KarooSystemService.
+ */
+internal fun timeoutOrNone(delivered: Int, anyResponse: Boolean, anyTimeout: Boolean): FailureCause =
+    if (delivered == 0 && anyTimeout && !anyResponse) FailureCause.TIMEOUT else FailureCause.NONE
+
+/**
  * Result of a send across a provider's eligible recipients.
  *
  * - [delivered] — recipients that returned success.
@@ -58,9 +70,10 @@ enum class FailureCause {
  *   zero-recipient no-op. `eligible` is not read on any failure path (only [partial] reads it,
  *   and that requires `delivered >= 1`), so the timeout case carrying `eligible == 0` is benign.
  * - [cause]     — for a failure (`!anyOk`), WHY it reached nobody. [FailureCause.NONE] on any
- *   delivered/partial/no-op outcome. Only [Sender.sendWithRetry] classifies it (the terminal
- *   emergency path); [attemptSend]'s internal HARD_FAIL returns keep NONE and are reclassified
- *   by the retry loop's terminal mapping.
+ *   delivered/partial/no-op outcome. [attemptSend] tags [FailureCause.TIMEOUT] when an attempt
+ *   reached nobody with no server response at all (genuine no-connection, via [timeoutOrNone]);
+ *   otherwise [Sender.sendWithRetry]'s terminal mapping classifies the exhausted failure
+ *   (TIMEOUT carried forward from the last attempt, else EXHAUSTED).
  */
 data class SendOutcome(
     val delivered: Int,
@@ -507,6 +520,8 @@ class Sender(
                 // all configured slots, so an empty set means there is genuinely no one).
                 if (send.isEmpty()) return if (isEmergency) SendOutcome.HARD_FAIL else SendOutcome.NO_OP
                 var delivered = 0
+                var anyResponse = false
+                var anyTimeout = false
                 for ((slot, phone, key) in recipients) {
                     if (slot !in send) continue
                     // URL-encode phone + apikey: an international phone entered with a leading
@@ -520,8 +535,10 @@ class Sender(
                     }
                     if (response == null) {
                         Timber.e("CallMeBot timeout (phone=$phone)")
+                        anyTimeout = true
                         continue
                     }
+                    anyResponse = true
                     val body = response.body?.toString(Charsets.UTF_8) ?: ""
                     // J1 — CallMeBot returns HTTP 200 with various failure bodies that
                     // do NOT contain the literal word "ERROR" (e.g. "APIKEY_INVALID",
@@ -535,7 +552,7 @@ class Sender(
                     if (ok) delivered++
                     else Timber.e("CallMeBot error (phone=$phone) ${response.statusCode}: $body")
                 }
-                SendOutcome(delivered, send.size)
+                SendOutcome(delivered, send.size, cause = timeoutOrNone(delivered, anyResponse, anyTimeout))
             }
 
             ProviderType.PUSHOVER -> {
@@ -545,6 +562,8 @@ class Sender(
                 val send = recipientsToSend(configuredSlots, config::scopeForSlot, isEmergency)
                 if (send.isEmpty()) return if (isEmergency) SendOutcome.HARD_FAIL else SendOutcome.NO_OP
                 var delivered = 0
+                var anyResponse = false
+                var anyTimeout = false
                 for (slot in send) {
                     val key = allKeys[slot]
                     val jsonBody = buildJsonObject {
@@ -566,8 +585,10 @@ class Sender(
                     }
                     if (response == null) {
                         Timber.e("Pushover timeout (userKey=$key)")
+                        anyTimeout = true
                         continue
                     }
+                    anyResponse = true
                     val body = response.body?.toString(Charsets.UTF_8) ?: ""
                     // K2 — anchored substring check. The previous `"status":1` matched
                     // both `"status":1,` (real success) AND `"status":10,` / `"status":11,`
@@ -580,7 +601,7 @@ class Sender(
                     if (ok) delivered++
                     else Timber.e("Pushover error (userKey=$key) ${response.statusCode}: $body")
                 }
-                SendOutcome(delivered, send.size)
+                SendOutcome(delivered, send.size, cause = timeoutOrNone(delivered, anyResponse, anyTimeout))
             }
 
             ProviderType.NTFY -> {
@@ -605,7 +626,10 @@ class Sender(
                 }
                 if (response == null) {
                     Timber.e("ntfy timeout")
-                    return SendOutcome(0, 1)   // one eligible destination, delivered to none
+                    // Single recipient: a null response means the one attempt never reached the
+                    // server → no usable connection. Tag TIMEOUT so the terminal cause is accurate
+                    // (else it would be misreported as EXHAUSTED = "reachable but rejected").
+                    return SendOutcome(0, 1, cause = FailureCause.TIMEOUT)
                 }
                 val ok = response.statusCode in 200..299
                 if (!ok) Timber.e("ntfy error ${response.statusCode}: ${response.body?.toString(Charsets.UTF_8)}")
@@ -619,6 +643,8 @@ class Sender(
                 val send = recipientsToSend(configuredSlots, config::scopeForSlot, isEmergency)
                 if (send.isEmpty()) return if (isEmergency) SendOutcome.HARD_FAIL else SendOutcome.NO_OP
                 var delivered = 0
+                var anyResponse = false
+                var anyTimeout = false
                 for (slot in send) {
                     val chatId = allChatIds[slot]
                     val jsonBody = buildJsonObject {
@@ -636,14 +662,16 @@ class Sender(
                     }
                     if (response == null) {
                         Timber.e("Telegram timeout (chatId=$chatId)")
+                        anyTimeout = true
                         continue
                     }
+                    anyResponse = true
                     val body = response.body?.toString(Charsets.UTF_8) ?: ""
                     val ok = response.statusCode in 200..299 && body.contains("\"ok\":true")
                     if (ok) delivered++
                     else Timber.e("Telegram error (chatId=$chatId) ${response.statusCode}: $body")
                 }
-                SendOutcome(delivered, send.size)
+                SendOutcome(delivered, send.size, cause = timeoutOrNone(delivered, anyResponse, anyTimeout))
             }
         }
     }
