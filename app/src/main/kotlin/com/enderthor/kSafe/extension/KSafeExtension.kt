@@ -2927,14 +2927,13 @@ class KSafeExtension : KarooExtension("ksafe", BuildConfig.VERSION_NAME), Corout
             ) return
 
             configManager.setUpdateNoticeEpochDay(today)
+            // Auto-dismiss via showInfo's own guarded timer (removes only if this exact overlay
+            // is still showing) instead of a separate launch{ delay; removeInfoOverlay }.
             updateOverlay.showInfo(
                 title = getString(R.string.update_available_title),
                 message = getString(R.string.update_available_message, manifest.latestVersion),
+                autoDismissMs = UPDATE_NOTICE_AUTODISMISS_MS,
             )
-            launch {
-                kotlinx.coroutines.delay(UPDATE_NOTICE_AUTODISMISS_MS)
-                updateOverlay.removeInfoOverlay()
-            }
             Timber.i("Update notice shown: v${manifest.latestVersion} (code ${manifest.latestVersionCode} > ${BuildConfig.VERSION_CODE})")
         } catch (e: Exception) {
             // No connectivity at boot / SDK error → silent; retried next eligible start.
