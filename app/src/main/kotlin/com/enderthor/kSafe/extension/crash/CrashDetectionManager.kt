@@ -216,6 +216,7 @@ class CrashDetectionManager(
     @Volatile private var lastHighMagLogMs = 0L
     @Volatile private var lastSilenceBrokenMs = 0L
     @Volatile private var lastGyroBlockedLogMs = 0L
+    @Volatile private var lastCadGateSuppressedLogMs = 0L
     @Volatile private var lastPeriodicLogMs = 0L
     @Volatile private var lastLogTime = 0L
     @Volatile private var lastGpsStaleState = false
@@ -557,11 +558,16 @@ class CrashDetectionManager(
         val decision = stateMachine.onSample(sampleForSm)
 
         // ─── Diagnostic: CAD_GATE suppression (FN fix, 2026-05-25) ──────────
-        // The state machine reports per-sample whether CAD_GATE was about to fire
-        // but was suppressed by the on-side orientation evidence. Log this once
-        // per occurrence so calibration data shows the suppression context (the
-        // decision and the values at the moment of suppression).
-        if (stateMachine.lastCadenceGateSuppressed) {
+        // The state machine raises `lastCadenceGateSuppressed` on EVERY sample it
+        // stays on-side, so at the ~50 Hz sensor rate one ~1–2 s on-side silence
+        // window emitted 170–260 rows (≈ half a periodic-upload chunk). Rate-limit
+        // to once per second (CAD_GATE_SUPPRESSED_INTERVAL_MS): the first sample of
+        // an episode still logs (the throttle clock starts stale) so the suppression
+        // context is preserved, but a sustained on-side window no longer floods the
+        // log and evicts real signal. Detection behaviour is unchanged.
+        if (stateMachine.lastCadenceGateSuppressed &&
+            (now - lastCadGateSuppressedLogMs) > CalibrationLogger.CAD_GATE_SUPPRESSED_INTERVAL_MS) {
+            lastCadGateSuppressedLogMs = now
             calibLogger?.log(CalibrationLogger.Event.CADENCE_GATE_SUPPRESSED) {
                 // Use the LIVE angle the state machine captured at suppression
                 // time (set just before `lastCadenceGateSuppressed = true`).
