@@ -270,6 +270,14 @@ class CalibrationLogger(
         const val SILENCE_BROKEN_INTERVAL_MS = 2_000L
         /** Rate-limit GYRO_BLOCKED logs: at most once per 1 second. */
         const val GYRO_BLOCKED_INTERVAL_MS = 1_000L
+        /** Rate-limit CAD_GATE_SUPPRESSED logs: at most once per 1 second. The
+         *  state machine raises `lastCadenceGateSuppressed` on every sample it
+         *  stays on-side, so at 50 Hz a single ~1–2 s on-side silence window
+         *  emitted 170–260 rows (≈ half a periodic-upload chunk), diluting real
+         *  signal and risking eviction of a genuine CRASH_OK from a downloadable
+         *  window. The first sample of an episode still logs (the throttle clock
+         *  starts stale), so the suppression context is preserved. */
+        const val CAD_GATE_SUPPRESSED_INTERVAL_MS = 1_000L
 
         /**
          * Device model sanitised for filesystem / Telegram filename use.
