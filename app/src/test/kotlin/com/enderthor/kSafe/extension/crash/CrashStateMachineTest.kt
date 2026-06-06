@@ -732,6 +732,129 @@ class CrashStateMachineTest {
         assertEquals(CrashStateMachine.State.MONITORING, sm.state)
     }
 
+    // ── R6-F: real-data replay — the three v2.0.0 field FPs of 2026-06-06 ────────
+    // These three CRASH_OK events came from v2.0.0 logs (the GAP veto did NOT exist
+    // yet — it landed post-v2.0.0 on this branch). All three share the FP signature:
+    // decided_by=GAP, silence_path=UPRIGHT, speed=0, deviation≈0, pre_impact_angle=-1.0
+    // (a v2.0.0 PLACEHOLDER: that build set lastConfirmedAngleDeg=lastOrientationAngleDeg,
+    // which is -1.0 in the gap regime — it never measured the gap-regime silence angle).
+    // The riders kept riding afterwards (benign stops), yet two of the three were NOT
+    // cancelled and the alert dispatched. These tests answer "would v2.1.0 still fire?":
+    // under the physically-faithful reconstruction (bike upright pre-impact + dead-still
+    // upright through silence ⇒ silence gravity vector == pre-impact reference ⇒ angle
+    // ≈ 0°), R6-F vetoes all three. The pre-impact reference vectors are the verbatim
+    // pre_x/pre_y/pre_z logged at the impact that led to each confirm.
+    //
+    // Shared driver: impact → keep moving for the real impact→stillness gap → coast to a
+    // stop holding the pre-impact orientation → stand motionless for the 20 s gap window.
+    private fun assertField20260606FpIsVetoed(
+        impactSpeedKmh: Double,
+        impactPeak: Double,
+        impactSmoothed: Double,
+        impactGyro: Double,
+        gapMs: Long,
+        preRef: PreImpactRef,
+    ) {
+        val (sm, _) = newSm()
+        sm.onSpeedUpdate(impactSpeedKmh)
+        val base = 1_000_000L
+        sm.onSample(sample(time = base, peak = impactPeak, smoothed = impactSmoothed, gyro = impactGyro))
+        assertEquals(CrashStateMachine.State.IMPACT, sm.state)
+        sm.setPreImpactReference(preRef)
+        // Silence gravity vector == the pre-impact reference (bike held its orientation).
+        val mag = Math.sqrt(preRef.x * preRef.x + preRef.y * preRef.y + preRef.z * preRef.z)
+        // Keep moving for the real impact→stillness gap (speed high → IMPACT→SILENCE gate blocked).
+        var t = base + 1000L
+        while (t < base + gapMs) {
+            sm.onSample(sample(time = t, raw = 9.81, smoothed = 9.81, gyro = 0.1))
+            t += 1000L
+        }
+        // Coast to a full stop; the bike keeps the pre-impact orientation.
+        sm.onSpeedUpdate(0.0)
+        sm.onSample(sample(time = base + gapMs, raw = mag, smoothed = mag, gyro = 0.11,
+            ax = preRef.x, ay = preRef.y, az = preRef.z))
+        assertEquals(CrashStateMachine.State.SILENCE_CHECK, sm.state)
+        // Stand motionless and upright for the full 20 s gap-regime window.
+        var confirmed = false
+        var vetoed = false
+        t = base + gapMs
+        repeat(24) {
+            t += 1000L
+            val d = sm.onSample(sample(time = t, raw = mag, smoothed = mag, gyro = 0.11,
+                ax = preRef.x, ay = preRef.y, az = preRef.z))
+            if (d is CrashStateMachine.Decision.Confirm) confirmed = true
+            if (d is CrashStateMachine.Decision.ReturnToMonitoring && !vetoed) {
+                vetoed = true
+                assertTrue("silence orientation must read upright (angle≈0°, was ${sm.lastGapUprightVetoAngleDeg})",
+                    sm.lastGapUprightVetoAngleDeg in 0.0..5.0)
+                assertTrue("veto regime must be GAP", sm.lastUprightVetoGapRegime)
+                // Blind-spot fix: the silence orientation vector must now be recorded
+                // (NaN/-1.0 was the v2.0.0 blind spot) and match the fed silence gravity.
+                assertEquals("sil_z must record the silence orientation", preRef.z, sm.lastSilenceOrientZ, 0.05)
+                assertEquals("sil_y must record the silence orientation", preRef.y, sm.lastSilenceOrientY, 0.05)
+                assertEquals("sil_x must record the silence orientation", preRef.x, sm.lastSilenceOrientX, 0.05)
+            }
+        }
+        assertFalse("v2.0.0 field FP must NOT confirm under v2.1.0 R6-F", confirmed)
+        assertTrue("R6-F must veto this reconstructed v2.0.0 FP", vetoed)
+        assertEquals(CrashStateMachine.State.MONITORING, sm.state)
+    }
+
+    @Test
+    fun `R6-F field replay - 2026-06-06 FP f5ca95 gravel delayed upright stop is vetoed`() {
+        // IMPACT_IN @2420.6s raw=58.1 smooth=28.2 speed=19.3 gyro=1.01 pre=(-0.67,3.61,9.50)
+        // SIL_IN @2435.7s gap_ms=15096 ; CRASH_OK @2457.8s decided_by=GAP pre_impact_angle=-1.0
+        assertField20260606FpIsVetoed(
+            impactSpeedKmh = 19.3, impactPeak = 58.1, impactSmoothed = 28.2, impactGyro = 1.01,
+            gapMs = 15_096L, preRef = PreImpactRef(-0.67, 3.61, 9.50, valid = true),
+        )
+    }
+
+    @Test
+    fun `R6-F field replay - 2026-06-06 FP bd5fc1 road delayed upright stop is vetoed`() {
+        // IMPACT_IN @4579.3s raw=51.1 smooth=21.0 speed=26.9 gyro=0.16 pre=(-0.22,0.34,9.81)
+        // SIL_IN @4589.3s gap_ms=10000 ; CRASH_OK @4609.4s decided_by=GAP pre_impact_angle=-1.0
+        // This is the one that was NOT cancelled → alert dispatched → ALERT_FAIL CallMeBot.
+        assertField20260606FpIsVetoed(
+            impactSpeedKmh = 26.9, impactPeak = 51.1, impactSmoothed = 21.0, impactGyro = 0.16,
+            gapMs = 10_000L, preRef = PreImpactRef(-0.22, 0.34, 9.81, valid = true),
+        )
+    }
+
+    @Test
+    fun `R6-F field replay - 2026-06-06 FP 786c16 road delayed upright stop is vetoed`() {
+        // IMPACT_IN @11914.6s raw=80.5 smooth=46.0 speed=15.8 gyro=1.70 pre=(1.01,1.04,10.05)
+        // SIL_IN @11926.9s gap_ms=12247 ; CRASH_OK @11947.4s decided_by=GAP pre_impact_angle=-1.0
+        // (gap regime ignores gyro, so the 1.70 rad/s impact rotation does not block the veto.)
+        assertField20260606FpIsVetoed(
+            impactSpeedKmh = 15.8, impactPeak = 80.5, impactSmoothed = 46.0, impactGyro = 1.70,
+            gapMs = 12_247L, preRef = PreImpactRef(1.01, 1.04, 10.05, valid = true),
+        )
+    }
+
+    @Test
+    fun `gap-regime confirm records the silence orientation vector (sil_x_y_z blind-spot fix)`() {
+        // The snapshot must be captured on the CONFIRM path too, not only the veto path,
+        // so a genuine on-side crash logs WHERE the bike was (sil_x/y/z) — the v2.0.0 gap
+        // regime recorded neither the angle nor the vector. On-side silence (ax≈9.81,
+        // az≈0) confirms at 20 s; the recorded vector must match the fed silence gravity.
+        val (sm, _) = smEnteringSilence(
+            gapMs = 12_000L,
+            preRef = PreImpactRef(0.0, 0.0, 9.81, valid = true),
+            silenceAz = 0.0, silenceAx = 9.81,   // on-side → confirms (outside the 15° cone)
+        )
+        var t = 1_012_000L
+        var confirmed = false
+        repeat(25) {
+            t += 1000L
+            if (sm.onSample(sample(time = t, raw = 9.81, smoothed = 9.81, az = 0.0, ax = 9.81))
+                    is CrashStateMachine.Decision.Confirm) confirmed = true
+        }
+        assertTrue("on-side gap stop must confirm at 20 s", confirmed)
+        assertEquals("sil_x must record the on-side silence orientation", 9.81, sm.lastSilenceOrientX, 0.05)
+        assertEquals("sil_z must record the on-side silence orientation", 0.0, sm.lastSilenceOrientZ, 0.05)
+    }
+
     // ── R6-F: exact 15° veto-cone boundary (just-below vetoes / just-above confirms) ──
     // The veto cone is gapVetoUprightAngleDeg = 15°. The existing R6-F tests bracket it
     // only loosely (0° vetoes, 30° confirms — 15° away on each side). These two pin the

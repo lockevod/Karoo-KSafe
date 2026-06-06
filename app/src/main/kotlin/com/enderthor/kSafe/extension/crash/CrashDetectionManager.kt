@@ -594,8 +594,13 @@ class CrashDetectionManager(
                 // the impact→silence rotation that passed the PROMPT gyro gate (gyro_thr);
                 // on a GAP veto it is informational only (the gap regime ignores rotation).
                 val regime = if (stateMachine.lastUprightVetoGapRegime) "GAP" else "PROMPT"
-                "angle=%.1f,veto_thr=${stateMachine.thresholds.gapVetoUprightAngleDeg},regime=$regime,gyro_peak=%.2f,gyro_thr=${stateMachine.thresholds.nonGapUprightVetoMaxGyroRadS},speed=%.1f,deviation=%.2f,cadence=%.0f,grade=%.1f,preset=${config.crashSensitivity}".formatUs(
-                    stateMachine.lastGapUprightVetoAngleDeg, stateMachine.peakGyroSinceImpactRadS, currentSpeedKmh, dev, currentCadence, currentGrade)
+                val ref = stateMachine.preImpactReference
+                // pre_x/y/z (pre-impact ref) + sil_x/y/z (averaged silence orientation) make
+                // the veto `angle` independently verifiable from the raw geometry.
+                "angle=%.1f,veto_thr=${stateMachine.thresholds.gapVetoUprightAngleDeg},regime=$regime,gyro_peak=%.2f,gyro_thr=${stateMachine.thresholds.nonGapUprightVetoMaxGyroRadS},speed=%.1f,deviation=%.2f,cadence=%.0f,grade=%.1f,preset=${config.crashSensitivity},pre_x=%.2f,pre_y=%.2f,pre_z=%.2f,sil_x=%.2f,sil_y=%.2f,sil_z=%.2f".formatUs(
+                    stateMachine.lastGapUprightVetoAngleDeg, stateMachine.peakGyroSinceImpactRadS, currentSpeedKmh, dev, currentCadence, currentGrade,
+                    ref.x, ref.y, ref.z,
+                    stateMachine.lastSilenceOrientX, stateMachine.lastSilenceOrientY, stateMachine.lastSilenceOrientZ)
             }
         }
 
@@ -734,8 +739,13 @@ class CrashDetectionManager(
             else -> "ORIENT_UPRIGHT"
         }
         calibLogger?.log(CalibrationLogger.Event.CRASH_CONFIRMED) {
-            "deviation=%.2f,speed=%.1f,confirm_spd_thr=${config.crashConfirmSpeedKmh},grade=%.1f,cadence=%.0f,gps_stale=$gpsStale,preset=${config.crashSensitivity},effective_dev_max=$effectiveDevMax,effective_silence_ms=$effectiveSilenceMs,silence_path=$silencePath,countdown_s=${config.countdownSeconds},gap_ms=$gapMs,pre_impact_angle=%.1f,decided_by=$decidedBy".formatUs(
-                deviation, currentSpeedKmh, currentGrade, currentCadence, angle)
+            // pre_x/y/z = pre-impact reference, sil_x/y/z = averaged silence orientation.
+            // Logging both makes pre_impact_angle independently verifiable from the raw
+            // geometry — the gap regime used to log only pre_impact_angle=-1.0 (see R6-F).
+            "deviation=%.2f,speed=%.1f,confirm_spd_thr=${config.crashConfirmSpeedKmh},grade=%.1f,cadence=%.0f,gps_stale=$gpsStale,preset=${config.crashSensitivity},effective_dev_max=$effectiveDevMax,effective_silence_ms=$effectiveSilenceMs,silence_path=$silencePath,countdown_s=${config.countdownSeconds},gap_ms=$gapMs,pre_impact_angle=%.1f,pre_x=%.2f,pre_y=%.2f,pre_z=%.2f,sil_x=%.2f,sil_y=%.2f,sil_z=%.2f,decided_by=$decidedBy".formatUs(
+                deviation, currentSpeedKmh, currentGrade, currentCadence, angle,
+                ref.x, ref.y, ref.z,
+                stateMachine.lastSilenceOrientX, stateMachine.lastSilenceOrientY, stateMachine.lastSilenceOrientZ)
         }
     }
 
