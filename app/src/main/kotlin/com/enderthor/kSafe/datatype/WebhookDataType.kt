@@ -165,7 +165,10 @@ class WebhookDataType(
                             val bgColor = if (enabled) idleColor else COLOR_DISABLED
                             val hint    = if (enabled) context.getString(R.string.field_state_webhook_tap)
                                           else context.getString(R.string.field_state_webhook_disabled)
-                            Frame(bgColor, label, hint, clickable = true)
+                            // Only wire the tap when enabled (parity with CustomMessageDataType):
+                            // a disabled field should be inert, not flash a red "disabled" alert
+                            // mid-ride when accidentally tapped.
+                            Frame(bgColor, label, hint, clickable = enabled)
                         }
                         WebhookState.FIRING  -> Frame(COLOR_FIRING,  label, context.getString(R.string.field_state_webhook_firing), clickable = false)
                         WebhookState.SUCCESS -> Frame(COLOR_SUCCESS, label, stateData.message.ifBlank { context.getString(R.string.field_state_webhook_ok) }, clickable = false)

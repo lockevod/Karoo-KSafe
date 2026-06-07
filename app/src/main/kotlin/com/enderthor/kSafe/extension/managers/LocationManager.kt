@@ -45,12 +45,17 @@ class LocationManager(
     // latitude from one sample with a longitude from the next. Reference writes are
     // atomic; volatile supplies the cross-thread visibility.
     @Volatile private var lastFix: GpsFix? = null
-    private var locationJob: Job? = null
+    // @Volatile + @Synchronized start()/stop(): the connect callback fires on a Karoo binder
+    // thread and can re-enter start() on a rapid reconnect. Without serialisation two concurrent
+    // start() calls could both read the prior locationJob, both cancel it, both launch, and lose
+    // one assignment — orphaning a GPS collector coroutine for the rest of the service lifetime.
+    @Volatile private var locationJob: Job? = null
 
     /** The most recent stored GPS fix as a single atomic snapshot, or null if none yet. */
     fun currentFix(): GpsFix? = lastFix
 
     @OptIn(kotlinx.coroutines.FlowPreview::class)
+    @Synchronized
     fun start() {
         // Defensive cancel of any prior job — Karoo system reconnects can re-fire
         // the connect callback while a previous collector is still alive. Without
@@ -80,8 +85,8 @@ class LocationManager(
                         .sample(LOCATION_SAMPLE_MS)
                         .collect { event ->
                             // H8 — drop non-finite coordinates from the SDK.
-                            if (!event.lat.isFinite() || !event.lng.isFinite()) {
-                                Timber.w("Location sample dropped — non-finite coords (lat=${event.lat}, lng=${event.lng})")
+                            if (!event.lat.isFinite() || !event.lng.isFinite() || (event.lat == 0.0 && event.lng == 0.0)) {
+                                Timber.w("Location sample dropped — non-finite or Null-Island (0,0) coords (lat=${event.lat}, lng=${event.lng})")
                                 return@collect
                             }
                             lastFix = GpsFix(event.lat, event.lng, System.currentTimeMillis())
@@ -102,8 +107,10 @@ class LocationManager(
         }
     }
 
+    @Synchronized
     fun stop() {
         locationJob?.cancel()
+        locationJob = null
     }
 
     /** Returns the cached Google Maps link, or null if no fix has been stored yet. */
@@ -143,8 +150,8 @@ class LocationManager(
             val event = withTimeout(timeoutMs) {
                 karooSystem.streamLocation().first()
             }
-            if (!event.lat.isFinite() || !event.lng.isFinite()) {
-                Timber.w("getFreshFix: SDK returned non-finite coords (lat=${event.lat}, lng=${event.lng}); falling back to cache")
+            if (!event.lat.isFinite() || !event.lng.isFinite() || (event.lat == 0.0 && event.lng == 0.0)) {
+                Timber.w("getFreshFix: SDK returned non-finite or Null-Island (0,0) coords (lat=${event.lat}, lng=${event.lng}); falling back to cache")
                 return cached.freshEnoughForFallback()
             }
             val fresh = GpsFix(event.lat, event.lng, System.currentTimeMillis())
@@ -198,8 +205,8 @@ class LocationManager(
             // distanceMeters calls (which would return NaN, and NaN > radius is
             // always false, bypassing the geo-fence). Fall back to cached on
             // non-finite coordinates the same way we fall back on timeout.
-            if (!event.lat.isFinite() || !event.lng.isFinite()) {
-                Timber.w("Fresh location returned non-finite coords (lat=${event.lat}, lng=${event.lng}); falling back to cache")
+            if (!event.lat.isFinite() || !event.lng.isFinite() || (event.lat == 0.0 && event.lng == 0.0)) {
+                Timber.w("Fresh location returned non-finite or Null-Island (0,0) coords (lat=${event.lat}, lng=${event.lng}); falling back to cache")
                 return getLocationLink()
             }
             // Update cache with the fresh fix

@@ -60,6 +60,16 @@ All parameters live in `KSafeConfig` and are user-configurable via the Settings 
 | `crashMonitorOutsideRideAnySpeed` | `false` | Force `minSpeed = 0` outside rides (⚠ more false positives) |
 | `countdownSeconds` | `30` | Duration of the cancel window before alert is sent |
 
+### Per-profile crash overrides
+
+Each Karoo ride profile (Road / Gravel / MTB / custom) can carry its own crash config, auto-learned when KSafe first sees the profile become active. Controlled by `KSafeConfig.crashProfileSettings` (`List<CrashProfileSetting>`, default empty).
+
+> **Discovery and timing (user-facing).** A profile only appears in the Safety-tab list **after you have started a ride with it** — the ride-profile stream is what triggers the auto-learn, and it is only active during a ride (unless "monitor outside ride" is on). The override you save is applied to the live detector at the **start of the next ride** with that profile, so configure it before the ride you want it to take effect on. In the UI each profile card collapses to a one-line summary (Global / Custom · level / Off) to keep a long list manageable.
+
+Resolution (`CrashProfileResolver.resolveEffectiveCrashConfig`): (1) empty list → global config for all profiles; (2) matching entry (by `RideProfile.id`) with `useGlobal=true` → global unchanged; (3) `useGlobal=false` → the per-profile `crashSensitivity / customCrashThreshold / minSpeedForCrashKmh / crashConfirmSpeedKmh` FULLY replace the global ones (all-or-nothing; per-profile `crashDetectionEnabled` is AND-ed with the global kill-switch — it can only further disable). (4) Auto-learn: each profile switch calls `learnProfile` — new id → appends a `useGlobal=true` stub; rename → updates the stored name; stale same-name/different-id orphans pruned. (5) Applied to the live detector immediately on profile switch via `reapplyEffectiveCrash`.
+
+The per-profile feature does NOT change any global preset thresholds, impact windows, or silence constants — it only routes a different `KSafeConfig` into the same lookup maps.
+
 ### Impact thresholds by sensitivity preset (smoothed magnitude)
 
 The **smoothed** threshold is the 3-sample moving average of total acceleration vector magnitude. At rest this baseline is ~9.8 m/s² (1g).
@@ -413,6 +423,8 @@ Captures the scenario where the rider falls and is unconscious at low speed (e.g
 | SILENCE_CHECK required duration — upright or delayed stop (GPS stale) | 20,000ms |
 | Delayed-stop gap threshold (`delayedStopGapMs`) | 8,000ms |
 | Upright angle threshold (`uprightAngleThresholdDegrees`) | 45° |
+| GAP-regime upright veto cone (`gapVetoUprightAngleDeg`, R6-F) | 15° |
+| Prompt-stop upright veto gyro gate (`nonGapUprightVetoMaxGyroRadS`, R6-G) | 3.0 rad/s |
 | Pre-impact reference window (`WINDOW_MS`) | 2,000ms |
 | Pre-impact reference guard before impact (`GUARD_MS`) | 250ms |
 | SILENCE_CHECK deviation max (GPS fresh) | 4.0 m/s² |
@@ -470,10 +482,12 @@ The class does not use locks. The algorithm tolerates slightly stale reads acros
 | ID | Change | Status |
 |----|--------|--------|
 | **R6-A** | **Replaced learned-baseline orientation with pre-impact orientation reference.** `SensorReader` now keeps a ~150-entry ring buffer of timestamped accelerometer vectors. On every `Decision.EnterImpact`, the facade averages the slice `[impactTs − 250 ms − 2 000 ms, impactTs − 250 ms]` into a `PreImpactRef(x, y, z, valid)` and injects it into `CrashStateMachine.setPreImpactReference`. No speed/noise learning gates — available from the first 2 s of any ride and on any terrain. | ✅ Implemented |
-| **R6-B** | **Gap regime in `computeEffectiveSilenceMs`.** If `firstSilenceGapMs > delayedStopGapMs (8 s)` the stop is classified as delayed (rider kept riding after the impact) and the 20 s window is required with no orientation check. Fixes the gravel bump+brake+stop FP whose observed gap was 17 s. | ✅ Implemented |
+| **R6-B** | **Gap regime in `computeEffectiveSilenceMs`.** If `firstSilenceGapMs > delayedStopGapMs (8 s)` the stop is classified as delayed (rider kept riding after the impact) and the 20 s window is required (window choice needs no orientation; **R6-F** later adds an orientation veto at the confirm gate). Fixes the gravel bump+brake+stop FP whose observed gap was 17 s. | ✅ Implemented |
 | **R6-C** | **Orientation regime for prompt stops.** If the gap is ≤ 8 s: angle ≥ 45° → on-side → 4.5 s (fast alert); angle < 45° → still upright → 20 s (wait); invalid reference → 4.5 s (conservative). `delayedStopGapMs = 8 000 ms` added to `Thresholds`. | ✅ Implemented |
 | **R6-D** | **Removed learned-baseline machinery.** `feedBaselineSample`, `isBaselineReady`, `baselineVector`, the EMA cap logic, the cruising-speed/std-dev learning gate in the facade, and the `ORIENTATION_BASELINE` / `ORIENT_BASE` calibration event are all deleted. `baselineMinSamples` and `baselineCruisingMinSpeedKmh` removed from `Thresholds`. | ✅ Removed |
 | **R6-E** | **Calibration log fields updated.** `SILENCE_ENTER` gains `gap_ms`, `pre_valid`, `pre_x/y/z`. `CRASH_CONFIRMED` gains `gap_ms`, `pre_impact_angle`, `decided_by` (`GAP` / `ORIENT_UPRIGHT` / `ORIENT_ONSIDE` / `UNKNOWN`). `IMPACT_TIMEOUT` gains `pre_valid`. `ORIENT_BASE` event removed. | ✅ Implemented |
+| **R6-F** | **GAP-regime upright veto.** The gap regime (R6-B) was the only confirm path that ignored orientation — it confirmed on 20 s of stillness alone. A real-world FP (gravel bump → coast to a stop, gap 9.9 s → stand motionless and **upright** 20 s) confirmed as a crash. At the confirm gate, when `firstSilenceGapMs > delayedStopGapMs`, the silence-window orientation angle is now computed: if `0 ≤ angle < gapVetoUprightAngleDeg` the confirm is **vetoed** and the machine returns to MONITORING. The veto cone is a **dedicated, tight 15°** — NOT the 45° `uprightAngleThresholdDegrees` (which is a *timing* threshold where both sides still confirm). A veto suppresses an SOS and a false negative is far worse than a false positive, so the veto only engages when the bike is almost identical to its riding orientation. The safety rationale: a bike cannot hold ≤15°-from-upright **and** stay perfectly still for 20 s without a conscious rider balancing it (an unsupported bike falls over in 1–2 s; a crash victim's bike ends on-side or is displaced > 15°), so the trigger condition is itself strong evidence of a non-crash. A bike merely tilted to 15–45° is left to confirm. Non-upright (`angle ≥ 15°`) and not-computable (`-1.0`: invalid ref / too few samples) still confirm — the on-side paths and the no-orientation-data safety net are untouched. The veto reads the LIVE silence accumulator, which on the CR3 IMPACT-relax→gap path is dominated by on-side samples (≥60°), so a genuine on-side rolling crash is not vetoed. New `GAP_UPRIGHT_VETO` (`GAP_VETO`) calibration event records each veto (angle, veto threshold, speed, deviation, cadence) so field data can measure the real silence-orientation angle (the old gap regime never logged it), count vetoes vs `CRASH_OK`, and catch any FN via a paired `MANUAL_SOS`. Regression seeds in `CrashStateMachineTest`: upright (~0°) vetoes incl. a real-data replay of the FP session; ~30° tilted, on-side, and invalid-ref still confirm. | ✅ Implemented |
+| **R6-G** | **Prompt-stop (non-gap) upright veto.** R6-F's "lever to revisit" (below), implemented after the 2026-06-03 session `effa0e`: a bump at 12 km/h → coast to a stop in ~7 s (gap ≤ `delayedStopGapMs` → prompt-stop regime) → stand motionless and **upright** for the full 20 s window confirmed as a crash (FP, rider cancelled in 3.5 s). The R6-F veto did not cover it (gap regime only). R6-G extends the upright veto to the prompt-stop regime, with one EXTRA guard the gap regime does not need: the impact must have produced **no violent rotation** (`peakGyroSinceImpactRadS < nonGapUprightVetoMaxGyroRadS`, 3.0 rad/s — tracked from impact entry through the silence window). Rationale: the prompt stop is the more crash-like regime, so vetoing there is riskier; an over-the-bars / endo that ends wheels-up (≈ upright) spikes the gyro (the 2026-06-03 on-side crash `27baa0` hit 9.65 rad/s vs `effa0e`'s ~1.7) and is left to confirm, as is any toppled on-side crash (≥ 15° cone). The "unconscious rider, bike upright" FN is not feasible — a laterally-unstable bike cannot stay within 15° without a conscious rider balancing it; incapacitation topples it (on-side → confirms) or tumbles it (high gyro → confirms). The `GAP_VETO` row gains `regime=GAP\|PROMPT` and `gyro_peak`/`gyro_thr`. Regression seeds in `CrashStateMachineTest`: `effa0e` low-rotation upright → vetoed (PROMPT regime); high-rotation (endo) upright → confirms; on-side / invalid-ref / GPS-stale unaffected. | ✅ Implemented |
 
 ### Revision 4 — May 2026 (contextual sensor data)
 
@@ -634,7 +648,9 @@ Two signals decide the silence-window duration, each authoritative in its own re
 
 ```
 gap > 8 s  (rider kept moving after impact — delayed stop):
-    → 20 s  [gap regime; orientation ignored]
+    → 20 s window  [gap regime; orientation NOT used to pick the window]
+       · but at the 20 s confirm gate, the R6-F upright veto applies
+         (orientation < 15° → suppress confirm) — see "Two uses of orientation" below
 
 gap ≤ 8 s  (stopped with the impact — prompt stop):
     angle ≥ 45°  (on-side or significantly tilted)  → 4.5 s  [clear crash, fast alert]
@@ -645,6 +661,24 @@ gap ≤ 8 s  (stopped with the impact — prompt stop):
 - The **gap** regime does the heavy false-positive lifting. A bump+brake+stop FP has a long gap (10–20 s of continued riding) → 20 s window, with no dependency on orientation or terrain. A real crash always has a short gap (1–4 s) so the gap rule never delays a genuine emergency.
 - The **orientation** regime does scoped work among prompt stops: a crash lays the bike on its side (angle ≥ 45° → fast 4.5 s alert); an ambiguous upright stop at a traffic light or after a non-crash bump requires 20 s.
 - The 20 s window only costs a delay if an event is ambiguous; for a true false positive the rider rides off and nothing fires — zero cost. The 20 s value is unchanged from the earlier orientation attempt.
+
+#### Two uses of orientation — window choice (timing) vs confirm veto (R6-F / R6-G)
+
+Orientation degrees feed **two distinct decisions**, and conflating them causes confusion ("didn't we already handle tilt?"):
+
+1. **Window duration — *timing* (R6-C, the decision table above).** In the **prompt-stop** regime (gap ≤ 8 s) the angle picks *how long to wait*: ≥ 45° (on-side) → 4.5 s fast alert, < 45° (upright) → 20 s. **Both outcomes still CONFIRM** — the window choice never suppresses an alert. The **gap regime does not use orientation for the window** (always 20 s).
+
+2. **Confirm veto — *fire / no-fire* (R6-F gap + R6-G prompt).** At the 20 s confirm gate, if the silence-window orientation is within a **tight, dedicated 15° cone** (`gapVetoUprightAngleDeg`, **not** the 45° timing threshold) of the pre-impact reference, the confirm is **vetoed** → return to MONITORING, no alert. In the **gap** regime this engages on orientation alone (R6-F); in the **prompt-stop** regime it additionally requires that the impact produced **no violent rotation** (`peakGyroSinceImpactRadS < nonGapUprightVetoMaxGyroRadS`, R6-G). This is the only place orientation *suppresses* a confirm.
+
+**Why the prompt-stop veto needs the extra gyro gate** (the gap veto does not):
+
+| Regime | What it means physically | Upright + still 20 s → |
+|--------|--------------------------|------------------------|
+| **Gap > 8 s** | Rider kept riding ~10 s after the bump, *then* stopped | **Vetoed (R6-F)** — you do not keep riding for 10 s after crashing, so a delayed upright stop is almost certainly a benign rest. Orientation alone suffices. |
+| **Gap ≤ 8 s, low rotation** | Stopped promptly, no tumble | **Vetoed (R6-G)** — a bike held < 15°-from-upright and motionless for 20 s is being balanced by a conscious rider; an incapacitated rider cannot keep a laterally-unstable bike upright (it topples → on-side, or tumbles → high gyro). Session `effa0e`. |
+| **Gap ≤ 8 s, high rotation** | Stopped promptly, *with* a tumble (endo / over-the-bars) | **Still confirms** — a violent rotation ending wheels-up is crash-consistent; the gyro gate (3.0 rad/s) keeps this path firing. FN ≫ FP. |
+
+So R6-C, R6-F and R6-G are **not redundant**: R6-C *times* the confirm using orientation in the prompt-stop regime; R6-F/R6-G *suppress* the confirm using a tighter cone — R6-F in the gap regime (orientation alone), R6-G in the prompt-stop regime (orientation **and** no-tumble). The original "lever to revisit" — a hard-brake → track-stand upright 20 s FP at gap ≤ 8 s — was observed in the field (`effa0e`, 2026-06-03) and is now closed by R6-G.
 
 ### Pre-impact reference capture (`SensorReader` + `PreImpactReference`)
 

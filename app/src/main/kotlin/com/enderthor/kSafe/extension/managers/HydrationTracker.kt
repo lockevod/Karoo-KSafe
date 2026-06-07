@@ -378,9 +378,47 @@ class HydrationTracker(
         return ml
     }
 
+    /** Time of the most recent [logAmount] (combined-field) log. Lets [hasInterleavedLogAfter]
+     *  see a combined log it would otherwise miss (logAmount carries no slot), so a per-slot
+     *  [undoLastForSlot] can't roll the {elapsed} timer back past an interleaved combined log. */
+    @Volatile private var lastAmountLogMs = 0L
+
+    /** Log an EXPLICIT [ml] (used by the combined fuel-log field, which carries its own amount
+     *  rather than a slot's config). Feeds the same [cumLoggedMl] total as [logEntry]. Returns
+     *  the ml logged (0 if non-positive). The caller records the amount for undo via [undoAmount]. */
+    fun logAmount(ml: Int): Int {
+        if (ml <= 0) return 0
+        cumLoggedMl += ml
+        val now = System.currentTimeMillis()
+        lastLogMs = now
+        lastRealLogMs = now
+        lastAmountLogMs = now
+        calibLogger?.log(CalibrationLogger.Event.FUELING_HYDRATION_LOGGED) {
+            "slot=combined,ml=$ml,cum_logged=$cumLoggedMl,cum_target=${cumTargetMl.toInt()}"
+        }
+        publishStatus()
+        return ml
+    }
+
+    /** Reverse a previous [logAmount] of exactly [ml]. Clamps the total at >= 0.
+     *  Rolls back only [cumLoggedMl] (the deficit-relevant total), NOT the log timestamps —
+     *  see CarbsTracker.undoAmount for the rationale (not bumping on log would fire a false
+     *  "you haven't drunk" alert right after a genuine combined log). */
+    fun undoAmount(ml: Int) {
+        if (ml <= 0) return
+        cumLoggedMl = (cumLoggedMl - ml).coerceAtLeast(0)
+        calibLogger?.log(CalibrationLogger.Event.FUELING_HYDRATION_UNDONE) {
+            "slot=combined,ml=-$ml,cum_logged=$cumLoggedMl,cum_target=${cumTargetMl.toInt()}"
+        }
+        publishStatus()
+    }
+
     /** Mirrors [CarbsTracker.hasInterleavedLogAfter] — returns true if any slot OTHER
      *  than [excludeSlot] logged after [thresholdMs]. */
     private fun hasInterleavedLogAfter(excludeSlot: Int, thresholdMs: Long): Boolean {
+        // A combined-field logAmount carries no slot, so it isn't in the per-slot arrays below;
+        // check its timestamp explicitly or a per-slot undo could roll the timer back past it.
+        if (lastAmountLogMs >= thresholdMs) return true
         for (i in 1..2) {
             if (i == excludeSlot) continue
             if (lastLoggedMlBySlot[i] > 0 && lastLogMsBeforeBySlot[i] >= thresholdMs) return true

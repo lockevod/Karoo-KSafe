@@ -196,6 +196,13 @@ class WellnessMonitor(
         criticalFires = 0
         sustainedFires = 0
         decouplingFires = 0
+        // Symmetry with MedicalEpisodeDetector.resetSessionState(): clear the last HR sample
+        // so a restart never evaluates a tier against a stale bpm/timestamp carried over from a
+        // previous ride before the first fresh HR emission of the new session arrives. Currently
+        // latent (MONITOR_TICK_MS 30 s > HR_STALE_MS 15 s, so the stale guard already catches
+        // it), but the reset makes start() deterministic and survives a future tick/stale retune.
+        lastHrBpm = null
+        lastHrUpdateMs = 0L
         // B29 — publish a zeroed summary so the FIT writer reads a sensible
         // value from `summaryFlow.value` from the first tick onwards (instead
         // of `null` until the first tick has run).

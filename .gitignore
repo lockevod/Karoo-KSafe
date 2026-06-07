@@ -7,6 +7,15 @@
 # Local machine configuration — contains SDK path and SECRET credentials (never commit)
 local.properties
 
+# KSafe config backup/export — contains messaging SECRETS (provider API keys, bot
+# tokens, recipient phone numbers, webhook Authorization headers). Never commit.
+ksafe_export.json
+*_ksafe_export.json
+# Stray config-export dumps (any name) — these are the same secret-bearing blob.
+hola.json
+actual*.json
+*_export.json
+
 # Internal planning / design notes — kept local, not part of the public repo
 /docs/superpowers/
 

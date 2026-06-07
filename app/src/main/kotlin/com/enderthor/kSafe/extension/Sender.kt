@@ -4,6 +4,8 @@ import android.net.Uri
 import com.enderthor.kSafe.data.ProviderType
 import com.enderthor.kSafe.data.SenderConfig
 import com.enderthor.kSafe.extension.managers.ConfigurationManager
+import com.enderthor.kSafe.extension.util.recipientsToSend
+import com.enderthor.kSafe.extension.util.scopeForSlot
 import io.hammerhead.karooext.KarooSystemService
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.first
@@ -11,6 +13,92 @@ import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
 import timber.log.Timber
+
+/**
+ * Why an emergency send reached nobody. Recorded verbatim on the `ALERT_FAIL`
+ * calibration row (see [com.enderthor.kSafe.extension.managers.EmergencyManager])
+ * so a post-incident audit can tell apart the failure modes WITHOUT reverse-
+ * engineering them from the `ALERT_FAIL` timestamp:
+ *
+ *  - [NO_CREDENTIALS] / [NO_CONFIG] fail FAST (pre-flight, ~no time) — the row lands
+ *    ~1 s after the countdown ends. This is a rider misconfiguration (provider
+ *    selected but token/contact blank), NOT a connectivity problem.
+ *  - [TIMEOUT] / [EXHAUSTED] land ~30 min later — the full 3×3 retry budget ran.
+ *    [TIMEOUT] = no usable connection (every attempt hit the block timeout);
+ *    [EXHAUSTED] = the provider was reachable but rejected every attempt
+ *    (e.g. 401 invalid token, chat-not-found).
+ *
+ * The 2026-06-03 calibration session `27baa0` showed the original `ALERT_FAIL`
+ * (`provider,reason,superseded` only) forced exactly that timestamp guesswork.
+ */
+enum class FailureCause {
+    /** Not a failure — success / partial / legitimate scope no-op. */
+    NONE,
+    /** No [SenderConfig] found for the active provider. */
+    NO_CONFIG,
+    /** Blank/missing credentials — failed the pre-flight before any network attempt. */
+    NO_CREDENTIALS,
+    /** Retries exhausted; the final attempt hit the block-level timeout (no usable connection). */
+    TIMEOUT,
+    /** Retries exhausted; provider reachable but rejected every attempt. */
+    EXHAUSTED,
+    /** Failure of an unexpected/defensive path that could not be classified. */
+    UNKNOWN,
+}
+
+/**
+ * Classifies a finished provider attempt for the post-incident cause tag (see [FailureCause]).
+ * Returns [FailureCause.TIMEOUT] only when nothing was delivered AND no recipient ever got an
+ * HTTP response (every attempt timed out → genuinely no usable connection, the "rider in a
+ * tunnel / no coverage" case). If any server responded — even with an error code — there *was*
+ * a connection, so the failure is a rejection: return [FailureCause.NONE] and let
+ * [Sender.sendWithRetry]'s terminal mapping record it as EXHAUSTED. Top-level + internal so the
+ * truth table is unit-testable without constructing a [Sender] / KarooSystemService.
+ */
+internal fun timeoutOrNone(delivered: Int, anyResponse: Boolean, anyTimeout: Boolean): FailureCause =
+    if (delivered == 0 && anyTimeout && !anyResponse) FailureCause.TIMEOUT else FailureCause.NONE
+
+/**
+ * Result of a send across a provider's eligible recipients.
+ *
+ * - [delivered] — recipients that returned success.
+ * - [eligible]  — recipients actually attempted (the post-scope-filter set).
+ * - [hardFail]  — this send reached nobody and it is a GENUINE failure, NOT a legitimate
+ *   scope-filtered info no-op. Set for blank/missing credentials, no configured contact, AND
+ *   for a transient total failure (block-level timeout / unexpected exception in the retry
+ *   loop). Its only job is to stop [infoSuccess] from treating a zero-recipient FAILURE like a
+ *   zero-recipient no-op. `eligible` is not read on any failure path (only [partial] reads it,
+ *   and that requires `delivered >= 1`), so the timeout case carrying `eligible == 0` is benign.
+ * - [cause]     — for a failure (`!anyOk`), WHY it reached nobody. [FailureCause.NONE] on any
+ *   delivered/partial/no-op outcome. [attemptSend] tags [FailureCause.TIMEOUT] when an attempt
+ *   reached nobody with no server response at all (genuine no-connection, via [timeoutOrNone]);
+ *   otherwise [Sender.sendWithRetry]'s terminal mapping classifies the exhausted failure
+ *   (TIMEOUT carried forward from the last attempt, else EXHAUSTED).
+ */
+data class SendOutcome(
+    val delivered: Int,
+    val eligible: Int,
+    val hardFail: Boolean = false,
+    val cause: FailureCause = FailureCause.NONE,
+) {
+    /** At least one recipient was reached. */
+    val anyOk: Boolean get() = delivered > 0
+    /** Reached ≥1 but not every eligible recipient — the emergency partial-delivery signal. */
+    val partial: Boolean get() = delivered in 1 until eligible
+    /** Info-send success: a deliverable config that either reached someone or had a
+     *  legitimate zero-recipient scope no-op (`eligible == 0` and not a hard failure). */
+    val infoSuccess: Boolean get() = !hardFail && (delivered > 0 || eligible == 0)
+
+    companion object {
+        /** Reached nobody, GENUINE failure (not a no-op): blank/missing credentials, no
+         *  configured contact, or a transient total failure (timeout / unexpected exception). */
+        val HARD_FAIL = SendOutcome(0, 0, hardFail = true)
+        /** A [HARD_FAIL] tagged with a specific [FailureCause] for the calibration audit trail. */
+        fun hardFail(cause: FailureCause) = SendOutcome(0, 0, hardFail = true, cause = cause)
+        /** Deliverable but scope-filtered to zero recipients (legitimate info no-op). */
+        val NO_OP = SendOutcome(0, 0)
+    }
+}
 
 class Sender(
     private val karooSystem: KarooSystemService,
@@ -36,17 +124,51 @@ class Sender(
          *  60 s leaves headroom for JSON building, log writes, and the brief gap
          *  between recipient calls without prematurely killing the third recipient. */
         private const val ATTEMPT_BLOCK_TIMEOUT_MS = 60_000L
+        /** Throttle for [markSendSucceeded]: re-stamp `lastSuccessfulSendMs` at most once per hour
+         *  per provider. The staleness window is 30 days, so finer precision is pointless and this
+         *  avoids a DataStore write on every ride-start/end + custom-message tap. */
+        private const val STAMP_MIN_INTERVAL_MS = 3_600_000L
     }
 
     // ─── Entry points ─────────────────────────────────────────────────────────
 
-    /** Sends an emergency [message] via [provider] (high priority, retries on failure). */
-    suspend fun sendAlert(message: String, provider: ProviderType): Boolean =
-        sendWithRetry(message, provider, isEmergency = true)
+    /**
+     * Sends an emergency [message] via [provider] (high priority, retries on failure).
+     * Returns the [SendOutcome] of the terminal attempt so the caller can distinguish
+     * full delivery from partial delivery (reached some but not all emergency contacts)
+     * and total failure.
+     */
+    suspend fun sendAlert(message: String, provider: ProviderType): SendOutcome {
+        val outcome = sendWithRetry(message, provider, isEmergency = true)
+        if (outcome.anyOk) markSendSucceeded(provider)   // a delivered alert proves the provider works
+        return outcome
+    }
 
-    /** Sends an informational [message] via [provider] (normal priority, single attempt). */
+    /** Sends an informational [message] via [provider] (normal priority, single attempt).
+     *  Wrapped: [attemptSend] can throw (RemoteException / IllegalStateException from a
+     *  momentarily-unbound KarooSystemService) — map that to a clean `false` instead of
+     *  letting it crash the caller (ride-start/end + custom-message paths). */
     suspend fun sendInfo(message: String, provider: ProviderType): Boolean =
-        attemptSend(message, provider, isEmergency = false)
+        sendInfoOutcome(message, provider).infoSuccess
+
+    /** Like [sendInfo] but returns the full [SendOutcome] so a rider-initiated path (e.g. a
+     *  custom-message tap) can distinguish a real delivery (`delivered > 0`) from a legitimate
+     *  zero-recipient scope no-op (`eligible == 0`, not `hardFail`) — the latter must NOT be
+     *  reported to the rider as "sent ✓". A thrown exception maps to [SendOutcome.HARD_FAIL]. */
+    suspend fun sendInfoOutcome(message: String, provider: ProviderType): SendOutcome {
+        val outcome = try {
+            attemptSend(message, provider, isEmergency = false)
+        } catch (e: kotlinx.coroutines.CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            Timber.w(e, "sendInfo failed for $provider — treating as not delivered")
+            SendOutcome.HARD_FAIL
+        }
+        // A delivered info message (ride start/end, custom message) also proves the provider
+        // works — stamp it so the staleness clock resets. A zero-recipient scope no-op does NOT.
+        if (outcome.anyOk) markSendSucceeded(provider)
+        return outcome
+    }
 
     /**
      * Single-attempt send for configuration tests.
@@ -57,20 +179,21 @@ class Sender(
         val config  = configs.find { it.provider == provider }
             ?: return "Provider not configured."
 
-        return try {
+        // A Test Send that reaches the provider counts as a successful send — stamps
+        // lastSuccessfulSendMs (clears the "not verified" nudge + resets the staleness clock).
+        var anySucceeded = false
+        val message = try {
             when (provider) {
                 ProviderType.CALLMEBOT -> {
-                    if (config.phoneNumber.isBlank()) return "Missing phone number."
-                    if (config.apiKey.isBlank())      return "Missing API key."
                     val recipients = callMeBotRecipients(config)
+                    if (recipients.isEmpty()) return "Missing phone number or API key."
                     val results = mutableListOf<String>()
-                    for ((i, pair) in recipients.withIndex()) {
-                        val (phone, key) = pair
-                        val label = "Recipient ${i + 1}"
+                    for ((slot, phone, key) in recipients) {
+                        val label = "Recipient ${slot + 1}"
                         val url = "https://api.callmebot.com/whatsapp.php" +
-                            "?phone=$phone" +
+                            "?phone=${Uri.encode(phone)}" +
                             "&text=${Uri.encode("KSafe test — alerts are configured correctly.")}" +
-                            "&apikey=$key"
+                            "&apikey=${Uri.encode(key)}"
                         val response = withTimeoutOrNull(ATTEMPT_TIMEOUT_MS) { karooSystem.httpRequest("GET", url) }
                         if (response == null) {
                             results.add("$label: no response — check connection.")
@@ -82,8 +205,9 @@ class Sender(
                         // (testSend reporting "sent ✓" while sendAlert silently fails
                         // is the worst-of-both-worlds UX).
                         when {
-                            isCallMeBotSuccess(response.statusCode, body) ->
-                                results.add("$label: sent ✓")
+                            isCallMeBotSuccess(response.statusCode, body) -> {
+                                results.add("$label: sent ✓"); anySucceeded = true
+                            }
                             body.contains("not authorized", ignoreCase = true) ||
                             body.contains("apikey", ignoreCase = true) ->
                                 results.add("$label: invalid API key.")
@@ -95,11 +219,11 @@ class Sender(
 
                 ProviderType.PUSHOVER -> {
                     if (config.apiKey.isBlank())  return "Missing App Token."
-                    if (config.userKey.isBlank())  return "Missing User Key."
+                    if (listOf(config.userKey, config.userKey2, config.userKey3).all { it.isBlank() }) return "Missing User Key."
                     val userKeys = listOf(config.userKey, config.userKey2, config.userKey3)
-                        .filter { it.isNotBlank() }
                     val results = mutableListOf<String>()
                     for ((i, key) in userKeys.withIndex()) {
+                        if (key.isBlank()) continue
                         val label = "Recipient ${i + 1}"
                         val jsonBody = buildJsonObject {
                             put("token",   config.apiKey)
@@ -122,8 +246,9 @@ class Sender(
                             when {
                                 // K2 — anchored check, see attemptSend Pushover branch.
                                 response.statusCode in 200..299 &&
-                                    (body.contains("\"status\":1,") || body.contains("\"status\":1}")) ->
-                                    results.add("$label: sent ✓")
+                                    (body.contains("\"status\":1,") || body.contains("\"status\":1}")) -> {
+                                    results.add("$label: sent ✓"); anySucceeded = true
+                                }
                                 response.statusCode == 429 ->
                                     results.add("$label: rate limited — try again later.")
                                 else -> {
@@ -156,8 +281,10 @@ class Sender(
                         )
                     } ?: return "No response — check your internet connection."
                     when {
-                        response.statusCode in 200..299 ->
+                        response.statusCode in 200..299 -> {
+                            anySucceeded = true
                             "Test sent! Open the ntfy app and check your topic."
+                        }
                         response.statusCode == 403 ->
                             "Access denied — the topic may be protected or reserved."
                         else -> "Error ${response.statusCode}: ${response.body?.toString(Charsets.UTF_8)?.take(120) ?: ""}"
@@ -166,11 +293,11 @@ class Sender(
 
                 ProviderType.TELEGRAM -> {
                     if (config.apiKey.isBlank()) return "Missing Bot Token."
-                    if (config.userKey.isBlank()) return "Missing Chat ID."
+                    if (listOf(config.userKey, config.userKey2, config.userKey3).all { it.isBlank() }) return "Missing Chat ID."
                     val chatIds = listOf(config.userKey, config.userKey2, config.userKey3)
-                        .filter { it.isNotBlank() }
                     val results = mutableListOf<String>()
                     for ((i, chatId) in chatIds.withIndex()) {
+                        if (chatId.isBlank()) continue
                         val label = "Chat ${i + 1}"
                         val jsonBody = buildJsonObject {
                             put("chat_id", chatId.trim())
@@ -189,8 +316,9 @@ class Sender(
                         } else {
                             val body = response.body?.toString(Charsets.UTF_8) ?: ""
                             when {
-                                response.statusCode in 200..299 && body.contains("\"ok\":true") ->
-                                    results.add("$label: sent ✓")
+                                response.statusCode in 200..299 && body.contains("\"ok\":true") -> {
+                                    results.add("$label: sent ✓"); anySucceeded = true
+                                }
                                 response.statusCode == 401 ->
                                     results.add("$label: invalid Bot Token.")
                                 response.statusCode == 400 && body.contains("chat not found", ignoreCase = true) ->
@@ -216,17 +344,44 @@ class Sender(
         } catch (e: Exception) {
             "Unexpected error: ${e.message}"
         }
+        if (anySucceeded) markSendSucceeded(provider)
+        return message
+    }
+
+    /** Stamp [SenderConfig.lastSuccessfulSendMs] = now for [provider] when a send actually reaches
+     *  the provider ([testSend], [sendAlert] delivered, or [sendInfoOutcome] delivered). Clears the
+     *  "not verified" nudge and resets the 30-day staleness clock.
+     *
+     *  Uses [ConfigurationManager.updateSenderConfigs] (ATOMIC RMW inside one `dataStore.edit{}`) so
+     *  it can't lost-update a concurrent credential edit. Throttled to ≤1 write/hour per provider
+     *  (the staleness window is 30 days → sub-hour precision is irrelevant), which also avoids
+     *  write amplification across ride-start/end + custom-message taps. Wrapped in try/catch:
+     *  this is called on the emergency [sendAlert] path AFTER delivery — a persist failure
+     *  (e.g. disk full) must NEVER propagate and skip the caller's partial-delivery handling. */
+    private suspend fun markSendSucceeded(provider: ProviderType) {
+        val now = System.currentTimeMillis()
+        try {
+            configManager.updateSenderConfigs { list ->
+                val idx = list.indexOfFirst { it.provider == provider }
+                if (idx < 0 || now - list[idx].lastSuccessfulSendMs < STAMP_MIN_INTERVAL_MS) list
+                else list.toMutableList().also { it[idx] = it[idx].copy(lastSuccessfulSendMs = now) }
+            }
+        } catch (e: kotlinx.coroutines.CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            Timber.w(e, "markSendSucceeded persist failed for $provider — ignoring (non-critical)")
+        }
     }
 
     // ─── Retry logic ──────────────────────────────────────────────────────────
 
-    private suspend fun sendWithRetry(message: String, provider: ProviderType, isEmergency: Boolean): Boolean {
+    private suspend fun sendWithRetry(message: String, provider: ProviderType, isEmergency: Boolean): SendOutcome {
         // Load config ONCE before the retry loop — avoids up to 9 DataStore reads + JSON
         // deserialisations (one per attempt) for a value that cannot change mid-emergency.
         val configs = configManager.loadSenderConfigFlow().first()
         val config  = configs.find { it.provider == provider } ?: run {
             Timber.e("sendWithRetry: no config found for $provider")
-            return false
+            return SendOutcome.hardFail(FailureCause.NO_CONFIG)
         }
 
         // Pre-flight credential validation — every provider's attemptSend short-circuits
@@ -236,17 +391,27 @@ class Sender(
         // immediately instead of after half an hour.
         if (!hasUsableCredentials(provider, config)) {
             Timber.e("sendWithRetry: blank/missing credentials for $provider — failing fast without retries")
-            return false
+            return SendOutcome.hardFail(FailureCause.NO_CREDENTIALS)
         }
 
         var totalAttempts = 0
         var currentCycle = 0
+        // Outcome of the most recent attempt — returned on exhaustion so a caller still
+        // sees the eligible count even when nothing was delivered.
+        var lastOutcome: SendOutcome = SendOutcome.HARD_FAIL
 
         return try {
             while (currentCycle < maxCycles) {
-                repeat(attemptsPerCycle) { _ ->
+                repeat(attemptsPerCycle) { attemptInCycle ->
                     totalAttempts++
-                    if (totalAttempts > 1) {
+                    // Inter-attempt wait applies WITHIN a cycle only. The first attempt of
+                    // each cycle must not pre-delay: cycle 0's first attempt fires
+                    // immediately, and cycles 1/2's first attempt already waited the
+                    // cycleDelayMinutes gap below. Guarding on the global totalAttempts
+                    // counter (instead of this per-cycle index) double-charged that first
+                    // attempt an extra delaySeconds[cycle] — worst case ~41 min vs the
+                    // intended ~30.
+                    if (attemptInCycle > 0) {
                         val waitSeconds = delaySeconds[currentCycle]
                         Timber.d("Retry attempt $totalAttempts, waiting ${waitSeconds}s")
                         delay(waitSeconds * 1000L)
@@ -258,21 +423,22 @@ class Sender(
                     // escape the repeat/while, and hit the OUTER catch(Exception) below
                     // — collapsing the entire 9-attempt × 30-min retry budget into one
                     // failed try and silently dropping the rider's emergency alert.
-                    val result = try {
+                    val outcome = try {
                         withTimeoutOrNull(ATTEMPT_BLOCK_TIMEOUT_MS) {
                             attemptSend(message, provider, isEmergency, config)
-                        } == true
+                        } ?: SendOutcome.hardFail(FailureCause.TIMEOUT)   // block-level timeout
                     } catch (e: kotlinx.coroutines.CancellationException) {
                         // Cancellation must still propagate (caller scope tear-down).
                         throw e
                     } catch (e: Exception) {
                         Timber.w(e, "Attempt $totalAttempts threw — treating as failed, continuing retry chain")
-                        false
+                        SendOutcome.HARD_FAIL
                     }
+                    lastOutcome = outcome
 
-                    if (result) {
-                        Timber.d("Message sent on attempt $totalAttempts")
-                        return true
+                    if (outcome.anyOk) {
+                        Timber.d("Message sent on attempt $totalAttempts (delivered=${outcome.delivered}/${outcome.eligible})")
+                        return outcome
                     }
                 }
 
@@ -284,7 +450,16 @@ class Sender(
                 currentCycle++
             }
             Timber.e("Message failed after $totalAttempts attempts")
-            false
+            // Tag the terminal failure cause for the post-incident calibration trail
+            // (ALERT_FAIL payload). A block-level timeout on the FINAL attempt → TIMEOUT
+            // (no usable connection); any other non-OK terminal outcome → EXHAUSTED (the
+            // provider was reachable but rejected every attempt — e.g. 401 / chat-not-found,
+            // or a per-attempt exception). Reaching here always means delivered == 0 (the
+            // loop returns early on anyOk), so copying cause onto lastOutcome is safe.
+            val terminalCause =
+                if (lastOutcome.cause == FailureCause.TIMEOUT) FailureCause.TIMEOUT
+                else FailureCause.EXHAUSTED
+            lastOutcome.copy(cause = terminalCause)
         } catch (e: kotlinx.coroutines.CancellationException) {
             // Cancellation must propagate (caller scope tear-down). Swallowing here
             // would leave the parent coroutine running past the cancellation point.
@@ -294,7 +469,7 @@ class Sender(
             // throw path; this remains for any unexpected exception escaping the
             // surrounding control flow (delay between cycles, config load, etc.).
             Timber.e(e, "Retry error: ${e.message}")
-            false
+            SendOutcome.hardFail(FailureCause.UNKNOWN)
         }
     }
 
@@ -310,14 +485,10 @@ class Sender(
      * to send — the original slot-1-only check would have made the pre-flight return
      * false and silently swallow the entire retry budget.
      */
-    private fun hasUsableCredentials(provider: ProviderType, config: SenderConfig): Boolean = when (provider) {
-        ProviderType.CALLMEBOT -> callMeBotRecipients(config).isNotEmpty() && config.apiKey.isNotBlank()
-        ProviderType.PUSHOVER  -> config.apiKey.isNotBlank() &&
-            listOf(config.userKey, config.userKey2, config.userKey3).any { it.isNotBlank() }
-        ProviderType.NTFY      -> config.apiKey.isNotBlank()
-        ProviderType.TELEGRAM  -> config.apiKey.isNotBlank() &&
-            listOf(config.userKey, config.userKey2, config.userKey3).any { it.isNotBlank() }
-    }
+    // Delegates to [providerReadiness] so the retry-loop fast-fail and the rider-facing
+    // "provider incomplete" warning (Provider tab + ride start) share one source of truth.
+    private fun hasUsableCredentials(provider: ProviderType, config: SenderConfig): Boolean =
+        providerReadiness(provider, config) is ProviderReadiness.Ready
 
     /**
      * CallMeBot success predicate. The provider returns HTTP 200 even on most failure
@@ -369,9 +540,9 @@ class Sender(
 
     // ─── Provider implementations ─────────────────────────────────────────────
 
-    private suspend fun attemptSend(message: String, provider: ProviderType, isEmergency: Boolean): Boolean {
+    private suspend fun attemptSend(message: String, provider: ProviderType, isEmergency: Boolean): SendOutcome {
         val configs = configManager.loadSenderConfigFlow().first()
-        val config = configs.find { it.provider == provider } ?: return false
+        val config = configs.find { it.provider == provider } ?: return SendOutcome.HARD_FAIL
         return attemptSend(message, provider, isEmergency, config)
     }
 
@@ -380,16 +551,26 @@ class Sender(
         provider: ProviderType,
         isEmergency: Boolean,
         config: SenderConfig,
-    ): Boolean {
+    ): SendOutcome {
 
         return when (provider) {
             ProviderType.CALLMEBOT -> {
-                if (config.phoneNumber.isBlank() || config.apiKey.isBlank()) return false
                 val encodedMsg = Uri.encode(message)
                 val recipients = callMeBotRecipients(config)
-                var anyOk = false
-                for ((phone, key) in recipients) {
-                    val url = "https://api.callmebot.com/whatsapp.php?phone=$phone&text=$encodedMsg&apikey=$key"
+                val send = recipientsToSend(recipients.map { it.first }, config::scopeForSlot, isEmergency)
+                // info filtered to zero = intentional no-op (success); emergency with no
+                // configured contact = hard failure (the scope fallback already widened to
+                // all configured slots, so an empty set means there is genuinely no one).
+                if (send.isEmpty()) return if (isEmergency) SendOutcome.HARD_FAIL else SendOutcome.NO_OP
+                var delivered = 0
+                var anyResponse = false
+                var anyTimeout = false
+                for ((slot, phone, key) in recipients) {
+                    if (slot !in send) continue
+                    // URL-encode phone + apikey: an international phone entered with a leading
+                    // '+' would otherwise be decoded server-side as a space (the emergency alert
+                    // silently fails to deliver). text is already encoded above.
+                    val url = "https://api.callmebot.com/whatsapp.php?phone=${Uri.encode(phone)}&text=$encodedMsg&apikey=${Uri.encode(key)}"
                     // Per-recipient timeout so a hung first recipient doesn't starve
                     // recipients 2/3 of the outer attempt's 30 s block.
                     val response = withTimeoutOrNull(ATTEMPT_TIMEOUT_MS) {
@@ -397,8 +578,10 @@ class Sender(
                     }
                     if (response == null) {
                         Timber.e("CallMeBot timeout (phone=$phone)")
+                        anyTimeout = true
                         continue
                     }
+                    anyResponse = true
                     val body = response.body?.toString(Charsets.UTF_8) ?: ""
                     // J1 — CallMeBot returns HTTP 200 with various failure bodies that
                     // do NOT contain the literal word "ERROR" (e.g. "APIKEY_INVALID",
@@ -409,18 +592,23 @@ class Sender(
                     // Require a positive success marker ("Message Sent" or "Message
                     // queued"), then double-check no known failure substring is present.
                     val ok = isCallMeBotSuccess(response.statusCode, body)
-                    if (ok) anyOk = true
+                    if (ok) delivered++
                     else Timber.e("CallMeBot error (phone=$phone) ${response.statusCode}: $body")
                 }
-                anyOk
+                SendOutcome(delivered, send.size, cause = timeoutOrNone(delivered, anyResponse, anyTimeout))
             }
 
             ProviderType.PUSHOVER -> {
-                if (config.apiKey.isBlank() || config.userKey.isBlank()) return false
-                val userKeys = listOf(config.userKey, config.userKey2, config.userKey3)
-                    .filter { it.isNotBlank() }
-                var anyOk = false
-                for (key in userKeys) {
+                if (config.apiKey.isBlank()) return SendOutcome.HARD_FAIL
+                val allKeys = listOf(config.userKey, config.userKey2, config.userKey3)
+                val configuredSlots = allKeys.indices.filter { allKeys[it].isNotBlank() }
+                val send = recipientsToSend(configuredSlots, config::scopeForSlot, isEmergency)
+                if (send.isEmpty()) return if (isEmergency) SendOutcome.HARD_FAIL else SendOutcome.NO_OP
+                var delivered = 0
+                var anyResponse = false
+                var anyTimeout = false
+                for (slot in send) {
+                    val key = allKeys[slot]
                     val jsonBody = buildJsonObject {
                         put("token", config.apiKey)
                         put("user", key)
@@ -440,8 +628,10 @@ class Sender(
                     }
                     if (response == null) {
                         Timber.e("Pushover timeout (userKey=$key)")
+                        anyTimeout = true
                         continue
                     }
+                    anyResponse = true
                     val body = response.body?.toString(Charsets.UTF_8) ?: ""
                     // K2 — anchored substring check. The previous `"status":1` matched
                     // both `"status":1,` (real success) AND `"status":10,` / `"status":11,`
@@ -451,14 +641,18 @@ class Sender(
                     // terminator (`,` for non-last field, `}` for the last field).
                     val ok = response.statusCode in 200..299 &&
                         (body.contains("\"status\":1,") || body.contains("\"status\":1}"))
-                    if (ok) anyOk = true
+                    if (ok) delivered++
                     else Timber.e("Pushover error (userKey=$key) ${response.statusCode}: $body")
                 }
-                anyOk
+                SendOutcome(delivered, send.size, cause = timeoutOrNone(delivered, anyResponse, anyTimeout))
             }
 
             ProviderType.NTFY -> {
-                if (config.apiKey.isBlank()) return false
+                if (config.apiKey.isBlank()) return SendOutcome.HARD_FAIL
+                if (recipientsToSend(listOf(0), config::scopeForSlot, isEmergency).isEmpty()) {
+                    Timber.d("ntfy: skipped by per-recipient filter (scope=${config.recipient1Alerts})")
+                    return if (isEmergency) SendOutcome.HARD_FAIL else SendOutcome.NO_OP
+                }
                 val title    = if (isEmergency) "KSafe Emergency" else "KSafe"
                 val priority = if (isEmergency) "urgent" else "default"
                 val response = withTimeoutOrNull(ATTEMPT_TIMEOUT_MS) {
@@ -475,19 +669,27 @@ class Sender(
                 }
                 if (response == null) {
                     Timber.e("ntfy timeout")
-                    return false
+                    // Single recipient: a null response means the one attempt never reached the
+                    // server → no usable connection. Tag TIMEOUT so the terminal cause is accurate
+                    // (else it would be misreported as EXHAUSTED = "reachable but rejected").
+                    return SendOutcome(0, 1, cause = FailureCause.TIMEOUT)
                 }
                 val ok = response.statusCode in 200..299
                 if (!ok) Timber.e("ntfy error ${response.statusCode}: ${response.body?.toString(Charsets.UTF_8)}")
-                ok
+                SendOutcome(if (ok) 1 else 0, 1)
             }
 
             ProviderType.TELEGRAM -> {
-                if (config.apiKey.isBlank() || config.userKey.isBlank()) return false
-                val chatIds = listOf(config.userKey, config.userKey2, config.userKey3)
-                    .filter { it.isNotBlank() }
-                var anyOk = false
-                for (chatId in chatIds) {
+                if (config.apiKey.isBlank()) return SendOutcome.HARD_FAIL
+                val allChatIds = listOf(config.userKey, config.userKey2, config.userKey3)
+                val configuredSlots = allChatIds.indices.filter { allChatIds[it].isNotBlank() }
+                val send = recipientsToSend(configuredSlots, config::scopeForSlot, isEmergency)
+                if (send.isEmpty()) return if (isEmergency) SendOutcome.HARD_FAIL else SendOutcome.NO_OP
+                var delivered = 0
+                var anyResponse = false
+                var anyTimeout = false
+                for (slot in send) {
+                    val chatId = allChatIds[slot]
                     val jsonBody = buildJsonObject {
                         put("chat_id", chatId.trim())
                         put("text", message)
@@ -503,34 +705,37 @@ class Sender(
                     }
                     if (response == null) {
                         Timber.e("Telegram timeout (chatId=$chatId)")
+                        anyTimeout = true
                         continue
                     }
+                    anyResponse = true
                     val body = response.body?.toString(Charsets.UTF_8) ?: ""
                     val ok = response.statusCode in 200..299 && body.contains("\"ok\":true")
-                    if (ok) anyOk = true
+                    if (ok) delivered++
                     else Timber.e("Telegram error (chatId=$chatId) ${response.statusCode}: $body")
                 }
-                anyOk
+                SendOutcome(delivered, send.size, cause = timeoutOrNone(delivered, anyResponse, anyTimeout))
             }
         }
     }
 
     /**
-     * Builds the list of `(phone, apiKey)` pairs to deliver a CallMeBot message to.
+     * Builds the list of `(slot, phone, apiKey)` triples to deliver a CallMeBot message to.
      * CallMeBot cannot fan-out a single request, so every recipient needs its own
      * credential pair. Slots with either half blank are dropped — three slots total,
-     * mirroring Pushover / Telegram.
+     * mirroring Pushover / Telegram. The slot index (0/1/2) is preserved so the
+     * per-recipient alert-scope filter can gate individual recipients.
      */
-    private fun callMeBotRecipients(config: SenderConfig): List<Pair<String, String>> {
-        fun pair(phone: String, key: String): Pair<String, String>? {
+    private fun callMeBotRecipients(config: SenderConfig): List<Triple<Int, String, String>> {
+        fun entry(slot: Int, phone: String, key: String): Triple<Int, String, String>? {
             val p = phone.trim()
             val k = key.trim()
-            return if (p.isNotBlank() && k.isNotBlank()) p to k else null
+            return if (p.isNotBlank() && k.isNotBlank()) Triple(slot, p, k) else null
         }
         return listOfNotNull(
-            pair(config.phoneNumber,  config.apiKey),
-            pair(config.phoneNumber2, config.apiKey2),
-            pair(config.phoneNumber3, config.apiKey3),
+            entry(0, config.phoneNumber,  config.apiKey),
+            entry(1, config.phoneNumber2, config.apiKey2),
+            entry(2, config.phoneNumber3, config.apiKey3),
         )
     }
 }

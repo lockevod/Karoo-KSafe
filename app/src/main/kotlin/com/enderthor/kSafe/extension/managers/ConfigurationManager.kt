@@ -2,6 +2,8 @@ package com.enderthor.kSafe.extension.managers
 
 import android.content.Context
 import androidx.datastore.preferences.core.edit
+import androidx.datastore.preferences.core.intPreferencesKey
+import androidx.datastore.preferences.core.longPreferencesKey
 import androidx.datastore.preferences.core.stringPreferencesKey
 import com.enderthor.kSafe.activity.dataStore
 import com.enderthor.kSafe.data.EmergencyState
@@ -23,11 +25,15 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.catch
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.filterNotNull
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.serialization.encodeToString
 import timber.log.Timber
@@ -40,6 +46,8 @@ class ConfigurationManager(private val context: Context) {
     private val wellnessHistoryKey = stringPreferencesKey("wellnesshistory")
     private val fuelingStateKey = stringPreferencesKey("fuelingstate")
     private val installIdKey = stringPreferencesKey("install_id")
+    private val updateRestartCountKey = intPreferencesKey("update_restart_count")
+    private val updateNoticeEpochDayKey = longPreferencesKey("update_notice_epoch_day")
 
     // ─── Install ID ───────────────────────────────────────────────────────────
 
@@ -70,11 +78,50 @@ class ConfigurationManager(private val context: Context) {
         return fresh
     }
 
+    /**
+     * Increments and returns the persisted count of extension-service starts.
+     * Drives the update-notice cadence (show on every Nth restart). Stored as a
+     * scalar pref, outside the KSafeConfig JSON blob, so config resets don't reset it.
+     */
+    suspend fun incrementUpdateRestartCount(): Int {
+        var next = 1
+        context.dataStore.edit { prefs ->
+            next = (prefs[updateRestartCountKey] ?: 0) + 1
+            prefs[updateRestartCountKey] = next
+        }
+        return next
+    }
+
+    /** Epoch-day (UTC; currentTimeMillis / 86_400_000) of the last update notice shown, or 0 if never. */
+    suspend fun getUpdateNoticeEpochDay(): Long =
+        context.dataStore.data.first()[updateNoticeEpochDayKey] ?: 0L
+
+    /** Records that the update notice was shown on [epochDay] (caps it to ≤1/day). */
+    suspend fun setUpdateNoticeEpochDay(epochDay: Long) {
+        context.dataStore.edit { it[updateNoticeEpochDayKey] = epochDay }
+    }
+
     // ─── KSafeConfig ──────────────────────────────────────────────────────────
 
     suspend fun saveConfig(config: KSafeConfig) {
         context.dataStore.edit { t ->
             t[configKey] = jsonForStorage.encodeToString(listOf(config))
+        }
+    }
+
+    /**
+     * Atomic read-modify-write of the config blob: decode (+ migrate) → [transform] → encode
+     * all run inside ONE DataStore [edit] transaction. Unlike a separate `loadConfigFlow()
+     * .first()` + [saveConfig], a concurrent writer (a UI settings save in the other process,
+     * a parallel profile-learn) cannot interleave between the read and the write and clobber
+     * unrelated fields. Persists only when [transform] actually changes the config (data-class
+     * equality), so a no-op transform doesn't churn a redundant write.
+     */
+    suspend fun updateConfig(transform: (KSafeConfig) -> KSafeConfig) {
+        context.dataStore.edit { prefs ->
+            val current = decodeConfig(prefs[configKey] ?: defaultKSafeConfigJson)
+            val updated = transform(current)
+            if (updated != current) prefs[configKey] = jsonForStorage.encodeToString(listOf(updated))
         }
     }
 
@@ -128,18 +175,59 @@ class ConfigurationManager(private val context: Context) {
         }
     }
 
+    /**
+     * ATOMIC read-modify-write of the sender-config blob: the decode + [transform] + encode all
+     * run inside a single `dataStore.edit {}`, which DataStore serializes — so concurrent writers
+     * (e.g. a service-side send stamping `lastSuccessfulSendMs` and a UI-side credential edit)
+     * cannot lost-update each other. Skips the write when [transform] returns an unchanged list, so
+     * a no-op stamp (e.g. throttled within the hour) costs nothing. Prefer this over
+     * load-then-[saveSenderConfigs] for any RMW.
+     */
+    suspend fun updateSenderConfigs(transform: (List<SenderConfig>) -> List<SenderConfig>) {
+        context.dataStore.edit { prefs ->
+            val raw = (prefs[senderConfigKey] ?: defaultSenderConfigJson)
+                .replace("\"SIMPLEPUSH\"", "\"NTFY\"")
+            val current = try {
+                jsonWithUnknownKeys.decodeFromString<List<SenderConfig>>(raw)
+            } catch (e: Throwable) {
+                lastGoodSenderConfigs ?: emptyList()
+            }
+            val updated = transform(current)
+            if (updated != current) {
+                lastGoodSenderConfigs = updated
+                prefs[senderConfigKey] = jsonForStorage.encodeToString(updated)
+            }
+        }
+    }
+
+    /** Last successfully-decoded sender configs. Returned by [loadSenderConfigFlow] when a
+     *  later decode throws, so a transient/structural decode failure can't silently wipe the
+     *  rider's emergency contacts mid-session. */
+    @Volatile private var lastGoodSenderConfigs: List<SenderConfig>? = null
+
     fun loadSenderConfigFlow(): Flow<List<SenderConfig>> {
         return context.dataStore.data.map { prefs ->
             val raw = (prefs[senderConfigKey] ?: defaultSenderConfigJson)
                 .replace("\"SIMPLEPUSH\"", "\"NTFY\"") // migration: SIMPLEPUSH renamed to NTFY
             try {
-                jsonWithUnknownKeys.decodeFromString<List<SenderConfig>>(raw)
+                val decoded = jsonWithUnknownKeys.decodeFromString<List<SenderConfig>>(raw)
+                lastGoodSenderConfigs = decoded
+                decoded
             } catch (e: Throwable) {
                 val snippet = raw.take(200).replace("\n", " ")
                 Timber.e(e, "Failed to read SenderConfig (%s: %s) — raw[0..200] = %s",
                     e.javaClass.simpleName, e.message, snippet)
-                emptyList()
+                lastGoodSenderConfigs ?: emptyList()
             }
+        }.catch { e ->
+            // Upstream DataStore read failure (IOException) — distinct from the JSON-decode
+            // failure handled inside map above. Without this the flow terminates and a
+            // loadSenderConfigFlow().first() (now called UNDER settingsWriteMutex by
+            // updateSenderConfig) would hang forever, holding the lock and wedging ALL settings
+            // writes. Emit last-good (or empty) so .first() returns and the lock is released.
+            if (e is CancellationException) throw e
+            Timber.e(e, "SenderConfig DataStore read failed — falling back to last-good/empty so consumers don't hang")
+            emit(lastGoodSenderConfigs ?: emptyList())
         }.distinctUntilChanged()
     }
 
@@ -165,6 +253,16 @@ class ConfigurationManager(private val context: Context) {
                     e.javaClass.simpleName, e.message, snippet)
                 EmergencyState()
             }
+        }.catch { e ->
+            // Upstream DataStore read failure (IOException) — distinct from the decode failure
+            // handled inside map. Without this, the emergency-resume `loadEmergencyStateFlow()
+            // .first()` (KSafeExtension.initializeSystem) hangs forever on a cold-boot storage
+            // error — the same error the config `.catch` now survives — so a persisted in-flight
+            // countdown would never resume. Emit the default (IDLE, nothing to resume) so the
+            // resume path completes instead of wedging.
+            if (e is CancellationException) throw e
+            Timber.e(e, "EmergencyState DataStore read failed — emitting default IDLE so the resume path doesn't hang")
+            emit(EmergencyState())
         }
     }
 
@@ -267,12 +365,41 @@ class ConfigurationManager(private val context: Context) {
                     // `.filterNotNull()` so external callers never observe the null.
                     val seed = MutableStateFlow<KSafeConfig?>(null)
                     sharedJob = sharedScope.launch {
-                        context.applicationContext.dataStore.data
-                            .map { prefs ->
-                                mgr.decodeConfig(prefs[mgr.configKey] ?: defaultKSafeConfigJson)
+                        // Resilient re-subscribing collector (SAFETY-CRITICAL). dataStore.data throws
+                        // on an IOException (cold-boot read, eMMC hiccup, corruption); a plain collect
+                        // would then END for the whole process — `seed` frozen forever, so EVERY
+                        // loadConfigFlow() consumer (ride-state gate, emergency-resume `.first()`,
+                        // ride-profile `.first()`, all 10+ tappable fields) would hang or stop updating.
+                        // Instead RE-SUBSCRIBE with capped backoff: a TRANSIENT error recovers, and even
+                        // a PERSISTENT one keeps retrying (never permanently dead) while consumers keep
+                        // seeing last-good. A plain `.catch` can't do this — once it handles the error the
+                        // downstream completes and the collector exits; only re-subscription survives.
+                        // Cold boot (seed still null) seeds defaults so nothing hangs; a MID-SESSION error
+                        // KEEPS last-good (never reverts to defaults, which would re-enable detectors the
+                        // rider disabled / reset crash thresholds mid-ride). CancellationException is
+                        // rethrown so teardown stays transparent.
+                        var backoffMs = 500L
+                        while (isActive) {
+                            try {
+                                context.applicationContext.dataStore.data
+                                    .map { prefs ->
+                                        mgr.decodeConfig(prefs[mgr.configKey] ?: defaultKSafeConfigJson)
+                                    }
+                                    .distinctUntilChanged()
+                                    .collect {
+                                        seed.value = it
+                                        backoffMs = 500L   // healthy stream → reset backoff
+                                    }
+                                break   // dataStore.data is effectively infinite; a clean completion = stop.
+                            } catch (e: CancellationException) {
+                                throw e
+                            } catch (e: Exception) {
+                                Timber.e(e, "Shared config read failed — re-subscribing in ${backoffMs}ms (keeping last-good${if (seed.value == null) "; seeding defaults" else ""})")
+                                if (seed.value == null) seed.value = mgr.decodeConfig(defaultKSafeConfigJson)
+                                delay(backoffMs)
+                                backoffMs = (backoffMs * 2).coerceAtMost(30_000L)
                             }
-                            .distinctUntilChanged()
-                            .collect { seed.value = it }
+                        }
                     }
                     seed.asStateFlow().also { sharedState = it }
                 }

@@ -1,12 +1,18 @@
 package com.enderthor.kSafe.extension.managers
 
 import android.content.Context
+import android.provider.Settings
 import com.enderthor.kSafe.R
 import com.enderthor.kSafe.data.EmergencyReason
 import com.enderthor.kSafe.data.EmergencyState
 import com.enderthor.kSafe.data.EmergencyStatus
 import com.enderthor.kSafe.data.IncidentResponseLevel
 import com.enderthor.kSafe.data.KSafeConfig
+import com.enderthor.kSafe.data.SenderConfig
+import com.enderthor.kSafe.extension.ProviderReadiness
+import com.enderthor.kSafe.extension.providerReadiness
+import com.enderthor.kSafe.extension.isSendStale
+import kotlinx.coroutines.flow.first
 import com.enderthor.kSafe.extension.Sender
 import com.enderthor.kSafe.extension.util.ALERT_DETAIL_MAX_CHARS
 import com.enderthor.kSafe.extension.util.ALERT_TITLE_MAX_CHARS
@@ -83,6 +89,16 @@ class EmergencyManager(
      * alert, so crash detection must be fully re-armed.
      */
     private val onCrashEmergencyCancelled: (() -> Unit)? = null,
+    /**
+     * Tells the manager whether the rider is currently on the Karoo ride screen
+     * (RideState.Recording OR Paused — autopause at a light/café keeps the data screen up).
+     * Wired by KSafeExtension to its live ride-state. Used by [notifyDeliveryFailure] to pick
+     * a single feedback channel: InRideAlert on the ride screen, system overlay off it.
+     * Evaluated lazily at failure time (which can be ~30 min after the alert started, often
+     * post-ride), not captured at construction. Defaults to false so unit tests / standalone
+     * construction route to the overlay/notification path.
+     */
+    private val isOnRideScreen: () -> Boolean = { false },
 ) {
     companion object {
 
@@ -249,6 +265,77 @@ class EmergencyManager(
         Timber.d("Emergency cancelled by user (reason=$cancelledReason, after ${howLongMs}ms)")
     }
 
+    /**
+     * Clears any lingering delivery-failure / partial-delivery info overlay left over from a
+     * previous ride. The failure overlay is intentionally sticky (no auto-dismiss) so a rider
+     * can't miss "your SOS reached nobody" — but it must not bleed into the *next* ride. Called
+     * at the start of a fresh recording. Safe/idempotent when no overlay is showing.
+     */
+    fun clearDeliveryNotice() {
+        sosOverlay.removeInfoOverlay()
+    }
+
+    /**
+     * Ride-start safety net for the SELECTED messaging provider. Two cases, both surfaced as an
+     * InRideAlert (the same channel as WARNING incidents — a SystemNotification doesn't surface
+     * over the ride screen) + a calibration audit row. Non-blocking — only warns:
+     *  1. **Incomplete** (local credential check): emergencies would silently fast-fail with
+     *     `NO_CREDENTIALS` (the class found in session 327846_40d50a, 2026-06-07) → red warning.
+     *  2. **Stale** (worked before but no successful send in > 30 days): credentials may have
+     *     rotted (revoked key / deleted bot / expired trial) → amber "please re-test" reminder.
+     *     A provider that has NEVER sent is left to the Provider-tab nudge, not nagged here.
+     */
+    suspend fun warnIfProviderIncomplete(config: KSafeConfig) {
+        val active = config.activeProvider
+        val senderConfig = configManager.loadSenderConfigFlow().first()
+            .find { it.provider == active } ?: SenderConfig(provider = active)
+        when (val readiness = providerReadiness(active, senderConfig)) {
+            is ProviderReadiness.Incomplete -> {
+                karooSystem.dispatch(InRideAlert(
+                    id = "ksafe-provider-incomplete-${System.currentTimeMillis()}",
+                    icon = R.drawable.ic_ksafe,
+                    title = context.getString(R.string.provider_warn_ridestart_title),
+                    detail = context.getString(providerMissingResId(readiness.missing)),
+                    autoDismissMs = 10_000L,
+                    backgroundColor = R.color.alert_orange,
+                    textColor = R.color.alert_text_white,
+                ))
+                calibLogger?.log(CalibrationLogger.Event.PROVIDER_NOT_READY) {
+                    "provider=$active,missing=${readiness.missing.name}"
+                }
+                Timber.d("Provider-incomplete warning dispatched: $active / ${readiness.missing}")
+            }
+            ProviderReadiness.Ready -> {
+                val now = System.currentTimeMillis()
+                if (isSendStale(senderConfig.lastSuccessfulSendMs, now)) {
+                    karooSystem.dispatch(InRideAlert(
+                        id = "ksafe-provider-stale-${now}",
+                        icon = R.drawable.ic_ksafe,
+                        title = context.getString(R.string.provider_warn_stale_title),
+                        detail = context.getString(R.string.provider_warn_stale_detail),
+                        autoDismissMs = 10_000L,
+                        backgroundColor = R.color.alert_orange,
+                        textColor = R.color.alert_text_white,
+                    ))
+                    val days = (now - senderConfig.lastSuccessfulSendMs) / 86_400_000L
+                    calibLogger?.log(CalibrationLogger.Event.PROVIDER_STALE) {
+                        "provider=$active,days_since=$days"
+                    }
+                    Timber.d("Provider-stale reminder dispatched: $active ($days d)")
+                }
+            }
+        }
+    }
+
+    private fun providerMissingResId(m: ProviderReadiness.Missing): Int = when (m) {
+        ProviderReadiness.Missing.CALLMEBOT_PHONE_OR_KEY -> R.string.provider_missing_callmebot
+        ProviderReadiness.Missing.PUSHOVER_APP_TOKEN     -> R.string.provider_missing_pushover_token
+        ProviderReadiness.Missing.PUSHOVER_USER_KEY      -> R.string.provider_missing_pushover_user
+        ProviderReadiness.Missing.NTFY_TOPIC             -> R.string.provider_missing_ntfy_topic
+        ProviderReadiness.Missing.TELEGRAM_BOT_TOKEN     -> R.string.provider_missing_telegram_token
+        ProviderReadiness.Missing.TELEGRAM_CHAT_ID       -> R.string.provider_missing_telegram_chat
+    }
+
     fun startCheckinTimer(config: KSafeConfig) {
         if (!config.checkinEnabled) return
         checkinJob?.cancel()
@@ -333,8 +420,6 @@ class EmergencyManager(
         // than the full interval, and a resume past the deadline fires promptly.
         val elapsed = (System.currentTimeMillis() - startTime).coerceIn(0L, intervalMs)
         val expiryDelay = intervalMs - elapsed
-        val warningDelay = (intervalMs - 10 * 60_000L) - elapsed
-
         // Update UI state synchronously so TimerDataType sees the checkin state immediately.
         _uiState.value = EmergencyState(
             checkinEnabled = true,
@@ -342,35 +427,86 @@ class EmergencyManager(
             checkinIntervalMinutes = config.checkinIntervalMinutes
         )
 
+        // Escalating pre-expiry warnings at -5 and -1 min. The original single -10 min beep
+        // was being missed on long rides — field data showed one rider let the check-in expire
+        // 4× in a single ride, each time landing in a live SOS COUNTDOWN they had to scramble
+        // to cancel (one with only ~24 s of margin). Both nudges use the urgent beep; the -1
+        // min one also wakes the screen. Audio-only by design: the rider resets by tapping the
+        // Timer field. The warning is deliberately NOT a cancellable alert — that gesture would
+        // mimic the crash-cancel flow and blur two distinct interactions.
+        //
+        // halPattern != null ⇒ route through playEmergencyBeep so it pierces a muted Karoo
+        // when the rider enabled the buzzer override. Only the -1 min stage does this: it is
+        // the LAST audible heads-up before CHECKIN_EXPIRED turns into a live SOS countdown, so
+        // a muted rider must hear it or they're blindsided by the countdown itself. The -5 min
+        // stage stays mute-respecting (raw dispatch), matching the documented "check-in beeps
+        // respect mute" contract. Riders without the override fall back to SDK dispatch on
+        // every stage (playEmergencyBeep handles that internally) — behaviour unchanged.
+        data class WarnStage(
+            val minutesBefore: Int,
+            val beep: PlayBeepPattern,
+            val wakeScreen: Boolean,
+            val halPattern: List<BuzzerClient.Tone>?,
+        )
+        val warnStages = listOf(
+            WarnStage(5, BEEP_URGENT, wakeScreen = false, halPattern = null),
+            WarnStage(1, BEEP_URGENT, wakeScreen = true, halPattern = BuzzerClient.COUNTDOWN_TICK),
+        )
         checkinWarningJob = scope.launch {
-            if (warningDelay > 0) {
-                delay(warningDelay)
-                if (currentStatus == EmergencyStatus.IDLE) {
-                    karooSystem.dispatch(TurnScreenOn)
-                    karooSystem.dispatch(BEEP_LONG)
-                    karooSystem.dispatch(
-                        SystemNotification(
-                            // Unique-per-fire suffix: a rider who restarts the check-in
-                            // countdown twice in quick succession (e.g. test mode) would
-                            // otherwise re-dispatch the same id and risk crashing the
-                            // host's notification tracker.
-                            id = "ksafe-checkin-warn-${System.currentTimeMillis()}",
-                            message = "Check-in in 10 min",
-                            header = context.getString(R.string.app_name),
-                        )
+            // Delays are cumulative from job start. Offsets are descending (5,1) so the
+            // targets are ascending; a stage whose target is already behind us (interval
+            // shorter than the offset, or a resume past that milestone) is skipped without
+            // disturbing the cumulative clock.
+            var firedDelay = 0L
+            for (stage in warnStages) {
+                val target = (intervalMs - stage.minutesBefore * 60_000L) - elapsed
+                if (target <= firedDelay) continue
+                delay(target - firedDelay)
+                firedDelay = target
+                if (currentStatus != EmergencyStatus.IDLE) continue  // a countdown/alert owns the buzzer
+                if (stage.wakeScreen) karooSystem.dispatch(TurnScreenOn)
+                if (stage.halPattern != null) playEmergencyBeep(config, stage.beep, stage.halPattern)
+                else karooSystem.dispatch(stage.beep)
+                // InRideAlert, NOT SystemNotification: the warning only ever fires while the
+                // ride is Recording, and a SystemNotification does not surface over the Karoo
+                // ride screen — the rider would never see it. InRideAlert overlays the data
+                // screen. Amber (warning, not the red emergency hue); display-only is fine —
+                // the rider resets by tapping the Timer field, never this popup. Colours are
+                // @ColorRes (the SDK resolves them via getColor) — a packed ARGB int crashes
+                // the host ride app; see res/values/colors.xml.
+                karooSystem.dispatch(
+                    InRideAlert(
+                        // Unique-per-fire suffix: a rider who restarts the check-in countdown
+                        // twice in quick succession (e.g. test mode) would otherwise re-dispatch
+                        // the same id and risk crashing the host's overlay tracker.
+                        id = "ksafe-checkin-warn-${System.currentTimeMillis()}",
+                        icon = com.enderthor.kSafe.R.drawable.ic_ksafe,
+                        title = context.getString(R.string.checkin_warning_title, stage.minutesBefore),
+                        detail = context.getString(R.string.checkin_warning_detail),
+                        autoDismissMs = 15_000L,
+                        backgroundColor = com.enderthor.kSafe.R.color.alert_orange,
+                        textColor = com.enderthor.kSafe.R.color.alert_text_white,
                     )
-                }
+                )
             }
         }
 
         checkinJob = scope.launch {
-            configManager.saveEmergencyState(
-                EmergencyState(
-                    checkinEnabled = true,
-                    checkinStartTime = startTime,
-                    checkinIntervalMinutes = config.checkinIntervalMinutes
+            // H1 — a disk-full / DataStore IOException from this persist must NOT abort the
+            // check-in coroutine before its delay(expiryDelay) + CHECKIN_EXPIRED trigger: the
+            // persisted copy is recovery metadata that heals on the next write, but if the throw
+            // escaped, the dead-man's-switch coroutine would die silently and never fire.
+            try {
+                configManager.saveEmergencyState(
+                    EmergencyState(
+                        checkinEnabled = true,
+                        checkinStartTime = startTime,
+                        checkinIntervalMinutes = config.checkinIntervalMinutes
+                    )
                 )
-            )
+            } catch (e: Exception) {
+                Timber.e(e, "Failed to persist check-in state; dead-man's-switch continues in-memory")
+            }
             delay(expiryDelay)
             if (currentStatus == EmergencyStatus.IDLE) {
                 Timber.d("Check-in timer expired!")
@@ -393,7 +529,13 @@ class EmergencyManager(
         checkinStartTimeMs = 0L
         checkinPausedAtMs = 0L
         _uiState.value = EmergencyState()
-        scope.launch { configManager.saveEmergencyState(EmergencyState()) }
+        scope.launch {
+            // H1 — wrap the persist (matches every other saveEmergencyState site): a DataStore
+            // IOException on a fire-and-forget cleanup launch would otherwise reach the default
+            // uncaught handler on the service scope.
+            try { configManager.saveEmergencyState(EmergencyState()) }
+            catch (e: Exception) { Timber.e(e, "Failed to persist IDLE emergency state") }
+        }
     }
 
     fun stopAll() {
@@ -410,8 +552,18 @@ class EmergencyManager(
         currentReason = null
         countdownStartedAt = 0L
         sosOverlay.removeOverlay()
+        // Clear any lingering "SOS delivery failed" info overlay on full teardown / ride end
+        // so a previous ride's alarm can't bleed into the next session. (A failure that fires
+        // AFTER stopAll, post-ride, still shows and stays sticky until the rider dismisses it.)
+        sosOverlay.removeInfoOverlay()
         _uiState.value = EmergencyState()
-        scope.launch { configManager.saveEmergencyState(EmergencyState()) }
+        scope.launch {
+            // H1 — wrap the persist (matches every other saveEmergencyState site): a DataStore
+            // IOException on a fire-and-forget cleanup launch would otherwise reach the default
+            // uncaught handler on the service scope.
+            try { configManager.saveEmergencyState(EmergencyState()) }
+            catch (e: Exception) { Timber.e(e, "Failed to persist IDLE emergency state") }
+        }
     }
 
     /**
@@ -435,7 +587,13 @@ class EmergencyManager(
             countdownStartedAt = 0L
             sosOverlay.removeOverlay()
             _uiState.value = EmergencyState()
-            scope.launch { configManager.saveEmergencyState(EmergencyState()) }
+            scope.launch {
+                // H1 — wrap the persist (matches every other saveEmergencyState site): a DataStore
+                // IOException on a fire-and-forget cleanup launch would otherwise reach the default
+                // uncaught handler on the service scope.
+                try { configManager.saveEmergencyState(EmergencyState()) }
+                catch (e: Exception) { Timber.e(e, "Failed to persist IDLE emergency state") }
+            }
             Timber.d("Check-in emergency cancelled on ride pause")
         }
     }
@@ -850,8 +1008,8 @@ class EmergencyManager(
         lateinit var myJob: kotlinx.coroutines.Job
         myJob = scope.launch {
             try {
-                val delivered = sender.sendAlert(message, config.activeProvider)
-                if (!delivered) {
+                val outcome = sender.sendAlert(message, config.activeProvider)
+                if (!outcome.anyOk) {
                     // H7 — ALWAYS log the delivery failure to the calibration trail.
                     // Even when this emergency has been superseded by a newer one (so
                     // the rider-facing notification is suppressed to avoid wrong-
@@ -860,7 +1018,11 @@ class EmergencyManager(
                     // `superseded` marker so analysers can distinguish the two paths.
                     val supersededByNewer = alertJob !== myJob
                     calibLogger?.log(CalibrationLogger.Event.ALERT_DELIVERY_FAILED) {
-                        "provider=${config.activeProvider},reason=${reason.label},superseded=$supersededByNewer"
+                        // `cause` (R6 calib follow-up, 2026-06-03) lets post-incident audit tell
+                        // a fail-fast misconfiguration (NO_CREDENTIALS/NO_CONFIG, row lands ~1 s
+                        // after countdown) apart from a genuine retry-exhaustion (TIMEOUT/EXHAUSTED,
+                        // ~30 min later) WITHOUT inferring it from the timestamp.
+                        "provider=${config.activeProvider},reason=${reason.label},cause=${outcome.cause},superseded=$supersededByNewer"
                     }
                     // G6 — only fire the rider-facing failure notification when WE
                     // are still the registered alertJob. A previous emergency that
@@ -879,6 +1041,29 @@ class EmergencyManager(
                         notifyDeliveryFailure(config, reason)
                     } else {
                         Timber.d("Delivery failure for $reason notification suppressed — alertJob superseded by newer emergency")
+                    }
+                } else if (outcome.partial) {
+                    // Reached ≥1 but not every emergency contact (e.g. 1 of 3 — a contact in
+                    // a coverage gap or with an expired key). The SOS DID get out, so this is
+                    // NOT the red delivery-FAILED path; surface a softer amber "reached X of
+                    // Y" notice so the rider knows some contacts may not have been alerted.
+                    // ALWAYS log to the calibration trail (even when superseded) — symmetric
+                    // with the ALERT_DELIVERY_FAILED branch — so post-incident audit can see
+                    // that some contacts were missed. Only paint UI when WE are still the
+                    // registered alertJob (same identity guard as the failure path) so a
+                    // superseded emergency can't attribute the notice to the wrong reason.
+                    // Capture the identity ONCE (as the failure branch does with
+                    // supersededByNewer) so the logged `superseded` flag and the UI guard below
+                    // can never disagree if `alertJob` is reassigned between two separate reads.
+                    val partialSuperseded = alertJob !== myJob
+                    calibLogger?.log(CalibrationLogger.Event.ALERT_DELIVERY_PARTIAL) {
+                        "provider=${config.activeProvider},reason=${reason.label},reached=${outcome.delivered},total=${outcome.eligible},superseded=$partialSuperseded"
+                    }
+                    Timber.w("Emergency partial delivery: reached ${outcome.delivered}/${outcome.eligible} contacts via ${config.activeProvider} for ${reason.label}")
+                    if (!partialSuperseded) {
+                        notifyPartialDelivery(config, reason, outcome.delivered, outcome.eligible)
+                    } else {
+                        Timber.d("Partial delivery for $reason notification suppressed — alertJob superseded by newer emergency")
                     }
                 }
             } catch (e: kotlinx.coroutines.CancellationException) {
@@ -957,7 +1142,8 @@ class EmergencyManager(
     }
 
     /**
-     * Fires when [Sender.sendAlert] returns false after exhausting every retry cycle.
+     * Fires when [Sender.sendAlert] returns an outcome that reached nobody (`!anyOk`) after
+     * exhausting every retry cycle.
      * Without this the rider has no on-device way to distinguish "alert delivered to
      * contacts" from "alert silently dropped on every attempt" — the visible field
      * sequence (5 s ALERTING then SAFE) is identical for both cases. The notification
@@ -988,31 +1174,104 @@ class EmergencyManager(
             )),
             halPattern = BuzzerClient.DELIVERY_FAILED_PATTERN,
         )
-        // Unique-per-fire suffix on both ids (InRideAlert AND SystemNotification):
-        // the sender's retry loop can call notifyDeliveryFailure multiple times for
-        // the same provider+reason across its ~30 min retry window. Re-dispatching
-        // the same id has been observed to crash the Karoo ride app's overlay
-        // tracker.
+        // Unique-per-fire suffix on the ids. notifyDeliveryFailure fires ONCE per emergency
+        // (sender.sendAlert runs all retry cycles internally and returns a single outcome),
+        // but a *separate* later emergency with the same provider+reason would reuse a stable
+        // id — and re-dispatching a duplicate id to the host has crashed the Karoo ride app's
+        // overlay/notification tracker. The timestamp suffix keeps every fire distinct.
         val failureDispatchedAtMs = System.currentTimeMillis()
-        karooSystem.dispatch(InRideAlert(
-            id = "ksafe-alert-delivery-failed-${reason.name.lowercase()}-$failureDispatchedAtMs",
-            icon = com.enderthor.kSafe.R.drawable.ic_ksafe,
-            title = context.getString(R.string.alert_delivery_failed_title),
-            detail = context.getString(R.string.alert_delivery_failed_detail, provider.name),
-            autoDismissMs = 20_000L,
-            backgroundColor = com.enderthor.kSafe.R.color.alert_red,
-            textColor = com.enderthor.kSafe.R.color.alert_text_white,
-        ))
-        // SystemNotification fallback — InRideAlert only renders inside the Karoo
-        // ride app. The sender's retry loop runs up to ~30 min, so the failure
-        // notification can fire LONG after the rider has ended the ride and the
-        // device is on the launcher / Settings / off. Without the system-tray
-        // fallback, a rider in a tunnel whose ride ends before the sender gives
-        // up would just hear an unfamiliar beep with no on-screen explanation.
-        karooSystem.dispatch(SystemNotification(
-            id = "ksafe-alert-delivery-failed-sys-${reason.name.lowercase()}-$failureDispatchedAtMs",
-            message = context.getString(R.string.alert_delivery_failed_detail, provider.name),
-            header = context.getString(R.string.alert_delivery_failed_title),
-        ))
+        // ONE channel, picked by ride state — never two at once. On the ride screen the
+        // InRideAlert is the visible native channel, so the overlay would just stack a sticky
+        // duplicate over it. Off the ride screen (launcher / Settings — the common case, since
+        // the ~30 min retry loop usually gives up after the ride) the InRideAlert renders
+        // nowhere, so use the system overlay that draws over any screen; fall back to the drawer
+        // notification only when SYSTEM_ALERT_WINDOW wasn't granted. Either way the descending
+        // beep above is the cross-state attention signal.
+        if (isOnRideScreen()) {
+            karooSystem.dispatch(InRideAlert(
+                id = "ksafe-alert-delivery-failed-${reason.name.lowercase()}-$failureDispatchedAtMs",
+                icon = com.enderthor.kSafe.R.drawable.ic_ksafe,
+                title = context.getString(R.string.alert_delivery_failed_title),
+                detail = context.getString(R.string.alert_delivery_failed_detail, provider.name),
+                autoDismissMs = 20_000L,
+                backgroundColor = com.enderthor.kSafe.R.color.alert_red,
+                textColor = com.enderthor.kSafe.R.color.alert_text_white,
+            ))
+        } else if (Settings.canDrawOverlays(context)) {
+            sosOverlay.showInfo(
+                title = context.getString(R.string.alert_delivery_failed_title),
+                message = context.getString(R.string.alert_delivery_failed_detail, provider.name),
+            )
+        } else {
+            karooSystem.dispatch(SystemNotification(
+                id = "ksafe-alert-delivery-failed-sys-${reason.name.lowercase()}-$failureDispatchedAtMs",
+                message = context.getString(R.string.alert_delivery_failed_detail, provider.name),
+                header = context.getString(R.string.alert_delivery_failed_title),
+            ))
+        }
+    }
+
+    /**
+     * Fires when [Sender.sendAlert] reached at least one but not every emergency contact
+     * (e.g. 1 of 3 — a contact in a coverage gap or with an expired key). Distinct from
+     * [notifyDeliveryFailure]: the SOS DID get out, so this is an amber "heads-up", not the
+     * red total-failure alarm. A two-tone "partial" beep plus ONE visual channel picked by
+     * ride state (InRideAlert on the ride screen, else the system overlay, else a drawer
+     * notification — same single-channel routing as [notifyDeliveryFailure]) tells the rider
+     * that some contacts may not have been alerted, without implying the alert failed outright.
+     */
+    private fun notifyPartialDelivery(
+        config: KSafeConfig,
+        reason: EmergencyReason,
+        reached: Int,
+        total: Int,
+    ) {
+        val provider = config.activeProvider
+        // Two equal mid-tone bursts — deliberately neither the rising EMERGENCY_PATTERN
+        // ("alert fired") nor the descending DELIVERY_FAILED_PATTERN ("alert FAILED"), so a
+        // muted-Karoo rider hears partial delivery as its own identity. Routed through
+        // playEmergencyBeep so the HAL bypass engages on a muted device (a partial delivery
+        // is still safety-relevant). The HAL pattern mirrors this SDK shape.
+        playEmergencyBeep(
+            config = config,
+            sdkPattern = PlayBeepPattern(listOf(
+                PlayBeepPattern.Tone(frequency = 700, durationMs = 250),
+                PlayBeepPattern.Tone(frequency = null, durationMs = 150),
+                PlayBeepPattern.Tone(frequency = 700, durationMs = 250),
+            )),
+            halPattern = BuzzerClient.PARTIAL_DELIVERY_PATTERN,
+        )
+        // Unique-per-fire suffix on the ids — same rationale as notifyDeliveryFailure
+        // (re-dispatching a duplicate id has crashed the ride app's overlay tracker).
+        // ONE channel, picked by ride state — mirrors notifyDeliveryFailure so the partial
+        // notice never stacks an overlay/notification on top of the InRideAlert on the ride
+        // screen, and still reaches the rider off-screen (overlay, or drawer fallback).
+        val dispatchedAtMs = System.currentTimeMillis()
+        if (isOnRideScreen()) {
+            karooSystem.dispatch(InRideAlert(
+                id = "ksafe-alert-delivery-partial-${reason.name.lowercase()}-$dispatchedAtMs",
+                icon = com.enderthor.kSafe.R.drawable.ic_ksafe,
+                title = context.getString(R.string.alert_delivery_partial_title),
+                detail = context.getString(R.string.alert_delivery_partial_detail, reached, total, provider.name),
+                autoDismissMs = 15_000L,
+                backgroundColor = com.enderthor.kSafe.R.color.alert_orange,
+                textColor = com.enderthor.kSafe.R.color.alert_text_white,
+            ))
+        } else if (Settings.canDrawOverlays(context)) {
+            // Auto-dismiss to match the InRideAlert path (15 s). Partial delivery is an amber
+            // heads-up, not the must-not-miss red failure alarm — it should not linger sticky
+            // into the next ride the way the failure overlay deliberately does.
+            sosOverlay.showInfo(
+                title = context.getString(R.string.alert_delivery_partial_title),
+                message = context.getString(R.string.alert_delivery_partial_detail, reached, total, provider.name),
+                autoDismissMs = 15_000L,
+            )
+        } else {
+            karooSystem.dispatch(SystemNotification(
+                id = "ksafe-alert-delivery-partial-sys-${reason.name.lowercase()}-$dispatchedAtMs",
+                message = context.getString(R.string.alert_delivery_partial_detail, reached, total, provider.name),
+                header = context.getString(R.string.alert_delivery_partial_title),
+            ))
+        }
     }
 }

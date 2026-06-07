@@ -149,7 +149,7 @@ fun FieldEmojiPicker(
                 }
             },
             confirmButton = {
-                TextButton(onClick = { dialogOpen = false }) { Text("Close") }
+                TextButton(onClick = { dialogOpen = false }) { Text(androidx.compose.ui.res.stringResource(com.enderthor.kSafe.R.string.dialog_close)) }
             },
         )
     }

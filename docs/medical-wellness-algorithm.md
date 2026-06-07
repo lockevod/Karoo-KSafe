@@ -1,6 +1,6 @@
 # KSafe — Medical Episode & Wellness Algorithms
 
-> **Version:** May 2026 (revision 2 — % of max HR option, extended collapse window)
+> **Version:** June 2026 (revision 3 — collapse absolute-HR floor; revision 2 — % of max HR option, extended collapse window)
 > **Files:** `MedicalEpisodeDetector.kt`, `WellnessMonitor.kt`
 > **Sensors:** Karoo SDK heart-rate stream + `streamUserProfile()` (max HR, HR zones)
 
@@ -84,8 +84,9 @@ recent   = average HR over [now - 15 s,  now]              (recent 15 s window)
 drop_pct = (baseline - recent) / baseline
 
 condition = (drop_pct >= HR_COLLAPSE_DROP_FRACTION)
+            AND recent <= HR_COLLAPSE_MAX_RECENT_BPM        (revision 3 — absolute floor)
             AND HR data is fresh
-            AND rider was active recently
+            AND rider is moving NOW (≥ 5 km/h, fresh speed signal)   (H2 concurrent-speed gate)
             AND collapse cooldown elapsed (4 min after the previous fire)
             AND we have ≥ 4 min of HR history (cold-start guard)
 ```
@@ -93,6 +94,7 @@ condition = (drop_pct >= HR_COLLAPSE_DROP_FRACTION)
 | Constant | Value | Rationale |
 |---|---|---|
 | `HR_COLLAPSE_DROP_FRACTION` | 0.40 | A 40 % drop from the rolling baseline is rare in normal riding. Recovery from a sprint drops gradually over 1–2 min, not abruptly. A real cardiac event drops 40–60 %. |
+| `HR_COLLAPSE_MAX_RECENT_BPM` | **55** *(revision 3)* | Absolute floor on the recent-window average. The % drop alone is artefact-prone: field FP 2026-06-04 (install `68c6ea`) fired on a 158 → ~91 bpm chest-strap dropout (42 % drop) while the rider was **sprinting at 50.7 km/h** — then HR recovered seconds later. A genuine collapse leaves the recent HR *absolutely* low, not merely lower than a hard-effort baseline. 55 bpm sits around the upper edge of an athlete's active resting HR yet above the flatline band (< 30), so **collapse owns the 30–55 bpm window, flatline owns < 30** — a clean hand-off. Set to 55, not 50: 50 was too aggressive a suppression (a real collapse bottoming at 51–54 must still fire), and 55 still rejects the field FP (recent ≈ 91 ≫ 55). **Cost:** a real collapse that bottoms in the 55–70 bpm band with a ≥ 40 % drop is missed by *both* sub-detectors (see [Why both sub-detectors](#why-both-sub-detectors)). Accepted because an incapacitating syncope drops below this band; a rider holding 55–70 bpm is conscious and perfusing. |
 | `HR_COLLAPSE_WINDOW_SEC` | **15** *(was 10 in revision 1)* | The recent-average window. Extended in revision 2 to 15 s so that a brief 1–3 s artefact can't pull the average down enough to cross 40 %. Detection latency increases by 5 s — negligible for the emergency response timeline. |
 | `HR_COLLAPSE_MIN_HISTORY_SEC` | 240 | Cold-start guard. Collapse can't fire until 4 min of HR data is available — ensures the baseline average is stable. Also used as the post-fire cooldown. |
 
@@ -100,13 +102,23 @@ condition = (drop_pct >= HR_COLLAPSE_DROP_FRACTION)
 
 | Scenario | Flatline catches | Collapse catches |
 |---|---|---|
-| Asystole (HR → 0) | ✅ HR drops below 30 | ✅ Drop > 40 % from any baseline |
-| Severe bradycardia (HR → 25) | ✅ HR < 30 sustained | ✅ Drop > 40 % from typical ride HR (~150) |
-| Vasovagal syncope (HR → 70 from 150) | ❌ Doesn't reach 30 | ✅ Drop ≈ 53 % |
-| Hypoglycemic with mild HR depression | ❌ HR stays normal | ⚠ Depends on magnitude |
+| Asystole (HR → 0) | ✅ HR drops below 30 | ✅ Drop > 40 % **and** recent ≤ 55 |
+| Severe bradycardia (HR → 25) | ✅ HR < 30 sustained | ✅ Drop > 40 % from typical ride HR **and** recent ≤ 55 |
+| Vasovagal syncope (HR → 45 from 150) | ❌ Doesn't reach 30 | ✅ Drop ≈ 70 %, recent 45 ≤ 55 |
+| Collapse that bottoms at 56–70 bpm | ❌ Doesn't reach 30 | ❌ **recent > 55 floor (revision 3)** — see note below |
+| Hypoglycemic with mild HR depression | ❌ HR stays normal | ⚠ Only if it drives recent ≤ 55 |
 | Sensor artefact (1–3 readings drop) | Rejected — duration guard | Rejected — 15 s window guard |
+| HR ≤ 55 sustained 15 s while pedalling hard | Rejected — H3 cadence/power cross-check | **Fires** — and that is *correct*: a sustained low HR under load is a genuine HR-effort contradiction worth surfacing. Severity is the rider's choice via `medicalResponseLevel` (see [note](#known-gaps-revision-3)) |
 
-Without **A**, vasovagal events go undetected for up to 5 minutes (until the speed-drop monitor in `CrashDetectionManager` fires). Without **B**, asystole still triggers but a vasovagal where HR settles at 60–70 bpm flies under the radar entirely. Both together provide layered coverage.
+Without **A**, vasovagal events go undetected for up to 5 minutes (until the speed-drop monitor in `CrashDetectionManager` fires). Without **B**, asystole still triggers but a vasovagal where HR settles in the 30–55 band flies under the radar entirely. Both together provide layered coverage **of the ≤ 55 bpm range** — by design (revision 3) neither catches a drop that bottoms at 56–70 bpm, on the rationale that a rider holding that HR is conscious and perfusing.
+
+### Known gaps (revision 3)
+
+The absolute floor (`HR_COLLAPSE_MAX_RECENT_BPM = 55`) fixed the dominant strap-artifact FP (the field case: a 15 s dropout that stayed *above* 55 while sprinting, with HR recovering seconds later — clearly no event). It is not a complete suppressor of *all* low-HR fires, **by design**:
+
+- **Deep sustained low HR while pedalling — fires, and that is correct (not a FP).** If HR reads ≤ 55 for the full 15 s window while the rider is clearly still working hard (high cadence / power), collapse fires. This is the *right* behaviour: a sustained low HR under load is a real HR-effort contradiction — either a genuine cardiac event or, at minimum, equipment behaving anomalously. The detector's job is to surface "something is wrong"; it does **not** assert the situation is fatal. **Severity is the rider's decision**, set once via `medicalResponseLevel` (`SILENT` = log only, `WARNING` = on-screen + beep, `EMERGENCY` = countdown + contact alert). A rider who finds emergency-level medical fires too aggressive sets it to `WARNING`; a truly fatal event that drops the rider is still caught by the crash detector regardless. Because the fire is a *correct* anomaly signal, the flatline-style cadence/power cross-check is **not** applied here — silencing the anomaly would be the wrong default. (See the [Open Items](#open-items--future-work) note if real field data ever shows this is pure nuisance.)
+- **FN — moderate collapse (56–70 bpm).** Documented above and accepted on clinical grounds.
+- **Latency.** For a fast real collapse from a high baseline, the floor (≤ 55) is stricter than the drop gate (≤ 0.6 × baseline), so the fire waits for the 15 s recent-window average to fall to ≤ 55 — up to ~one extra window-fill (≈ 5–10 s) before the 30 s countdown. Negligible against the response timeline.
 
 ### Edge Cases
 
@@ -404,6 +416,7 @@ The lambdas passed to `calibLogger?.log { ... }` are inert (no allocation, no st
 
 - **HR-based confirmation gate for crash detection.** The original spec considered using a sudden HR drop after an accelerometer impact as additional evidence to shorten the SILENCE_CHECK window in `CrashDetectionManager`. Dropped from v1 because the savings (~2.5 s on a 35 s total flow) were marginal and the change would have broken the "crash code untouched" guarantee. Re-evaluate if real-world FP/FN data shows a clear win.
 - **Adaptive collapse threshold.** The 40 % drop fraction is a fixed constant. A future iteration could lower it for riders whose ride HR is naturally more variable (e.g. interval-heavy workouts). Defer until calibration data shows the constant produces FP / FN.
+- **Cadence/power cross-check for collapse — deliberately NOT done (revision 3).** `evaluateFlatline` suppresses a fire when cadence > 10 RPM or power > 30 W (H3). The symmetric move for collapse would silence a sustained ≤ 55 bpm reading while pedalling hard — but that reading is a *correct* anomaly signal (HR-effort contradiction), not a false positive, and the rider already controls its severity via `medicalResponseLevel`. Silencing it would discard real information. So this is **not** planned as a fix. Revisit only if field data shows the deep-low-HR-under-load fire is pure equipment nuisance with zero diagnostic value — in which case a cadence/power cross-check (or downgrading just this sub-case to `WARNING` independently of `medicalResponseLevel`) would be the lever.
 - **HR-based fall detection.** A soft fall (low-energy impact below the smoothed accel threshold) is a documented FN limitation of the crash detector. HR data combined with sudden orientation change could help. Out of scope for v1; needs more research.
 - **Sensor-disconnect persistence.** Currently `HR_STALE` fires once per fresh→stale transition. If the user wants to know "the strap is still disconnected 2 min later", we'd need periodic re-emission. Not currently a request.
 

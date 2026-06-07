@@ -9,7 +9,13 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
+import androidx.compose.foundation.clickable
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.KeyboardArrowDown
+import androidx.compose.material.icons.filled.KeyboardArrowUp
 import androidx.compose.material3.FilterChip
+import androidx.compose.material3.FilterChipDefaults
+import androidx.compose.material3.Icon
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
@@ -32,7 +38,9 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import com.enderthor.kSafe.R
 import com.enderthor.kSafe.activity.MainViewModel
+import com.enderthor.kSafe.data.CrashProfileSetting
 import com.enderthor.kSafe.data.CrashSensitivity
+import com.enderthor.kSafe.extension.KSafeExtension
 import kotlinx.coroutines.delay
 
 /**
@@ -65,6 +73,11 @@ fun SafetyScreen(vm: MainViewModel) {
     var sosFieldColor   by remember(config.sosFieldColor)   { mutableStateOf(config.sosFieldColor) }
     var timerFieldColor by remember(config.timerFieldColor) { mutableStateOf(config.timerFieldColor) }
 
+    var crashProfileSettings by remember(config.crashProfileSettings) { mutableStateOf(config.crashProfileSettings) }
+
+    // Reactive: updates immediately on a Karoo profile switch, no polling loop.
+    val activeProfileId by KSafeExtension.activeProfileIdFlow.collectAsState()
+
     // Auto-save: runs whenever any setting changes, with a short debounce for text fields.
     // Karoo Live + calibration + backup live in SettingsScreen now and own their own save loops.
     LaunchedEffect(
@@ -74,6 +87,7 @@ fun SafetyScreen(vm: MainViewModel) {
         speedDropEnabled, speedDropMinutes,
         checkinEnabled, checkinInterval,
         sosFieldColor, timerFieldColor,
+        crashProfileSettings,
     ) {
         delay(600)
         // Merge onto the LATEST config (not this composition snapshot) so a debounced
@@ -114,6 +128,7 @@ fun SafetyScreen(vm: MainViewModel) {
                 checkinIntervalMinutes  = (checkinInterval.toIntOrNull() ?: 120).coerceIn(10, 1440),
                 sosFieldColor           = sosFieldColor,
                 timerFieldColor         = timerFieldColor,
+                crashProfileSettings    = crashProfileSettings,
             )
         }
     }
@@ -202,10 +217,12 @@ fun SafetyScreen(vm: MainViewModel) {
                 style = MaterialTheme.typography.bodyMedium
             )
             // First row: Low / Medium / High
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 listOf(CrashSensitivity.LOW, CrashSensitivity.MEDIUM, CrashSensitivity.HIGH).forEach { s ->
                     FilterChip(
                         selected = crashSensitivity == s,
+                        modifier = Modifier.weight(1f),
+                        colors = selectedFilterChipColors(),
                         onClick = {
                             crashSensitivity = s
                             minSpeedForCrash = when (s) {
@@ -241,6 +258,7 @@ fun SafetyScreen(vm: MainViewModel) {
                     crashSensitivity = CrashSensitivity.CUSTOM
                 },
                 modifier = Modifier.fillMaxWidth(),
+                colors = selectedFilterChipColors(),
                 label = { Text(stringResource(R.string.sensitivity_custom)) }
             )
 
@@ -288,9 +306,9 @@ fun SafetyScreen(vm: MainViewModel) {
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.SpaceBetween
                 ) {
-                    Text("20 m/s² (very sensitive)", style = MaterialTheme.typography.labelSmall,
+                    Text(stringResource(R.string.sensitivity_scale_min), style = MaterialTheme.typography.labelSmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant)
-                    Text("70 m/s² (hard impacts only)", style = MaterialTheme.typography.labelSmall,
+                    Text(stringResource(R.string.sensitivity_scale_max), style = MaterialTheme.typography.labelSmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
             }
@@ -321,6 +339,78 @@ fun SafetyScreen(vm: MainViewModel) {
                 singleLine = true,
                 supportingText = { Text(stringResource(R.string.crash_confirm_speed_hint)) }
             )
+
+            HorizontalDivider(modifier = Modifier.padding(vertical = 4.dp))
+
+            // ── Per-profile crash overrides ───────────────────────────────────
+            Text(
+                text = stringResource(R.string.crash_per_profile_title),
+                style = MaterialTheme.typography.bodyMedium,
+                fontWeight = FontWeight.Bold
+            )
+            Text(
+                text = stringResource(R.string.crash_per_profile_hint),
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+            if (crashProfileSettings.isEmpty()) {
+                Text(
+                    text = stringResource(R.string.crash_per_profile_empty),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            } else {
+                // key() keeps each card's remember{} (text-field focus/selection) bound to its
+                // profile across add/remove/reorder — otherwise Compose reuses slots by position
+                // and a removed profile leaks its field state to its neighbour.
+                val renderCard: @Composable (CrashProfileSetting) -> Unit = { setting ->
+                    androidx.compose.runtime.key(setting.profileId) {
+                        CrashProfileCard(
+                            setting = setting,
+                            isActive = setting.profileId == activeProfileId,
+                            onChange = { updated ->
+                                crashProfileSettings = crashProfileSettings.map {
+                                    if (it.profileId == updated.profileId) updated else it
+                                }
+                            },
+                            onRemove = {
+                                crashProfileSettings = crashProfileSettings.filterNot { it.profileId == setting.profileId }
+                            },
+                        )
+                    }
+                }
+
+                val activeOnes = crashProfileSettings.filter { it.profileId == activeProfileId }
+                val customized = crashProfileSettings.filter { it.profileId != activeProfileId && !it.useGlobal }
+                val globalStubs = crashProfileSettings.filter { it.profileId != activeProfileId && it.useGlobal }
+
+                // Prominent cards: the active profile first, then any customised profiles.
+                (activeOnes + customized).forEach { renderCard(it) }
+
+                // The rest just inherit the global config — tuck them into a collapsible group
+                // so a long profile list (10+ Karoo profiles) stays manageable.
+                if (globalStubs.isNotEmpty()) {
+                    var globalsExpanded by remember { mutableStateOf(false) }
+                    Row(
+                        modifier = Modifier.fillMaxWidth().clickable { globalsExpanded = !globalsExpanded },
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(
+                            text = stringResource(R.string.crash_per_profile_global_group, globalStubs.size),
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                        Icon(
+                            imageVector = if (globalsExpanded) Icons.Filled.KeyboardArrowUp else Icons.Filled.KeyboardArrowDown,
+                            contentDescription = null
+                        )
+                    }
+                    if (globalsExpanded) {
+                        globalStubs.forEach { renderCard(it) }
+                    }
+                }
+            }
 
             HorizontalDivider(modifier = Modifier.padding(vertical = 4.dp))
 
@@ -414,6 +504,15 @@ fun SafetyScreen(vm: MainViewModel) {
                 modifier = Modifier.fillMaxWidth(),
                 singleLine = true
             )
+            // Onboarding: the check-in is a dead-man's-switch the rider must actively
+            // reset by tapping the field — riders who don't realise this let it expire
+            // and land in a live SOS countdown. Spell out the reset gesture + escalating
+            // warnings right where they enable it.
+            Text(
+                text = stringResource(R.string.checkin_hint),
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
         }
 
         FieldColorPicker(
@@ -421,6 +520,251 @@ fun SafetyScreen(vm: MainViewModel) {
             selected = timerFieldColor,
             onSelected = { timerFieldColor = it }
         )
+    }
+}
+
+/** Stronger selected-state colours so the chosen preset chip is obvious on the Karoo's
+ *  sunlight display (the default tint is too subtle to read as "selected"). */
+@Composable
+private fun selectedFilterChipColors() = FilterChipDefaults.filterChipColors(
+    selectedContainerColor = MaterialTheme.colorScheme.primary,
+    selectedLabelColor = MaterialTheme.colorScheme.onPrimary,
+)
+
+@Composable
+private fun CrashProfileCard(
+    setting: CrashProfileSetting,
+    isActive: Boolean,
+    onChange: (CrashProfileSetting) -> Unit,
+    onRemove: () -> Unit,
+) {
+    // Active profile starts expanded; the rest collapse so a long list stays manageable.
+    var expanded by remember(setting.profileId) { mutableStateOf(isActive) }
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        elevation = CardDefaults.cardElevation(defaultElevation = 1.dp)
+    ) {
+        Column(
+            modifier = Modifier.padding(8.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            // Tappable header: name + active badge + (when collapsed) a one-line summary +
+            // an expand chevron. Collapsing keeps a long list of profiles manageable.
+            Row(
+                modifier = Modifier.fillMaxWidth().clickable { expanded = !expanded },
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        text = setting.profileName,
+                        style = MaterialTheme.typography.bodyMedium,
+                        fontWeight = FontWeight.Bold
+                    )
+                    if (isActive) {
+                        Text(
+                            text = stringResource(R.string.crash_per_profile_active),
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.primary
+                        )
+                    }
+                    if (!expanded) {
+                        Text(
+                            text = when {
+                                setting.useGlobal -> stringResource(R.string.crash_per_profile_summary_global)
+                                !setting.crashDetectionEnabled -> stringResource(R.string.crash_per_profile_summary_off)
+                                else -> stringResource(
+                                    R.string.crash_per_profile_summary_custom,
+                                    when (setting.crashSensitivity) {
+                                        CrashSensitivity.LOW -> stringResource(R.string.sensitivity_low)
+                                        CrashSensitivity.MEDIUM -> stringResource(R.string.sensitivity_medium)
+                                        CrashSensitivity.HIGH -> stringResource(R.string.sensitivity_high)
+                                        CrashSensitivity.CUSTOM -> stringResource(R.string.sensitivity_custom)
+                                    }
+                                )
+                            },
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                }
+                Icon(
+                    imageVector = if (expanded) Icons.Filled.KeyboardArrowUp else Icons.Filled.KeyboardArrowDown,
+                    contentDescription = null
+                )
+            }
+
+            if (expanded) {
+            // Use global / Custom toggle
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                FilterChip(
+                    selected = setting.useGlobal,
+                    onClick = { onChange(setting.copy(useGlobal = true)) },
+                    colors = selectedFilterChipColors(),
+                    label = { Text(stringResource(R.string.crash_per_profile_use_global)) }
+                )
+                FilterChip(
+                    selected = !setting.useGlobal,
+                    onClick = { onChange(setting.copy(useGlobal = false)) },
+                    colors = selectedFilterChipColors(),
+                    label = { Text(stringResource(R.string.crash_per_profile_custom)) }
+                )
+            }
+
+            // Per-profile custom controls (only when not using global)
+            if (!setting.useGlobal) {
+                // Enable/disable crash for this profile
+                SettingRow(label = stringResource(R.string.crash_detection_label)) {
+                    Switch(
+                        checked = setting.crashDetectionEnabled,
+                        onCheckedChange = { checked ->
+                            onChange(setting.copy(crashDetectionEnabled = checked))
+                        }
+                    )
+                }
+
+                if (setting.crashDetectionEnabled) {
+                    Text(
+                        text = stringResource(R.string.crash_sensitivity_label),
+                        style = MaterialTheme.typography.bodyMedium
+                    )
+                    // First row: Low / Medium / High
+                    Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        listOf(CrashSensitivity.LOW, CrashSensitivity.MEDIUM, CrashSensitivity.HIGH).forEach { s ->
+                            FilterChip(
+                                selected = setting.crashSensitivity == s,
+                                modifier = Modifier.weight(1f),
+                                colors = selectedFilterChipColors(),
+                                onClick = {
+                                    val newMinSpeed = when (s) {
+                                        CrashSensitivity.LOW    -> 3
+                                        CrashSensitivity.MEDIUM -> 10
+                                        CrashSensitivity.HIGH   -> 15
+                                        CrashSensitivity.CUSTOM -> setting.minSpeedForCrashKmh
+                                    }
+                                    val newConfirmSpeed = when (s) {
+                                        CrashSensitivity.LOW    -> 3
+                                        CrashSensitivity.MEDIUM -> 5
+                                        CrashSensitivity.HIGH   -> 5
+                                        CrashSensitivity.CUSTOM -> setting.crashConfirmSpeedKmh
+                                    }
+                                    onChange(setting.copy(crashSensitivity = s, minSpeedForCrashKmh = newMinSpeed, crashConfirmSpeedKmh = newConfirmSpeed))
+                                },
+                                label = {
+                                    Text(
+                                        when (s) {
+                                            CrashSensitivity.LOW    -> stringResource(R.string.sensitivity_low)
+                                            CrashSensitivity.MEDIUM -> stringResource(R.string.sensitivity_medium)
+                                            CrashSensitivity.HIGH   -> stringResource(R.string.sensitivity_high)
+                                            CrashSensitivity.CUSTOM -> ""
+                                        }
+                                    )
+                                }
+                            )
+                        }
+                    }
+                    // Second row: Custom (full width)
+                    FilterChip(
+                        selected = setting.crashSensitivity == CrashSensitivity.CUSTOM,
+                        onClick = { onChange(setting.copy(crashSensitivity = CrashSensitivity.CUSTOM)) },
+                        modifier = Modifier.fillMaxWidth(),
+                        colors = selectedFilterChipColors(),
+                        label = { Text(stringResource(R.string.sensitivity_custom)) }
+                    )
+
+                    // Custom threshold slider
+                    if (setting.crashSensitivity == CrashSensitivity.CUSTOM) {
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Text(
+                                text = stringResource(R.string.sensitivity_custom_threshold, setting.customCrashThreshold),
+                                style = MaterialTheme.typography.bodySmall
+                            )
+                            Text(
+                                text = when {
+                                    setting.customCrashThreshold <= 35 -> "≈ High"
+                                    setting.customCrashThreshold <= 50 -> "≈ Medium"
+                                    else                               -> "≈ Low"
+                                },
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                        Slider(
+                            value = setting.customCrashThreshold.toFloat(),
+                            onValueChange = { v -> onChange(setting.copy(customCrashThreshold = v.toInt())) },
+                            valueRange = 20f..70f,
+                            steps = 49,
+                            modifier = Modifier.fillMaxWidth()
+                        )
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween
+                        ) {
+                            Text(stringResource(R.string.sensitivity_scale_min), style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            Text(stringResource(R.string.sensitivity_scale_max), style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        }
+                    }
+
+                    // Min speed field
+                    var profileMinSpeed by remember(setting.profileId, setting.minSpeedForCrashKmh) {
+                        mutableStateOf(setting.minSpeedForCrashKmh.toString())
+                    }
+                    OutlinedTextField(
+                        value = profileMinSpeed,
+                        onValueChange = { v ->
+                            if (v.all { c -> c.isDigit() }) {
+                                profileMinSpeed = v   // allow blank as an intermediate UI state
+                                // Only commit a real number — otherwise clearing the field would
+                                // leave it blank while silently writing the OLD value back.
+                                v.toIntOrNull()?.let { onChange(setting.copy(minSpeedForCrashKmh = it)) }
+                            }
+                        },
+                        label = { Text(stringResource(R.string.min_speed_label)) },
+                        modifier = Modifier.fillMaxWidth(),
+                        singleLine = true,
+                        supportingText = {
+                            Text(
+                                when (setting.crashSensitivity) {
+                                    CrashSensitivity.LOW    -> stringResource(R.string.min_speed_hint_low)
+                                    CrashSensitivity.MEDIUM -> stringResource(R.string.min_speed_hint_medium)
+                                    CrashSensitivity.HIGH   -> stringResource(R.string.min_speed_hint_high)
+                                    CrashSensitivity.CUSTOM -> stringResource(R.string.min_speed_hint_custom)
+                                }
+                            )
+                        }
+                    )
+
+                    // Confirm speed field
+                    var profileConfirmSpeed by remember(setting.profileId, setting.crashConfirmSpeedKmh) {
+                        mutableStateOf(setting.crashConfirmSpeedKmh.toString())
+                    }
+                    OutlinedTextField(
+                        value = profileConfirmSpeed,
+                        onValueChange = { v ->
+                            if (v.all { c -> c.isDigit() }) {
+                                profileConfirmSpeed = v   // allow blank as an intermediate UI state
+                                v.toIntOrNull()?.let { onChange(setting.copy(crashConfirmSpeedKmh = it)) }
+                            }
+                        },
+                        label = { Text(stringResource(R.string.crash_confirm_speed_label)) },
+                        modifier = Modifier.fillMaxWidth(),
+                        singleLine = true,
+                        supportingText = { Text(stringResource(R.string.crash_confirm_speed_hint)) }
+                    )
+                }
+            }
+
+            androidx.compose.material3.TextButton(onClick = onRemove) {
+                Text(stringResource(R.string.crash_per_profile_remove))
+            }
+            }
+        }
     }
 }
 

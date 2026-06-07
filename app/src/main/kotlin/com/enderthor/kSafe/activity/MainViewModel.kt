@@ -6,12 +6,14 @@ import androidx.lifecycle.viewModelScope
 import com.enderthor.kSafe.data.KSafeConfig
 import com.enderthor.kSafe.data.KSafeBackupExport
 import com.enderthor.kSafe.data.ProviderType
+import com.enderthor.kSafe.data.RecipientAlertScope
 import com.enderthor.kSafe.data.SenderConfig
 import com.enderthor.kSafe.data.defaultSenderConfigs
 import com.enderthor.kSafe.data.materializeAlertDefaults
 import com.enderthor.kSafe.data.migrateToLatest
 import com.enderthor.kSafe.data.toBackupExport
 import com.enderthor.kSafe.data.toSenderConfigs
+import com.enderthor.kSafe.extension.sameCredentials
 import com.enderthor.kSafe.extension.jsonForExport
 import com.enderthor.kSafe.extension.jsonWithUnknownKeys
 import com.enderthor.kSafe.extension.managers.ConfigurationManager
@@ -23,6 +25,8 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.decodeFromJsonElement
@@ -64,15 +68,21 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     /**
-     * Read-modify-write a subset of config fields against the LATEST emitted config rather
+     * Read-modify-write a subset of config fields against the LATEST PERSISTED config rather
      * than a composition snapshot. A debounced multi-field save in SettingsScreen otherwise
      * captures `config` at launch time and `config.copy(...)` clobbers any OTHER field
      * (e.g. a calibration toggle) saved from a different snapshot in the same window —
-     * a last-writer-wins lost update. Applying [transform] to `config.value` at execution
-     * time (after the debounce, so prior writes have propagated) preserves unrelated fields.
+     * a last-writer-wins lost update.
+     *
+     * Reads fresh from DataStore under [settingsWriteMutex] — NOT `config.value` — for the
+     * Atomic read-modify-write inside ONE DataStore transaction via
+     * [ConfigurationManager.updateConfig], so it can't lose unrelated fields to a concurrent
+     * writer in the service process (e.g. profile-learning, which uses the same helper) and the
+     * StateFlow's WhileSubscribed(5000) seed-default footgun can't apply (it never reads
+     * `config.value`). Supersedes the previous fresh-read + in-process mutex.
      */
     fun updateConfig(transform: (KSafeConfig) -> KSafeConfig) {
-        viewModelScope.launch { configManager.saveConfig(transform(config.value)) }
+        viewModelScope.launch { configManager.updateConfig(transform) }
     }
 
     fun saveSenderConfigs(configs: List<SenderConfig>) {
@@ -80,6 +90,11 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     // ─── Provider helpers ─────────────────────────────────────────────────────
+
+    /** Serialises the read-modify-write of the provider/sender blobs so two concurrent
+     *  saves (e.g. ProviderScreen's debounced field auto-save racing a provider switch)
+     *  can't both read the same DataStore snapshot and clobber each other's change. */
+    private val settingsWriteMutex = Mutex()
 
     fun updateSenderConfig(
         provider: ProviderType,
@@ -92,9 +107,10 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         phoneNumber2: String = "",
         apiKey3: String = "",
         phoneNumber3: String = "",
+        recipient1Alerts: RecipientAlertScope = RecipientAlertScope.ALL,
+        recipient2Alerts: RecipientAlertScope = RecipientAlertScope.ALL,
+        recipient3Alerts: RecipientAlertScope = RecipientAlertScope.ALL,
     ) {
-        val updated = senderConfigs.value.toMutableList()
-        val idx = updated.indexOfFirst { it.provider == provider }
         val newConfig = SenderConfig(
             provider = provider,
             apiKey = apiKey,
@@ -106,13 +122,35 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             phoneNumber2 = phoneNumber2,
             apiKey3 = apiKey3,
             phoneNumber3 = phoneNumber3,
+            recipient1Alerts = recipient1Alerts,
+            recipient2Alerts = recipient2Alerts,
+            recipient3Alerts = recipient3Alerts,
         )
-        if (idx >= 0) updated[idx] = newConfig else updated.add(newConfig)
-        saveSenderConfigs(updated)
+        // ATOMIC read-modify-write inside one dataStore.edit{} — can't lost-update a concurrent
+        // service-side send stamp (markSendSucceeded), and reads the freshly-persisted list (not
+        // senderConfigs.value, which WhileSubscribed(5000) may hand back as emptyList()).
+        viewModelScope.launch {
+            settingsWriteMutex.withLock {
+                configManager.updateSenderConfigs { current ->
+                    val list = current.toMutableList()
+                    val idx = list.indexOfFirst { it.provider == provider }
+                    if (idx >= 0) {
+                        // Preserve the last-successful-send timestamp only when the credentials are
+                        // unchanged — editing a token/phone/key invalidates a prior successful send,
+                        // but a scope-only change must NOT reset the "it works" / staleness clock.
+                        val keep = if (sameCredentials(newConfig, list[idx])) list[idx].lastSuccessfulSendMs else 0L
+                        list[idx] = newConfig.copy(lastSuccessfulSendMs = keep)
+                    } else list.add(newConfig)
+                    list
+                }
+            }
+        }
     }
 
     fun setActiveProvider(provider: ProviderType) {
-        saveConfig(config.value.copy(activeProvider = provider))
+        // Atomic read-modify-write inside one DataStore transaction (can't race a service-process
+        // config writer or lose unrelated fields; no WhileSubscribed seed-default footgun).
+        viewModelScope.launch { configManager.updateConfig { it.copy(activeProvider = provider) } }
     }
 
     // ─── Backup / Restore ─────────────────────────────────────────────────────
@@ -177,8 +215,20 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             // layout; without this the read path eventually migrates it, but persisting the
             // un-migrated blob is a latent footgun (e.g. a version-0 stamp re-runs the v0→v2
             // crash-speed rewrite on every read). migrateToLatest() is idempotent.
-            saveConfig(config.migrateToLatest())
-            saveSenderConfigs(senderConfigs)
+            val migrated = config.migrateToLatest()
+            // Persist both blobs in ONE coroutine, sequentially, under [settingsWriteMutex] so
+            // the import can't interleave with a concurrent updateConfig / updateSenderConfig /
+            // setActiveProvider (e.g. an in-flight ProviderScreen debounced auto-save) that
+            // would otherwise read a pre-import snapshot and clobber the imported values.
+            // DataStore can't write two keys atomically, but the ordered, serialised launch
+            // removes the interleave window and guarantees senders are never written before
+            // the config they belong to.
+            viewModelScope.launch {
+                settingsWriteMutex.withLock {
+                    configManager.saveConfig(migrated)
+                    configManager.saveSenderConfigs(senderConfigs)
+                }
+            }
             true
         } catch (e: Exception) {
             Timber.e(e, "Failed to import config from JSON")

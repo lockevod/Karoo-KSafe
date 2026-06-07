@@ -139,6 +139,16 @@ class CrashDetectionManager(
          *  (long window). Matches [Thresholds.uprightAngleThresholdDegrees]. */
         const val UPRIGHT_ANGLE_THRESHOLD_DEGREES = 45.0
 
+        /** Angle (deg) below which the GAP-regime confirm is vetoed (R6-F). A tight
+         *  cone — a veto suppresses an SOS, and an FN is worse than an FP. Matches
+         *  [Thresholds.gapVetoUprightAngleDeg]. */
+        const val GAP_VETO_UPRIGHT_ANGLE_DEG = 15.0
+
+        /** Peak gyro (rad/s) below which the non-gap (prompt-stop) upright veto (R6-G)
+         *  may engage — distinguishes a benign stand from an endo that ends upright.
+         *  Matches [Thresholds.nonGapUprightVetoMaxGyroRadS]. */
+        const val NON_GAP_UPRIGHT_VETO_MAX_GYRO_RAD_S = 3.0
+
         /** Angle (deg) above which the SILENCE_CHECK speed-rise relaxation engages. */
         const val ON_SIDE_RELAXATION_ANGLE_DEG = 60.0
 
@@ -206,6 +216,7 @@ class CrashDetectionManager(
     @Volatile private var lastHighMagLogMs = 0L
     @Volatile private var lastSilenceBrokenMs = 0L
     @Volatile private var lastGyroBlockedLogMs = 0L
+    @Volatile private var lastCadGateSuppressedLogMs = 0L
     @Volatile private var lastPeriodicLogMs = 0L
     @Volatile private var lastLogTime = 0L
     @Volatile private var lastGpsStaleState = false
@@ -547,11 +558,16 @@ class CrashDetectionManager(
         val decision = stateMachine.onSample(sampleForSm)
 
         // ─── Diagnostic: CAD_GATE suppression (FN fix, 2026-05-25) ──────────
-        // The state machine reports per-sample whether CAD_GATE was about to fire
-        // but was suppressed by the on-side orientation evidence. Log this once
-        // per occurrence so calibration data shows the suppression context (the
-        // decision and the values at the moment of suppression).
-        if (stateMachine.lastCadenceGateSuppressed) {
+        // The state machine raises `lastCadenceGateSuppressed` on EVERY sample it
+        // stays on-side, so at the ~50 Hz sensor rate one ~1–2 s on-side silence
+        // window emitted 170–260 rows (≈ half a periodic-upload chunk). Rate-limit
+        // to once per second (CAD_GATE_SUPPRESSED_INTERVAL_MS): the first sample of
+        // an episode still logs (the throttle clock starts stale) so the suppression
+        // context is preserved, but a sustained on-side window no longer floods the
+        // log and evicts real signal. Detection behaviour is unchanged.
+        if (stateMachine.lastCadenceGateSuppressed &&
+            (now - lastCadGateSuppressedLogMs) > CalibrationLogger.CAD_GATE_SUPPRESSED_INTERVAL_MS) {
+            lastCadGateSuppressedLogMs = now
             calibLogger?.log(CalibrationLogger.Event.CADENCE_GATE_SUPPRESSED) {
                 // Use the LIVE angle the state machine captured at suppression
                 // time (set just before `lastCadenceGateSuppressed = true`).
@@ -563,6 +579,28 @@ class CrashDetectionManager(
                 val dev = abs(sample.rawMagnitude - GRAVITY)
                 "cadence=%.0f,speed=%.1f,deviation=%.2f,grade=%.1f,angle=%.1f,upright_thr=${stateMachine.thresholds.uprightAngleThresholdDegrees}".formatUs(
                     currentCadence, currentSpeedKmh, dev, currentGrade, angle)
+            }
+        }
+
+        // ─── Diagnostic: GAP-regime upright veto (R6-F, FP #2 fix) ──────────
+        // A delayed stop reached the 20 s confirm gate but orientation showed the
+        // bike decisively upright → the gap regime's confirm was vetoed (benign
+        // stop, not a crash). Logged once per occurrence so calibration data can
+        // count vetoes vs CRASH_OK and catch any real-crash FN (paired MANUAL_SOS).
+        if (stateMachine.lastGapUprightVeto) {
+            calibLogger?.log(CalibrationLogger.Event.GAP_UPRIGHT_VETO) {
+                val dev = abs(sample.rawMagnitude - GRAVITY)
+                // regime=GAP (R6-F delayed stop) vs PROMPT (R6-G prompt stop). gyro_peak is
+                // the impact→silence rotation that passed the PROMPT gyro gate (gyro_thr);
+                // on a GAP veto it is informational only (the gap regime ignores rotation).
+                val regime = if (stateMachine.lastUprightVetoGapRegime) "GAP" else "PROMPT"
+                val ref = stateMachine.preImpactReference
+                // pre_x/y/z (pre-impact ref) + sil_x/y/z (averaged silence orientation) make
+                // the veto `angle` independently verifiable from the raw geometry.
+                "angle=%.1f,veto_thr=${stateMachine.thresholds.gapVetoUprightAngleDeg},regime=$regime,gyro_peak=%.2f,gyro_thr=${stateMachine.thresholds.nonGapUprightVetoMaxGyroRadS},speed=%.1f,deviation=%.2f,cadence=%.0f,grade=%.1f,preset=${config.crashSensitivity},pre_x=%.2f,pre_y=%.2f,pre_z=%.2f,sil_x=%.2f,sil_y=%.2f,sil_z=%.2f".formatUs(
+                    stateMachine.lastGapUprightVetoAngleDeg, stateMachine.peakGyroSinceImpactRadS, currentSpeedKmh, dev, currentCadence, currentGrade,
+                    ref.x, ref.y, ref.z,
+                    stateMachine.lastSilenceOrientX, stateMachine.lastSilenceOrientY, stateMachine.lastSilenceOrientZ)
             }
         }
 
@@ -701,8 +739,13 @@ class CrashDetectionManager(
             else -> "ORIENT_UPRIGHT"
         }
         calibLogger?.log(CalibrationLogger.Event.CRASH_CONFIRMED) {
-            "deviation=%.2f,speed=%.1f,confirm_spd_thr=${config.crashConfirmSpeedKmh},grade=%.1f,cadence=%.0f,gps_stale=$gpsStale,preset=${config.crashSensitivity},effective_dev_max=$effectiveDevMax,effective_silence_ms=$effectiveSilenceMs,silence_path=$silencePath,countdown_s=${config.countdownSeconds},gap_ms=$gapMs,pre_impact_angle=%.1f,decided_by=$decidedBy".formatUs(
-                deviation, currentSpeedKmh, currentGrade, currentCadence, angle)
+            // pre_x/y/z = pre-impact reference, sil_x/y/z = averaged silence orientation.
+            // Logging both makes pre_impact_angle independently verifiable from the raw
+            // geometry — the gap regime used to log only pre_impact_angle=-1.0 (see R6-F).
+            "deviation=%.2f,speed=%.1f,confirm_spd_thr=${config.crashConfirmSpeedKmh},grade=%.1f,cadence=%.0f,gps_stale=$gpsStale,preset=${config.crashSensitivity},effective_dev_max=$effectiveDevMax,effective_silence_ms=$effectiveSilenceMs,silence_path=$silencePath,countdown_s=${config.countdownSeconds},gap_ms=$gapMs,pre_impact_angle=%.1f,pre_x=%.2f,pre_y=%.2f,pre_z=%.2f,sil_x=%.2f,sil_y=%.2f,sil_z=%.2f,decided_by=$decidedBy".formatUs(
+                deviation, currentSpeedKmh, currentGrade, currentCadence, angle,
+                ref.x, ref.y, ref.z,
+                stateMachine.lastSilenceOrientX, stateMachine.lastSilenceOrientY, stateMachine.lastSilenceOrientZ)
         }
     }
 
@@ -774,6 +817,14 @@ class CrashDetectionManager(
                     "cadence=%.0f,speed=%.1f,deviation=%.2f,grade=%.1f".formatUs(
                         currentCadence, currentSpeedKmh, deviation, currentGrade)
                 }
+            } else if (stateMachine.lastGapUprightVeto) {
+                // R6-F: the 20 s silence WAS achieved — the confirm was vetoed on
+                // upright orientation (benign delayed stop), NOT a timeout. The
+                // GAP_UPRIGHT_VETO row was already emitted this tick; suppress the
+                // misleading SILENCE_TIMEOUT but still snapshot 2 s later so the
+                // calibration trail shows whether the bike stayed upright/still.
+                Timber.d("GAP-regime upright veto → benign delayed stop, resetting")
+                schedulePostResetSnapshot("GAP_VETO")
             } else {
                 Timber.d("Silence never achieved → false alarm, resetting")
                 calibLogger?.log(CalibrationLogger.Event.SILENCE_TIMEOUT) {
@@ -907,6 +958,8 @@ class CrashDetectionManager(
             delayedStopGapMs = DELAYED_STOP_GAP_MS,
             silenceDurationUprightMs = SILENCE_DURATION_UPRIGHT_MS,
             uprightAngleThresholdDegrees = UPRIGHT_ANGLE_THRESHOLD_DEGREES,
+            gapVetoUprightAngleDeg = GAP_VETO_UPRIGHT_ANGLE_DEG,
+            nonGapUprightVetoMaxGyroRadS = NON_GAP_UPRIGHT_VETO_MAX_GYRO_RAD_S,
             onSideRelaxationAngleDeg = ON_SIDE_RELAXATION_ANGLE_DEG,
             onSideRelaxationMaxSpeedKmh = ON_SIDE_RELAXATION_MAX_SPEED_KMH,
         )
@@ -917,6 +970,12 @@ class CrashDetectionManager(
     private fun isGpsStale(now: Long): Boolean =
         speedLastChangeMs > 0 && (now - speedLastChangeMs) > GPS_STALE_MS
 
+    // AUDIT 2026-06: intentional duplicate of CrashStateMachine.isSpeedDropConfirmed. This
+    // facade copy feeds ONLY the calibration CSV accumulators (speedReachedInWindow / gyro-block
+    // labels), never the live detection decision — the state machine owns that. The two may
+    // differ by a tick on their independent speed snapshots, which is acceptable for an
+    // approximate audit label. Not a bug; do not re-flag. (Only unify if calibration mislabels
+    // start blocking threshold tuning.)
     private fun isSpeedDropConfirmed(now: Long): Boolean {
         if (!speedDataReceived && (now - startTime) < COLD_START_GUARD_MS) return false
         if (isGpsStale(now)) return true

@@ -86,6 +86,78 @@ class MedicalEpisodeDetectorTest {
     }
 
     @Test
+    fun `flatline fires only ONCE while HR stays low — recovery latch blocks re-fire until HR rises`() {
+        val f = Fixture()
+        // Keep the rider continuously active with a fresh, changing speed signal (>= 5 km/h)
+        // throughout, so re-firing is governed by the recovery latch, not the activity gate.
+        fun feed(seconds: Int, bpm: Int) {
+            for (sec in 0 until seconds) {
+                f.clock.nowMs += 1_000L
+                f.hr(bpm)
+                f.speed(if (sec % 2 == 0) 20.0 else 21.0)
+                f.detector.tick()
+            }
+        }
+
+        // Episode 1: HR <30 sustained for 30 s → fires once.
+        feed(35, 20)
+        assertEquals(EmergencyReason.MEDICAL_FLATLINE, f.captured?.first)
+
+        // HR stays stuck low for another 90 s (a dead/loose strap) → must NOT re-fire.
+        f.captured = null
+        feed(90, 20)
+        assertNull("stuck-low HR must not re-fire FLATLINE while the recovery latch is held", f.captured)
+
+        // HR recovers to/above the threshold → latch clears.
+        feed(5, 70)
+
+        // A genuine NEW drop after recovery → must fire again.
+        f.captured = null
+        feed(35, 20)
+        assertEquals(
+            "a new sustained drop after HR recovery must fire again",
+            EmergencyReason.MEDICAL_FLATLINE, f.captured?.first,
+        )
+    }
+
+    @Test
+    fun `flatline recovery clears the latch even while the rider is idle — recovery is gated on HR, not speed`() {
+        val f = Fixture()
+        fun feedActive(seconds: Int, bpm: Int) {
+            for (sec in 0 until seconds) {
+                f.clock.nowMs += 1_000L
+                f.hr(bpm)
+                f.speed(if (sec % 2 == 0) 20.0 else 21.0)
+                f.detector.tick()
+            }
+        }
+
+        // Episode 1 fires (rider active).
+        feedActive(35, 20)
+        assertEquals(EmergencyReason.MEDICAL_FLATLINE, f.captured?.first)
+
+        // Rider STOPS (no active speed → the activity gate would block FLATLINE eval) but HR
+        // recovers to 70 for 70 s. The recovery latch must still clear, because the clear is at
+        // the top of evaluateFlatline (gated on HR alone). Pre-fix, the clear lived only in the
+        // gated else branch, so this idle recovery left the latch stuck.
+        f.captured = null
+        for (sec in 0 until 70) {
+            f.clock.nowMs += 1_000L
+            f.hr(70)
+            f.speed(0.0)            // not active
+            f.detector.tick()
+        }
+
+        // Rider resumes and immediately has a genuine sustained-low episode → must fire again.
+        f.captured = null
+        feedActive(35, 20)
+        assertEquals(
+            "recovery while idle must clear the latch so a later real episode still fires",
+            EmergencyReason.MEDICAL_FLATLINE, f.captured?.first,
+        )
+    }
+
+    @Test
     fun `flatline does NOT fire when HR is fresh but rider has been idle longer than ACTIVE_RECENT_MS`() {
         val f = Fixture()
         // Brief activity to seed lastSpeedAboveActiveMs, then idle out beyond the 60 s window.
@@ -159,12 +231,75 @@ class MedicalEpisodeDetectorTest {
         }
         for (i in 0 until 15) {
             f.clock.nowMs += 1_000L
-            f.hr(80)                        // 50 % drop, well past the 40 % gate
+            f.hr(40)                        // 75 % drop AND below the 55 bpm absolute floor (H4)
             f.speed(20.0 + (i % 5) * 0.1)
         }
         f.detector.tick()
         assertTrue("collapse should fire: ${f.captured}", f.captured != null)
         assertEquals(EmergencyReason.MEDICAL_COLLAPSE, f.captured!!.first)
+    }
+
+    @Test
+    fun `collapse does NOT fire on a sharp drop when recent HR stays above the absolute floor (HR-strap artifact)`() {
+        // Field false-positive 2026-06-04 (install 68c6ea): HR 158 -> 88 (42% drop) at
+        // 50.7 km/h fired a MEDICAL_COLLAPSE the rider cancelled. 88 bpm is not a collapse —
+        // it's a chest-strap dropout while sprinting (HR recovered to 110+ seconds later, and
+        // a real collapse victim can't hold 50 km/h). A sharp % drop alone is artifact-prone;
+        // require the recent HR to be absolutely low (≤ HR_COLLAPSE_MAX_RECENT_BPM) too.
+        val f = Fixture()
+        for (i in 0 until 250) {
+            f.clock.nowMs += 1_000L
+            f.hr(158)
+            f.speed(40.0 + (i % 5) * 0.1)
+        }
+        for (i in 0 until 15) {
+            f.clock.nowMs += 1_000L
+            f.hr(88)                        // 44% drop — past the % gate, but not a collapse
+            f.speed(50.0 + (i % 5) * 0.1)   // still sprinting → clearly in control
+        }
+        f.detector.tick()
+        assertNull("sharp drop to 88 bpm is above the collapse floor → must NOT fire: ${f.captured}", f.captured)
+    }
+
+    @Test
+    fun `collapse fires AT the absolute floor - recent equals 55 bpm is the last firing value`() {
+        // Boundary pin: the gate is `recent > HR_COLLAPSE_MAX_RECENT_BPM` (55), so recent == 55
+        // must still fire. Locks the inclusive edge so a future edit to the constant can't drift
+        // silently. baseline 160 → drop = 65.6 %, well past the 40 % gate.
+        // NB: a 1 s gap between the baseline block and the recent block keeps the last 160 bpm
+        // sample out of the half-open recent window's inclusive lower edge, so `recent` is an
+        // exact 55 (not pulled up by an edge leak) — this test must isolate the floor.
+        val f = floorBoundaryFixture(recentBpm = 55)
+        f.detector.tick()
+        assertEquals(EmergencyReason.MEDICAL_COLLAPSE, f.captured?.first)
+    }
+
+    @Test
+    fun `collapse does NOT fire one bpm above the floor - recent equals 56 bpm is suppressed`() {
+        // Boundary pin, suppressed side: recent == 56 (> 55) must be blocked even though the
+        // 40 % drop gate is satisfied (baseline 160 → drop = 65.0 %).
+        val f = floorBoundaryFixture(recentBpm = 56)
+        f.detector.tick()
+        assertNull("recent 56 bpm is above the 55 floor → must NOT fire: ${f.captured}", f.captured)
+    }
+
+    /** Builds a fixture with a 4-min 160 bpm baseline, a 1 s gap, then a 16 s window at
+     *  [recentBpm] so the computed recent-window average is exactly [recentBpm] (no
+     *  baseline-edge leak). Used by the two floor-boundary tests. */
+    private fun floorBoundaryFixture(recentBpm: Int): Fixture {
+        val f = Fixture()
+        for (i in 0 until 250) {
+            f.clock.nowMs += 1_000L
+            f.hr(160)
+            f.speed(20.0 + (i % 5) * 0.1)
+        }
+        f.clock.nowMs += 1_000L              // 1 s gap, no sample → excludes the last 160 from the window
+        for (i in 0 until 16) {
+            f.clock.nowMs += 1_000L
+            f.hr(recentBpm)
+            f.speed(20.0 + (i % 5) * 0.1)
+        }
+        return f
     }
 
     @Test
@@ -244,7 +379,7 @@ class MedicalEpisodeDetectorTest {
         }
         for (i in 0 until 15) {
             f.clock.nowMs += 1_000L
-            f.hr(80)
+            f.hr(40)                        // below the 55 bpm absolute floor (H4) so it fires
             f.speed(20.0 + (i % 5) * 0.1)
         }
         f.detector.tick()
@@ -301,7 +436,9 @@ class MedicalEpisodeDetectorTest {
         }
         for (i in 0 until 60) {
             f.clock.nowMs += 1_000L
-            val bpm = (160 - (i + 1) * 80 / 60).coerceAtLeast(80)
+            // Fade 160 → 40 over ~30 s, then hold at 40 so the recent-window average sits below
+            // the 50 bpm absolute floor (H4) — a genuine mid-ride collapse, not a strap blip.
+            val bpm = (160 - (i + 1) * 4).coerceAtLeast(40)
             f.hr(bpm)
             f.speed(20.0 + (i % 5) * 0.1)   // still moving — vary value so speed stays fresh
         }

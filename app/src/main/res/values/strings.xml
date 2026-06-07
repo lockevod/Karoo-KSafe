@@ -52,7 +52,7 @@
     <string name="settings_master_hint">When OFF the extension stops monitoring everything — crash, speed-drop, check-in, Health (HR), Fueling. Notifications already configured (ride start/end, custom messages, webhooks) are also suppressed. Leave ON unless you want a hard stop.</string>
     <string name="actions_section_karoo_live">Karoo Live notifications</string>
     <string name="actions_section_karoo_live_tests">Test ride notifications</string>
-    <string name="fueling_fit_export_hint">Writes KSafe data into the recorded FIT so Strava / Intervals.icu / TrainingPeaks can plot it alongside HR and power. Includes cumulative carbs logged (g), cumulative carbs burned (g), current carb burn rate (g/h) and hydration (ml); plus, when wellness is enabled, current HR drift (%), max drift this ride, and wellness alert count.</string>
+    <string name="fueling_fit_export_hint">Off by default — turn it on before the ride. Writes KSafe data into the recorded FIT as developer fields. Intervals.icu and TrainingPeaks can plot these alongside HR and power; Strava does NOT display custom data fields and will ignore them. Includes cumulative carbs logged (g), cumulative carbs burned (g), current carb burn rate (g/h) and hydration (ml); plus, when wellness is enabled, current HR drift (%), max drift this ride, and wellness alert count.</string>
     <string name="simulate_crash_label">Simulate Crash (send alert now)</string>
     <string name="simulate_crash_confirm_title">Send a real alert?</string>
     <string name="simulate_crash_confirm_body">This sends the configured emergency message through your active provider — no countdown, no cancel. Use this only to verify the channel works end-to-end.</string>
@@ -108,7 +108,11 @@
     <string name="fueling_slot_label_label">Label</string>
     <string name="fueling_slot_grams_label">g</string>
     <string name="fueling_slot_ml_label">ml</string>
-    <string name="fueling_fit_export_label">Write KSafe data to FIT (Strava / Intervals.icu)</string>
+    <string name="fueling_color_label">Colour</string>
+    <string name="fueling_combined_section">Combined logging</string>
+    <string name="fueling_combined_concentration_label">Carbs per 500 ml (g)</string>
+    <string name="fueling_combined_hint">One tap logs a drink + its carbs. Set the carb concentration once; each button\'s carbs auto-fill from its volume (still editable). Active when carbs and/or hydration tracking is on.</string>
+    <string name="fueling_fit_export_label">Write KSafe data to FIT (Intervals.icu / TrainingPeaks)</string>
 
     <!-- Readiness at ride start -->
     <string name="readiness_at_ride_start_label">Readiness advice at ride start</string>
@@ -161,6 +165,9 @@
     <string name="hyd_log_1_datatype_name">KSafe Drink 1</string>
     <string name="hyd_log_2_datatype_name">KSafe Drink 2</string>
     <string name="hyd_log_datatype_desc">Tap to log a configured drink item (e.g. sip, bottle). Counts toward your hourly target.</string>
+    <string name="combined_log_1_datatype_name">Fuel Combo 1</string>
+    <string name="combined_log_2_datatype_name">Fuel Combo 2</string>
+    <string name="combined_log_datatype_desc">Tap to log a configured drink + carbs combo in one go. Counts toward both your hydration and carb targets.</string>
     <string name="hyd_status_datatype_name">KSafe Hydration Status</string>
     <string name="hyd_status_datatype_desc">Shows current hydration deficit relative to target. Color-coded by urgency. A leading \"~\" means the sweat estimate is running without a HR/power sensor (rough, temperature-based) — the reminders still work, the number is just approximate.</string>
 
@@ -210,10 +217,33 @@
     <string name="telegram_chat_id2_hint">Chat ID — recipient 2 (optional)</string>
     <string name="telegram_chat_id3_hint">Chat ID — recipient 3 (optional)</string>
     <string name="telegram_description">Free Telegram messages via a bot. Create a bot with @BotFather, get the token, and enter your Chat ID.</string>
+    <string name="recipient_alerts_all">All</string>
+    <string name="recipient_alerts_emergency">Emergency</string>
+    <string name="recipient_alerts_info">Info</string>
+    <string name="recipient_alerts_label">This contact receives</string>
+    <string name="recipient_alerts_need_emergency">At least one contact must receive emergency alerts</string>
     <string name="section_safety">Safety configuration</string>
     <string name="backup_export">Export</string>
     <string name="backup_import">Import</string>
+    <string name="backup_path_hint">Export → /sdcard/KSafe/ksafe_export.json  |  Import ← /sdcard/KSafe/ksafe_import.json</string>
+    <string name="backup_secrets_warning">⚠ The export file stores your messaging credentials (bot tokens, API keys) and recipient numbers in plain text. Keep it private and delete it after restoring.</string>
+    <string name="backup_needs_access">Backup needs file access. Grant it, then tap again.</string>
+    <string name="backup_grant_opening">Opening file-access settings — grant it, then tap again.</string>
+    <string name="backup_grant_adb">This Karoo can\'t open the file-access screen. Grant via adb:\nadb shell appops set com.enderthor.kSafe MANAGE_EXTERNAL_STORAGE allow</string>
     <string name="test_send">Test Send</string>
+    <!-- Provider-incomplete warning (Provider tab banner + ride-start InRideAlert) -->
+    <string name="provider_warn_ridestart_title">KSafe: alerts won\'t send</string>
+    <string name="provider_warn_banner_suffix">— alerts won\'t send</string>
+    <string name="provider_missing_callmebot">CallMeBot: no phone/API key</string>
+    <string name="provider_missing_pushover_token">Pushover: missing App Token</string>
+    <string name="provider_missing_pushover_user">Pushover: missing User Key</string>
+    <string name="provider_missing_ntfy_topic">ntfy: missing topic name</string>
+    <string name="provider_missing_telegram_token">Telegram: missing Bot Token</string>
+    <string name="provider_missing_telegram_chat">Telegram: missing Chat ID</string>
+    <string name="provider_warn_unverified">Not verified yet — tap Test Send to confirm alerts work</string>
+    <!-- Ride-start "provider has gone quiet > 30 days" reminder -->
+    <string name="provider_warn_stale_title">KSafe: re-test your alerts</string>
+    <string name="provider_warn_stale_detail">No alert sent in over a month</string>
 
     <!-- Settings screen -->
     <string name="settings_title">Safety Settings</string>
@@ -221,8 +251,8 @@
     <string name="emergency_message_label">Emergency message</string>
     <string name="emergency_message_hint">Use {location} for GPS link and {reason} for cause</string>
     <string name="crash_detection_label">Automatic crash detection</string>
-    <string name="safety_buzzer_mute_title">If your Karoo is muted, alerts make no sound</string>
-    <string name="safety_buzzer_mute_hint">KSafe can\'t override the device mute. Everything else still works — alerts fire and messages are sent normally.</string>
+    <string name="safety_buzzer_mute_title">If your Karoo is muted, non-emergency alerts make no sound</string>
+    <string name="safety_buzzer_mute_hint">Emergency sounds (crash countdown, SOS, and the final 1-min check-in reminder) still play via the buzzer override below. Other beeps (ride start, earlier check-in reminders, wellness) respect the device mute. Alerts still fire and messages are sent normally regardless.</string>
     <string name="health_maxhr_not_loaded">Karoo profile maxHr not loaded yet — set it in Karoo\'s User Profile.</string>
     <string name="health_pct_enter_range">Enter 60–100 to see the resolved bpm threshold (your maxHr = %1$d).</string>
     <string name="health_pct_resolved_bpm">= %1$d bpm (your maxHr = %2$d)</string>
@@ -238,7 +268,7 @@
     <string name="custom_alert_length_counter">%1$d / %2$d — keep it short to fit the alert popup</string>
     <string name="crash_sensitivity_label">Crash detection sensitivity</string>
     <string name="sensitivity_low">Low</string>
-    <string name="sensitivity_medium">Medium</string>
+    <string name="sensitivity_medium">Med</string>
     <string name="sensitivity_high">High</string>
     <string name="sensitivity_custom">Custom threshold</string>
     <!-- Sensitivity descriptions — note: "High sensitivity" means a LOWER impact threshold (detects lighter hits).
@@ -264,6 +294,9 @@
     <string name="speed_drop_minutes_label">Minutes stopped before alert</string>
     <string name="checkin_timer_label">Check-in timer</string>
     <string name="checkin_interval_label">Check-in interval (minutes)</string>
+    <string name="checkin_warning_title">Check-in in %1$d min</string>
+    <string name="checkin_warning_detail">Tap the Check-in field to confirm you\'re OK</string>
+    <string name="checkin_hint">Add the \"KSafe Check-in\" field to a data page: tap it during the ride to confirm you\'re OK and reset the timer. You\'ll be reminded with beeps 5 and 1 min before it expires. If the timer runs out without a tap, your contacts are alerted automatically — so reset it well before it expires.</string>
     <string name="active_label">Extension active</string>
     <string name="karoo_live_label">Notify contacts on ride start</string>
     <string name="karoo_live_hint">Sends a message when the ride starts (first start only — resuming after a pause does NOT send it again). Requires a Karoo Live key to include the tracking link; leave the key empty to send a plain message without a link.</string>
@@ -335,7 +368,7 @@
          source of truth. The %1$s args are dynamic diagnostic context
          (bind error message, BeepResult enum name). -->
     <string name="settings_buzzer_bypass_label">Buzzer on emergency (overrides mute)</string>
-    <string name="settings_buzzer_bypass_hint">Plays the Karoo buzzer on crash countdown and SOS firing, even if your Karoo is muted. Non-emergency beeps (ride start, check-in, wellness warnings) still respect mute as usual.</string>
+    <string name="settings_buzzer_bypass_hint">Plays the Karoo buzzer on crash countdown, SOS firing, and the final 1-min check-in reminder, even if your Karoo is muted. Other non-emergency beeps (ride start, earlier check-in reminders, wellness warnings) still respect mute as usual.</string>
     <string name="settings_buzzer_test_label">Test buzzer (HAL probe)</string>
     <string name="settings_buzzer_test_running">Binding…</string>
     <string name="settings_buzzer_test_bind_failed">Bind failed: %1$s — KSafe will fall back to SDK beep on emergencies.</string>
@@ -402,6 +435,10 @@
     <string name="webhook_alert_text_desc">This message will appear as an on-screen notification every time the action fires</string>
     <string name="calibration_desc">When enabled, KSafe records anonymous sensor data (accelerometer values, speed readings, detection states) to help the developer calibrate the crash detection algorithm. No GPS coordinates, no messages, no personal information of any kind is ever included. Data is sent automatically to the developer when you disable this option or finish a ride. Disabled by default — completely optional.</string>
     <string name="calibration_logging_label">Send anonymous calibration data</string>
+    <string name="update_check_label">Notify me about updates</string>
+    <string name="update_available_title">Update available</string>
+    <!-- %1$s is the version, e.g. 2.2.0 -->
+    <string name="update_available_message">v%1$s available — update from the Hammerhead extensions store</string>
     <string name="calibration_send">Send now</string>
     <string name="calibration_clear">Clear log</string>
     <string name="calibration_adb_hint">Pull full CSV: adb pull /sdcard/Android/data/com.enderthor.kSafe/files/ksafe_calibration.csv</string>
@@ -412,7 +449,38 @@
     <string name="sos_field_color_label">SOS field colour</string>
     <string name="timer_field_color_label">Timer field colour</string>
 
+    <!-- Per-profile crash settings -->
+    <string name="crash_per_profile_title">Per-profile crash detection</string>
+    <string name="crash_per_profile_empty">No profiles yet — start a ride with a Karoo profile and it will appear here to customise.</string>
+    <string name="crash_per_profile_hint">Each Karoo profile appears here after you start a ride with it. Settings you save take effect at the start of your next ride with that profile.</string>
+    <string name="crash_per_profile_active">● active now</string>
+    <string name="crash_per_profile_use_global">Use global</string>
+    <string name="crash_per_profile_custom">Custom</string>
+    <string name="crash_per_profile_summary_global">Global settings</string>
+    <string name="crash_per_profile_summary_off">Crash detection off</string>
+    <string name="crash_per_profile_summary_custom">Custom · %1$s</string>
+    <string name="crash_per_profile_global_group">Profiles using global settings (%1$d)</string>
+    <string name="crash_per_profile_remove">Remove</string>
+
     <!-- Outbound alert delivery failure — fires after Sender exhausts every retry cycle. -->
     <string name="alert_delivery_failed_title">Alert NOT delivered</string>
     <string name="alert_delivery_failed_detail">%1$s could not send. Check coverage / credentials.</string>
+    <!-- Outbound alert reached some but not all emergency contacts (partial delivery). -->
+    <string name="alert_delivery_partial_title">Alert partly delivered</string>
+    <string name="alert_delivery_partial_detail">Reached %1$d of %2$d contacts via %3$s. Check the others\' setup.</string>
+
+    <!-- B27 — literals pulled out of inline Kotlin / layout XML so they localise. -->
+    <string name="dialog_close">Close</string>
+    <string name="fueling_allowed_range">Allowed range: %1$d..%2$d</string>
+    <string name="sensitivity_scale_min">20 m/s² (very sensitive)</string>
+    <string name="sensitivity_scale_max">70 m/s² (hard impacts only)</string>
+    <string name="overlay_cancel">CANCEL</string>
+    <string name="overlay_dismiss">DISMISS</string>
+    <!-- Webhook tap rejection feedback (InRideAlert / SystemNotification). -->
+    <string name="webhook_blocked_master_off">Extension is disabled — enable it in Settings first.</string>
+    <string name="webhook_blocked_disabled">Webhook disabled — enable it in the Actions tab</string>
+    <string name="webhook_blocked_no_url">No URL configured — set one in the Actions tab</string>
+    <string name="webhook_blocked_no_gps">Blocked — no GPS fix yet</string>
+    <string name="webhook_blocked_no_target">Blocked — no target location configured</string>
+    <string name="webhook_blocked_too_far">Blocked — %1$dm away (max %2$dm)</string>
 </resources>

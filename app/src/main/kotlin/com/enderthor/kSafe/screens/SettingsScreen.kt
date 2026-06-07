@@ -22,6 +22,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
@@ -31,10 +32,12 @@ import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import com.enderthor.kSafe.R
+import com.enderthor.kSafe.activity.BackupStorage
 import com.enderthor.kSafe.activity.MainViewModel
 import com.enderthor.kSafe.extension.KSafeExtension
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
 /**
@@ -54,17 +57,38 @@ import kotlinx.coroutines.withContext
 fun SettingsScreen(vm: MainViewModel) {
     val config by vm.config.collectAsState()
     val context = LocalContext.current
+    val scope = rememberCoroutineScope()
 
     var isActive          by remember(config.isActive)                  { mutableStateOf(config.isActive) }
     var fitExportEnabled  by remember(config.fuelingFitExportEnabled)   { mutableStateOf(config.fuelingFitExportEnabled) }
     var calibrationLogging by remember(config.calibrationLoggingEnabled) { mutableStateOf(config.calibrationLoggingEnabled) }
+    var updateCheck       by remember(config.updateCheckEnabled)        { mutableStateOf(config.updateCheckEnabled) }
     var buzzerOnEmergency by remember(config.buzzerOnEmergencyEnabled)  { mutableStateOf(config.buzzerOnEmergencyEnabled) }
     var calibLogInfo       by remember { mutableStateOf("") }
     var calibLogNote       by remember { mutableStateOf("") }
     var calibLogNoteIsError by remember { mutableStateOf(false) }
 
-    val exportFile = java.io.File(context.getExternalFilesDir(null), "ksafe_export.json")
-    val importFile = java.io.File(context.getExternalFilesDir(null), "ksafe_import.json")
+    // Legacy app-private dir kept ONLY as an import fallback for users whose file is still there.
+    val legacyBackupDir = context.getExternalFilesDir(null)
+    // API < 30 runtime-permission launcher (no-op on 30+, which uses the settings deep-link).
+    val writePermLauncher = androidx.activity.compose.rememberLauncherForActivityResult(
+        androidx.activity.result.contract.ActivityResultContracts.RequestPermission()
+    ) { /* result consumed on the user's next Export/Import tap via BackupStorage.hasAccess */ }
+
+    // Returns null if backup access is ready; otherwise kicks off the grant flow and returns a
+    // status string for the button to show. Lazy — only ever runs on an Export/Import tap.
+    fun ensureBackupAccess(): String? {
+        if (BackupStorage.hasAccess(context)) return null
+        val intent = BackupStorage.allFilesSettingsIntent(context)
+        return when {
+            intent != null -> { context.startActivity(intent); context.getString(R.string.backup_grant_opening) }
+            android.os.Build.VERSION.SDK_INT < android.os.Build.VERSION_CODES.R -> {
+                writePermLauncher.launch(android.Manifest.permission.WRITE_EXTERNAL_STORAGE)
+                context.getString(R.string.backup_needs_access)
+            }
+            else -> context.getString(R.string.backup_grant_adb)
+        }
+    }
 
     LaunchedEffect(isActive, fitExportEnabled, buzzerOnEmergency) {
         delay(600)
@@ -162,6 +186,20 @@ fun SettingsScreen(vm: MainViewModel) {
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant
         )
+
+        // Update-availability notice — opt-out toggle (default on). Gates the periodic,
+        // ride-idle overlay that tells the rider a newer KSafe build is published.
+        SettingRow(label = stringResource(R.string.update_check_label)) {
+            Switch(
+                checked = updateCheck,
+                onCheckedChange = { newValue ->
+                    updateCheck = newValue
+                    // Merge onto the latest config (not the captured snapshot) so this
+                    // immediate save can't clobber the debounced batch save.
+                    vm.updateConfig { it.copy(updateCheckEnabled = newValue) }
+                },
+            )
+        }
 
         // Diagnostic button — binds the HAL service and plays a short test tone. Useful
         // for confirming the bypass works after a Karoo OTA (Hammerhead can gate the
@@ -293,10 +331,9 @@ fun SettingsScreen(vm: MainViewModel) {
         if (calibrationLogging) {
             LaunchedEffect(calibrationLogging) {
                 while (calibrationLogging) {
-                    // Off-Main: getCalibrationLogInfo() reads whole files (line scan + readText).
-                    calibLogInfo = withContext(Dispatchers.IO) {
-                        KSafeExtension.getInstance()?.getCalibrationLogInfo() ?: ""
-                    }
+                    // getCalibrationLogInfo() is suspend + hops to Dispatchers.IO internally
+                    // (it scans the whole CSV + reads the previous file) — safe to call here.
+                    calibLogInfo = KSafeExtension.getInstance()?.getCalibrationLogInfo() ?: ""
                     delay(5_000L)
                 }
             }
@@ -325,10 +362,14 @@ fun SettingsScreen(vm: MainViewModel) {
                 }
                 Button(
                     onClick = {
-                        KSafeExtension.getInstance()?.clearCalibrationLog()
-                        calibLogInfo = ""
-                        calibLogNote = "Log cleared."
-                        calibLogNoteIsError = false
+                        // clearCalibrationLog() is suspend (deletes files on Dispatchers.IO);
+                        // launch off the Main onClick so the delete never janks the UI.
+                        scope.launch {
+                            KSafeExtension.getInstance()?.clearCalibrationLog()
+                            calibLogInfo = ""
+                            calibLogNote = "Log cleared."
+                            calibLogNoteIsError = false
+                        }
                     },
                     modifier = Modifier.weight(1f),
                     colors = ButtonDefaults.buttonColors(
@@ -363,9 +404,16 @@ fun SettingsScreen(vm: MainViewModel) {
             color = MaterialTheme.colorScheme.onSurfaceVariant
         )
         Text(
-            text = "Export → ksafe_export.json  |  Import ← ksafe_import.json",
+            text = stringResource(R.string.backup_path_hint),
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant
+        )
+        // Privacy notice: the export is a plaintext credential dump (bot tokens, API keys,
+        // recipient numbers). Surfaced in error colour so the rider knows to keep it private.
+        Text(
+            text = stringResource(R.string.backup_secrets_warning),
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.error
         )
 
         Row(
@@ -378,13 +426,15 @@ fun SettingsScreen(vm: MainViewModel) {
                     runningLabel = "Exporting…",
                     isSuccess = { it.startsWith("Exported") },
                     onAction = {
+                        ensureBackupAccess()?.let { return@TestActionButton it }
                         try {
                             val json = vm.exportToJson()
+                            val target = BackupStorage.exportFile()
                             withContext(Dispatchers.IO) {
-                                exportFile.parentFile?.mkdirs()
-                                exportFile.writeText(json)
+                                target.parentFile?.mkdirs()
+                                target.writeText(json)
                             }
-                            "Exported to ksafe_export.json"
+                            "Exported to /sdcard/KSafe/${BackupStorage.EXPORT_NAME}"
                         } catch (e: Exception) {
                             "Export failed: ${e.message}"
                         }
@@ -397,12 +447,23 @@ fun SettingsScreen(vm: MainViewModel) {
                     runningLabel = "Importing…",
                     isSuccess = { it == "Imported successfully." },
                     onAction = {
+                        // Only gate on shared-storage access when we actually need /sdcard/KSafe.
+                        // A legacy app-private import file needs no permission, so import it
+                        // without requesting access (Copilot review: legacy import must not be blocked).
+                        val legacyFile = withContext(Dispatchers.IO) {
+                            BackupStorage.legacyImportFile(legacyBackupDir)
+                        }
+                        if (legacyFile == null) {
+                            ensureBackupAccess()?.let { return@TestActionButton it }
+                        }
                         try {
-                            val exists = withContext(Dispatchers.IO) { importFile.exists() }
-                            if (!exists) {
-                                "ksafe_import.json not found. See README."
+                            val file = withContext(Dispatchers.IO) {
+                                BackupStorage.resolveImportFile(BackupStorage.backupDir(), legacyBackupDir)
+                            }
+                            if (file == null) {
+                                "${BackupStorage.IMPORT_NAME} not found in /sdcard/KSafe/. See README."
                             } else {
-                                val json = withContext(Dispatchers.IO) { importFile.readText() }
+                                val json = withContext(Dispatchers.IO) { file.readText() }
                                 val ok = vm.importFromJson(json)
                                 if (ok) "Imported successfully." else "Import failed — invalid file."
                             }

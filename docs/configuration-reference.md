@@ -37,6 +37,7 @@ Everything that decides **when** and **how** an emergency fires lives here.
   Higher values trade a small extra false-positive rate (a rider who hits a bump and brakes hard *might* dip below 8 km/h for the 4.5 s silence window without crashing) against fewer missed alerts on sliding crashes. Lower values do the opposite trade-off.
 - **Monitor crash when not riding**: Keeps crash detection active even when no ride is recording. Useful for warm-ups or quick spins without starting a recording.
 - **Monitor crash when not riding — any speed**: Same as above but ignores the minimum speed threshold (detects crashes even while stationary). ⚠ More false positives — use with caution.
+- **Per-profile crash settings**: Override the crash configuration per Karoo ride profile (Road / Gravel / MTB / custom). Each profile can either keep the **Use global** toggle (inherit the global crash config) or define its own independent preset / enabled / sensitivity / min-speed / confirm-speed set. The override is **all-or-nothing** — turning off Use-global replaces the whole crash config for that profile, not individual fields (a per-profile *disable* can only further restrict the global kill-switch, never re-enable it). A Use-global stub is **auto-created** the first time KSafe sees a profile become active, so the list fills itself in as you ride — a profile only appears after you have **started a ride** with it. The saved override takes effect at the **start of your next ride** with that profile, so configure it before the ride you want it to apply to. Entries are **keyed by profile id**, so renaming a profile preserves its settings; entries for deleted profiles are pruned automatically. In the Safety tab each profile card collapses to a one-line summary so a long list stays manageable.
 - **Speed drop detection**: Enable/disable detection of prolonged speed drops. Configure the time window (minutes, clamped to **[1, 60]**, default 5) with no movement before triggering. The detector opens its zero-speed window when effective speed falls below **3.5 km/h** (the threshold sits in the valley between consumer-GPS jitter on a stationary bike and slow hike-a-bike — see `crash-detection-algorithm.md`).
 
 ### Check-in timer
@@ -58,6 +59,16 @@ Everything that decides **when** and **how** an emergency fires lives here.
 
 > The `{livetrack}` placeholder also works in the Safety tab's emergency message — if a key is set here, emergency alerts will include the tracking link too.
 
+### Per-contact alert scope
+
+Each configured contact (provider slots 1/2/3) carries an alert-scope filter, stored on the provider config as `recipient1Alerts` / `recipient2Alerts` / `recipient3Alerts` of type `RecipientAlertScope`:
+
+- **ALL** (default) — the contact receives both emergencies (crash / SOS / check-in / speed-drop / medical) and info messages (ride start/end + custom messages).
+- **EMERGENCY_ONLY** — only emergencies.
+- **INFO_ONLY** — only info messages.
+
+> Safety net: if the per-contact filters would leave an **emergency** with no recipients, KSafe falls back to sending the emergency to **all** contacts. A misconfigured filter can never silence a real emergency. (For NTFY, only slot 1 applies — single destination.)
+
 ---
 
 ## Settings tab
@@ -66,6 +77,15 @@ Master switch, calibration and housekeeping.
 
 - **Active**: Enable or disable the extension entirely. When OFF, all monitoring stops (crash, speed-drop, check-in, Health, Fueling) and configured notifications (ride start/end, custom messages, webhooks) are suppressed. Cancel paths for an in-flight emergency stay available so a rider can always stop an active alert.
 - **Simulate Crash**: Sends the configured emergency message immediately — no countdown, no waiting — so you can verify the full message (location, livetrack link) reaches your contact. Sends a **real alert**; warn your contact first.
-- **FIT export** *(v2.0)*: Toggles whether KSafe's fueling stream (cumulative carbs logged, cumulative carbs burned, current burn rate g/h, hydration ml) and wellness stream (HR drift %, max drift, alert count) are written to the Karoo's FIT file as developer fields. Default ON. Details in [health-fueling.md](health-fueling.md).
+- **FIT export** *(v2.0)*: Toggles whether KSafe's fueling stream (cumulative carbs logged, cumulative carbs burned, current burn rate g/h, hydration ml) and wellness stream (HR drift %, max drift, alert count) are written to the Karoo's FIT file as developer fields. Default **OFF** (opt-in). Details in [health-fueling.md](health-fueling.md).
 - **Help improve KSafe**: Optional anonymous calibration data toggle (disabled by default). Full disclosure in [calibration-logging.md](calibration-logging.md).
 - **Export / Import**: Configuration backup and restore — see [backup-restore.md](backup-restore.md) for the file format, the recommended ADB workflow, and the JSON schema.
+
+---
+
+## Combined fuel-log field (Fueling)
+
+The combined drink+carbs tap field logs a drink volume **and** its carbs in a single tap (for riders running a carb-loaded drink mix). Configured via these fields (full Fueling reference in [health-fueling.md](health-fueling.md)):
+
+- **`combinedCarbConcentrationPer500ml`** (default **60**): Carbs (g) per 500 ml of your drink mix. Drives the auto-fill of each combined button's carbs from its volume (`ml × concentration / 500`). Editable; only used by the Fueling screen to pre-fill — the per-button carbs value is what actually gets logged.
+- **`combined1Label` / `combined1Ml` / `combined1Carbs` / `combined1Color`** (defaults `"Sip"` / 250 ml / 30 g / Auto) and **`combined2Label` / `combined2Ml` / `combined2Carbs` / `combined2Color`** (defaults `"Bottle"` / 500 ml / 60 g / Auto): The two combined buttons' label, volume, carbs, and idle background colour. Carbs auto-fill from `ml × combinedCarbConcentrationPer500ml / 500` but are independently editable. The field is active when **either** the carbs or hydration tracker is enabled (it logs only the enabled side) and greyed when both are off — there is no separate enable flag. The icon is fixed (not configurable).

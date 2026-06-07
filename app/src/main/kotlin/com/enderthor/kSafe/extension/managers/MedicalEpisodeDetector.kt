@@ -52,6 +52,17 @@ class MedicalEpisodeDetector(
     private val HR_FLATLINE_MAX_BPM        = 30
     private val HR_FLATLINE_DURATION_SEC   = 30
     private val HR_COLLAPSE_DROP_FRACTION  = 0.40f
+    /** H4 fix — absolute floor for the collapse detector. The % drop alone is artefact-prone:
+     *  field FP 2026-06-04 (install 68c6ea) fired MEDICAL_COLLAPSE on a 158 → ~91 bpm chest-strap
+     *  dropout (42 % drop) while the rider was sprinting at 50.7 km/h, then HR recovered to 110+
+     *  seconds later. A genuine collapse leaves the recent HR ABSOLUTELY low, not merely lower than
+     *  a high effort baseline. Require the recent-window average to be ≤ this floor in addition to
+     *  the % drop. 55 bpm sits around the upper edge of an athlete's active resting HR yet above
+     *  the FLATLINE band (< 30 bpm), so COLLAPSE owns the 30–55 bpm bradycardia window and FLATLINE
+     *  owns < 30 — a clean hand-off. Set to 55 (not 50): 50 was too aggressive a suppression — a
+     *  real collapse that bottoms at 51–54 must still fire, and 55 still rejects the field FP
+     *  (recent ≈ 91). Raising further (more permissive) re-admits high-effort strap artefacts. */
+    private val HR_COLLAPSE_MAX_RECENT_BPM = 55
     /** Recent window for the collapse detector. 15 s (was 10 s) — extending this requires the
      *  drop to be sustained for the full window before triggering, which filters out brief
      *  HR-strap artefacts (1–3 bad readings due to sweat / contact loss) that would otherwise
@@ -106,6 +117,13 @@ class MedicalEpisodeDetector(
     @Volatile private var lastSpeedKmh        = 0.0
     @Volatile private var lastSpeedAboveActiveMs = 0L
     @Volatile private var flatlineSinceMs     = 0L
+    /** Recovery latch: set true when FLATLINE fires, cleared only when HR rises back to/above
+     *  [HR_FLATLINE_MAX_BPM]. While set, FLATLINE cannot re-fire — so a stuck/dead HR strap
+     *  reading <30 bpm raises ONE SOS, not a fresh one every [HR_FLATLINE_DURATION_SEC].
+     *  Enforces the intent the "re-arm requires HR to rise" comment only documented. (COLLAPSE
+     *  uses a time cooldown instead — see [collapseCooldownUntilMs] — because its trigger is a
+     *  relative drop vs a rolling baseline, not an absolute sustained-low level.) */
+    @Volatile private var flatlineFiredAwaitingRecovery = false
     @Volatile private var collapseCooldownUntilMs = 0L
     @Volatile private var lastHrStaleState    = false
     @Volatile private var lastPeriodicLogMs   = 0L
@@ -234,6 +252,7 @@ class MedicalEpisodeDetector(
      */
     private fun resetSessionState() {
         flatlineSinceMs = 0L
+        flatlineFiredAwaitingRecovery = false
         collapseCooldownUntilMs = 0L
         lastPeriodicLogMs = 0L
         lastHrStaleState = false
@@ -447,6 +466,14 @@ class MedicalEpisodeDetector(
     }
 
     private fun evaluateFlatline(now: Long, isStale: Boolean) {
+        // Recovery is purely an HR fact: clear the fire latch as soon as a FRESH HR reading is
+        // back at/above the threshold — BEFORE the speed/active gates below. If the clear lived
+        // only in the (gated) `else` branch, a recovery that happens while GPS is stale (tunnel)
+        // or the rider is stopped would never be seen, leaving the latch stuck and able to block
+        // a later GENUINE flatline (a false negative on a life-critical path).
+        if (hrDataReceived && !isStale && currentHrBpm >= HR_FLATLINE_MAX_BPM) {
+            flatlineFiredAwaitingRecovery = false
+        }
         if (!hrDataReceived || isStale) {
             flatlineSinceMs = 0L
             return
@@ -463,6 +490,16 @@ class MedicalEpisodeDetector(
             return
         }
         if (currentHrBpm < HR_FLATLINE_MAX_BPM) {
+            // Recovery latch — already fired for this sustained-low episode. Don't re-arm or
+            // re-fire until HR climbs back to/above the threshold (cleared at the top of this
+            // function, gated only on HR — not on speed). Without this a stuck/dead strap stuck
+            // <30 bpm fires a fresh EMERGENCY SOS every HR_FLATLINE_DURATION_SEC for the rest of
+            // the ride. (When HR never recovers, there is no valid signal to detect a real event
+            // anyway, so suppressing re-fire on stuck-bad data is correct, not a missed event.)
+            if (flatlineFiredAwaitingRecovery) {
+                flatlineSinceMs = 0L
+                return
+            }
             if (flatlineSinceMs == 0L) flatlineSinceMs = now
             val durationMs = (now - flatlineSinceMs)
             if (durationMs >= HR_FLATLINE_DURATION_SEC * 1000L) {
@@ -516,10 +553,15 @@ class MedicalEpisodeDetector(
                 calibLogger?.log(CalibrationLogger.Event.HR_FLATLINE) {
                     "bpm=$currentHrBpm,duration_s=${durationMs / 1000},speed=%.1f,threshold=$HR_FLATLINE_MAX_BPM,cadence=%.0f,power=$currentPowerW,cadence_data=$cadenceDataReceived,power_data=$powerDataReceived".formatUs(lastSpeedKmh, currentCadenceRpm)
                 }
-                flatlineSinceMs = 0L  // re-arm: requires HR to rise above threshold then fall again
+                flatlineSinceMs = 0L
+                // Latch until HR recovers above threshold (cleared at the top of this function)
+                // so this sustained-low episode raises exactly ONE SOS, not one per window.
+                flatlineFiredAwaitingRecovery = true
                 onIncident(EmergencyReason.MEDICAL_FLATLINE, mapOf("bpm" to currentHrBpm.toString()))
             }
         } else {
+            // HR is at/above threshold → genuine recovery. Reset the timer; the recovery latch
+            // was already cleared at the top of this function (gated on HR alone, not speed).
             flatlineSinceMs = 0L
         }
     }
@@ -548,6 +590,15 @@ class MedicalEpisodeDetector(
             now,
         )
         if (baseline <= 0 || recent <= 0) return
+
+        // H4 fix — absolute floor. A 40 % drop off a high effort baseline is not a collapse if the
+        // recent HR is still well within the active range (158 → 91 at 50 km/h was a strap dropout,
+        // not asystole). A genuine collapse drives the recent HR absolutely low. Gate on `recent`
+        // (the windowed average that the drop is computed from) so a single noisy sample can't flip it.
+        if (recent > HR_COLLAPSE_MAX_RECENT_BPM) {
+            Timber.d(">>> HR_COLLAPSE suppressed: recent=$recent above floor $HR_COLLAPSE_MAX_RECENT_BPM (baseline=$baseline) — likely HR-strap artifact")
+            return
+        }
 
         val drop = (baseline - recent).toFloat() / baseline.toFloat()
         if (drop >= HR_COLLAPSE_DROP_FRACTION) {

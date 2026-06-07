@@ -27,7 +27,12 @@ import androidx.compose.ui.unit.dp
 import com.enderthor.kSafe.R
 import com.enderthor.kSafe.activity.MainViewModel
 import com.enderthor.kSafe.data.ProviderType
+import com.enderthor.kSafe.data.SenderConfig
+import com.enderthor.kSafe.extension.ProviderReadiness
+import com.enderthor.kSafe.extension.providerReadiness
+import com.enderthor.kSafe.data.RecipientAlertScope
 import com.enderthor.kSafe.extension.KSafeExtension
+import com.enderthor.kSafe.extension.util.accepts
 import kotlinx.coroutines.delay
 
 @Composable
@@ -51,6 +56,10 @@ fun ProviderScreen(vm: MainViewModel) {
     var phoneNumber2 by remember { mutableStateOf(activeSender?.phoneNumber2 ?: "") }
     var apiKey3      by remember { mutableStateOf(activeSender?.apiKey3      ?: "") }
     var phoneNumber3 by remember { mutableStateOf(activeSender?.phoneNumber3 ?: "") }
+    var recipient1Alerts by remember { mutableStateOf(activeSender?.recipient1Alerts ?: RecipientAlertScope.ALL) }
+    var recipient2Alerts by remember { mutableStateOf(activeSender?.recipient2Alerts ?: RecipientAlertScope.ALL) }
+    var recipient3Alerts by remember { mutableStateOf(activeSender?.recipient3Alerts ?: RecipientAlertScope.ALL) }
+    var scopeErrorSlot by remember { mutableStateOf<Int?>(null) }
 
     // Sync fieldsProvider + fields when DataStore loads the real active provider on first
     // composition (e.g. stored provider is PUSHOVER but default is CALLMEBOT) or after
@@ -69,6 +78,9 @@ fun ProviderScreen(vm: MainViewModel) {
             phoneNumber2 = s?.phoneNumber2 ?: ""
             apiKey3      = s?.apiKey3      ?: ""
             phoneNumber3 = s?.phoneNumber3 ?: ""
+            recipient1Alerts = s?.recipient1Alerts ?: RecipientAlertScope.ALL
+            recipient2Alerts = s?.recipient2Alerts ?: RecipientAlertScope.ALL
+            recipient3Alerts = s?.recipient3Alerts ?: RecipientAlertScope.ALL
         }
     }
 
@@ -87,17 +99,67 @@ fun ProviderScreen(vm: MainViewModel) {
                 if (sender.phoneNumber2 != phoneNumber2) phoneNumber2 = sender.phoneNumber2
                 if (sender.apiKey3      != apiKey3)      apiKey3      = sender.apiKey3
                 if (sender.phoneNumber3 != phoneNumber3) phoneNumber3 = sender.phoneNumber3
+                if (sender.recipient1Alerts != recipient1Alerts) recipient1Alerts = sender.recipient1Alerts
+                if (sender.recipient2Alerts != recipient2Alerts) recipient2Alerts = sender.recipient2Alerts
+                if (sender.recipient3Alerts != recipient3Alerts) recipient3Alerts = sender.recipient3Alerts
             }
         }
     }
 
     // Auto-save with debounce — uses fieldsProvider (always in sync with the fields)
-    LaunchedEffect(apiKey, userKey, userKey2, userKey3, phoneNumber, apiKey2, phoneNumber2, apiKey3, phoneNumber3) {
+    LaunchedEffect(
+        apiKey, userKey, userKey2, userKey3, phoneNumber, apiKey2, phoneNumber2, apiKey3, phoneNumber3,
+        recipient1Alerts, recipient2Alerts, recipient3Alerts,
+    ) {
+        scopeErrorSlot = null
         delay(700)
         vm.updateSenderConfig(
             fieldsProvider, apiKey, userKey, userKey2, userKey3,
             phoneNumber, apiKey2, phoneNumber2, apiKey3, phoneNumber3,
+            recipient1Alerts, recipient2Alerts, recipient3Alerts,
         )
+    }
+
+    // N4 — auto-dismiss the "must keep an emergency contact" banner. A rejected tap leaves the
+    // chip on its previous (valid) value, and a SegmentedButton does NOT re-fire onScopeChange
+    // when the rider taps the already-selected segment — so without a timeout the only way to
+    // clear the banner is to edit another field. Clearing it on a valid scope change still
+    // happens immediately (setScope / the auto-save effect above); this only bounds the error.
+    LaunchedEffect(scopeErrorSlot) {
+        if (scopeErrorSlot != null) {
+            delay(4000)
+            scopeErrorSlot = null
+        }
+    }
+
+    // Apply a new alert scope to one recipient slot, enforcing the invariant that — for the
+    // active provider's configured recipients — at least one still accepts emergency alerts.
+    // Rejecting (rather than silently allowing) avoids a config where a crash reaches nobody.
+    fun setScope(slot: Int, newScope: RecipientAlertScope) {
+        val keys = listOf(userKey, userKey2, userKey3)
+        val phones = listOf(phoneNumber, phoneNumber2, phoneNumber3)
+        val apiKeys = listOf(apiKey, apiKey2, apiKey3)
+        val configured = (0..2).filter {
+            when (fieldsProvider) {
+                ProviderType.CALLMEBOT -> phones[it].isNotBlank() && apiKeys[it].isNotBlank()
+                ProviderType.NTFY      -> it == 0 && apiKey.isNotBlank()
+                else                   -> keys[it].isNotBlank()
+            }
+        }
+        val candidate = { i: Int ->
+            if (i == slot) newScope
+            else listOf(recipient1Alerts, recipient2Alerts, recipient3Alerts)[i]
+        }
+        if (configured.none { candidate(it).accepts(isEmergency = true) }) {
+            scopeErrorSlot = slot   // reject — would leave no emergency contact
+            return
+        }
+        scopeErrorSlot = null
+        when (slot) {
+            0 -> recipient1Alerts = newScope
+            1 -> recipient2Alerts = newScope
+            else -> recipient3Alerts = newScope
+        }
     }
 
     Column(
@@ -120,6 +182,7 @@ fun ProviderScreen(vm: MainViewModel) {
             vm.updateSenderConfig(
                 fieldsProvider, apiKey, userKey, userKey2, userKey3,
                 phoneNumber, apiKey2, phoneNumber2, apiKey3, phoneNumber3,
+                recipient1Alerts, recipient2Alerts, recipient3Alerts,
             )
             // Load the new provider's saved values and update fieldsProvider atomically.
             val s = senderConfigs.find { it.provider == provider }
@@ -133,6 +196,10 @@ fun ProviderScreen(vm: MainViewModel) {
             phoneNumber2 = s?.phoneNumber2 ?: ""
             apiKey3      = s?.apiKey3      ?: ""
             phoneNumber3 = s?.phoneNumber3 ?: ""
+            recipient1Alerts = s?.recipient1Alerts ?: RecipientAlertScope.ALL
+            recipient2Alerts = s?.recipient2Alerts ?: RecipientAlertScope.ALL
+            recipient3Alerts = s?.recipient3Alerts ?: RecipientAlertScope.ALL
+            scopeErrorSlot = null
             // Switch active provider last so DataStore propagates after fields are ready.
             vm.setActiveProvider(provider)
         }
@@ -147,7 +214,7 @@ fun ProviderScreen(vm: MainViewModel) {
                     modifier = Modifier.weight(1f),
                     label = {
                         Text(
-                            text = if (provider == ProviderType.CALLMEBOT) "CallMeBot" else "Pushover",
+                            text = if (provider == ProviderType.CALLMEBOT) "CallMeBot (WhatsApp)" else "Pushover",
                             style = MaterialTheme.typography.labelSmall
                         )
                     }
@@ -193,6 +260,48 @@ fun ProviderScreen(vm: MainViewModel) {
             color = MaterialTheme.colorScheme.onSurfaceVariant
         )
 
+        // Provider-incomplete warning. Computed from the LIVE field values (not the saved
+        // config) so it updates as the rider types. Same predicate as the Sender fast-fail
+        // ([providerReadiness]) → the banner and "alert won't send" behaviour can't disagree.
+        val readiness = providerReadiness(
+            fieldsProvider,
+            SenderConfig(
+                provider = fieldsProvider,
+                apiKey = apiKey, userKey = userKey, userKey2 = userKey2, userKey3 = userKey3,
+                phoneNumber = phoneNumber, apiKey2 = apiKey2, phoneNumber2 = phoneNumber2,
+                apiKey3 = apiKey3, phoneNumber3 = phoneNumber3,
+            ),
+        )
+        if (readiness is ProviderReadiness.Incomplete) {
+            val reason = when (readiness.missing) {
+                ProviderReadiness.Missing.CALLMEBOT_PHONE_OR_KEY -> stringResource(R.string.provider_missing_callmebot)
+                ProviderReadiness.Missing.PUSHOVER_APP_TOKEN     -> stringResource(R.string.provider_missing_pushover_token)
+                ProviderReadiness.Missing.PUSHOVER_USER_KEY      -> stringResource(R.string.provider_missing_pushover_user)
+                ProviderReadiness.Missing.NTFY_TOPIC             -> stringResource(R.string.provider_missing_ntfy_topic)
+                ProviderReadiness.Missing.TELEGRAM_BOT_TOKEN     -> stringResource(R.string.provider_missing_telegram_token)
+                ProviderReadiness.Missing.TELEGRAM_CHAT_ID       -> stringResource(R.string.provider_missing_telegram_chat)
+            }
+            Text(
+                text = "⚠ $reason ${stringResource(R.string.provider_warn_banner_suffix)}",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.error,
+                modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
+            )
+        } else {
+            // Soft nudge: credentials look complete, but no send has ever succeeded for them yet
+            // — encourage (don't force) verifying. The timestamp comes from the SAVED config (set
+            // on any successful send, reset to 0 when credentials change).
+            val everSent = (senderConfigs.find { it.provider == fieldsProvider }?.lastSuccessfulSendMs ?: 0L) > 0L
+            if (!everSent) {
+                Text(
+                    text = "⚠ ${stringResource(R.string.provider_warn_unverified)}",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
+                )
+            }
+        }
+
         // CallMeBot: recipient 1 phone number (the API key field below is recipient 1's key)
         if (fieldsProvider == ProviderType.CALLMEBOT) {
             OutlinedTextField(
@@ -222,6 +331,23 @@ fun ProviderScreen(vm: MainViewModel) {
             singleLine = true
         )
 
+        // NTFY has a single recipient (the topic in `apiKey`); CallMeBot recipient 1 is
+        // phoneNumber + this apiKey, so its slot-0 selector also belongs here once the phone is set.
+        if (fieldsProvider == ProviderType.NTFY && apiKey.isNotBlank()) {
+            RecipientAlertScopeSelector(
+                scope = recipient1Alerts,
+                onScopeChange = { setScope(0, it) },
+                showError = scopeErrorSlot == 0
+            )
+        }
+        if (fieldsProvider == ProviderType.CALLMEBOT && phoneNumber.isNotBlank() && apiKey.isNotBlank()) {
+            RecipientAlertScopeSelector(
+                scope = recipient1Alerts,
+                onScopeChange = { setScope(0, it) },
+                showError = scopeErrorSlot == 0
+            )
+        }
+
         // CallMeBot: optional second recipient (each recipient needs its own phone + API key
         // because CallMeBot can't fan-out a single request to multiple WhatsApp numbers).
         if (fieldsProvider == ProviderType.CALLMEBOT) {
@@ -239,6 +365,13 @@ fun ProviderScreen(vm: MainViewModel) {
                 modifier = Modifier.fillMaxWidth(),
                 singleLine = true
             )
+            if (phoneNumber2.isNotBlank() && apiKey2.isNotBlank()) {
+                RecipientAlertScopeSelector(
+                    scope = recipient2Alerts,
+                    onScopeChange = { setScope(1, it) },
+                    showError = scopeErrorSlot == 1
+                )
+            }
             OutlinedTextField(
                 value = phoneNumber3,
                 onValueChange = { phoneNumber3 = it },
@@ -253,6 +386,13 @@ fun ProviderScreen(vm: MainViewModel) {
                 modifier = Modifier.fillMaxWidth(),
                 singleLine = true
             )
+            if (phoneNumber3.isNotBlank() && apiKey3.isNotBlank()) {
+                RecipientAlertScopeSelector(
+                    scope = recipient3Alerts,
+                    onScopeChange = { setScope(2, it) },
+                    showError = scopeErrorSlot == 2
+                )
+            }
         }
 
         // Pushover user keys (up to 3 recipients)
@@ -264,6 +404,13 @@ fun ProviderScreen(vm: MainViewModel) {
                 modifier = Modifier.fillMaxWidth(),
                 singleLine = true
             )
+            if (userKey.isNotBlank()) {
+                RecipientAlertScopeSelector(
+                    scope = recipient1Alerts,
+                    onScopeChange = { setScope(0, it) },
+                    showError = scopeErrorSlot == 0
+                )
+            }
             OutlinedTextField(
                 value = userKey2,
                 onValueChange = { userKey2 = it },
@@ -271,6 +418,13 @@ fun ProviderScreen(vm: MainViewModel) {
                 modifier = Modifier.fillMaxWidth(),
                 singleLine = true
             )
+            if (userKey2.isNotBlank()) {
+                RecipientAlertScopeSelector(
+                    scope = recipient2Alerts,
+                    onScopeChange = { setScope(1, it) },
+                    showError = scopeErrorSlot == 1
+                )
+            }
             OutlinedTextField(
                 value = userKey3,
                 onValueChange = { userKey3 = it },
@@ -278,6 +432,13 @@ fun ProviderScreen(vm: MainViewModel) {
                 modifier = Modifier.fillMaxWidth(),
                 singleLine = true
             )
+            if (userKey3.isNotBlank()) {
+                RecipientAlertScopeSelector(
+                    scope = recipient3Alerts,
+                    onScopeChange = { setScope(2, it) },
+                    showError = scopeErrorSlot == 2
+                )
+            }
         }
 
         // Telegram chat IDs (up to 3 recipients)
@@ -289,6 +450,13 @@ fun ProviderScreen(vm: MainViewModel) {
                 modifier = Modifier.fillMaxWidth(),
                 singleLine = true
             )
+            if (userKey.isNotBlank()) {
+                RecipientAlertScopeSelector(
+                    scope = recipient1Alerts,
+                    onScopeChange = { setScope(0, it) },
+                    showError = scopeErrorSlot == 0
+                )
+            }
             OutlinedTextField(
                 value = userKey2,
                 onValueChange = { userKey2 = it },
@@ -296,6 +464,13 @@ fun ProviderScreen(vm: MainViewModel) {
                 modifier = Modifier.fillMaxWidth(),
                 singleLine = true
             )
+            if (userKey2.isNotBlank()) {
+                RecipientAlertScopeSelector(
+                    scope = recipient2Alerts,
+                    onScopeChange = { setScope(1, it) },
+                    showError = scopeErrorSlot == 1
+                )
+            }
             OutlinedTextField(
                 value = userKey3,
                 onValueChange = { userKey3 = it },
@@ -303,6 +478,13 @@ fun ProviderScreen(vm: MainViewModel) {
                 modifier = Modifier.fillMaxWidth(),
                 singleLine = true
             )
+            if (userKey3.isNotBlank()) {
+                RecipientAlertScopeSelector(
+                    scope = recipient3Alerts,
+                    onScopeChange = { setScope(2, it) },
+                    showError = scopeErrorSlot == 2
+                )
+            }
         }
 
         // Test send
@@ -315,9 +497,63 @@ fun ProviderScreen(vm: MainViewModel) {
                 vm.updateSenderConfig(
                     fieldsProvider, apiKey, userKey, userKey2, userKey3,
                     phoneNumber, apiKey2, phoneNumber2, apiKey3, phoneNumber3,
+                    recipient1Alerts, recipient2Alerts, recipient3Alerts,
                 )
                 ext.sendTestMessage(fieldsProvider)
             }
         )
+    }
+}
+
+/**
+ * Per-contact alert-scope picker: three mutually-exclusive [FilterChip]s (All / Emergencies only /
+ * Info only) bound to one recipient slot. [onScopeChange] funnels through `setScope`, which enforces
+ * the "at least one emergency contact" invariant, so a rejected change leaves [scope] unchanged.
+ */
+@Composable
+private fun RecipientAlertScopeSelector(
+    scope: RecipientAlertScope,
+    onScopeChange: (RecipientAlertScope) -> Unit,
+    modifier: Modifier = Modifier,
+    showError: Boolean = false,
+) {
+    Column(modifier = modifier.fillMaxWidth()) {
+        Text(
+            text = stringResource(R.string.recipient_alerts_label),
+            style = MaterialTheme.typography.labelSmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant
+        )
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            val options = listOf(
+                RecipientAlertScope.ALL to R.string.recipient_alerts_all,
+                RecipientAlertScope.EMERGENCY_ONLY to R.string.recipient_alerts_emergency,
+                RecipientAlertScope.INFO_ONLY to R.string.recipient_alerts_info,
+            )
+            options.forEach { (option, labelRes) ->
+                // No weight: each chip sizes to its own label so "Emergency" fits on one line
+                // and "All" / "Info" don't waste a full third of the row each.
+                FilterChip(
+                    selected = scope == option,
+                    onClick = { onScopeChange(option) },
+                    label = {
+                        Text(
+                            text = stringResource(labelRes),
+                            style = MaterialTheme.typography.labelSmall,
+                            maxLines = 1
+                        )
+                    }
+                )
+            }
+        }
+        if (showError) {
+            Text(
+                text = stringResource(R.string.recipient_alerts_need_emergency),
+                color = MaterialTheme.colorScheme.error,
+                style = MaterialTheme.typography.bodySmall
+            )
+        }
     }
 }

@@ -25,7 +25,11 @@ import com.enderthor.kSafe.extension.crash.CrashDetectionManager
 import com.enderthor.kSafe.extension.managers.EmergencyManager
 import com.enderthor.kSafe.extension.managers.LocationManager
 import com.enderthor.kSafe.extension.util.LogReporter
+import com.enderthor.kSafe.extension.util.learnProfile
+import com.enderthor.kSafe.extension.util.resolveEffectiveCrashConfig
 import com.enderthor.kSafe.extension.managers.MedicalEpisodeDetector
+import com.enderthor.kSafe.extension.managers.SosOverlayManager
+import com.enderthor.kSafe.extension.managers.UpdateChecker
 import com.enderthor.kSafe.extension.util.ReadinessAdvice
 import com.enderthor.kSafe.extension.util.ReadinessLevel
 import com.enderthor.kSafe.extension.managers.WebhookManager
@@ -44,6 +48,7 @@ import io.hammerhead.karooext.models.StreamState
 import io.hammerhead.karooext.models.SystemNotification
 import io.hammerhead.karooext.models.WriteToRecordMesg
 import io.hammerhead.karooext.models.WriteToSessionMesg
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -55,6 +60,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeoutOrNull
 import timber.log.Timber
 import kotlin.coroutines.CoroutineContext
 import kotlin.math.PI
@@ -65,6 +71,11 @@ import kotlin.math.sin
 import kotlin.math.sqrt
 
 private const val FUELING_PERSIST_INTERVAL_MS: Long = 30_000L
+/** Hard cap on how long the ride-state collector waits for the first config emission
+ *  (configSeeded) before proceeding anyway. The wait only avoids a brief default-config
+ *  window; 5 s is far longer than a healthy DataStore first read, so if it elapses the
+ *  config load is broken and we must NOT keep crash detection / ride handling blocked. */
+private const val CONFIG_SEED_TIMEOUT_MS: Long = 5_000L
 /** Coarse poll interval for the background loops while their work-gate is unmet
  *  (no ride recording / calibration logging disabled). The loops still wake to
  *  re-check the gate, but at ~2 min instead of their active 30 s / 60 s cadence —
@@ -95,6 +106,21 @@ private const val CALIBRATION_HEALTH_CHECK_INTERVAL_MS: Long = 60_000L
  *  caption ≈ 500 bytes) plus Binder buffer pressure from other apps. */
 private const val CALIBRATION_MAX_CHUNK_BYTES: Int = 72_000
 
+/** Wait this long after KarooSystemService connects before checking for updates —
+ *  the Karoo takes ≥30 s to boot and the tethered-phone link lags; 45 s gives
+ *  connectivity time to come up. */
+private const val UPDATE_CHECK_STARTUP_DELAY_MS: Long = 45_000L
+/** Show the update notice on every Nth service start (combined with a ≤1/day cap). */
+private const val UPDATE_CHECK_EVERY_N_RESTARTS: Int = 3
+/** Auto-dismiss the update overlay after this long (rider may also tap to close). */
+private const val UPDATE_NOTICE_AUTODISMISS_MS: Long = 10_000L
+/** Hard cap on the manifest GET so a hung tethered link can't leave the check
+ *  coroutine suspended until service teardown. */
+private const val UPDATE_CHECK_HTTP_TIMEOUT_MS: Long = 15_000L
+/** OTA manifest describing the latest published build. */
+private const val UPDATE_MANIFEST_URL: String =
+    "https://github.com/lockevod/Karoo-KSafe/releases/latest/download/manifest.json"
+
 /** Per-cycle ceiling on the number of chunks the periodic loop will send back-to-back
  *  when catching up after one or more failed windows. Without a cap a rider whose
  *  Karoo accumulated 10 windows of data while offline would block the periodic
@@ -111,6 +137,20 @@ private const val CALIBRATION_PERIODIC_MAX_CHUNKS_PER_CYCLE: Int = 6
  *  most 5 g behind the true total (sub-2 % error on a typical 300 g ride) and
  *  the session-write rate drops ~5× vs writing on every gram increment. */
 private const val SESSION_BURN_DEADBAND_G: Double = 5.0
+
+/** Minimum spacing between FIT RECORD-message writes (carry-forward cadence). The record
+ *  dev-fields are re-emitted at this interval regardless of whether the value changed.
+ *
+ *  Default 1 s (≈ every record). Hosts that DON'T interpolate sparse developer fields
+ *  (intervals.icu et al.) zero-fill every record lacking the field, so ANY gap renders as a
+ *  full-depth notch — i.e. a throttle doesn't give "shallow teeth", it gives the same spike
+ *  problem at the throttle interval. Only a gap-free (per-record) series draws as a clean
+ *  cumulative line, which is the whole point of carry-forward. Cost is ~1 write/s during
+ *  recording only (~18 000 over a 5 h ride, ~360-450 KB of dev-field data); each is a blocking
+ *  Binder round-trip but the writer runs on [Dispatchers.IO] (see startFit) so it never blocks
+ *  Main, and the per-tick reads are cheap volatile snapshots (B29). Raise this ONLY if you
+ *  accept a visibly toothed graph in exchange for fewer writes. */
+private const val FIT_RECORD_WRITE_INTERVAL_MS: Long = 1_000L
 
 /** Deadband on `CarbFuelingState.cumBurnedG` for the fueling-persistence loop.
  *  Persisted state is restored after a process kill (FUELING_RESTORE_MAX_AGE_MS).
@@ -157,9 +197,29 @@ class KSafeExtension : KarooExtension("ksafe", BuildConfig.VERSION_NAME), Corout
     private lateinit var wellnessMonitor: WellnessMonitor
     private lateinit var carbsTracker: com.enderthor.kSafe.extension.managers.CarbsTracker
     private lateinit var hydrationTracker: com.enderthor.kSafe.extension.managers.HydrationTracker
+    /** Dedicated overlay for the update-availability notice. A separate instance keeps it
+     *  fully isolated from the emergency SOS overlay owned by [emergencyManager]; the two
+     *  never display at the same moment — update fires at idle boot, SOS during an incident. */
+    private val updateOverlay by lazy { SosOverlayManager(applicationContext) }
 
     private var activeConfig = KSafeConfig()
+    /** Completed on the first config emission from DataStore so the ride-state collector
+     *  never runs [handleRideState] against KSafeConfig() defaults (isActive / crash /
+     *  medical all ON) when the extension (re)connects while the Karoo is already Recording. */
+    private val configSeeded = CompletableDeferred<Unit>()
+    /** Completed once the persisted fueling snapshot has been loaded into
+     *  [pendingFuelingRestore] (or determined absent/stale). The ride-state collector waits
+     *  on this before handling the first transition so a mid-ride (re)connect that emits
+     *  Recording quickly can't take the fresh-start branch and silently drop an interrupted
+     *  ride's accumulated carbs/hydration. Like [configSeeded], the wait is bounded — this is
+     *  an optimisation, never a hard block. Completed in a finally so a failed load can't hang it. */
+    private val fuelingRestoreLoaded = CompletableDeferred<Unit>()
     private var currentRideState: RideState? = null
+    @Volatile private var activeProfileId: String? = null
+    /** Whether the crash detector is currently running under the effective config. Kept in
+     *  sync by [reapplyEffectiveCrash] so a profile switch can reconcile start/stop without
+     *  double-registering the sensor listener (CrashDetectionManager.start re-registers). */
+    @Volatile private var crashEffectiveRunning = false
     /** True once the ride-start notification has been sent for the current recording session. */
     private var rideStartNotificationSent = false
     /** Set true once the Headwind extension publishes a temperature reading for this session.
@@ -241,6 +301,7 @@ class KSafeExtension : KarooExtension("ksafe", BuildConfig.VERSION_NAME), Corout
      *  arrays (no @Volatile) are safe. */
     private val carbTapRevertJobs: Array<kotlinx.coroutines.Job?> = arrayOfNulls(4)
     private val hydTapRevertJobs: Array<kotlinx.coroutines.Job?> = arrayOfNulls(3)
+    private val combinedTapRevertJobs: Array<kotlinx.coroutines.Job?> = arrayOfNulls(3)
 
     /** Per-slot revert-to-IDLE jobs for webhook and custom-message field state.
      *  Same problem the carb/hyd arrays solve: every ERROR / SUCCESS branch in
@@ -319,6 +380,11 @@ class KSafeExtension : KarooExtension("ksafe", BuildConfig.VERSION_NAME), Corout
          *  sunset/sunrise theme switch while idle. Seeded in onCreate; rarely changes. */
         val nightModeFlow = kotlinx.coroutines.flow.MutableStateFlow(false)
 
+        /** Active Karoo ride-profile id, mirrored for the Settings UI so the per-profile
+         *  "active" badge updates reactively (and without a polling loop) on a profile switch.
+         *  Updated by the streamRideProfile collector alongside [activeProfileId]. */
+        val activeProfileIdFlow = kotlinx.coroutines.flow.MutableStateFlow<String?>(null)
+
         /** Minimum gap (ms) between two SOS field taps before the second tap is honoured.
          *  Protects BOTH directions around the IDLE→COUNTDOWN flip:
          *   - IDLE→trigger: a phantom retap within the window cannot re-arm.
@@ -356,6 +422,8 @@ class KSafeExtension : KarooExtension("ksafe", BuildConfig.VERSION_NAME), Corout
             com.enderthor.kSafe.datatype.CarbsBurnedDataType("carbs-burned", applicationContext),
             com.enderthor.kSafe.datatype.HydrationLogDataType("hyd-log-1", applicationContext, karooSystem, slot = 1),
             com.enderthor.kSafe.datatype.HydrationLogDataType("hyd-log-2", applicationContext, karooSystem, slot = 2),
+            com.enderthor.kSafe.datatype.CombinedFuelLogDataType("combined-log-1", applicationContext, karooSystem, slot = 1),
+            com.enderthor.kSafe.datatype.CombinedFuelLogDataType("combined-log-2", applicationContext, karooSystem, slot = 2),
             com.enderthor.kSafe.datatype.HydrationStatusDataType("hyd-status", applicationContext, karooSystem),
         )
     }
@@ -384,6 +452,12 @@ class KSafeExtension : KarooExtension("ksafe", BuildConfig.VERSION_NAME), Corout
             calibLogger,
             buzzerClient = buzzerClient,
             onCrashEmergencyCancelled = { crashManager.clearCrashCooldown() },
+            // Recording OR Paused = rider is on the ride screen (autopause keeps it up), so a
+            // delivery-failure InRideAlert is visible there; off it, EmergencyManager uses the
+            // overlay instead. Same predicate as dispatchWebhookFeedback's channel switch.
+            isOnRideScreen = {
+                currentRideState is RideState.Recording || currentRideState is RideState.Paused
+            },
         )
         crashManager = CrashDetectionManager(applicationContext, this, {
             Timber.d("Crash detected by sensor!")
@@ -456,6 +530,11 @@ class KSafeExtension : KarooExtension("ksafe", BuildConfig.VERSION_NAME), Corout
                 // and `while(true)` loop launched inside initializeSystem, doubling
                 // emission handlers + battery cost per reconnect (only onDestroy's
                 // job.cancel() ever releases them).
+                // AUDIT 2026-06: intentional that this flag is write-once and NOT reset in
+                // onDestroy — Android destroys the whole service instance on teardown, so a
+                // fresh onCreate starts a new object with systemInitialized=false. A reconnect
+                // on the SAME instance after job.cancel() doesn't happen in the normal lifecycle.
+                // Not a bug; do not re-flag (re-gate on job.isActive only if that assumption changes).
                 if (systemInitialized) {
                     Timber.d("Karoo reconnect — initializeSystem already running, skipping respawn")
                 } else {
@@ -476,7 +555,10 @@ class KSafeExtension : KarooExtension("ksafe", BuildConfig.VERSION_NAME), Corout
             configManager.loadConfigFlow().collect { config ->
                 val prevActive = activeConfig.isActive
                 activeConfig = config
-                crashManager.updateConfig(config)
+                // Idempotent: unblock the ride-state collector's first handleRideState so it
+                // never runs against KSafeConfig() defaults on a mid-ride (re)connect.
+                configSeeded.complete(Unit)
+                crashManager.updateConfig(effectiveCrashConfig(config))
                 // Auto-start branch of the four trackers is gated on the current ride state
                 // so a config emission at extension boot (or a settings save while idle) does
                 // NOT spin up integration / monitoring coroutines outside a ride. Crash is
@@ -517,7 +599,11 @@ class KSafeExtension : KarooExtension("ksafe", BuildConfig.VERSION_NAME), Corout
                 // An in-flight emergency countdown is left alone for Recording-active
                 // transitions — cancel via SOS/cancel button.
                 when (currentRideState) {
-                    is RideState.Idle -> applyIdleMonitoring(config)
+                    is RideState.Idle -> {
+                        val effIdle = effectiveCrashConfig(config)
+                        applyIdleMonitoring(effIdle)
+                        crashEffectiveRunning = crashShouldBeRunningNow(effIdle)
+                    }
                     is RideState.Recording -> applyMasterSwitchTransition(prevActive)
                     is RideState.Paused -> applyMasterSwitchTransitionPaused(prevActive)
                     else -> { /* null: not yet observed, leave as-is */ }
@@ -533,6 +619,7 @@ class KSafeExtension : KarooExtension("ksafe", BuildConfig.VERSION_NAME), Corout
             // this block completes quickly on startup before any ride state arrives.
             val initialConfig = configManager.loadConfigFlow().first()
             activeConfig = initialConfig
+            scheduleUpdateCheck()
             val state = configManager.loadEmergencyStateFlow().first()
             val decision = decideResume(state, System.currentTimeMillis())
             // Master switch acts as a hard stop — if the user toggled isActive OFF
@@ -577,22 +664,34 @@ class KSafeExtension : KarooExtension("ksafe", BuildConfig.VERSION_NAME), Corout
             // Load persisted fueling snapshot BEFORE we start observing ride state — the
             // first Recording event must see `pendingFuelingRestore` already populated so
             // the restore-vs-fresh-start decision in [handleRideState] picks the right
-            // branch. A snapshot older than FUELING_RESTORE_MAX_AGE_MS is discarded as
-            // stale (rider stopped the ride deliberately, or device sat unused).
-            val persisted = configManager.loadFuelingState()
-            val age = System.currentTimeMillis() - persisted.savedAtMs
-            pendingFuelingRestore = if (persisted.savedAtMs > 0 &&
-                age in 0..com.enderthor.kSafe.data.FUELING_RESTORE_MAX_AGE_MS) {
-                Timber.i("FuelingState eligible for restore: age=${age / 1000}s, " +
-                    "carb_burned=${persisted.carb.cumBurnedG.toInt()}g, " +
-                    "hyd_target=${persisted.hyd.cumTargetMl.toInt()}ml")
-                persisted
-            } else {
-                if (persisted.savedAtMs > 0) {
-                    Timber.i("FuelingState too old to restore: age=${age / 1000}s (max ${com.enderthor.kSafe.data.FUELING_RESTORE_MAX_AGE_MS / 1000}s)")
-                    configManager.clearFuelingState()
+            // branch. The ride-state collector waits on [fuelingRestoreLoaded] (bounded) to
+            // enforce that ordering; without it a fast mid-ride reconnect could take the
+            // fresh-start branch and silently drop the interrupted ride's accumulated fuel.
+            // A snapshot older than FUELING_RESTORE_MAX_AGE_MS is discarded as stale
+            // (rider stopped the ride deliberately, or device sat unused).
+            try {
+                val persisted = configManager.loadFuelingState()
+                val age = System.currentTimeMillis() - persisted.savedAtMs
+                pendingFuelingRestore = if (persisted.savedAtMs > 0 &&
+                    age in 0..com.enderthor.kSafe.data.FUELING_RESTORE_MAX_AGE_MS) {
+                    Timber.i("FuelingState eligible for restore: age=${age / 1000}s, " +
+                        "carb_burned=${persisted.carb.cumBurnedG.toInt()}g, " +
+                        "hyd_target=${persisted.hyd.cumTargetMl.toInt()}ml")
+                    persisted
+                } else {
+                    if (persisted.savedAtMs > 0) {
+                        Timber.i("FuelingState too old to restore: age=${age / 1000}s (max ${com.enderthor.kSafe.data.FUELING_RESTORE_MAX_AGE_MS / 1000}s)")
+                        configManager.clearFuelingState()
+                    }
+                    null
                 }
-                null
+            } catch (e: Exception) {
+                // A failed load (e.g. DataStore IOException at cold boot) means no restore —
+                // leave pendingFuelingRestore null and let the ride start fresh.
+                Timber.w(e, "FuelingState load failed — starting fresh (no restore)")
+            } finally {
+                // Always signal: a hung/failed load must not block ride-state handling forever.
+                fuelingRestoreLoaded.complete(Unit)
             }
         }
 
@@ -771,7 +870,29 @@ class KSafeExtension : KarooExtension("ksafe", BuildConfig.VERSION_NAME), Corout
         }
 
         launch {
-            // Observe ride state
+            // Observe ride state. Wait until activeConfig has been seeded from DataStore
+            // (configSeeded) before handling the first transition: on a mid-ride (re)connect
+            // streamRide() can emit Recording before the config collector's first emission,
+            // and handleRideState would otherwise run against KSafeConfig() defaults
+            // (isActive / crash / medical all ON) — briefly starting detectors the rider had
+            // disabled. The deferred completes on the first DataStore emission (~ms).
+            //
+            // BOUNDED await — this is an OPTIMISATION (skip the ~100 ms default-config window),
+            // so it must NEVER make things worse than not awaiting at all. configSeeded is
+            // completed by the config collector's first emission, which depends on the shared
+            // DataStore flow emitting; if that upstream dies before its first value (DataStore
+            // IOException at cold boot, file corruption), configSeeded would never complete and
+            // ride-state handling — hence crash detection — would hang for the whole process.
+            // Cap the wait and fall back to the original immediate behaviour on timeout.
+            if (withTimeoutOrNull(CONFIG_SEED_TIMEOUT_MS) { configSeeded.await() } == null) {
+                Timber.w("configSeeded not ready after ${CONFIG_SEED_TIMEOUT_MS}ms — proceeding so ride-state/crash handling is never blocked by a stalled config load")
+            }
+            // Same bounded-await contract for the fueling snapshot: a fast mid-ride reconnect
+            // must see pendingFuelingRestore populated before the first Recording transition,
+            // or an interrupted ride's accumulated carbs/hydration are silently dropped.
+            if (withTimeoutOrNull(CONFIG_SEED_TIMEOUT_MS) { fuelingRestoreLoaded.await() } == null) {
+                Timber.w("fuelingRestoreLoaded not ready after ${CONFIG_SEED_TIMEOUT_MS}ms — proceeding; an interrupted ride may start fresh")
+            }
             karooSystem.streamRide()
                 .distinctUntilChanged()
                 .collect { state ->
@@ -1012,8 +1133,40 @@ class KSafeExtension : KarooExtension("ksafe", BuildConfig.VERSION_NAME), Corout
                 // for post-ride calibration analysis. It is not used as a gate or threshold modifier
                 // at runtime — the reactive cluster boost and grade-aware boost handle that.
                 karooSystem.streamRideProfile()
+                    // Karoo re-emits the current profile on every SDK reconnect (≈daily +
+                    // every lifecycle bounce). Dedup so an unchanged profile doesn't trigger a
+                    // redundant DataStore.edit + reapplyEffectiveCrash on Main.
+                    .distinctUntilChanged()
                     .collect { profile ->
                         crashManager.updateRideProfile(profile.routingPreference)
+                        activeProfileId = profile.id
+                        activeProfileIdFlow.value = profile.id   // reactive mirror for the Settings UI
+                        // Atomic read-modify-write (see ConfigurationManager.updateConfig):
+                        // profile-learning runs from the service process and must not clobber a
+                        // concurrent UI settings save. updateConfig skips the write when nothing
+                        // was learned, so this stays a no-op on every unchanged profile emission.
+                        // Guarded: a DataStore write failure must NOT kill this collector, or
+                        // profile switches would stop updating activeProfileId / crash config for
+                        // the rest of the ride.
+                        try {
+                            configManager.updateConfig { latest ->
+                                latest.copy(crashProfileSettings = learnProfile(latest.crashProfileSettings, profile.id, profile.name))
+                            }
+                        } catch (e: kotlinx.coroutines.CancellationException) {
+                            throw e
+                        } catch (e: Exception) {
+                            Timber.w(e, "learnProfile persist failed for profile ${profile.id} — continuing")
+                        }
+                        // Guarded too: a crashManager start/stop/updateConfig fault while re-applying
+                        // must not kill this collector, or every LATER profile switch would stop
+                        // re-applying crash config for the rest of the ride.
+                        try {
+                            reapplyEffectiveCrash()
+                        } catch (e: kotlinx.coroutines.CancellationException) {
+                            throw e
+                        } catch (e: Exception) {
+                            Timber.w(e, "reapplyEffectiveCrash failed for profile ${profile.id} — continuing")
+                        }
                     }
             }
             }  // end supervisorScope (B10)
@@ -1047,8 +1200,10 @@ class KSafeExtension : KarooExtension("ksafe", BuildConfig.VERSION_NAME), Corout
                     // wipe an hour of fueling work). Crash + medical have no rider-visible
                     // accumulator, so .start() is safe in either case.
                     val isResumeFromPause = rideStartNotificationSent
-                    if (isResumeFromPause) crashManager.resume(activeConfig)
-                    else crashManager.start(activeConfig)
+                    val eff = effectiveCrashConfig()
+                    if (isResumeFromPause) crashManager.resume(eff)
+                    else crashManager.start(eff)
+                    crashEffectiveRunning = crashShouldBeRunningNow(eff)
                     medicalDetector.start(activeConfig)
                     if (isResumeFromPause) {
                         wellnessMonitor.resume(activeConfig)
@@ -1076,7 +1231,14 @@ class KSafeExtension : KarooExtension("ksafe", BuildConfig.VERSION_NAME), Corout
                     // Resuming from Pause also triggers Recording — we skip it there.
                     if (!rideStartNotificationSent) {
                         rideStartNotificationSent = true
+                        // Clear any sticky SOS delivery-failure/partial overlay left from a
+                        // previous ride so it can't bleed into this one.
+                        emergencyManager.clearDeliveryNotice()
                         sendRideStartNotification()
+                        // Safety net: if the selected provider's credentials are incomplete,
+                        // every emergency would silently fast-fail (NO_CREDENTIALS) — warn the
+                        // rider now, before they rely on it. Local check only, non-blocking.
+                        launch { emergencyManager.warnIfProviderIncomplete(activeConfig) }
                         // Readiness advice from the last 10 rides' wellness summaries.
                         // Silent when RECOVERED (decideReadiness returns null) — no per-ride spam.
                         if (activeConfig.readinessAtRideStartEnabled) {
@@ -1131,7 +1293,9 @@ class KSafeExtension : KarooExtension("ksafe", BuildConfig.VERSION_NAME), Corout
                 // running because crash detection may continue outside the ride
                 // (crashMonitorOutsideRide).
                 stopRecordingCollectors()
-                applyIdleMonitoring(activeConfig)
+                val eff = effectiveCrashConfig()
+                applyIdleMonitoring(eff)
+                crashEffectiveRunning = crashShouldBeRunningNow(eff)
                 // Reset per-ride flags
                 rideStartNotificationSent = false
                 rideWasActive = false
@@ -1174,6 +1338,7 @@ class KSafeExtension : KarooExtension("ksafe", BuildConfig.VERSION_NAME), Corout
         if (prevActive && !nowActive) {
             Timber.d("Master switch OFF mid-ride — stopping all monitoring")
             crashManager.stop()
+            crashEffectiveRunning = false
             medicalDetector.stop()
             wellnessMonitor.stop()
             carbsTracker.stop()
@@ -1202,8 +1367,10 @@ class KSafeExtension : KarooExtension("ksafe", BuildConfig.VERSION_NAME), Corout
             startCrashSensorCollectors()
             // Master-switch ON inside an already-Recording ride is semantically
             // a resume — preserve the baseline.
-            if (currentRideState is RideState.Recording) crashManager.resume(activeConfig)
-            else crashManager.start(activeConfig)
+            val eff = effectiveCrashConfig()
+            if (currentRideState is RideState.Recording) crashManager.resume(eff)
+            else crashManager.start(eff)
+            crashEffectiveRunning = crashShouldBeRunningNow(eff)
             medicalDetector.start(activeConfig)
             wellnessMonitor.resume(activeConfig)
             carbsTracker.resume(activeConfig)
@@ -1231,6 +1398,7 @@ class KSafeExtension : KarooExtension("ksafe", BuildConfig.VERSION_NAME), Corout
         if (prevActive && !nowActive) {
             Timber.d("Master switch OFF during Paused — stopping all monitoring")
             crashManager.stop()
+            crashEffectiveRunning = false
             medicalDetector.stop()
             wellnessMonitor.stop()
             carbsTracker.stop()
@@ -1247,6 +1415,47 @@ class KSafeExtension : KarooExtension("ksafe", BuildConfig.VERSION_NAME), Corout
             // stale state). The next Recording transition takes the fresh-start
             // path via `handleRideState.Recording` once the rider unpauses.
             Timber.d("Master switch ON during Paused — deferring re-arm to next Recording")
+        }
+    }
+
+    /** Global config (activeConfig) merged with the active profile's crash override. */
+    private fun effectiveCrashConfig(base: KSafeConfig = activeConfig): KSafeConfig =
+        resolveEffectiveCrashConfig(base, activeProfileId)
+
+    /** Whether crash detection should be running right now under [eff] and the current
+     *  ride state. Single source of truth for the crashEffectiveRunning bookkeeping. */
+    private fun crashShouldBeRunningNow(eff: KSafeConfig): Boolean =
+        eff.isActive && eff.crashDetectionEnabled && when (currentRideState) {
+            is RideState.Recording, is RideState.Paused -> true
+            else -> eff.crashMonitorOutsideRide || eff.crashMonitorOutsideRideAnySpeed
+        }
+
+    /**
+     * Single owner of crash start/stop/threshold reconciliation under the effective
+     * (per-profile) config. Safe to call repeatedly and from any context — touches ONLY
+     * the crash manager, never the trackers/medical/check-in.
+     */
+    private fun reapplyEffectiveCrash() {
+        val eff = effectiveCrashConfig()
+        // Mirror applyIdleMonitoring's "any speed" override: when monitoring crashes
+        // outside a ride at any speed, the speed gate is forced to 0. Without this, a
+        // profile switch while Idle (which reaches the updateConfig-only path) would
+        // restore the configured minimum speed and silently defeat anySpeed monitoring.
+        val applied = if (currentRideState is RideState.Idle && eff.isActive && eff.crashMonitorOutsideRideAnySpeed)
+                          eff.copy(minSpeedForCrashKmh = 0)
+                      else eff
+        crashManager.updateConfig(applied)   // live threshold swap; never starts/stops
+        val shouldRun = crashShouldBeRunningNow(eff)
+        if (shouldRun && !crashEffectiveRunning) {
+            when (currentRideState) {
+                is RideState.Recording -> crashManager.start(eff)
+                is RideState.Paused    -> crashManager.resume(eff)
+                else -> applyIdleMonitoring(eff)   // handles minSpeed=0 outside-ride variant
+            }
+            crashEffectiveRunning = shouldRun
+        } else if (!shouldRun && crashEffectiveRunning) {
+            crashManager.stop()
+            crashEffectiveRunning = false
         }
     }
 
@@ -1533,14 +1742,25 @@ class KSafeExtension : KarooExtension("ksafe", BuildConfig.VERSION_NAME), Corout
             scheduleCustomRevert(slot, 4_000L)
             return "Message resolved to empty — check tokens (e.g. {livetrack} requires a Karoo Live key)."
         }
-        val ok = sender.sendInfo(resolved, config.activeProvider)
-        return if (ok) {
-            CustomMessageState.update(slot, CustomMessageState.SENT)
-            scheduleCustomRevert(slot, 4_000L)
-            "Custom message sent! ✓"
-        } else {
-            CustomMessageState.update(slot, CustomMessageState.ERROR)
-            "Send failed — check your provider configuration."
+        val outcome = sender.sendInfoOutcome(resolved, config.activeProvider)
+        return when {
+            outcome.delivered > 0 -> {
+                CustomMessageState.update(slot, CustomMessageState.SENT)
+                scheduleCustomRevert(slot, 4_000L)
+                "Custom message sent! ✓"
+            }
+            // Deliverable config but the per-contact alert scopes filtered every recipient
+            // out (e.g. all set to Emergency-only). Nobody received it — do NOT flash "sent ✓".
+            outcome.infoSuccess -> {
+                Timber.w("Custom message slot $slot: no recipients (all scopes exclude info messages)")
+                CustomMessageState.update(slot, CustomMessageState.ERROR)
+                scheduleCustomRevert(slot, 4_000L)
+                "No recipients for this message — check each contact's alert scope (set to Emergency-only?)."
+            }
+            else -> {
+                CustomMessageState.update(slot, CustomMessageState.ERROR)
+                "Send failed — check your provider configuration."
+            }
         }
     }
 
@@ -1629,9 +1849,12 @@ class KSafeExtension : KarooExtension("ksafe", BuildConfig.VERSION_NAME), Corout
                 if (chunk.hasMore) append(" (chunk ${chunksSent + 1}, more pending)")
                 else if (chunksSent > 0) append(" (chunk ${chunksSent + 1}, final)")
             }
+            // Name each chunk uniquely + sortably (…_c000_, _c001_, …) so the
+            // receiving inbox keeps multi-chunk / multi-cycle sessions orderable
+            // instead of collapsing them onto one repeated "(2)(3)…" filename.
             val result = LogReporter.sendLogFile(
                 content = chunk.content,
-                fileName = calibLogger.fileNameForSession,
+                fileName = calibLogger.chunkFileName(calibLogger.uploadedChunks),
                 caption = caption,
                 karooSystem = karooSystem,
             )
@@ -1735,7 +1958,7 @@ class KSafeExtension : KarooExtension("ksafe", BuildConfig.VERSION_NAME), Corout
             }
             val result = LogReporter.sendLogFile(
                 content = chunk.content,
-                fileName = calibLogger.previousFileNameForSession(),
+                fileName = calibLogger.previousChunkFileName(calibLogger.uploadedPreviousChunks),
                 caption = caption,
                 karooSystem = karooSystem,
             )
@@ -1758,25 +1981,31 @@ class KSafeExtension : KarooExtension("ksafe", BuildConfig.VERSION_NAME), Corout
 
     /**
      * Expose the persistent install ID for the Settings UI.
-     * The lazy [CalibrationLogger.installId] is initialised on first access via
-     * a [kotlinx.coroutines.runBlocking] call on Dispatchers.IO — effectively
-     * instant after the first ride-start. Non-suspend because the underlying
-     * value is already a plain [String] once the lazy is resolved.
+     * `suspend` + [Dispatchers.IO]: the lazy [CalibrationLogger.installId] resolves on
+     * first access via a [kotlinx.coroutines.runBlocking] call on Dispatchers.IO, so the
+     * very first read would block whatever thread calls it. Hopping to IO here guarantees
+     * that block never lands on Main even if the warm-up hasn't completed yet.
      */
-    fun getInstallIdForUi(): String = calibLogger.installId
+    suspend fun getInstallIdForUi(): String = withContext(Dispatchers.IO) { calibLogger.installId }
 
-    /** Returns a string with file location info for display in the Settings UI. */
-    fun getCalibrationLogInfo(): String {
+    /** Active Karoo ride-profile id for the Settings UI's per-profile crash section. */
+    fun getActiveProfileIdForUi(): String? = activeProfileId
+
+    /** Returns a string with file location info for display in the Settings UI.
+     *  `suspend` + [Dispatchers.IO]: scans the whole CSV (line count) and reads the
+     *  previous-session file — never run this on Main. */
+    suspend fun getCalibrationLogInfo(): String = withContext(Dispatchers.IO) {
         val count = calibLogger.getEntryCount()
         val file = calibLogger.getLogFile()
         val previousPending = calibLogger.getPreviousFileContent() != null
         val base = if (file != null) "$count entries | ${file.path}"
                    else "$count entries (not yet flushed to disk)"
-        return if (previousPending) "$base\n⚠ Previous unsent session detected — tap Send to recover."
-               else base
+        if (previousPending) "$base\n⚠ Previous unsent session detected — tap Send to recover."
+        else base
     }
 
-    fun clearCalibrationLog() {
+    /** `suspend` + [Dispatchers.IO]: [CalibrationLogger.clear] deletes the log files. */
+    suspend fun clearCalibrationLog() = withContext(Dispatchers.IO) {
         calibLogger.clear()
     }
 
@@ -1788,9 +2017,12 @@ class KSafeExtension : KarooExtension("ksafe", BuildConfig.VERSION_NAME), Corout
         Timber.d("Simulated crash test: sending alert directly (no countdown)")
         val config = activeConfig
         val message = emergencyManager.buildMessage(config, EmergencyReason.CRASH_DETECTED)
-        val ok = sender.sendAlert(message, config.activeProvider)
-        return if (ok) "Test alert sent successfully! Check your device."
-               else "Send failed — check your provider configuration."
+        val outcome = sender.sendAlert(message, config.activeProvider)
+        return when {
+            outcome.partial -> "Test alert reached ${outcome.delivered} of ${outcome.eligible} contacts — check the others' configuration."
+            outcome.anyOk   -> "Test alert sent successfully! Check your device."
+            else            -> "Send failed — check your provider configuration."
+        }
     }
 
     /**
@@ -1812,9 +2044,17 @@ class KSafeExtension : KarooExtension("ksafe", BuildConfig.VERSION_NAME), Corout
         val config = activeConfig
         if (!config.karooLiveEnabled) return "Karoo Live is disabled — enable it in Settings first."
         if (config.karooLiveKey.isBlank()) return "No Karoo Live key configured."
-        val liveLink = com.enderthor.kSafe.data.KAROO_LIVE_BASE_URL + config.karooLiveKey.trim()
-        val message = config.karooLiveStartMessage.replace("{livetrack}", liveLink)
         Timber.d("Sending test ride start notification via ${config.activeProvider}")
+        // Route through the shared token substitution (same as sendRideStartNotification)
+        // so {location}, {livetrack} etc. are resolved — the test must exercise the exact
+        // message the rider's contacts would receive, not a literal-token preview.
+        val message = emergencyManager.substituteTokens(
+            template = config.karooLiveStartMessage,
+            config = config,
+        )
+        // Parity with sendTestRideEnd / the production sendRideStartNotification: don't send
+        // (and don't report success for) an empty message if the rider blanked the template.
+        if (message.isBlank()) return "Ride start message is empty — set it in Settings first."
         val ok = sender.sendInfo(message, config.activeProvider)
         return if (ok) "Ride start message sent successfully! Check your device."
                else "Send failed — check your provider configuration."
@@ -1829,7 +2069,13 @@ class KSafeExtension : KarooExtension("ksafe", BuildConfig.VERSION_NAME), Corout
         if (!config.karooLiveEndEnabled) return "Ride end notification is disabled — enable it in Settings first."
         if (config.karooLiveEndMessage.isBlank()) return "No ride end message configured."
         Timber.d("Sending test ride end notification via ${config.activeProvider}")
-        val ok = sender.sendInfo(config.karooLiveEndMessage, config.activeProvider)
+        // Route through the shared token substitution (same as sendRideEndNotification)
+        // so {location} / {livetrack} are resolved instead of sent literally.
+        val message = emergencyManager.substituteTokens(
+            template = config.karooLiveEndMessage,
+            config = config,
+        )
+        val ok = sender.sendInfo(message, config.activeProvider)
         return if (ok) "Ride end message sent successfully! Check your device."
                else "Send failed — check your provider configuration."
     }
@@ -1929,7 +2175,7 @@ class KSafeExtension : KarooExtension("ksafe", BuildConfig.VERSION_NAME), Corout
                 dispatchWebhookFeedback(
                     id = "ksafe-webhook-$slot-master-off",
                     header = label,
-                    message = "Extension is disabled — enable it in Settings first.",
+                    message = getString(R.string.webhook_blocked_master_off),
                     bgColorRes = R.color.alert_red,
                 )
                 return
@@ -1944,7 +2190,7 @@ class KSafeExtension : KarooExtension("ksafe", BuildConfig.VERSION_NAME), Corout
                 dispatchWebhookFeedback(
                     id = "ksafe-webhook-$slot-disabled",
                     header = label,
-                    message = "Webhook disabled — enable it in the Actions tab",
+                    message = getString(R.string.webhook_blocked_disabled),
                     bgColorRes = R.color.alert_red,
                 )
                 return
@@ -1959,7 +2205,7 @@ class KSafeExtension : KarooExtension("ksafe", BuildConfig.VERSION_NAME), Corout
                 dispatchWebhookFeedback(
                     id = "ksafe-webhook-$slot-nourl",
                     header = label,
-                    message = "No URL configured — set one in the Actions tab",
+                    message = getString(R.string.webhook_blocked_no_url),
                     bgColorRes = R.color.alert_red,
                 )
                 return
@@ -1993,7 +2239,7 @@ class KSafeExtension : KarooExtension("ksafe", BuildConfig.VERSION_NAME), Corout
                     dispatchWebhookFeedback(
                         id = "ksafe-webhook-$slot-geo-nofix",
                         header = label,
-                        message = "Blocked — no GPS fix yet",
+                        message = getString(R.string.webhook_blocked_no_gps),
                         bgColorRes = R.color.alert_orange,
                     )
                     return
@@ -2006,7 +2252,7 @@ class KSafeExtension : KarooExtension("ksafe", BuildConfig.VERSION_NAME), Corout
                     dispatchWebhookFeedback(
                         id = "ksafe-webhook-$slot-geo-nocfg",
                         header = label,
-                        message = "Blocked — no target location configured",
+                        message = getString(R.string.webhook_blocked_no_target),
                         bgColorRes = R.color.alert_orange,
                     )
                     return
@@ -2019,7 +2265,7 @@ class KSafeExtension : KarooExtension("ksafe", BuildConfig.VERSION_NAME), Corout
                     dispatchWebhookFeedback(
                         id = "ksafe-webhook-$slot-geo-far",
                         header = label,
-                        message = "Blocked — ${distance.toInt()}m away (max ${radiusM}m)",
+                        message = getString(R.string.webhook_blocked_too_far, distance.toInt(), radiusM),
                         bgColorRes = R.color.alert_orange,
                     )
                     Timber.d("Webhook $slot geo-fenced: ${distance.toInt()}m > ${radiusM}m")
@@ -2166,6 +2412,46 @@ class KSafeExtension : KarooExtension("ksafe", BuildConfig.VERSION_NAME), Corout
             kotlinx.coroutines.delay(6_000L)
             com.enderthor.kSafe.datatype.HydrationLogState.update(slot, com.enderthor.kSafe.datatype.HydrationLogState.IDLE)
             hydTapRevertJobs[slot] = null
+        }
+    }
+
+    fun handleCombinedLogTap(slot: Int) {
+        Timber.d("handleCombinedLogTap slot=$slot")
+        if (!activeConfig.isActive) return
+        val carbsOn = activeConfig.carbsTrackerEnabled && this::carbsTracker.isInitialized
+        val hydOn = activeConfig.hydrationTrackerEnabled && this::hydrationTracker.isInitialized
+        if (!carbsOn && !hydOn) return
+        if (slot !in 1..2) return
+        combinedTapRevertJobs[slot]?.cancel()
+        combinedTapRevertJobs[slot] = null
+
+        val St = com.enderthor.kSafe.datatype.CombinedFuelLogState
+        val state = St.flowForSlot(slot).value
+        if (state is com.enderthor.kSafe.datatype.CombinedFuelLogState.LOGGED) {
+            // Reverse exactly what THIS log added (carried in the state), not what the live
+            // toggles say now. If the rider disables a tracker during the 6 s undo window,
+            // re-checking carbsOn/hydOn here would skip the reversal and leave that amount
+            // stuck in the cumulative total. state.grams>0 already implies it was logged, so
+            // undoAmount (clamped at 0) is safe; the isInitialized guard is belt-and-braces.
+            if (state.grams > 0 && this::carbsTracker.isInitialized) carbsTracker.undoAmount(state.grams)
+            if (state.ml > 0 && this::hydrationTracker.isInitialized) hydrationTracker.undoAmount(state.ml)
+            St.update(slot, com.enderthor.kSafe.datatype.CombinedFuelLogState.UNDONE(state.ml, state.grams))
+            combinedTapRevertJobs[slot] = launch {
+                kotlinx.coroutines.delay(1_500L)
+                St.update(slot, com.enderthor.kSafe.datatype.CombinedFuelLogState.IDLE)
+                combinedTapRevertJobs[slot] = null
+            }
+            return
+        }
+        val ml = if (slot == 2) activeConfig.combined2Ml else activeConfig.combined1Ml
+        val grams = if (slot == 2) activeConfig.combined2Carbs else activeConfig.combined1Carbs
+        val loggedMl = if (hydOn) hydrationTracker.logAmount(ml) else 0
+        val loggedG = if (carbsOn) carbsTracker.logAmount(grams) else 0
+        St.update(slot, com.enderthor.kSafe.datatype.CombinedFuelLogState.LOGGED(loggedMl, loggedG))
+        combinedTapRevertJobs[slot] = launch {
+            kotlinx.coroutines.delay(6_000L)
+            St.update(slot, com.enderthor.kSafe.datatype.CombinedFuelLogState.IDLE)
+            combinedTapRevertJobs[slot] = null
         }
     }
 
@@ -2434,42 +2720,30 @@ class KSafeExtension : KarooExtension("ksafe", BuildConfig.VERSION_NAME), Corout
             // can be cross-referenced with the developer-field schema in the resulting FIT.
             "fields=0,1,2,3,4,5,6"
         }
-        val job: Job = launch {
-            // Per-ride caches of the last value written to each FIT field. The FIT
-            // record/session messages are throttled to **write-on-change** so a 5 h
-            // ride doesn't emit 18 000 record-writes per Recording-second on fields
-            // whose underlying source-of-truth changes far less often. Real cadence
-            // post-throttle (post-merge audit Nov 2026):
-            //   - Record-message writes per 5 h ride: ~4 000-8 000 (down from 18 000;
-            //     ~55-78 % saving). Driven mostly by `burnRateGph` and `driftPct`,
-            //     both of which carry per-second noise from live HR/power even at
-            //     "steady" intensity. NOT the ~1 200 originally claimed —
-            //     `burnRateGph.toInt()` rounds at every g/h step which is reached
-            //     several times per minute on a varied ride.
-            //   - Session-message writes per 5 h ride: ~75-100 (down from 18 000)
-            //     thanks to the 5 g deadband on cumBurnedG below.
+        // Dispatchers.IO: every emit is a karoo-ext `Emitter.onNext`, which serialises the
+        // effect and makes a BLOCKING (non-oneway) Binder round-trip to the Karoo recording
+        // service. At the per-record cadence below that would otherwise run ~1×/s on the Main
+        // thread for the whole ride (where crash detection + the countdown also live). The
+        // collector only reads volatile StateFlow snapshots and emits, so IO is safe.
+        val job: Job = launch(Dispatchers.IO) {
+            // FIT developer-field writer.
             //
-            // FIT consumer behaviour: Strava / Intervals.icu / TrainingPeaks plot
-            // developer-field time series at the emitted timestamps and interpolate
-            // between them. A sparse series therefore renders identically to a
-            // dense series that repeats values — but the dense series wastes the
-            // FIT file size and the host's per-record allocation budget on the
-            // Karoo (the 2026-05-25 audit quantified ~50K allocations/hour from
-            // this writer pre-throttle, of which ~75 % are now skipped).
+            // RECORD message: re-emitted on a fixed [FIT_RECORD_WRITE_INTERVAL_MS] cadence
+            // (carry-forward of the current cumulative values), NOT write-on-change. An earlier
+            // version throttled to write-on-change on the assumption that hosts "interpolate
+            // between emitted timestamps", so a sparse series would render like a dense one. That
+            // assumption is FALSE for intervals.icu (and others): a host that does NOT interpolate
+            // zero-fills the records lacking the field, so a sparse cumulative series renders as
+            // spikes-to-zero instead of a clean line — and two co-written cumulative fields (e.g.
+            // ksafe_carbs_g and ksafe_hyd_ml) then look identical once the host autoscales each to
+            // its own axis. A fixed cadence bounds the gap (hence the zero-fill "teeth") to the
+            // interval, trading graph cleanliness against write cost — see the constant's doc.
             //
-            // Sentinel: `Double.NaN`. `NaN != NaN` is true in IEEE 754, so the
-            // first comparison after `startFit` is always "changed" and the
-            // first tick always emits. Each subsequent tick compares the new
-            // value to the cached one and only re-emits if any field moved.
-            // Session-message uses the same idiom on its own cache because the
-            // session activity-header contract is "last write wins" — emitting
-            // identical values mid-ride doesn't change what Strava reads at the
-            // end, but it does churn allocations.
-            var lastRecCarbsG       = Double.NaN
-            var lastRecHydMl        = Double.NaN
-            var lastRecCarbsBurnedG = Double.NaN
-            var lastRecBurnRateGph  = Double.NaN
-            var lastRecDriftPct     = Double.NaN
+            // SESSION message: keeps its write-on-change + 5 g cumBurnedG deadband below. It is
+            // "last write wins" — only the value at FIT-close becomes the Strava/Intervals.icu
+            // activity header — so dense session writes would churn allocations for no visible
+            // benefit. Sentinel Double.NaN: NaN != NaN, so the first tick always emits.
+            var lastRecordWriteMs   = 0L
             var lastSesCarbsG       = Double.NaN
             var lastSesHydMl        = Double.NaN
             var lastSesCarbsBurnedG = Double.NaN
@@ -2513,13 +2787,12 @@ class KSafeExtension : KarooExtension("ksafe", BuildConfig.VERSION_NAME), Corout
                             // running max — uninteresting as a per-second time series)
                             // and totalFires (just a counter). Both belong in the session
                             // summary only. See FIT-writer audit 2026-05-25.
-                            val recChanged =
-                                carbsG       != lastRecCarbsG       ||
-                                hydMl        != lastRecHydMl        ||
-                                carbsBurnedG != lastRecCarbsBurnedG ||
-                                burnRateGph  != lastRecBurnRateGph  ||
-                                driftPct     != lastRecDriftPct
-                            if (recChanged) {
+                            // Carry-forward at a fixed cadence: re-emit the current cumulative
+                            // values at most every FIT_RECORD_WRITE_INTERVAL_MS so every ~3 s of
+                            // records carries the field and the curves draw as clean lines on
+                            // zero-filling hosts, while bounding write cost (see header + constant).
+                            val nowMs = System.currentTimeMillis()
+                            if (nowMs - lastRecordWriteMs >= FIT_RECORD_WRITE_INTERVAL_MS) {
                                 emitter.onNext(WriteToRecordMesg(listOf(
                                     FieldValue(carbField,         carbsG),
                                     FieldValue(hydField,          hydMl),
@@ -2527,11 +2800,7 @@ class KSafeExtension : KarooExtension("ksafe", BuildConfig.VERSION_NAME), Corout
                                     FieldValue(burnRateField,     burnRateGph),
                                     FieldValue(hrDriftField,      driftPct),
                                 )))
-                                lastRecCarbsG       = carbsG
-                                lastRecHydMl        = hydMl
-                                lastRecCarbsBurnedG = carbsBurnedG
-                                lastRecBurnRateGph  = burnRateGph
-                                lastRecDriftPct     = driftPct
+                                lastRecordWriteMs = nowMs
                             }
                             // Session (single-value activity-header summary): totals at
                             // ride end + ride-max statistics. Each tick overwrites the
@@ -2618,6 +2887,61 @@ class KSafeExtension : KarooExtension("ksafe", BuildConfig.VERSION_NAME), Corout
         }
     }
 
+    /** Schedules the one-shot, delayed update check. Called once from initializeSystem. */
+    private fun scheduleUpdateCheck() {
+        launch {
+            kotlinx.coroutines.delay(UPDATE_CHECK_STARTUP_DELAY_MS)
+            runUpdateCheck()
+        }
+    }
+
+    private suspend fun runUpdateCheck() {
+        try {
+            // Always advance the restart counter (drives the cadence) before the cheap gates.
+            val restartCount = configManager.incrementUpdateRestartCount()
+            if (!activeConfig.updateCheckEnabled) return
+            if (UPDATE_CHECK_EVERY_N_RESTARTS <= 0 || restartCount % UPDATE_CHECK_EVERY_N_RESTARTS != 0) return
+            // Epoch-day (UTC). Uses System.currentTimeMillis() to match the codebase convention
+            // and avoid java.time (API 26) on minSdk 23 — a UTC day boundary is fine for a ≤1/day cap.
+            val today = System.currentTimeMillis() / 86_400_000L
+            if (configManager.getUpdateNoticeEpochDay() == today) return  // ≤1 notice/day
+
+            // Only now is a network round-trip worth it. Bounded so a hung tethered link
+            // can't leave this coroutine suspended until teardown (null → skip silently).
+            val response = kotlinx.coroutines.withTimeoutOrNull(UPDATE_CHECK_HTTP_TIMEOUT_MS) {
+                karooSystem.httpRequest("GET", UPDATE_MANIFEST_URL)
+            } ?: return
+            if (response.statusCode !in 200..299) return
+            val manifest = UpdateChecker.parseManifest(response.body?.toString(Charsets.UTF_8) ?: "") ?: return
+            val isNewer = UpdateChecker.isNewer(manifest.latestVersionCode, BuildConfig.VERSION_CODE)
+            val rideActive = currentRideState is RideState.Recording || currentRideState is RideState.Paused
+
+            if (!UpdateChecker.shouldNotify(
+                    enabled = activeConfig.updateCheckEnabled,
+                    restartCount = restartCount,
+                    everyN = UPDATE_CHECK_EVERY_N_RESTARTS,
+                    lastNoticeEpochDay = configManager.getUpdateNoticeEpochDay(),
+                    todayEpochDay = today,
+                    isNewer = isNewer,
+                    rideActive = rideActive,
+                )
+            ) return
+
+            configManager.setUpdateNoticeEpochDay(today)
+            // Auto-dismiss via showInfo's own guarded timer (removes only if this exact overlay
+            // is still showing) instead of a separate launch{ delay; removeInfoOverlay }.
+            updateOverlay.showInfo(
+                title = getString(R.string.update_available_title),
+                message = getString(R.string.update_available_message, manifest.latestVersion),
+                autoDismissMs = UPDATE_NOTICE_AUTODISMISS_MS,
+            )
+            Timber.i("Update notice shown: v${manifest.latestVersion} (code ${manifest.latestVersionCode} > ${BuildConfig.VERSION_CODE})")
+        } catch (e: Exception) {
+            // No connectivity at boot / SDK error → silent; retried next eligible start.
+            Timber.d(e, "Update check skipped (no connectivity or error)")
+        }
+    }
+
     override fun onDestroy() {
         crashManager.stop()
         medicalDetector.stop()
@@ -2627,12 +2951,21 @@ class KSafeExtension : KarooExtension("ksafe", BuildConfig.VERSION_NAME), Corout
         locationManager.stop()
         emergencyManager.stopAll()
         calibLogger.disable()
+        updateOverlay.removeInfoOverlay()
         // Unbind the HAL service before the karooSystem disconnect so we don't leak a
         // ServiceConnection across extension restarts. Safe to call even if connect()
         // failed — disconnect() is a no-op when not bound.
         if (::buzzerClient.isInitialized) buzzerClient.disconnect()
-        karooSystem.disconnect()
+        // Cancel our own collectors BEFORE dropping the Karoo connection. A streamRide /
+        // config collector suspended inside its callbackFlow would otherwise be able to
+        // resume on a final SDK event AFTER disconnect() and run handleRideState / dispatch
+        // against a dead connection; flipping the job to "cancelling" first means any such
+        // pending emission resolves as a CancellationException and no business logic runs.
+        // (cancel() is non-blocking — onDestroy can't cancelAndJoin on Main — so each
+        // callbackFlow's awaitClose/removeConsumer still runs after this returns; the goal
+        // here is only to stop post-disconnect event PROCESSING, not to order consumer removal.)
         job.cancel()
+        karooSystem.disconnect()
         // Null out the published tracker references so any DataType that re-enters
         // `startView` after a service restart sees the cleared state and waits for
         // the new extension instance to republish them.

@@ -396,4 +396,57 @@ class CalibrationChunkedSendTest {
             before, after,
         )
     }
+
+    // ── Per-chunk unique filenames (the Telegram "(2)(3)…" fix) ──────────────
+
+    @Test
+    fun `chunkFileName is zero-padded, unique per seq and lexically sortable`() {
+        val logger = makeLogger()
+        val n0 = logger.chunkFileName(0)
+        val n1 = logger.chunkFileName(1)
+        val n10 = logger.chunkFileName(10)
+        assertTrue("seq 0 must encode as _c000_", n0.contains("_c000_"))
+        assertTrue("seq 1 must encode as _c001_", n1.contains("_c001_"))
+        assertTrue("seq 10 must encode as _c010_", n10.contains("_c010_"))
+        assertEquals("Every chunk name must be distinct", 3, setOf(n0, n1, n10).size)
+        assertEquals(
+            "Lexical sort must match numeric chunk order (so a plain ls/inbox sort " +
+                "reconstructs arrival order without parsing)",
+            listOf(n0, n1, n10), listOf(n10, n0, n1).sorted(),
+        )
+    }
+
+    @Test
+    fun `each successful chunk advances uploadedChunks so the next chunk gets a fresh name`() {
+        seedFile(lines = 100, payloadPerLine = "x".repeat(40))  // ~5 KB → multi-chunk at 600 B
+        val logger = makeLogger()
+        assertEquals("Counter starts at zero", 0, logger.uploadedChunks)
+        val names = mutableListOf<String>()
+        var hasMore = true
+        var guard = 0
+        while (hasMore && guard++ < 30) {
+            val chunk = logger.getFileContentChunked(maxBytes = 600) ?: break
+            // The send loop names the chunk from the live counter BEFORE truncating.
+            names += logger.chunkFileName(logger.uploadedChunks)
+            logger.truncateAfterSuccessfulSend(chunk.linesIncluded)
+            hasMore = chunk.hasMore
+        }
+        assertTrue("Test must exercise the multi-chunk path", names.size > 1)
+        assertEquals("uploadedChunks must equal the number of chunks sent", names.size, logger.uploadedChunks)
+        assertEquals("Every chunk filename must be unique", names.size, names.toSet().size)
+        assertEquals("Filenames must already be in arrival order", names, names.sorted())
+    }
+
+    @Test
+    fun `previousChunkFileName advances independently on the recovered-session drain`() {
+        seedPreviousFile(lines = 60)
+        val logger = makeLogger()
+        assertEquals(0, logger.uploadedPreviousChunks)
+        val first = logger.previousChunkFileName(logger.uploadedPreviousChunks)
+        logger.truncatePreviousAfterSuccessfulSend(uploadedLineCount = 5)
+        val second = logger.previousChunkFileName(logger.uploadedPreviousChunks)
+        assertTrue("previous-chunk names carry the literal 'previous' token", first.contains("_previous_c000_"))
+        assertTrue("second previous chunk advances to _c001_", second.contains("_previous_c001_"))
+        assertEquals("Current-file counter must be untouched by a previous-file drain", 0, logger.uploadedChunks)
+    }
 }

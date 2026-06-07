@@ -85,6 +85,19 @@ class CalibrationLogger(
          */
         CRASH_CANCELLED("CRASH_NO"),
         /**
+         * GAP-regime confirm vetoed by the upright orientation cross-check (R6-F).
+         * Fires INSTEAD of CRASH_OK when a delayed stop (`gap_ms > delayedStopGapMs`)
+         * reached the 20 s confirm gate but the silence-window orientation showed the
+         * bike within the tight upright cone (`0 ≤ angle < gapVetoUprightAngleDeg`, 15°
+         * by default — NOT the 45° uprightAngleThresholdDegrees) → benign stop, not a
+         * crash. The `veto_thr` payload field records the cone in force. Counting these
+         * vs CRASH_OK measures how often the veto
+         * avoids an FP; a `MANUAL_SOS` shortly after a GAP_VETO would flag the rare FN
+         * (real crash that left the bike upright). The gap value is recoverable from the
+         * preceding SIL_IN / IMPACT_IN rows.
+         */
+        GAP_UPRIGHT_VETO("GAP_VETO"),
+        /**
          * SILENCE_CHECK timed out — device entered the silence phase but never achieved
          * uninterrupted stillness within the double-window period → false alarm at stage 3.
          * Distinct from IMPACT_TMO (which fires before entering SILENCE_CHECK at all).
@@ -179,8 +192,26 @@ class CalibrationLogger(
         /** Outbound emergency alert delivery failed across every retry cycle (no coverage,
          *  blank/expired credentials, provider down). The rider-facing fallback InRideAlert
          *  fires alongside this row. Critical for post-incident audit when contacts report
-         *  they never received an alert. */
+         *  they never received an alert. Payload carries `cause=` ([com.enderthor.kSafe.extension.FailureCause]):
+         *  NO_CREDENTIALS/NO_CONFIG = fail-fast misconfiguration (row ~1 s after countdown);
+         *  TIMEOUT/EXHAUSTED = genuine retry exhaustion (~30 min later). */
         ALERT_DELIVERY_FAILED("ALERT_FAIL"),
+        /** Outbound emergency alert reached at least one but NOT every eligible contact
+         *  (e.g. 1 of 3 — a contact in a coverage gap or with an expired key). The amber
+         *  rider-facing partial-delivery notice fires alongside this row. Logged for the same
+         *  post-incident audit reason as [ALERT_DELIVERY_FAILED]: a contact reporting they
+         *  never received an alert must be correlatable even when others did. */
+        ALERT_DELIVERY_PARTIAL("ALERT_PARTIAL"),
+        /** Ride started while the SELECTED messaging provider's credentials are incomplete
+         *  (local check — missing phone/key/token/topic/chat id), so no alert could ever be
+         *  sent. The rider-facing ride-start InRideAlert fires alongside. Payload: provider +
+         *  the missing-field reason. Catches the silent-misconfig class (session 327846_40d50a,
+         *  2026-06-07) where an emergency fired but the alert fast-failed on NO_CREDENTIALS. */
+        PROVIDER_NOT_READY("PROVIDER_NOT_READY"),
+        /** Ride started while the SELECTED provider is configured but has had NO successful send in
+         *  > 30 days (credentials may have rotted). The rider-facing "please re-test" InRideAlert
+         *  fires alongside. Payload: provider + days_since. */
+        PROVIDER_STALE("PROVIDER_STALE"),
         // ─── Fueling tracker (added 2026-05) ─────────────────────────────────
         /**
          * Snapshot of the carb tracker config at session start. Lets a reader of the CSV
@@ -249,6 +280,14 @@ class CalibrationLogger(
         const val SILENCE_BROKEN_INTERVAL_MS = 2_000L
         /** Rate-limit GYRO_BLOCKED logs: at most once per 1 second. */
         const val GYRO_BLOCKED_INTERVAL_MS = 1_000L
+        /** Rate-limit CAD_GATE_SUPPRESSED logs: at most once per 1 second. The
+         *  state machine raises `lastCadenceGateSuppressed` on every sample it
+         *  stays on-side, so at 50 Hz a single ~1–2 s on-side silence window
+         *  emitted 170–260 rows (≈ half a periodic-upload chunk), diluting real
+         *  signal and risking eviction of a genuine CRASH_OK from a downloadable
+         *  window. The first sample of an episode still logs (the throttle clock
+         *  starts stale), so the suppression context is preserved. */
+        const val CAD_GATE_SUPPRESSED_INTERVAL_MS = 1_000L
 
         /**
          * Device model sanitised for filesystem / Telegram filename use.
@@ -312,6 +351,37 @@ class CalibrationLogger(
      */
     val fileNameForSession: String
         get() = "ksafe_v${BuildConfig.VERSION_NAME}_${installId}_${sessionId}_${DEVICE_LABEL}.csv"
+
+    /** Monotonic count of calibration-log chunks successfully uploaded in THIS
+     *  session, driving [chunkFileName] so each chunk lands under a unique,
+     *  lexically-sortable Telegram filename. Incremented by
+     *  [truncateAfterSuccessfulSend] (called once per successful chunk).
+     *  In-memory only: a process restart resets it, but a restart also begins a
+     *  fresh session with a new [sessionId], so post-restart numbering cannot
+     *  collide with the pre-restart files. */
+    @Volatile
+    private var uploadedChunkCount: Int = 0
+    /** Read-only view of [uploadedChunkCount] for the send loop to name the next chunk. */
+    val uploadedChunks: Int get() = uploadedChunkCount
+
+    /** Same scheme for the recovered previous-session drain — see [uploadedChunks]. */
+    @Volatile
+    private var uploadedPreviousChunkCount: Int = 0
+    val uploadedPreviousChunks: Int get() = uploadedPreviousChunkCount
+
+    /**
+     * Per-chunk Telegram filename. Every uploaded chunk gets a distinct,
+     * zero-padded, lexically-sortable name so the receiving inbox keeps the
+     * pieces orderable and groupable without opening them — Telegram Desktop
+     * otherwise auto-renames identically-named downloads to "(2)", "(3)" … in
+     * ARRIVAL order (not logical order), which is what made multi-chunk sessions
+     * painful to reassemble.
+     * Format: `ksafe_v{version}_{installId}_{sessionId}_c{seq}_{deviceLabel}.csv`
+     * with `seq` = [uploadedChunks] at send time (3-digit zero-padded; values
+     * past 999 still sort correctly). E.g. `ksafe_v2.0.0_a3f9c2_b4e8d1_c000_k24.csv`.
+     */
+    fun chunkFileName(seq: Int): String =
+        "ksafe_v${BuildConfig.VERSION_NAME}_${installId}_${sessionId}_c${"%03d".format(seq)}_${DEVICE_LABEL}.csv"
 
     /**
      * Returns a short plain-text caption for the Telegram `sendDocument` call.
@@ -797,6 +867,9 @@ class CalibrationLogger(
                     Timber.i("CalibrationLogger: truncated previous session (sent=$uploadedLineCount, kept_tail=${keptTail.size})")
                 }
             }
+            // Advance the recovered-session chunk counter so the next previous-file
+            // chunk gets a unique, sortable filename via [previousChunkFileName].
+            uploadedPreviousChunkCount++
             dropped
         } catch (e: Exception) {
             Timber.w(e, "CalibrationLogger: truncatePreviousAfterSuccessfulSend failed")
@@ -815,6 +888,12 @@ class CalibrationLogger(
      * one currently being recorded.
      */
     fun previousFileNameForSession(): String = "ksafe_v${BuildConfig.VERSION_NAME}_${installId}_previous_${DEVICE_LABEL}.csv"
+
+    /** Per-chunk variant of [previousFileNameForSession] — same unique/sortable
+     *  scheme as [chunkFileName] so a multi-chunk recovered-session drain doesn't
+     *  collide on arrival. `seq` = [uploadedPreviousChunks] at send time. */
+    fun previousChunkFileName(seq: Int): String =
+        "ksafe_v${BuildConfig.VERSION_NAME}_${installId}_previous_c${"%03d".format(seq)}_${DEVICE_LABEL}.csv"
 
     /** Deletes the preserved previous-session file. Called by the Settings "Send" path
      *  after a successful upload so the rider doesn't see "previous: ✓" forever. */
@@ -965,10 +1044,14 @@ class CalibrationLogger(
                         "(uploaded=$uploadedLineCount lines, file_was=$before, kept_tail=${keptTail.size})"
                 )
             }
+            // This chunk has been uploaded — advance the per-session chunk counter so
+            // the NEXT chunk (this drain or a later periodic cycle) gets a fresh,
+            // sortable filename via [chunkFileName].
+            uploadedChunkCount++
             // Log a marker row so the next chunk's CSV self-identifies as a continuation.
             // Done OUTSIDE the fileLock — addEntryDirect only touches the in-memory buffer.
             addEntryDirect(Event.LOGGER_START,
-                "logging_resumed_after_periodic_send,install_id=$installId,session=$sessionId,uploaded_lines=$uploadedLineCount")
+                "logging_resumed_after_periodic_send,install_id=$installId,session=$sessionId,uploaded_lines=$uploadedLineCount,uploaded_chunks=$uploadedChunkCount")
             dropped
         } catch (e: Exception) {
             Timber.w(e, "CalibrationLogger: truncate after send failed")

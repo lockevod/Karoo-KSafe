@@ -1,6 +1,6 @@
 # Field Colours and Alignment
 
-Twelve of KSafe's 16 ride fields have a **rider-pickable idle background colour** (SOS, Safety Timer, Custom Message 1–3, Webhook 1–2, Carb Log 1–3, Hydration Log 1–2). The remaining four — Carb Burn Rate, Carbs Burned, Carb Status, Hydration Status — have no picker; their background is determined automatically (always Karoo theme for the two info readouts, deficit-driven semaphore for the two status fields). Two of those four (Carb Burn Rate and Carbs Burned) also follow the **per-field alignment** (left / center / right) the rider sets in the Karoo profile editor; everything else is always centered.
+Fourteen of KSafe's ride fields have a **rider-pickable idle background colour** (SOS, Safety Timer, Custom Message 1–3, Webhook 1–2, Carb Log 1–3, Hydration Log 1–2, Combined Fuel Log 1–2). The five passive/status fields — Carb Burn Rate, Carb Avg Burn Rate, Carbs Burned, Carb Status, Hydration Status — have no picker; their background is determined automatically (always Karoo theme for the three info readouts, deficit-driven semaphore for the two status fields). Three of those five (Carb Burn Rate, Carb Avg Burn Rate and Carbs Burned) also follow the **per-field alignment** (left / center / right) the rider sets in the Karoo profile editor; everything else is always centered.
 
 ## Idle background colour
 
@@ -89,5 +89,6 @@ When a field is in **Karoo default** mode (no painted background, theme-driven a
 - **Custom Message 1 / 2 / 3** → **Actions tab** → expand the message slot → colour swatches below the message text field.
 - **Webhook 1 / 2** → **Actions tab** → expand the webhook slot → colour swatches below the label field.
 - **Carb / Hydration log slots** *(v2.0)* → **Fueling tab** → expand the slot → colour swatches alongside the icon picker.
+- **Combined Fuel Log 1 / 2** *(Fuel Combo)* → **Fueling tab** → **Combined logging** section → per-button colour swatches (`combined1Color` / `combined2Color`). Unlike the Carb / Hydration log slots, the combined field has **no icon picker** — its icon (a bundled bottle + gel drawable) is **fixed**, so only the colour, label, volume and carbs are configurable.
 
 In every picker the **first swatch** is the Karoo-default (auto day/night). Selecting it stores a sentinel value internally; existing saved colours (any non-sentinel ARGB int) remain valid forever and keep rendering exactly as before.

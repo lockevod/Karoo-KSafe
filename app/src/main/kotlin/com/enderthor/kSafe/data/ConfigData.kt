@@ -103,8 +103,19 @@ const val KAROO_LIVE_BASE_URL = "https://dashboard.hammerhead.io/live/"
  *             fall back to the Swain tier until the rider fills them in via
  *             Settings. The removed `carbTargetGperHour` is silently dropped by
  *             kotlinx-serialization's `ignoreUnknownKeys = true`.
+ *  v18 → v19: crashProfileSettings (List<CrashProfileSetting>) added — per-Karoo-profile
+ *             crash overrides. Pure version stamp; the list defaults to empty, so every
+ *             profile keeps using the global crash config and existing installs are
+ *             unaffected until the rider creates an override.
+ *  v19 → v20: fuelingFitExportEnabled default flipped true → false (FIT developer-field
+ *             export is now opt-in). Pure version stamp; because jsonForStorage uses
+ *             encodeDefaults=false, existing installs that relied on the old default never
+ *             persisted `true`, so they decode to the new `false` (FIT export off on upgrade).
+ *  v20 → v21: combined fuel-log fields added (combinedCarbConcentrationPer500ml + the
+ *             combined1/2 Label/Ml/Carbs/Color set) for the combined drink+carbs tap field.
+ *             Pure version stamp; all fields have defaults, so existing installs are unaffected.
  */
-const val CONFIG_VERSION = 18
+const val CONFIG_VERSION = 22
 
 /**
  * Canonical minSpeedForCrashKmh value per preset.
@@ -248,6 +259,16 @@ val FIELD_COLOR_PALETTE: List<Int> = listOf(
 @Serializable
 enum class ProviderType { CALLMEBOT, PUSHOVER, NTFY, TELEGRAM }
 
+/**
+ * Which alert categories a single configured contact receives.
+ *  - [ALL]            both emergencies (Sender.sendAlert) and info (Sender.sendInfo).
+ *  - [EMERGENCY_ONLY] only emergencies (crash/SOS/check-in/speed-drop/medical).
+ *  - [INFO_ONLY]      only info (ride start/end + custom messages).
+ * See docs/messaging-providers.md.
+ */
+@Serializable
+enum class RecipientAlertScope { ALL, EMERGENCY_ONLY, INFO_ONLY }
+
 @Serializable
 enum class CrashSensitivity {
     LOW,    // Requires stronger impact (fewer false positives)
@@ -315,6 +336,9 @@ data class KSafeConfig(
     // Monitor crash even when no ride is active
     val crashMonitorOutsideRide: Boolean = false,         // uses configured minSpeedForCrashKmh
     val crashMonitorOutsideRideAnySpeed: Boolean = false, // forces minSpeed = 0 — ⚠ more false positives
+    /** Per-profile crash overrides (auto-learned, keyed by RideProfile.id). Empty = every
+     *  profile uses the global crash config above. See CrashProfileSetting. */
+    val crashProfileSettings: List<CrashProfileSetting> = emptyList(),
     // Speed-drop detection
     val speedDropDetectionEnabled: Boolean = false,
     val speedDropMinutes: Int = DEFAULT_SPEED_DROP_MINUTES,
@@ -414,6 +438,8 @@ data class KSafeConfig(
     val buzzerOnEmergencyEnabled: Boolean = true,
     // Calibration logging — writes detailed sensor events to CSV for threshold tuning
     val calibrationLoggingEnabled: Boolean = false,
+    // Update-availability notice — show a brief overlay when a newer KSafe build is published
+    val updateCheckEnabled: Boolean = true,
     // Field colours — idle/ready background for each ride-screen widget
     // Defaults are FIELD_COLOR_AUTO — fresh installs render in native Karoo theme
     // (auto day/night, theme-driven text). Riders who prefer a coloured tap target
@@ -572,18 +598,47 @@ data class KSafeConfig(
     val hydrationAlertBgColor: Int = FUELING_ALERT_COLOR_BLUE,
     val drink1Label: String = "Sip",     val drink1Ml: Int = 100,    val drink1Color: Int = FIELD_COLOR_AUTO,    val drink1Icon: String = "💧",
     val drink2Label: String = "Bottle",  val drink2Ml: Int = 500,    val drink2Color: Int = FIELD_COLOR_AUTO,    val drink2Icon: String = FUEL_BOTTLE_DRAWABLE,
+    /** Carbs per 500 ml of the rider's drink mix — used by the Fueling screen to auto-fill
+     *  each combined button's carbs from its volume. Editable; not used at log time (the
+     *  per-button [combined1Carbs]/[combined2Carbs] are what get logged). */
+    val combinedCarbConcentrationPer500ml: Int = 60,
+    /** Combined fuel-log buttons: log a drink volume AND carbs in one tap. Carbs default to
+     *  ml × concentration / 500 but are independently editable. The field is active when
+     *  EITHER the carbs OR hydration tracker is enabled (logs only the enabled side), and
+     *  grey when both are off — no separate enable flag. Icon is fixed (not configurable). */
+    val combined1Label: String = "Sip",     val combined1Ml: Int = 250, val combined1Carbs: Int = 30, val combined1Color: Int = FIELD_COLOR_AUTO,
+    val combined2Label: String = "Bottle",  val combined2Ml: Int = 500, val combined2Carbs: Int = 60, val combined2Color: Int = FIELD_COLOR_AUTO,
 
     /** Write per-second cumulative carbs (g) and hydration (ml) into the FIT file as
-     *  developer fields, plus the totals into the session message. Default ON because
-     *  the cost is negligible (~0.05% battery over 5 h, no perceptible CPU). Riders
-     *  who don't want extra columns in their FIT can turn it off. */
-    val fuelingFitExportEnabled: Boolean = true,
+     *  developer fields, plus the totals into the session message. Default OFF — opt-in:
+     *  most riders don't want extra developer-field columns in their FIT, and the fueling
+     *  trackers that feed it are themselves opt-in. Riders who want the data turn it on. */
+    val fuelingFitExportEnabled: Boolean = false,
     /**
      * Config schema version — used to detect stale saved configs and apply migrations.
      * Default 0 ensures that any pre-versioning config (JSON without this field) triggers migration.
      * New installs also start at 0 and migrate on first load, which is a no-op for most presets.
      */
     val configVersion: Int = 0,
+)
+
+/**
+ * Per-Karoo-profile crash-detection override, keyed by [RideProfile.id]. Auto-learned
+ * (one entry per profile KSafe has seen active). [useGlobal] = true means "inherit the
+ * global crash config"; false means this profile defines its own complete set (all-or-
+ * nothing). The custom fields are ignored while [useGlobal] is true; their defaults mirror
+ * the global crash defaults. See docs/crash-detection-algorithm.md.
+ */
+@Serializable
+data class CrashProfileSetting(
+    val profileId: String = "",
+    val profileName: String = "",
+    val useGlobal: Boolean = true,
+    val crashDetectionEnabled: Boolean = true,
+    val crashSensitivity: CrashSensitivity = CrashSensitivity.MEDIUM,
+    val customCrashThreshold: Int = 45,
+    val minSpeedForCrashKmh: Int = 10,
+    val crashConfirmSpeedKmh: Int = 5,
 )
 
 @Serializable
@@ -600,6 +655,19 @@ data class SenderConfig(
     val phoneNumber2: String = "",  // CallMeBot: second recipient WhatsApp number (optional)
     val apiKey3: String = "",       // CallMeBot: third recipient API key (optional)
     val phoneNumber3: String = "",  // CallMeBot: third recipient WhatsApp number (optional)
+    /** Per-recipient alert scope (slots 1/2/3). Default ALL = receives everything
+     *  (back-compat). For NTFY only slot 1 applies (single destination). */
+    val recipient1Alerts: RecipientAlertScope = RecipientAlertScope.ALL,
+    val recipient2Alerts: RecipientAlertScope = RecipientAlertScope.ALL,
+    val recipient3Alerts: RecipientAlertScope = RecipientAlertScope.ALL,
+    /** Epoch-ms of the last SUCCESSFUL outbound send via this provider (Test Send, ride
+     *  start/end, custom message, or a delivered emergency alert) — `0L` = never. Set by
+     *  [com.enderthor.kSafe.extension.Sender.markSendSucceeded]; reset to 0 whenever a
+     *  credential field changes (see MainViewModel.updateSenderConfig). Drives BOTH the
+     *  Provider-tab "not verified" nudge (`== 0L`) and the ride-start "please re-test"
+     *  reminder (worked once but quiet > 30 days — see [com.enderthor.kSafe.extension.isSendStale]).
+     *  Optional field with a default → backward-compatible with old "sender" JSON (no migration). */
+    val lastSuccessfulSendMs: Long = 0L,
 )
 
 // ─── Rider biological sex (v18) ─────────────────────────────────────────────
@@ -836,6 +904,9 @@ data class CallMeBotConfig(
     val phoneNumber2: String = "",  // Optional: second recipient's WhatsApp number
     val apiKey3: String = "",       // Optional: third recipient's API key
     val phoneNumber3: String = "",  // Optional: third recipient's WhatsApp number
+    val recipient1Alerts: RecipientAlertScope = RecipientAlertScope.ALL,
+    val recipient2Alerts: RecipientAlertScope = RecipientAlertScope.ALL,
+    val recipient3Alerts: RecipientAlertScope = RecipientAlertScope.ALL,
 )
 
 /** Pushover — app token (from pushover.net) + up to 3 recipient user/group keys. */
@@ -845,12 +916,16 @@ data class PushoverConfig(
     val userKey: String = "",      // Primary recipient user/group key
     val userKey2: String = "",     // Optional: second recipient user/group key
     val userKey3: String = "",     // Optional: third recipient user/group key
+    val recipient1Alerts: RecipientAlertScope = RecipientAlertScope.ALL,
+    val recipient2Alerts: RecipientAlertScope = RecipientAlertScope.ALL,
+    val recipient3Alerts: RecipientAlertScope = RecipientAlertScope.ALL,
 )
 
 /** ntfy.sh — only needs a topic name. Free, no account required, unlimited messages. */
 @Serializable
 data class NtfyConfig(
     val topic: String = "",    // Topic name chosen by you (e.g. "my-ksafe-alerts"). Anyone who knows it can subscribe.
+    val recipient1Alerts: RecipientAlertScope = RecipientAlertScope.ALL,
 )
 
 /** Telegram — bot token (from @BotFather) + up to 3 chat/channel/group IDs. */
@@ -860,6 +935,9 @@ data class TelegramConfig(
     val chatId: String = "",       // Primary chat / channel / group ID
     val chatId2: String = "",      // Optional: second chat ID
     val chatId3: String = "",      // Optional: third chat ID
+    val recipient1Alerts: RecipientAlertScope = RecipientAlertScope.ALL,
+    val recipient2Alerts: RecipientAlertScope = RecipientAlertScope.ALL,
+    val recipient3Alerts: RecipientAlertScope = RecipientAlertScope.ALL,
 )
 
 /**
@@ -891,19 +969,29 @@ fun KSafeBackupExport.toSenderConfigs(): List<SenderConfig> = listOf(
         apiKey2 = callmebot.apiKey2,
         phoneNumber2 = callmebot.phoneNumber2,
         apiKey3 = callmebot.apiKey3,
-        phoneNumber3 = callmebot.phoneNumber3),
+        phoneNumber3 = callmebot.phoneNumber3,
+        recipient1Alerts = callmebot.recipient1Alerts,
+        recipient2Alerts = callmebot.recipient2Alerts,
+        recipient3Alerts = callmebot.recipient3Alerts),
     SenderConfig(ProviderType.PUSHOVER,
         apiKey = pushover.appToken,
         userKey = pushover.userKey,
         userKey2 = pushover.userKey2,
-        userKey3 = pushover.userKey3),
+        userKey3 = pushover.userKey3,
+        recipient1Alerts = pushover.recipient1Alerts,
+        recipient2Alerts = pushover.recipient2Alerts,
+        recipient3Alerts = pushover.recipient3Alerts),
     SenderConfig(ProviderType.NTFY,
-        apiKey = ntfy.topic),
+        apiKey = ntfy.topic,
+        recipient1Alerts = ntfy.recipient1Alerts),
     SenderConfig(ProviderType.TELEGRAM,
         apiKey = telegram.botToken,
         userKey = telegram.chatId,
         userKey2 = telegram.chatId2,
-        userKey3 = telegram.chatId3),
+        userKey3 = telegram.chatId3,
+        recipient1Alerts = telegram.recipient1Alerts,
+        recipient2Alerts = telegram.recipient2Alerts,
+        recipient3Alerts = telegram.recipient3Alerts),
 )
 
 /** Builds a [KSafeBackupExport] from the current [config] and flat sender config list. */
@@ -922,10 +1010,29 @@ fun List<SenderConfig>.toBackupExport(config: KSafeConfig): KSafeBackupExport {
             phoneNumber2 = cmb.phoneNumber2,
             apiKey3 = cmb.apiKey3,
             phoneNumber3 = cmb.phoneNumber3,
+            recipient1Alerts = cmb.recipient1Alerts,
+            recipient2Alerts = cmb.recipient2Alerts,
+            recipient3Alerts = cmb.recipient3Alerts,
         ),
-        pushover   = PushoverConfig(appToken = po.apiKey, userKey = po.userKey, userKey2 = po.userKey2, userKey3 = po.userKey3),
-        ntfy       = NtfyConfig(topic = sp.apiKey),
-        telegram   = TelegramConfig(botToken = tg.apiKey, chatId = tg.userKey, chatId2 = tg.userKey2, chatId3 = tg.userKey3),
+        pushover   = PushoverConfig(
+            appToken = po.apiKey,
+            userKey = po.userKey,
+            userKey2 = po.userKey2,
+            userKey3 = po.userKey3,
+            recipient1Alerts = po.recipient1Alerts,
+            recipient2Alerts = po.recipient2Alerts,
+            recipient3Alerts = po.recipient3Alerts,
+        ),
+        ntfy       = NtfyConfig(topic = sp.apiKey, recipient1Alerts = sp.recipient1Alerts),
+        telegram   = TelegramConfig(
+            botToken = tg.apiKey,
+            chatId = tg.userKey,
+            chatId2 = tg.userKey2,
+            chatId3 = tg.userKey3,
+            recipient1Alerts = tg.recipient1Alerts,
+            recipient2Alerts = tg.recipient2Alerts,
+            recipient3Alerts = tg.recipient3Alerts,
+        ),
     )
 }
 
@@ -938,6 +1045,10 @@ val defaultSenderConfigs = listOf(
     SenderConfig(ProviderType.TELEGRAM),
 )
 
+// AUDIT 2026-06: these default-seed strings use the stdlib Json (not jsonForStorage) on purpose.
+// Both are encodeDefaults=false, so output is identical, and these strings are only ever fed
+// back into a decoder — never compared against a jsonForStorage write. Equivalent by design;
+// not a bug, do not re-flag.
 val defaultSenderConfigJson: String = Json.encodeToString(defaultSenderConfigs)
 val defaultKSafeConfigJson: String = Json.encodeToString(listOf(KSafeConfig(configVersion = CONFIG_VERSION)))
 val defaultEmergencyStateJson: String = Json.encodeToString(EmergencyState())
@@ -1152,16 +1263,31 @@ fun KSafeConfig.migrateToLatest(): KSafeConfig {
         // changed critical away from 175 keep their choice (the customised value signals
         // "I'm tuning this tier, don't touch") even if it leaves critical ≤ sustained — at
         // that point it's an intentional setup we shouldn't second-guess.
+        val oldCritical = c.wellnessCriticalThresholdBpm
+        // Strict `<` is DELIBERATE (locked by the `v14 with customised sustained keeps both
+        // unchanged` migration test): a rider who lowered sustained to 175 so that
+        // critical == sustained == 175 has signalled an intentional tight setup — we don't
+        // second-guess it. We only repair the genuine broken-default case where critical is
+        // stuck at 175 strictly BELOW sustained, bumping it to max(185, sustained + 5) so the
+        // critical tier regains headroom above sustained.
         val newCritical =
-            if (c.wellnessCriticalThresholdBpm == 175 &&
-                c.wellnessCriticalThresholdBpm < c.wellnessHighHrThreshold) {
+            if (oldCritical == 175 && oldCritical < c.wellnessHighHrThreshold) {
                 maxOf(185, c.wellnessHighHrThreshold + 5)
-            } else c.wellnessCriticalThresholdBpm
+            } else oldCritical
         c = c.copy(wellnessCriticalThresholdBpm = newCritical, configVersion = 15)
-        Timber.i(
-            "KSafeConfig migrated v%d→v15 (wellness critical default; critical 175→%d, sustained=%d)",
-            originalVersion, newCritical, c.wellnessHighHrThreshold,
-        )
+        if (newCritical != oldCritical) {
+            Timber.i(
+                "KSafeConfig migrated v%d→v15 (wellness critical %d→%d, sustained=%d)",
+                originalVersion, oldCritical, newCritical, c.wellnessHighHrThreshold,
+            )
+        } else {
+            // No change — critical was customised away from the broken default, or it already
+            // sits at/below a deliberately-lowered sustained. Don't imply a value changed.
+            Timber.d(
+                "KSafeConfig migrated v%d→v15 (version stamp; critical=%d unchanged vs sustained=%d)",
+                originalVersion, newCritical, c.wellnessHighHrThreshold,
+            )
+        }
     }
 
     if (c.configVersion < 16) {
@@ -1200,6 +1326,40 @@ fun KSafeConfig.migrateToLatest(): KSafeConfig {
         // every tick, so the next tick after the upgrade switches paths transparently.
         c = c.copy(configVersion = 18)
         Timber.i("KSafeConfig migrated v%d→v18 (physiology-based carb burn estimator)", originalVersion)
+    }
+
+    if (c.configVersion < 19) {
+        // v18 → v19: per-profile crash overrides (crashProfileSettings) added. Pure version
+        // stamp — the new list defaults to empty, so every profile inherits the global crash
+        // config and existing installs behave identically until the rider creates an override.
+        c = c.copy(configVersion = 19)
+        Timber.i("KSafeConfig migrated v%d→v19 (per-profile crash overrides)", originalVersion)
+    }
+
+    if (c.configVersion < 20) {
+        // v19 → v20: fuelingFitExportEnabled default flipped ON→OFF (FIT developer-field
+        // export is now opt-in). Pure version stamp: jsonForStorage uses encodeDefaults=false,
+        // so a rider on the old default never serialized `true` — on decode the now-absent
+        // field resolves to the new `false` default, while anyone who explicitly enabled it
+        // (e.g. via an imported config) keeps their `true`. Nothing to rewrite here.
+        c = c.copy(configVersion = 20)
+        Timber.i("KSafeConfig migrated v%d→v20 (FIT export now opt-in/off by default)", originalVersion)
+    }
+
+    if (c.configVersion < 21) {
+        // v20 → v21: combined fuel-log fields added. Pure version stamp — the new fields are
+        // additive with sensible defaults (Sip 250ml/30g, Bottle 500ml/60g @ 60g/500ml), so
+        // existing installs behave identically until the rider places a combined field.
+        c = c.copy(configVersion = 21)
+        Timber.i("KSafeConfig migrated v%d→v21 (combined fuel-log fields)", originalVersion)
+    }
+
+    if (c.configVersion < 22) {
+        // v21 → v22: updateCheckEnabled added (default ON). Pure version stamp — the field is
+        // additive and absent in old blobs decodes to its `true` default, so existing installs
+        // get the update notice enabled, matching new installs. Nothing to rewrite.
+        c = c.copy(configVersion = 22)
+        Timber.i("KSafeConfig migrated v%d→v22 (update-availability check)", originalVersion)
     }
 
     return c

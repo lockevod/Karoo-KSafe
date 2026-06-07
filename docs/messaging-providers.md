@@ -1,5 +1,9 @@
 # Messaging Providers — Full Setup Guide
 
+> **Just want the basics?** Read the [Easy Setup guide](easy-setup.md) first — it walks you
+> through the two easiest providers (ntfy and Telegram) in plain English. This page is the
+> full reference for all four.
+
 > Step-by-step setup for each of the four messaging providers KSafe supports. The README has a one-paragraph overview and the comparison table; this page is the deep dive with screenshots / commands / where-to-click instructions.
 
 KSafe supports **four providers**. Pick one based on cost and reliability:
@@ -12,6 +16,24 @@ KSafe supports **four providers**. Pick one based on cost and reliability:
 | **Pushover** | Free trial, ~$5 one-time | Most reliable push notifications |
 
 You can configure credentials for all four — they are saved independently and switching between them does not erase anything. Only the **selected (active) provider** will be used when an alert is triggered.
+
+---
+
+## Per-contact alert scopes
+
+Each configured recipient has an independent **"This contact receives"** setting:
+
+| Setting | Receives |
+|---|---|
+| **All alerts** (default) | Everything — crashes, SOS, check-in misses, speed-drop, ride start/end, custom messages |
+| **Emergency only** | Only safety-critical alerts (crash, SOS, missed check-in, speed-drop, medical) |
+| **Info only** | Only ride start/end and custom messages |
+
+Set it per slot in the **Provider** tab, below each recipient's credentials.
+
+**Safety invariant — emergencies always reach someone.** If a scope filter would leave zero recipients for an emergency, KSafe ignores the filter and delivers to all configured contacts. Info messages have no such fallback (if all contacts are *Emergency only*, info messages reach nobody — intentional).
+
+**Slot 1 is not mandatory.** You can leave Recipient 1 blank and use only slot 2/3; blank slots are skipped. For ntfy only slot 1 applies (single topic).
 
 ---
 
@@ -38,6 +60,8 @@ ntfy.sh is the simplest option: no account, no registration, no limits. Just pic
 3. Tap **Test Send** — you should receive a push notification in the ntfy app immediately.
 
 > You can add the same topic on multiple phones to alert several people at once. Each person just subscribes to the same topic name in their ntfy app.
+
+ntfy uses a single topic, so the [alert scope](#per-contact-alert-scopes) applies to slot 1 only and governs the whole topic.
 
 ---
 
@@ -66,9 +90,11 @@ CallMeBot lets you send WhatsApp messages for free using a simple API. **Importa
 
 ### Optional — add a second and third recipient
 
-CallMeBot supports a single recipient per request, so to alert several people KSafe sends one WhatsApp message per recipient. Each extra recipient needs **their own phone number and their own API key**: repeat Step 1 from each contact's phone (CallMeBot returns a different key for each WhatsApp number) and fill in the **Recipient 2** and **Recipient 3** fields. Leave them blank if you only want to alert one person.
+CallMeBot supports a single recipient per request, so to alert several people KSafe sends one WhatsApp message per recipient. Each extra recipient needs **their own phone number and their own API key**: repeat Step 1 from each contact's phone (CallMeBot returns a different key for each WhatsApp number) and fill in the **Recipient 2** and **Recipient 3** fields. Any recipient slot you leave blank is simply skipped — including Recipient 1, so you can use slots 2/3 alone if you prefer.
 
 A failed delivery to one recipient does not block the others, and the **Test Send** result is reported per recipient so you can spot a misconfigured slot.
+
+Each recipient slot has its own independent [alert scope](#per-contact-alert-scopes) selector, so you can route emergencies and info messages to different contacts.
 
 ---
 
@@ -83,31 +109,34 @@ Telegram lets you send messages for free through a bot you create yourself. Ther
 3. Follow the instructions: choose a name and a username for your bot (username must end in `bot`, e.g. `MySafetyBot`).
 4. BotFather will give you a **Bot Token** (e.g. `7123456789:AAFxxxxxxxxxxxxxxxxxxxxxx`). Copy it.
 
-### Step 2 — Get your Chat ID
+### Step 2 — Get the recipient's Chat ID
 
-The Chat ID tells the bot where to deliver the message. You can send alerts to a **personal chat**, a **group**, or a **channel**.
+The Chat ID identifies **who receives the alert**. If you are alerting someone else (a partner, an emergency contact), the Chat ID is **theirs** — so get it from **their** Telegram, not yours.
 
-For a **personal chat** (easiest):
+**Easiest — use @userinfobot:**
 
-1. Search for your new bot in Telegram and tap **Start** (`/start`).
-2. **Send any message to the bot** (e.g. `hello`) — this is required so the bot has an update to return.
-3. Go to `https://api.telegram.org/bot<BOT_TOKEN>/getUpdates` in a browser (replace `<BOT_TOKEN>` with your bot token).
-4. Look for `"chat":{"id":XXXXXXX}` in the response — that number is your **Chat ID**.
+1. On the **recipient's** phone, open Telegram and search for **@userinfobot**.
+2. Send `/start`. It replies with their numeric **ID** — that is the Chat ID.
 
-For a **group** or **channel**:
+**Alternative — via your bot's `getUpdates`:**
 
-1. Add the bot to the group/channel as an administrator.
-2. Send a message in the group, then fetch `getUpdates` as above — the Chat ID will be a negative number (e.g. `-1001234567890`).
+1. The recipient searches for **your** bot, taps **Start** (`/start`), and sends it any message.
+2. Open `https://api.telegram.org/bot<BOT_TOKEN>/getUpdates` in a browser (replace `<BOT_TOKEN>`).
+3. Find `"chat":{"id":XXXXXXX}` — that number is the Chat ID.
+
+For a **group** or **channel**: add the bot as an administrator, send a message there, then fetch `getUpdates` as above — the Chat ID will be a negative number (e.g. `-1001234567890`).
 
 ### Step 3 — Configure KSafe
 
 1. In the **Provider** tab, select **Telegram**.
 2. Enter your **Bot Token** in the first field.
-3. Enter your **Chat ID** (recipient 1) in the second field.
+3. Enter the recipient's **Chat ID** in the **Recipient 1** field.
 4. Optionally enter a second and third Chat ID to alert additional chats. In most cases one Chat ID is enough — if you want to alert multiple people at once, simply add the bot to a **Telegram group** and use the group's Chat ID.
 5. Tap **Test Send** — all configured chats should receive a message immediately.
 
-> If you don't receive the test message, make sure you have started a conversation with the bot first (send `/start` to it in Telegram).
+Each recipient slot has its own independent [alert scope](#per-contact-alert-scopes) selector.
+
+> **Important — the #1 reason alerts don't arrive:** a Telegram bot can only message someone who has **started a chat with it first**. Each recipient must open Telegram, search for **your bot**, and tap **Start** (`/start`) once. Until they do, KSafe's messages to them fail silently. If a Test Send doesn't arrive, this is almost always why.
 
 ---
 
@@ -153,5 +182,7 @@ Each person who uses KSafe needs to create their own Pushover application (it is
 3. Enter the **User Key** of the first recipient in the second field (from Step 1).
 4. Optionally enter a second and third User Key if you want to alert multiple people. Each recipient needs their own Pushover account and User Key — but they all share the same App Token you created in Step 2.
 5. Tap **Test Send** — all configured recipients should receive a push notification immediately.
+
+Each recipient slot has its own independent [alert scope](#per-contact-alert-scopes) selector.
 
 > Notifications are delivered even in silent/do-not-disturb mode when sent at high priority (which KSafe uses for emergencies).
