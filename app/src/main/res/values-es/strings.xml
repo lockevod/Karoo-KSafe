@@ -227,6 +227,19 @@
     <string name="backup_grant_opening">Abriendo ajustes de acceso a archivos — concédelo y vuelve a tocar.</string>
     <string name="backup_grant_adb">Este Karoo no puede abrir la pantalla de acceso a archivos. Concédelo vía adb:\nadb shell appops set com.enderthor.kSafe MANAGE_EXTERNAL_STORAGE allow</string>
     <string name="test_send">Probar envío</string>
+    <!-- Aviso de proveedor incompleto (banner de la pestaña Provider + InRideAlert al iniciar ruta) -->
+    <string name="provider_warn_ridestart_title">KSafe: las alertas no saldrán</string>
+    <string name="provider_warn_banner_suffix">— las alertas no saldrán</string>
+    <string name="provider_missing_callmebot">CallMeBot: falta teléfono o key</string>
+    <string name="provider_missing_pushover_token">Pushover: falta el App Token</string>
+    <string name="provider_missing_pushover_user">Pushover: falta el User Key</string>
+    <string name="provider_missing_ntfy_topic">ntfy: falta el nombre del topic</string>
+    <string name="provider_missing_telegram_token">Telegram: falta el Bot Token</string>
+    <string name="provider_missing_telegram_chat">Telegram: falta el Chat ID</string>
+    <string name="provider_warn_unverified">Sin verificar — pulsa Probar envío para confirmar que las alertas funcionan</string>
+    <!-- Recordatorio al iniciar ruta: el proveedor lleva > 30 días en silencio -->
+    <string name="provider_warn_stale_title">KSafe: re-prueba las alertas</string>
+    <string name="provider_warn_stale_detail">Sin envíos desde hace 30+ días</string>
 
     <!-- Pantalla de Ajustes (seguridad) -->
     <string name="settings_title">Ajustes de seguridad</string>

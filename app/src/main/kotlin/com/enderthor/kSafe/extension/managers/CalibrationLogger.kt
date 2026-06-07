@@ -202,6 +202,16 @@ class CalibrationLogger(
          *  post-incident audit reason as [ALERT_DELIVERY_FAILED]: a contact reporting they
          *  never received an alert must be correlatable even when others did. */
         ALERT_DELIVERY_PARTIAL("ALERT_PARTIAL"),
+        /** Ride started while the SELECTED messaging provider's credentials are incomplete
+         *  (local check — missing phone/key/token/topic/chat id), so no alert could ever be
+         *  sent. The rider-facing ride-start InRideAlert fires alongside. Payload: provider +
+         *  the missing-field reason. Catches the silent-misconfig class (session 327846_40d50a,
+         *  2026-06-07) where an emergency fired but the alert fast-failed on NO_CREDENTIALS. */
+        PROVIDER_NOT_READY("PROVIDER_NOT_READY"),
+        /** Ride started while the SELECTED provider is configured but has had NO successful send in
+         *  > 30 days (credentials may have rotted). The rider-facing "please re-test" InRideAlert
+         *  fires alongside. Payload: provider + days_since. */
+        PROVIDER_STALE("PROVIDER_STALE"),
         // ─── Fueling tracker (added 2026-05) ─────────────────────────────────
         /**
          * Snapshot of the carb tracker config at session start. Lets a reader of the CSV

@@ -27,6 +27,9 @@ import androidx.compose.ui.unit.dp
 import com.enderthor.kSafe.R
 import com.enderthor.kSafe.activity.MainViewModel
 import com.enderthor.kSafe.data.ProviderType
+import com.enderthor.kSafe.data.SenderConfig
+import com.enderthor.kSafe.extension.ProviderReadiness
+import com.enderthor.kSafe.extension.providerReadiness
 import com.enderthor.kSafe.data.RecipientAlertScope
 import com.enderthor.kSafe.extension.KSafeExtension
 import com.enderthor.kSafe.extension.util.accepts
@@ -256,6 +259,48 @@ fun ProviderScreen(vm: MainViewModel) {
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant
         )
+
+        // Provider-incomplete warning. Computed from the LIVE field values (not the saved
+        // config) so it updates as the rider types. Same predicate as the Sender fast-fail
+        // ([providerReadiness]) → the banner and "alert won't send" behaviour can't disagree.
+        val readiness = providerReadiness(
+            fieldsProvider,
+            SenderConfig(
+                provider = fieldsProvider,
+                apiKey = apiKey, userKey = userKey, userKey2 = userKey2, userKey3 = userKey3,
+                phoneNumber = phoneNumber, apiKey2 = apiKey2, phoneNumber2 = phoneNumber2,
+                apiKey3 = apiKey3, phoneNumber3 = phoneNumber3,
+            ),
+        )
+        if (readiness is ProviderReadiness.Incomplete) {
+            val reason = when (readiness.missing) {
+                ProviderReadiness.Missing.CALLMEBOT_PHONE_OR_KEY -> stringResource(R.string.provider_missing_callmebot)
+                ProviderReadiness.Missing.PUSHOVER_APP_TOKEN     -> stringResource(R.string.provider_missing_pushover_token)
+                ProviderReadiness.Missing.PUSHOVER_USER_KEY      -> stringResource(R.string.provider_missing_pushover_user)
+                ProviderReadiness.Missing.NTFY_TOPIC             -> stringResource(R.string.provider_missing_ntfy_topic)
+                ProviderReadiness.Missing.TELEGRAM_BOT_TOKEN     -> stringResource(R.string.provider_missing_telegram_token)
+                ProviderReadiness.Missing.TELEGRAM_CHAT_ID       -> stringResource(R.string.provider_missing_telegram_chat)
+            }
+            Text(
+                text = "⚠ $reason ${stringResource(R.string.provider_warn_banner_suffix)}",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.error,
+                modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
+            )
+        } else {
+            // Soft nudge: credentials look complete, but no send has ever succeeded for them yet
+            // — encourage (don't force) verifying. The timestamp comes from the SAVED config (set
+            // on any successful send, reset to 0 when credentials change).
+            val everSent = (senderConfigs.find { it.provider == fieldsProvider }?.lastSuccessfulSendMs ?: 0L) > 0L
+            if (!everSent) {
+                Text(
+                    text = "⚠ ${stringResource(R.string.provider_warn_unverified)}",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
+                )
+            }
+        }
 
         // CallMeBot: recipient 1 phone number (the API key field below is recipient 1's key)
         if (fieldsProvider == ProviderType.CALLMEBOT) {
