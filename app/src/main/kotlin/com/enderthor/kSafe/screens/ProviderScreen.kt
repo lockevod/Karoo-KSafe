@@ -211,7 +211,7 @@ fun ProviderScreen(vm: MainViewModel) {
                     modifier = Modifier.weight(1f),
                     label = {
                         Text(
-                            text = if (provider == ProviderType.CALLMEBOT) "CallMeBot" else "Pushover",
+                            text = if (provider == ProviderType.CALLMEBOT) "CallMeBot (Whatsapp)" else "Pushover",
                             style = MaterialTheme.typography.labelSmall
                         )
                     }

@@ -1,5 +1,9 @@
 # Messaging Providers — Full Setup Guide
 
+> **Just want the basics?** Read the [Easy Setup guide](easy-setup.md) first — it walks you
+> through the two easiest providers (ntfy and Telegram) in plain English. This page is the
+> full reference for all four.
+
 > Step-by-step setup for each of the four messaging providers KSafe supports. The README has a one-paragraph overview and the comparison table; this page is the deep dive with screenshots / commands / where-to-click instructions.
 
 KSafe supports **four providers**. Pick one based on cost and reliability:

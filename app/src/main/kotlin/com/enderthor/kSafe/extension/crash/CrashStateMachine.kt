@@ -248,6 +248,28 @@ class CrashStateMachine(
     @Volatile var lastConfirmedAngleDeg: Double = -1.0
         private set
 
+    /**
+     * The averaged silence-window gravity vector (m/s², device frame) at the moment
+     * the last terminal SILENCE_CHECK decision fired — a `Decision.Confirm` OR a GAP/
+     * PROMPT upright veto. Captured at the confirm/veto gate BEFORE [resetSilenceWindow]
+     * clears the accumulator, so the facade can log the raw silence orientation
+     * (`sil_x/sil_y/sil_z`) next to the derived [lastConfirmedAngleDeg] /
+     * [lastGapUprightVetoAngleDeg]. This closes the v2.0.0 gap-regime blind spot: that
+     * path logged only `pre_impact_angle=-1.0`, leaving the geometry that drove the
+     * decision impossible to reconstruct from a field log. Pair it with
+     * [preImpactReference] to recompute the angle independently.
+     *
+     * `NaN` until the first terminal decision with ≥ [MIN_ORIENTATION_SAMPLES]
+     * accumulated, or whenever too few samples make the vector meaningless. NOT reset
+     * between rides — a fresh terminal decision overwrites it.
+     */
+    @Volatile var lastSilenceOrientX: Double = Double.NaN
+        private set
+    @Volatile var lastSilenceOrientY: Double = Double.NaN
+        private set
+    @Volatile var lastSilenceOrientZ: Double = Double.NaN
+        private set
+
     // ── Pre-impact orientation reference (pre-impact-revision) ───────────────
     /**
      * The bike's gravity-vector direction averaged over ~2 s before the impact.
@@ -944,6 +966,12 @@ class CrashStateMachine(
                 // is a pure read; -1.0 (invalid ref / too few samples) → not upright →
                 // no veto → confirm (the no-orientation-data safety net is preserved).
                 val vetoAngle = currentOrientationAngleDeg()
+                // Snapshot the averaged silence orientation that produced vetoAngle, BEFORE
+                // either branch below calls resetSilenceWindow(). Recorded on BOTH terminal
+                // decisions (veto and confirm) so a field log carries the raw silence gravity
+                // vector — the angle is then independently verifiable from (pre-impact ref,
+                // sil) rather than trusting a single derived number. (v2.0.0 logged -1.0 here.)
+                captureSilenceOrientation()
                 val upright = vetoAngle >= 0.0 && vetoAngle < thresholds.gapVetoUprightAngleDeg
                 // R6-G (2026-06-03) — extend the upright veto to the PROMPT-STOP
                 // (non-gap) regime to kill the bump→brake→stand-still-upright FP
@@ -1102,6 +1130,29 @@ class CrashStateMachine(
         val cosAngle = ((curX * preImpactRef.x + curY * preImpactRef.y + curZ * preImpactRef.z)
                        / (curMag * refMag)).coerceIn(-1.0, 1.0)
         return Math.toDegrees(acos(cosAngle))
+    }
+
+    /**
+     * Snapshot the averaged silence-window gravity vector into
+     * [lastSilenceOrientX]/[lastSilenceOrientY]/[lastSilenceOrientZ] for diagnostic
+     * logging. Mirrors the averaging in [currentOrientationAngleDeg] but stores the
+     * vector itself instead of deriving the angle. `NaN` when fewer than
+     * [MIN_ORIENTATION_SAMPLES] are accumulated. Deliberately independent of
+     * pre-impact-reference validity — the silence orientation is meaningful even
+     * when there is no reference to measure an angle against (so an invalid-ref
+     * confirm still records WHERE the bike was, just not the angle).
+     */
+    private fun captureSilenceOrientation() {
+        if (orientationSampleCount < MIN_ORIENTATION_SAMPLES) {
+            lastSilenceOrientX = Double.NaN
+            lastSilenceOrientY = Double.NaN
+            lastSilenceOrientZ = Double.NaN
+            return
+        }
+        val n = orientationSampleCount.toDouble()
+        lastSilenceOrientX = orientationSumX / n
+        lastSilenceOrientY = orientationSumY / n
+        lastSilenceOrientZ = orientationSumZ / n
     }
 
     private fun resetSilenceWindow() {

@@ -6,6 +6,12 @@
 > [!WARNING]
 > KSafe can send emergency alerts to your contacts. Test it carefully before relying on it.
 
+> [!TIP]
+> **New to KSafe? Start here → [Easy Setup guide](docs/easy-setup.md)** ([español](docs/easy-setup.es.md)).
+> A plain-English walkthrough — what to tap, what to set, what to ignore — with a 5-minute
+> minimum setup and simple versions of the Senders and Fueling sections. The pages below are
+> the in-depth reference.
+
 KSafe is a free, open-source safety extension for Karoo 3 (Karoo OS 1.527+). It works on two layers:
 
 - **Reactive** — detects crashes (accelerometer + gyroscope), sudden speed drops, missed check-ins and, optionally with an HR sensor, medical-episode patterns (HR flatline, HR collapse) and wellness alerts (sustained / critical HR, HR–power decoupling). A manual SOS button is always one tap away.
