@@ -1,5 +1,9 @@
 # Health & Fueling Tabs — Full Reference
 
+> **Find this too technical?** Read the [Easy Setup guide](easy-setup.md) first — it has a
+> plain-English "Fueling made simple" section (pair a sensor, fill age/sex, set a drink
+> target, tap when you eat). This page is the complete reference.
+
 > Full configuration reference for the **Health** tab (HR-based detectors) and the **Fueling** tab (carb / hydration tracker). The README has a one-paragraph overview of each; this page covers every field, every tier, every alert mode, and the FIT-file integration.
 >
 > For the underlying algorithms (thresholds, baselines, hysteresis) see:
