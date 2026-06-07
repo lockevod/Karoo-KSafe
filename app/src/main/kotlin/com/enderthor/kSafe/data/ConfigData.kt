@@ -660,6 +660,14 @@ data class SenderConfig(
     val recipient1Alerts: RecipientAlertScope = RecipientAlertScope.ALL,
     val recipient2Alerts: RecipientAlertScope = RecipientAlertScope.ALL,
     val recipient3Alerts: RecipientAlertScope = RecipientAlertScope.ALL,
+    /** Epoch-ms of the last SUCCESSFUL outbound send via this provider (Test Send, ride
+     *  start/end, custom message, or a delivered emergency alert) — `0L` = never. Set by
+     *  [com.enderthor.kSafe.extension.Sender.markSendSucceeded]; reset to 0 whenever a
+     *  credential field changes (see MainViewModel.updateSenderConfig). Drives BOTH the
+     *  Provider-tab "not verified" nudge (`== 0L`) and the ride-start "please re-test"
+     *  reminder (worked once but quiet > 30 days — see [com.enderthor.kSafe.extension.isSendStale]).
+     *  Optional field with a default → backward-compatible with old "sender" JSON (no migration). */
+    val lastSuccessfulSendMs: Long = 0L,
 )
 
 // ─── Rider biological sex (v18) ─────────────────────────────────────────────

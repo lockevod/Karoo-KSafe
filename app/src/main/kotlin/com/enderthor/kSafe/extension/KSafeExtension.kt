@@ -1235,6 +1235,10 @@ class KSafeExtension : KarooExtension("ksafe", BuildConfig.VERSION_NAME), Corout
                         // previous ride so it can't bleed into this one.
                         emergencyManager.clearDeliveryNotice()
                         sendRideStartNotification()
+                        // Safety net: if the selected provider's credentials are incomplete,
+                        // every emergency would silently fast-fail (NO_CREDENTIALS) — warn the
+                        // rider now, before they rely on it. Local check only, non-blocking.
+                        launch { emergencyManager.warnIfProviderIncomplete(activeConfig) }
                         // Readiness advice from the last 10 rides' wellness summaries.
                         // Silent when RECOVERED (decideReadiness returns null) — no per-ride spam.
                         if (activeConfig.readinessAtRideStartEnabled) {

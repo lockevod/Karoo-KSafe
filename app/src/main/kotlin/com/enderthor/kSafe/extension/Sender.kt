@@ -124,6 +124,10 @@ class Sender(
          *  60 s leaves headroom for JSON building, log writes, and the brief gap
          *  between recipient calls without prematurely killing the third recipient. */
         private const val ATTEMPT_BLOCK_TIMEOUT_MS = 60_000L
+        /** Throttle for [markSendSucceeded]: re-stamp `lastSuccessfulSendMs` at most once per hour
+         *  per provider. The staleness window is 30 days, so finer precision is pointless and this
+         *  avoids a DataStore write on every ride-start/end + custom-message tap. */
+        private const val STAMP_MIN_INTERVAL_MS = 3_600_000L
     }
 
     // ─── Entry points ─────────────────────────────────────────────────────────
@@ -134,8 +138,11 @@ class Sender(
      * full delivery from partial delivery (reached some but not all emergency contacts)
      * and total failure.
      */
-    suspend fun sendAlert(message: String, provider: ProviderType): SendOutcome =
-        sendWithRetry(message, provider, isEmergency = true)
+    suspend fun sendAlert(message: String, provider: ProviderType): SendOutcome {
+        val outcome = sendWithRetry(message, provider, isEmergency = true)
+        if (outcome.anyOk) markSendSucceeded(provider)   // a delivered alert proves the provider works
+        return outcome
+    }
 
     /** Sends an informational [message] via [provider] (normal priority, single attempt).
      *  Wrapped: [attemptSend] can throw (RemoteException / IllegalStateException from a
@@ -148,8 +155,8 @@ class Sender(
      *  custom-message tap) can distinguish a real delivery (`delivered > 0`) from a legitimate
      *  zero-recipient scope no-op (`eligible == 0`, not `hardFail`) — the latter must NOT be
      *  reported to the rider as "sent ✓". A thrown exception maps to [SendOutcome.HARD_FAIL]. */
-    suspend fun sendInfoOutcome(message: String, provider: ProviderType): SendOutcome =
-        try {
+    suspend fun sendInfoOutcome(message: String, provider: ProviderType): SendOutcome {
+        val outcome = try {
             attemptSend(message, provider, isEmergency = false)
         } catch (e: kotlinx.coroutines.CancellationException) {
             throw e
@@ -157,6 +164,11 @@ class Sender(
             Timber.w(e, "sendInfo failed for $provider — treating as not delivered")
             SendOutcome.HARD_FAIL
         }
+        // A delivered info message (ride start/end, custom message) also proves the provider
+        // works — stamp it so the staleness clock resets. A zero-recipient scope no-op does NOT.
+        if (outcome.anyOk) markSendSucceeded(provider)
+        return outcome
+    }
 
     /**
      * Single-attempt send for configuration tests.
@@ -167,7 +179,10 @@ class Sender(
         val config  = configs.find { it.provider == provider }
             ?: return "Provider not configured."
 
-        return try {
+        // A Test Send that reaches the provider counts as a successful send — stamps
+        // lastSuccessfulSendMs (clears the "not verified" nudge + resets the staleness clock).
+        var anySucceeded = false
+        val message = try {
             when (provider) {
                 ProviderType.CALLMEBOT -> {
                     val recipients = callMeBotRecipients(config)
@@ -190,8 +205,9 @@ class Sender(
                         // (testSend reporting "sent ✓" while sendAlert silently fails
                         // is the worst-of-both-worlds UX).
                         when {
-                            isCallMeBotSuccess(response.statusCode, body) ->
-                                results.add("$label: sent ✓")
+                            isCallMeBotSuccess(response.statusCode, body) -> {
+                                results.add("$label: sent ✓"); anySucceeded = true
+                            }
                             body.contains("not authorized", ignoreCase = true) ||
                             body.contains("apikey", ignoreCase = true) ->
                                 results.add("$label: invalid API key.")
@@ -230,8 +246,9 @@ class Sender(
                             when {
                                 // K2 — anchored check, see attemptSend Pushover branch.
                                 response.statusCode in 200..299 &&
-                                    (body.contains("\"status\":1,") || body.contains("\"status\":1}")) ->
-                                    results.add("$label: sent ✓")
+                                    (body.contains("\"status\":1,") || body.contains("\"status\":1}")) -> {
+                                    results.add("$label: sent ✓"); anySucceeded = true
+                                }
                                 response.statusCode == 429 ->
                                     results.add("$label: rate limited — try again later.")
                                 else -> {
@@ -264,8 +281,10 @@ class Sender(
                         )
                     } ?: return "No response — check your internet connection."
                     when {
-                        response.statusCode in 200..299 ->
+                        response.statusCode in 200..299 -> {
+                            anySucceeded = true
                             "Test sent! Open the ntfy app and check your topic."
+                        }
                         response.statusCode == 403 ->
                             "Access denied — the topic may be protected or reserved."
                         else -> "Error ${response.statusCode}: ${response.body?.toString(Charsets.UTF_8)?.take(120) ?: ""}"
@@ -297,8 +316,9 @@ class Sender(
                         } else {
                             val body = response.body?.toString(Charsets.UTF_8) ?: ""
                             when {
-                                response.statusCode in 200..299 && body.contains("\"ok\":true") ->
-                                    results.add("$label: sent ✓")
+                                response.statusCode in 200..299 && body.contains("\"ok\":true") -> {
+                                    results.add("$label: sent ✓"); anySucceeded = true
+                                }
                                 response.statusCode == 401 ->
                                     results.add("$label: invalid Bot Token.")
                                 response.statusCode == 400 && body.contains("chat not found", ignoreCase = true) ->
@@ -323,6 +343,33 @@ class Sender(
             throw e
         } catch (e: Exception) {
             "Unexpected error: ${e.message}"
+        }
+        if (anySucceeded) markSendSucceeded(provider)
+        return message
+    }
+
+    /** Stamp [SenderConfig.lastSuccessfulSendMs] = now for [provider] when a send actually reaches
+     *  the provider ([testSend], [sendAlert] delivered, or [sendInfoOutcome] delivered). Clears the
+     *  "not verified" nudge and resets the 30-day staleness clock.
+     *
+     *  Uses [ConfigurationManager.updateSenderConfigs] (ATOMIC RMW inside one `dataStore.edit{}`) so
+     *  it can't lost-update a concurrent credential edit. Throttled to ≤1 write/hour per provider
+     *  (the staleness window is 30 days → sub-hour precision is irrelevant), which also avoids
+     *  write amplification across ride-start/end + custom-message taps. Wrapped in try/catch:
+     *  this is called on the emergency [sendAlert] path AFTER delivery — a persist failure
+     *  (e.g. disk full) must NEVER propagate and skip the caller's partial-delivery handling. */
+    private suspend fun markSendSucceeded(provider: ProviderType) {
+        val now = System.currentTimeMillis()
+        try {
+            configManager.updateSenderConfigs { list ->
+                val idx = list.indexOfFirst { it.provider == provider }
+                if (idx < 0 || now - list[idx].lastSuccessfulSendMs < STAMP_MIN_INTERVAL_MS) list
+                else list.toMutableList().also { it[idx] = it[idx].copy(lastSuccessfulSendMs = now) }
+            }
+        } catch (e: kotlinx.coroutines.CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            Timber.w(e, "markSendSucceeded persist failed for $provider — ignoring (non-critical)")
         }
     }
 
@@ -438,14 +485,10 @@ class Sender(
      * to send — the original slot-1-only check would have made the pre-flight return
      * false and silently swallow the entire retry budget.
      */
-    private fun hasUsableCredentials(provider: ProviderType, config: SenderConfig): Boolean = when (provider) {
-        ProviderType.CALLMEBOT -> callMeBotRecipients(config).isNotEmpty()
-        ProviderType.PUSHOVER  -> config.apiKey.isNotBlank() &&
-            listOf(config.userKey, config.userKey2, config.userKey3).any { it.isNotBlank() }
-        ProviderType.NTFY      -> config.apiKey.isNotBlank()
-        ProviderType.TELEGRAM  -> config.apiKey.isNotBlank() &&
-            listOf(config.userKey, config.userKey2, config.userKey3).any { it.isNotBlank() }
-    }
+    // Delegates to [providerReadiness] so the retry-loop fast-fail and the rider-facing
+    // "provider incomplete" warning (Provider tab + ride start) share one source of truth.
+    private fun hasUsableCredentials(provider: ProviderType, config: SenderConfig): Boolean =
+        providerReadiness(provider, config) is ProviderReadiness.Ready
 
     /**
      * CallMeBot success predicate. The provider returns HTTP 200 even on most failure

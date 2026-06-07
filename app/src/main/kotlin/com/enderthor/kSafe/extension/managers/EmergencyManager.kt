@@ -8,6 +8,11 @@ import com.enderthor.kSafe.data.EmergencyState
 import com.enderthor.kSafe.data.EmergencyStatus
 import com.enderthor.kSafe.data.IncidentResponseLevel
 import com.enderthor.kSafe.data.KSafeConfig
+import com.enderthor.kSafe.data.SenderConfig
+import com.enderthor.kSafe.extension.ProviderReadiness
+import com.enderthor.kSafe.extension.providerReadiness
+import com.enderthor.kSafe.extension.isSendStale
+import kotlinx.coroutines.flow.first
 import com.enderthor.kSafe.extension.Sender
 import com.enderthor.kSafe.extension.util.ALERT_DETAIL_MAX_CHARS
 import com.enderthor.kSafe.extension.util.ALERT_TITLE_MAX_CHARS
@@ -268,6 +273,67 @@ class EmergencyManager(
      */
     fun clearDeliveryNotice() {
         sosOverlay.removeInfoOverlay()
+    }
+
+    /**
+     * Ride-start safety net for the SELECTED messaging provider. Two cases, both surfaced as an
+     * InRideAlert (the same channel as WARNING incidents — a SystemNotification doesn't surface
+     * over the ride screen) + a calibration audit row. Non-blocking — only warns:
+     *  1. **Incomplete** (local credential check): emergencies would silently fast-fail with
+     *     `NO_CREDENTIALS` (the class found in session 327846_40d50a, 2026-06-07) → red warning.
+     *  2. **Stale** (worked before but no successful send in > 30 days): credentials may have
+     *     rotted (revoked key / deleted bot / expired trial) → amber "please re-test" reminder.
+     *     A provider that has NEVER sent is left to the Provider-tab nudge, not nagged here.
+     */
+    suspend fun warnIfProviderIncomplete(config: KSafeConfig) {
+        val active = config.activeProvider
+        val senderConfig = configManager.loadSenderConfigFlow().first()
+            .find { it.provider == active } ?: SenderConfig(provider = active)
+        when (val readiness = providerReadiness(active, senderConfig)) {
+            is ProviderReadiness.Incomplete -> {
+                karooSystem.dispatch(InRideAlert(
+                    id = "ksafe-provider-incomplete-${System.currentTimeMillis()}",
+                    icon = R.drawable.ic_ksafe,
+                    title = context.getString(R.string.provider_warn_ridestart_title),
+                    detail = context.getString(providerMissingResId(readiness.missing)),
+                    autoDismissMs = 10_000L,
+                    backgroundColor = R.color.alert_orange,
+                    textColor = R.color.alert_text_white,
+                ))
+                calibLogger?.log(CalibrationLogger.Event.PROVIDER_NOT_READY) {
+                    "provider=$active,missing=${readiness.missing.name}"
+                }
+                Timber.d("Provider-incomplete warning dispatched: $active / ${readiness.missing}")
+            }
+            ProviderReadiness.Ready -> {
+                val now = System.currentTimeMillis()
+                if (isSendStale(senderConfig.lastSuccessfulSendMs, now)) {
+                    karooSystem.dispatch(InRideAlert(
+                        id = "ksafe-provider-stale-${now}",
+                        icon = R.drawable.ic_ksafe,
+                        title = context.getString(R.string.provider_warn_stale_title),
+                        detail = context.getString(R.string.provider_warn_stale_detail),
+                        autoDismissMs = 10_000L,
+                        backgroundColor = R.color.alert_orange,
+                        textColor = R.color.alert_text_white,
+                    ))
+                    val days = (now - senderConfig.lastSuccessfulSendMs) / 86_400_000L
+                    calibLogger?.log(CalibrationLogger.Event.PROVIDER_STALE) {
+                        "provider=$active,days_since=$days"
+                    }
+                    Timber.d("Provider-stale reminder dispatched: $active ($days d)")
+                }
+            }
+        }
+    }
+
+    private fun providerMissingResId(m: ProviderReadiness.Missing): Int = when (m) {
+        ProviderReadiness.Missing.CALLMEBOT_PHONE_OR_KEY -> R.string.provider_missing_callmebot
+        ProviderReadiness.Missing.PUSHOVER_APP_TOKEN     -> R.string.provider_missing_pushover_token
+        ProviderReadiness.Missing.PUSHOVER_USER_KEY      -> R.string.provider_missing_pushover_user
+        ProviderReadiness.Missing.NTFY_TOPIC             -> R.string.provider_missing_ntfy_topic
+        ProviderReadiness.Missing.TELEGRAM_BOT_TOKEN     -> R.string.provider_missing_telegram_token
+        ProviderReadiness.Missing.TELEGRAM_CHAT_ID       -> R.string.provider_missing_telegram_chat
     }
 
     fun startCheckinTimer(config: KSafeConfig) {

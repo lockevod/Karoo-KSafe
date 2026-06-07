@@ -13,6 +13,7 @@ import com.enderthor.kSafe.data.materializeAlertDefaults
 import com.enderthor.kSafe.data.migrateToLatest
 import com.enderthor.kSafe.data.toBackupExport
 import com.enderthor.kSafe.data.toSenderConfigs
+import com.enderthor.kSafe.extension.sameCredentials
 import com.enderthor.kSafe.extension.jsonForExport
 import com.enderthor.kSafe.extension.jsonWithUnknownKeys
 import com.enderthor.kSafe.extension.managers.ConfigurationManager
@@ -125,16 +126,23 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             recipient2Alerts = recipient2Alerts,
             recipient3Alerts = recipient3Alerts,
         )
-        // Read-modify-write against the freshly persisted list, NOT senderConfigs.value:
-        // the StateFlow uses WhileSubscribed(5000), so if no UI is collecting when this
-        // fires .value hands back emptyList() and we'd drop every OTHER provider's saved
-        // config. Same guard as exportToJson.
+        // ATOMIC read-modify-write inside one dataStore.edit{} — can't lost-update a concurrent
+        // service-side send stamp (markSendSucceeded), and reads the freshly-persisted list (not
+        // senderConfigs.value, which WhileSubscribed(5000) may hand back as emptyList()).
         viewModelScope.launch {
             settingsWriteMutex.withLock {
-                val current = configManager.loadSenderConfigFlow().first().toMutableList()
-                val idx = current.indexOfFirst { it.provider == provider }
-                if (idx >= 0) current[idx] = newConfig else current.add(newConfig)
-                configManager.saveSenderConfigs(current)
+                configManager.updateSenderConfigs { current ->
+                    val list = current.toMutableList()
+                    val idx = list.indexOfFirst { it.provider == provider }
+                    if (idx >= 0) {
+                        // Preserve the last-successful-send timestamp only when the credentials are
+                        // unchanged — editing a token/phone/key invalidates a prior successful send,
+                        // but a scope-only change must NOT reset the "it works" / staleness clock.
+                        val keep = if (sameCredentials(newConfig, list[idx])) list[idx].lastSuccessfulSendMs else 0L
+                        list[idx] = newConfig.copy(lastSuccessfulSendMs = keep)
+                    } else list.add(newConfig)
+                    list
+                }
             }
         }
     }

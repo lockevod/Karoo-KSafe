@@ -231,6 +231,19 @@
     <string name="backup_grant_opening">Opening file-access settings — grant it, then tap again.</string>
     <string name="backup_grant_adb">This Karoo can\'t open the file-access screen. Grant via adb:\nadb shell appops set com.enderthor.kSafe MANAGE_EXTERNAL_STORAGE allow</string>
     <string name="test_send">Test Send</string>
+    <!-- Provider-incomplete warning (Provider tab banner + ride-start InRideAlert) -->
+    <string name="provider_warn_ridestart_title">KSafe: alerts won\'t send</string>
+    <string name="provider_warn_banner_suffix">— alerts won\'t send</string>
+    <string name="provider_missing_callmebot">CallMeBot: no phone/API key</string>
+    <string name="provider_missing_pushover_token">Pushover: missing App Token</string>
+    <string name="provider_missing_pushover_user">Pushover: missing User Key</string>
+    <string name="provider_missing_ntfy_topic">ntfy: missing topic name</string>
+    <string name="provider_missing_telegram_token">Telegram: missing Bot Token</string>
+    <string name="provider_missing_telegram_chat">Telegram: missing Chat ID</string>
+    <string name="provider_warn_unverified">Not verified yet — tap Test Send to confirm alerts work</string>
+    <!-- Ride-start "provider has gone quiet > 30 days" reminder -->
+    <string name="provider_warn_stale_title">KSafe: re-test your alerts</string>
+    <string name="provider_warn_stale_detail">No alert sent in over a month</string>
 
     <!-- Settings screen -->
     <string name="settings_title">Safety Settings</string>

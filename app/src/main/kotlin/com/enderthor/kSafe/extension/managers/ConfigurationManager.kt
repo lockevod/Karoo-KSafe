@@ -175,6 +175,31 @@ class ConfigurationManager(private val context: Context) {
         }
     }
 
+    /**
+     * ATOMIC read-modify-write of the sender-config blob: the decode + [transform] + encode all
+     * run inside a single `dataStore.edit {}`, which DataStore serializes — so concurrent writers
+     * (e.g. a service-side send stamping `lastSuccessfulSendMs` and a UI-side credential edit)
+     * cannot lost-update each other. Skips the write when [transform] returns an unchanged list, so
+     * a no-op stamp (e.g. throttled within the hour) costs nothing. Prefer this over
+     * load-then-[saveSenderConfigs] for any RMW.
+     */
+    suspend fun updateSenderConfigs(transform: (List<SenderConfig>) -> List<SenderConfig>) {
+        context.dataStore.edit { prefs ->
+            val raw = (prefs[senderConfigKey] ?: defaultSenderConfigJson)
+                .replace("\"SIMPLEPUSH\"", "\"NTFY\"")
+            val current = try {
+                jsonWithUnknownKeys.decodeFromString<List<SenderConfig>>(raw)
+            } catch (e: Throwable) {
+                lastGoodSenderConfigs ?: emptyList()
+            }
+            val updated = transform(current)
+            if (updated != current) {
+                lastGoodSenderConfigs = updated
+                prefs[senderConfigKey] = jsonForStorage.encodeToString(updated)
+            }
+        }
+    }
+
     /** Last successfully-decoded sender configs. Returned by [loadSenderConfigFlow] when a
      *  later decode throws, so a transient/structural decode failure can't silently wipe the
      *  rider's emergency contacts mid-session. */
