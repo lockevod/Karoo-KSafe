@@ -121,4 +121,4 @@ Every CSV row is tagged with a short event identifier. The current catalogue:
 | `EMERG_TRIG` | `triggerEmergency` fired (countdown started) |
 | `ALERT_FAIL` | Outbound alert delivery FAILED across every retry cycle. Payload: `provider`, `reason`, `superseded` (true = this alert was overridden by a newer emergency; the rider-facing fallback notification was suppressed but the audit row is always logged) |
 | `ALERT_PARTIAL` | Outbound alert reached at least one but NOT every eligible contact (e.g. 1 of 3 — a contact in a coverage gap or with an expired key). The amber rider-facing partial-delivery notice fires alongside. Payload: `provider`, `reason`, `reached`, `total`, `superseded`. Always logged (even when superseded) so a contact reporting they never got an alert is correlatable |
-| `LOGGER_START` / `LOG_END` | CSV session boundaries |
+| `LOG_START` / `LOG_END` | CSV session boundaries |

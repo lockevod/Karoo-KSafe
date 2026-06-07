@@ -447,7 +447,15 @@ fun SettingsScreen(vm: MainViewModel) {
                     runningLabel = "Importing…",
                     isSuccess = { it == "Imported successfully." },
                     onAction = {
-                        ensureBackupAccess()?.let { return@TestActionButton it }
+                        // Only gate on shared-storage access when we actually need /sdcard/KSafe.
+                        // A legacy app-private import file needs no permission, so import it
+                        // without requesting access (Copilot review: legacy import must not be blocked).
+                        val legacyFile = withContext(Dispatchers.IO) {
+                            BackupStorage.legacyImportFile(legacyBackupDir)
+                        }
+                        if (legacyFile == null) {
+                            ensureBackupAccess()?.let { return@TestActionButton it }
+                        }
                         try {
                             val file = withContext(Dispatchers.IO) {
                                 BackupStorage.resolveImportFile(BackupStorage.backupDir(), legacyBackupDir)
