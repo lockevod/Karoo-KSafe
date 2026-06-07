@@ -63,4 +63,13 @@ object BackupStorage {
         val legacy = legacyDir?.let { File(it, IMPORT_NAME) }
         return if (legacy != null && legacy.exists()) legacy else null
     }
+
+    /**
+     * The legacy app-private import file if (and only if) it exists. Reading it needs **no**
+     * shared-storage permission, so Import can use it as a fallback on devices where
+     * MANAGE_EXTERNAL_STORAGE can't be granted. Returns null when there is no legacy file.
+     * Pure — caller passes the candidate dir so it stays unit-testable.
+     */
+    fun legacyImportFile(legacyDir: File?): File? =
+        legacyDir?.let { File(it, IMPORT_NAME) }?.takeIf { it.exists() }
 }
