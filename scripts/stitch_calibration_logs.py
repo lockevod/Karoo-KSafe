@@ -42,8 +42,11 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 DEFAULT_ROOT = REPO_ROOT / "logs"
 
 _KV = lambda data, key: (m.group(1) if (m := re.search(rf"{key}=([^,\"]+)", data)) else None)
-# filename fallback session token (…_{install}_{session}_…  or  …_{session}_k2…)
-_FNAME_SESS = re.compile(r"_([0-9a-fA-F]{6})_(?:c\d+_)?k2")
+# filename fallback session token: the 6-hex id immediately before the trailing
+# _<device> label (…_{install}_{session}_<device>.csv). The device label is derived
+# from Build.MODEL and varies (k24, Karoo-3, …), so match any non-"_" device token to
+# end-of-name instead of hard-coding "k2".
+_FNAME_SESS = re.compile(r"_([0-9a-fA-F]{6})_(?:c\d+_)?[^_]+\.csv$")
 
 
 def iter_csvs(paths: list[Path], root: Path) -> list[Path]:

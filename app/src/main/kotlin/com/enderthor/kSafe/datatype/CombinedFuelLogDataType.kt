@@ -37,7 +37,9 @@ private const val COLOR_OFF    = 0xFF424242.toInt()
 class CombinedFuelLogDataType(
     datatype: String,
     private val context: Context,
-    private val karooSystem: KarooSystemService,
+    // Not stored: this field only needs DataStore + the tap PendingIntent. The param is
+    // kept for constructor symmetry with the other KSafe data types (all take karooSystem).
+    @Suppress("UNUSED_PARAMETER") karooSystem: KarooSystemService,
     private val slot: Int = 1,
 ) : DataTypeImpl("ksafe", datatype) {
 
