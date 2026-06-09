@@ -2716,11 +2716,24 @@ class KSafeExtension : KarooExtension("ksafe", BuildConfig.VERSION_NAME), Corout
         // The average is computed live by [CarbsTracker.computeAvgBurnRateGph]
         // and shown on the Karoo via the `carb-avg-burn-rate` data field during
         // the ride. fieldDefinitionNumber=7 is therefore reserved (not used).
+        // HR-based calorie estimate. Number 8 is the first free slot (7 reserved).
+        // Immutable once shipped (public API). Written only when the rider enabled the
+        // calorie feature — otherwise omitted entirely so riders who don't use it get
+        // no extra column.
+        val caloriesField = DeveloperField(
+            fieldDefinitionNumber = 8,
+            fitBaseTypeId = 136,
+            fieldName = "ksafe_calories_kcal",
+            units = "kcal",
+            nativeFieldNum = null,
+            developerDataIndex = 0,
+        )
+        val writeCalories = activeConfig.hrCaloriesEnabled
 
         calibLogger.log(CalibrationLogger.Event.FIT_WRITER_START) {
             // Field-definition numbers are public-API once shipped; record them so the CSV
             // can be cross-referenced with the developer-field schema in the resulting FIT.
-            "fields=0,1,2,3,4,5,6"
+            "fields=0,1,2,3,4,5,6${if (writeCalories) ",8" else ""}"
         }
         // Dispatchers.IO: every emit is a karoo-ext `Emitter.onNext`, which serialises the
         // effect and makes a BLOCKING (non-oneway) Binder round-trip to the Karoo recording
@@ -2751,6 +2764,7 @@ class KSafeExtension : KarooExtension("ksafe", BuildConfig.VERSION_NAME), Corout
             var lastSesCarbsBurnedG = Double.NaN
             var lastSesMaxDriftPct  = Double.NaN
             var lastSesFires        = Double.NaN
+            var lastSesKcal         = Double.NaN
 
             karooSystem.streamDataFlow(DataType.Type.ELAPSED_TIME)
                 .mapNotNull { (it as? StreamState.Streaming)?.dataPoint?.singleValue }
@@ -2769,6 +2783,7 @@ class KSafeExtension : KarooExtension("ksafe", BuildConfig.VERSION_NAME), Corout
                     val carbsG       = (carbStatus?.cumLoggedG ?: 0).toDouble()
                     val carbsBurnedG = (carbStatus?.cumBurnedG ?: 0).toDouble()
                     val burnRateGph  = (carbStatus?.burnRateGph ?: 0).toDouble()
+                    val kcal         = (carbStatus?.kcalTotal ?: 0).toDouble()
                     val hydMl  = (hydrationTrackerOrNull()?.statusFlow?.value?.cumLoggedMl ?: 0).toDouble()
                     val wellness = wellnessMonitorOrNull()?.summaryFlow?.value
                     val driftPct    = wellness?.currentDriftPct?.toDouble() ?: 0.0
@@ -2795,13 +2810,15 @@ class KSafeExtension : KarooExtension("ksafe", BuildConfig.VERSION_NAME), Corout
                             // zero-filling hosts, while bounding write cost (see header + constant).
                             val nowMs = System.currentTimeMillis()
                             if (nowMs - lastRecordWriteMs >= FIT_RECORD_WRITE_INTERVAL_MS) {
-                                emitter.onNext(WriteToRecordMesg(listOf(
+                                val recordFields = mutableListOf(
                                     FieldValue(carbField,         carbsG),
                                     FieldValue(hydField,          hydMl),
                                     FieldValue(carbsBurnedField,  carbsBurnedG),
                                     FieldValue(burnRateField,     burnRateGph),
                                     FieldValue(hrDriftField,      driftPct),
-                                )))
+                                )
+                                if (writeCalories) recordFields.add(FieldValue(caloriesField, kcal))
+                                emitter.onNext(WriteToRecordMesg(recordFields))
                                 lastRecordWriteMs = nowMs
                             }
                             // Session (single-value activity-header summary): totals at
@@ -2851,20 +2868,24 @@ class KSafeExtension : KarooExtension("ksafe", BuildConfig.VERSION_NAME), Corout
                                 carbsG      != lastSesCarbsG      ||
                                 hydMl       != lastSesHydMl       ||
                                 maxDriftPct != lastSesMaxDriftPct ||
-                                fires       != lastSesFires
+                                fires       != lastSesFires       ||
+                                (writeCalories && kcal != lastSesKcal)
                             if (burnSignificant || otherSesChanged) {
-                                emitter.onNext(WriteToSessionMesg(listOf(
+                                val sessionFields = mutableListOf(
                                     FieldValue(carbField,         carbsG),
                                     FieldValue(hydField,          hydMl),
                                     FieldValue(carbsBurnedField,  carbsBurnedG),
                                     FieldValue(maxDriftField,     maxDriftPct),
                                     FieldValue(firesField,        fires),
-                                )))
+                                )
+                                if (writeCalories) sessionFields.add(FieldValue(caloriesField, kcal))
+                                emitter.onNext(WriteToSessionMesg(sessionFields))
                                 lastSesCarbsG       = carbsG
                                 lastSesHydMl        = hydMl
                                 lastSesCarbsBurnedG = carbsBurnedG
                                 lastSesMaxDriftPct  = maxDriftPct
                                 lastSesFires        = fires
+                                lastSesKcal         = kcal
                             }
                         }
                         else -> { /* Paused / Idle / null: don't emit */ }
