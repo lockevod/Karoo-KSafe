@@ -152,36 +152,9 @@ private const val SESSION_BURN_DEADBAND_G: Double = 5.0
  *  accept a visibly toothed graph in exchange for fewer writes. */
 private const val FIT_RECORD_WRITE_INTERVAL_MS: Long = 1_000L
 
-/** Deadband on `CarbFuelingState.cumBurnedG` for the fueling-persistence loop.
- *  Persisted state is restored after a process kill (FUELING_RESTORE_MAX_AGE_MS).
- *
- *  Sizing: at 50 g/h moderate-intensity, the integrator advances ~0.42 g per
- *  30 s persist cycle. The deadband must comfortably exceed the per-cycle delta
- *  or it never fires while moving — that's the [B5] fix territory. 5 g is the
- *  binding choice: it gives ~6 minutes of integration between writes at moderate
- *  intensity, ~3.3 minutes at the 90 g/h absorption-cap. Worst-case loss on an
- *  unexpected process kill is therefore ≤ 5 g of carb burn — well below the
- *  10-15 % error band of the burn estimator itself (Keytel / Swain), so it's
- *  rider-invisible noise. Pre-v18.2 this was 1 g, which over-targeted accuracy
- *  vs DataStore writes — ~400 persists/5h ride instead of ~50. */
-private const val PERSIST_CARB_BURN_DEADBAND_G: Float = 5.0f
-
-/** Same as [PERSIST_CARB_BURN_DEADBAND_G] for the hydration target accumulator.
- *  At the default 750 ml/h, the integrator advances ~6.25 ml per 30 s cycle.
- *  60 ml = ~4.8 minutes between writes at default rate, well above the
- *  per-cycle delta. Pre-v18.2 this was 10 ml — too tight to be the binding
- *  constraint (write fired every ~48 s, dominating the persist rate even after
- *  the carb deadband was raised). Worst-case loss on process kill: ≤ 60 ml,
- *  within the SweatEstimator's ±20 % accuracy on a 750 ml/h baseline. */
-private const val PERSIST_HYD_TARGET_DEADBAND_ML: Float = 60.0f
-
-/** Same idea as [PERSIST_CARB_BURN_DEADBAND_G] for the HR-calorie accumulator. kcal
- *  accrues faster than carb grams (e.g. ~10 kcal per 30 s cycle at 600 kcal/h), so a
- *  10 kcal band keeps the deadband from firing on a near-stationary rider while
- *  bounding worst-case loss on process kill to ≤ 10 kcal — negligible against a
- *  multi-thousand-kcal ride. Without a calorie term here a calories-only ride would
- *  either never persist (zero-skip below) or write every cycle (deadband defeated). */
-private const val PERSIST_KCAL_DEADBAND_KCAL: Float = 10.0f
+// Fueling-persistence deadband constants and the zero-skip / unchanged / deadband
+// decision now live in [com.enderthor.kSafe.extension.util.FuelingPersistPolicy]
+// (pure + unit-tested) — see the persistence loop below.
 
 class KSafeExtension : KarooExtension("ksafe", BuildConfig.VERSION_NAME), CoroutineScope {
 
@@ -751,55 +724,17 @@ class KSafeExtension : KarooExtension("ksafe", BuildConfig.VERSION_NAME), Corout
                 if (!this@KSafeExtension::carbsTracker.isInitialized) continue
                 val carbState = carbsTracker.getPersistableState()
                 val hydState  = hydrationTracker.getPersistableState()
-                // Skip the write if both trackers are at zero — no accumulation worth
-                // persisting yet (e.g. rider just pressed Start, hasn't moved).
-                if (carbState.cumBurnedG <= 0f && carbState.cumLoggedG == 0 &&
-                    carbState.cumKcal <= 0f &&
-                    hydState.cumTargetMl <= 0f && hydState.cumLoggedMl == 0) continue
-                // Skip if neither tracker has changed since the last successful write.
-                // Note: we deliberately compare the trackers' state slices, NOT the
-                // wrapper FuelingState, because `savedAtMs` would otherwise force a
-                // write on every cycle.
-                if (carbState == lastPersistedCarb && hydState == lastPersistedHyd) continue
-                // Deadband: if the ONLY thing that changed is a small accumulator
-                // delta, defer the write. Compare a normalised copy where the
-                // protected field(s) are forced equal to the prior value — if that
-                // copy matches the prior snapshot exactly, the real diff is the
-                // accumulator alone, and it's within the deadband.
-                //
-                // B5 fix (post-v18.2 audit): `CarbFuelingState.activeIntegrationMs`
-                // also advances every tick (one tick worth of ms when moving) and
-                // is NOT itself deadband-protected. Without normalising it, the
-                // data-class equality below would ALWAYS fail while moving and the
-                // deadband would silently never fire — exactly the case it's meant
-                // to optimise. Force it equal to the prior value alongside
-                // `cumBurnedG` so the comparison sees only the rider-visible /
-                // event-driven fields (cumLoggedG, lastTimeAlertFireMs, etc.).
-                // Worst case on process kill is now bounded by the deadband + the
-                // 30 s cycle: ≤ 5 g of burn AND ≤ 30 s of integration-time loss.
-                val prevCarb = lastPersistedCarb
-                val prevHyd  = lastPersistedHyd
-                if (prevCarb != null && prevHyd != null) {
-                    val burnDelta   = carbState.cumBurnedG - prevCarb.cumBurnedG
-                    val targetDelta = hydState.cumTargetMl - prevHyd.cumTargetMl
-                    val kcalDelta   = carbState.cumKcal - prevCarb.cumKcal
-                    // cumKcal advances every moving tick when calories are on, so it must
-                    // be normalised out of the "other fields unchanged" comparison (like
-                    // cumBurnedG / activeIntegrationMs) AND given its own delta bound —
-                    // otherwise a calories-only ride either writes every cycle (band
-                    // defeated) or, if normalised without a bound, never writes at all.
-                    val carbOtherUnchanged = carbState.copy(
-                        cumBurnedG = prevCarb.cumBurnedG,
-                        activeIntegrationMs = prevCarb.activeIntegrationMs,
-                        cumKcal = prevCarb.cumKcal,
-                    ) == prevCarb
-                    val hydOtherUnchanged  = hydState.copy(cumTargetMl = prevHyd.cumTargetMl) == prevHyd
-                    val withinDeadband = carbOtherUnchanged && hydOtherUnchanged &&
-                        burnDelta   in 0f..PERSIST_CARB_BURN_DEADBAND_G &&
-                        targetDelta in 0f..PERSIST_HYD_TARGET_DEADBAND_ML &&
-                        kcalDelta   in 0f..PERSIST_KCAL_DEADBAND_KCAL
-                    if (withinDeadband) continue
-                }
+                // Zero-skip + unchanged-skip + per-accumulator deadband, all in the
+                // pure (unit-tested) [FuelingPersistPolicy]. Deltas are measured vs the
+                // last SUCCESSFUL write (lastPersisted*), so a monotonic accumulator's
+                // worst-case loss on a process kill stays bounded by its band.
+                if (!com.enderthor.kSafe.extension.util.FuelingPersistPolicy.shouldPersist(
+                        prevCarb = lastPersistedCarb,
+                        prevHyd  = lastPersistedHyd,
+                        curCarb  = carbState,
+                        curHyd   = hydState,
+                    )
+                ) continue
                 configManager.saveFuelingState(
                     com.enderthor.kSafe.data.FuelingState(
                         carb = carbState,
