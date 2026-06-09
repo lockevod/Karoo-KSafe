@@ -8,8 +8,10 @@ import com.enderthor.kSafe.data.fuelingAlertColorRes
 import com.enderthor.kSafe.extension.util.ABSORPTION_CAP_GPH
 import com.enderthor.kSafe.extension.util.ALERT_DETAIL_MAX_CHARS
 import com.enderthor.kSafe.extension.util.ALERT_TITLE_MAX_CHARS
+import com.enderthor.kSafe.extension.util.CalorieSource
 import com.enderthor.kSafe.extension.util.CarbBurnEstimator
 import com.enderthor.kSafe.extension.util.CarbIntegrator
+import com.enderthor.kSafe.extension.util.HrCalorieFallback
 import com.enderthor.kSafe.extension.util.FuelingAlertScheduler
 import com.enderthor.kSafe.extension.util.ZoneSnapshot
 import com.enderthor.kSafe.extension.util.ZoneSource
@@ -97,6 +99,10 @@ class CarbsTracker(
 
     // ─── Session state (reset by start()) ────────────────────────────────────
     @Volatile private var cumBurnedG = 0f
+    /** Cumulative HR-based energy this session (kcal). Integrated alongside
+     *  [cumBurnedG] in [tick] but over the burn-independent [CarbIntegrator.IntegrationStep.gatedDtMs]
+     *  so it keeps advancing in the %HRmax fallback regime (where carb burn is 0). */
+    @Volatile private var cumKcal = 0f
     @Volatile private var cumLoggedG = 0
     @Volatile private var sessionStartMs = 0L
     @Volatile private var lastTickMs = 0L
@@ -207,11 +213,16 @@ class CarbsTracker(
 
     private fun publishStatus() { _statusFlow.value = getStatus() }
 
+    /** The fueling monitor must run when EITHER the carb tracker OR the HR-calorie
+     *  feature is enabled — calories are usable without carb-deficit tracking. Carb
+     *  ALERTS still gate on carbsTrackerEnabled inside the evaluate* methods. */
+    private fun KSafeConfig.fuelMonitorEnabled() = carbsTrackerEnabled || hrCaloriesEnabled
+
     // ─── Public API ──────────────────────────────────────────────────────────
 
     fun start(config: KSafeConfig, restoreFrom: CarbFuelingState? = null) {
         this.config = config
-        if (!config.carbsTrackerEnabled) return
+        if (!config.fuelMonitorEnabled()) return
         // Snapshot the previous monitor before resetting state so we can join() it inside
         // the new coroutine — guarantees the old tick loop is fully gone before the new one
         // runs, eliminating the late-tick race that could otherwise emit a spurious PERIODIC
@@ -239,8 +250,10 @@ class CarbsTracker(
             // v18 — preserve active-integration time so the session-average
             // burn rate doesn't get artificially inflated after a restart.
             activeIntegrationMs = restoreFrom.activeIntegrationMs
+            cumKcal = restoreFrom.cumKcal
         } else {
             cumBurnedG = 0f
+            cumKcal = 0f
             cumLoggedG = 0
             sessionStartMs = now
             lastLogMs = now                  // {elapsed} fallback when no real log yet
@@ -308,6 +321,7 @@ class CarbsTracker(
         lastTimeAlertFireMs = lastTimeAlertFireMs,
         lastDeficitAlertFireMs = lastDeficitAlertFireMs,
         activeIntegrationMs = activeIntegrationMs,
+        cumKcal = cumKcal,
     )
 
     fun stop() {
@@ -328,7 +342,7 @@ class CarbsTracker(
      */
     fun resume(config: KSafeConfig) {
         this.config = config
-        if (!config.carbsTrackerEnabled) return
+        if (!config.fuelMonitorEnabled()) return
         val oldJob = monitorJob
         lastTickMs = 0L
         monitorJob = scope.launch {
@@ -351,10 +365,11 @@ class CarbsTracker(
      * on the auto-start branch. Same shape, same reason.
      */
     fun updateConfig(config: KSafeConfig, isRecording: Boolean) {
-        val wasEnabled = this.config.carbsTrackerEnabled
+        val wasEnabled = this.config.fuelMonitorEnabled()
         this.config = config
-        if (!wasEnabled && config.carbsTrackerEnabled && isRecording) start(config)
-        else if (wasEnabled && !config.carbsTrackerEnabled) stop()
+        val nowEnabled = config.fuelMonitorEnabled()
+        if (!wasEnabled && nowEnabled && isRecording) start(config)
+        else if (wasEnabled && !nowEnabled) stop()
     }
 
     fun updateUserProfile(p: UserProfile) { lastUserProfile = p }
@@ -526,6 +541,8 @@ class CarbsTracker(
         val burnRateGph = burn.gph
             .coerceAtMost(ABSORPTION_CAP_GPH.toDouble())
             .toInt()
+        val kcalH = effectiveKcalPerHour(burn)
+        val calorieSource = CalorieSource.from(burn.confidence, kcalH)
         return CarbStatus(
             cumBurnedG = cumBurnedG.toInt(),
             cumLoggedG = cumLoggedG,
@@ -544,6 +561,9 @@ class CarbsTracker(
                     (System.currentTimeMillis() - lastSpeedChangeMs) > SPEED_STALE_MS
                 !stale && speed >= MOVING_GATE_KMH
             },
+            kcalTotal = cumKcal.toInt(),
+            kcalPerHour = kcalH.toInt(),
+            calorieSource = calorieSource,
         )
     }
 
@@ -595,11 +615,22 @@ class CarbsTracker(
         )
     }
 
+    /** Instantaneous energy expenditure (kcal/h) for the calorie counter. Uses the
+     *  estimator's value when any tier fired; otherwise the calorie-only %HRmax
+     *  fallback (which needs just fresh HR + weight). Never feeds the carb path. */
+    private fun effectiveKcalPerHour(burn: CarbBurnEstimator.BurnEstimate): Double {
+        if (burn.confidence != CarbBurnEstimator.Confidence.NONE) return burn.kcalPerHour
+        val now = System.currentTimeMillis()
+        val freshHr = lastHrBpm?.takeIf { lastHrUpdateMs > 0L && now - lastHrUpdateMs <= SENSOR_STALE_MS }
+        return HrCalorieFallback.kcalPerHour(freshHr, lastUserProfile, config.riderAge)
+    }
+
     fun getSummary(): CarbSummary = CarbSummary(
         cumBurnedG = cumBurnedG.toInt(),
         cumLoggedG = cumLoggedG,
         deficitG = (cumBurnedG - cumLoggedG).toInt(),
         percentageHit = if (cumBurnedG > 0f) ((cumLoggedG / cumBurnedG) * 100f).toInt() else 0,
+        kcalTotal = cumKcal.toInt(),
     )
 
     // ─── Internals ───────────────────────────────────────────────────────────
@@ -629,6 +660,11 @@ class CarbsTracker(
         )
         cumBurnedG += step.deltaG
         activeIntegrationMs += step.deltaActiveMs
+        // Calorie accumulator: integrate energy expenditure over the movement-gated
+        // dt (gatedDtMs), which advances even in the fallback regime where carb burn
+        // (and deltaActiveMs) is 0. effectiveKcalPerHour falls back to %HRmax so the
+        // counter keeps moving whenever HR + weight are present.
+        cumKcal += (effectiveKcalPerHour(burn) * step.gatedDtMs / 3_600_000.0).toFloat()
         // Update lastTickMs on every tick (moving or not) so a stationary→moving
         // transition doesn't claim the entire stationary period in one big dt.
         lastTickMs = now
@@ -883,6 +919,12 @@ data class CarbStatus(
      *  (burn rate, burned, status) coherent: if integration is paused, every
      *  field is frozen; if it's running, every field shows a live number. */
     val isIntegrating: Boolean,
+    /** Cumulative HR-based energy this session (kcal). 0 until any accrues. */
+    val kcalTotal: Int,
+    /** Instantaneous energy expenditure (kcal/h). 0 when no HR/power (→ field shows `---`). */
+    val kcalPerHour: Int,
+    /** Which model produced the calorie figure — drives the `---` vs number decision. */
+    val calorieSource: CalorieSource,
 )
 
 /** Totals captured at end-of-ride for the post-ride summary InRideAlert. */
@@ -891,4 +933,5 @@ data class CarbSummary(
     val cumLoggedG: Int,
     val deficitG: Int,
     val percentageHit: Int,
+    val kcalTotal: Int,
 )
