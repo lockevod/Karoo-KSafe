@@ -204,4 +204,19 @@ class ConfigMigrationTest {
         assertEquals(500, migrated.combined2Ml)
         assertEquals(60, migrated.combined2Carbs)
     }
+
+    @Test
+    fun `v22 stamps to v23 and defaults hrCaloriesEnabled off`() {
+        val migrated = KSafeConfig(configVersion = 22).migrateToLatest()
+        assertEquals(23, migrated.configVersion)
+        assertEquals(CONFIG_VERSION, migrated.configVersion)
+        assertEquals(false, migrated.hrCaloriesEnabled)
+    }
+
+    @Test
+    fun `explicit hrCaloriesEnabled true survives migration`() {
+        val migrated = KSafeConfig(configVersion = 22, hrCaloriesEnabled = true).migrateToLatest()
+        assertEquals(CONFIG_VERSION, migrated.configVersion)
+        assertEquals(true, migrated.hrCaloriesEnabled)
+    }
 }

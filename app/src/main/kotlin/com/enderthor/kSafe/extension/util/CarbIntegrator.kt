@@ -55,6 +55,12 @@ object CarbIntegrator {
         /** True iff the movement gate let this step through (used by tests
          *  and by callers that want to surface "is integrating" to the UI). */
         val moving: Boolean,
+        /** Movement-gated dt for THIS step, INDEPENDENT of whether burn > 0.
+         *  Equals [dtMs] when the movement gate passed and dt > 0; 0 otherwise
+         *  (stationary, GPS-stale, or first tick). Used by the calorie
+         *  accumulator, which must keep advancing in the fallback regime where
+         *  carb burn (and therefore [deltaActiveMs]) is 0. */
+        val gatedDtMs: Long,
     )
 
     /**
@@ -92,6 +98,7 @@ object CarbIntegrator {
                 deltaActiveMs = 0L,
                 effectiveGph = burnGph.coerceAtMost(ABSORPTION_CAP_GPH.toDouble()),
                 moving = moving,
+                gatedDtMs = 0L,
             )
         }
         val dtSec = dtMs / 1000f
@@ -114,6 +121,7 @@ object CarbIntegrator {
             deltaActiveMs = deltaActiveMs,
             effectiveGph = effectiveGph,
             moving = true,
+            gatedDtMs = dtMs,
         )
     }
 }

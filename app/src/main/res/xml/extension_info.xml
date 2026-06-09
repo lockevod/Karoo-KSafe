@@ -120,6 +120,18 @@
         icon="@drawable/ic_ksafe"
         typeId="hyd-status" />
     <DataType
+        description="@string/calories_total_datatype_desc"
+        displayName="@string/calories_total_datatype_name"
+        graphical="true"
+        icon="@drawable/ic_ksafe"
+        typeId="calories-total" />
+    <DataType
+        description="@string/calories_rate_datatype_desc"
+        displayName="@string/calories_rate_datatype_name"
+        graphical="true"
+        icon="@drawable/ic_ksafe"
+        typeId="calories-rate" />
+    <DataType
         description="@string/combined_log_datatype_desc"
         displayName="@string/combined_log_1_datatype_name"
         graphical="true"

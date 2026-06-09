@@ -92,6 +92,20 @@ class CarbFuelingStateSerializationTest {
         assertEquals(CarbFuelingState(), restored)
     }
 
+    @Test
+    fun `old JSON without cumKcal defaults to zero and new field round-trips`() {
+        // Backward compat: a snapshot written before the calorie feature has no
+        // cumKcal key → must default to 0f, never crash.
+        val oldJson = """{ "cumTargetG": 50.0, "cumLoggedG": 30 }"""
+        val restored = json.decodeFromString(CarbFuelingState.serializer(), oldJson)
+        assertEquals(0f, restored.cumKcal, 0.001f)
+
+        // Round-trip a populated value.
+        val encoded = json.encodeToString(CarbFuelingState.serializer(), CarbFuelingState(cumKcal = 742.5f))
+        val back = json.decodeFromString(CarbFuelingState.serializer(), encoded)
+        assertEquals(742.5f, back.cumKcal, 0.001f)
+    }
+
     private fun assertTrue(message: String, condition: Boolean) {
         org.junit.Assert.assertTrue(message, condition)
     }

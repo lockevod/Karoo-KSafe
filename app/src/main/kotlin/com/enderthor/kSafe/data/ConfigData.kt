@@ -115,7 +115,7 @@ const val KAROO_LIVE_BASE_URL = "https://dashboard.hammerhead.io/live/"
  *             combined1/2 Label/Ml/Carbs/Color set) for the combined drink+carbs tap field.
  *             Pure version stamp; all fields have defaults, so existing installs are unaffected.
  */
-const val CONFIG_VERSION = 22
+const val CONFIG_VERSION = 23
 
 /**
  * Canonical minSpeedForCrashKmh value per preset.
@@ -614,6 +614,10 @@ data class KSafeConfig(
      *  most riders don't want extra developer-field columns in their FIT, and the fueling
      *  trackers that feed it are themselves opt-in. Riders who want the data turn it on. */
     val fuelingFitExportEnabled: Boolean = false,
+    /** Master toggle for the HR-based calorie estimate (two data fields + FIT field 8).
+     *  Independent of [carbsTrackerEnabled]: when either is on, the fueling monitor runs.
+     *  Opt-in, off by default — consistent with the carb / hydration siblings. */
+    val hrCaloriesEnabled: Boolean = false,
     /**
      * Config schema version — used to detect stale saved configs and apply migrations.
      * Default 0 ensures that any pre-versioning config (JSON without this field) triggers migration.
@@ -825,6 +829,13 @@ data class CarbFuelingState(
      * makes the average start fresh on the next tick after restart.
      */
     val activeIntegrationMs: Long = 0L,
+    /**
+     * Cumulative HR-based energy estimate for this session (kcal). Additive field —
+     * old snapshots deserialise with 0f (no data loss; calories simply start from 0
+     * after a pre-feature restart). Integrated from CarbBurnEstimator.kcalPerHour
+     * (or the HrCalorieFallback %HRmax estimate) by CarbsTracker.tick.
+     */
+    val cumKcal: Float = 0f,
 )
 
 @Serializable
@@ -1360,6 +1371,14 @@ fun KSafeConfig.migrateToLatest(): KSafeConfig {
         // get the update notice enabled, matching new installs. Nothing to rewrite.
         c = c.copy(configVersion = 22)
         Timber.i("KSafeConfig migrated v%d→v22 (update-availability check)", originalVersion)
+    }
+
+    if (c.configVersion < 23) {
+        // v22 → v23: hrCaloriesEnabled added (default OFF). Pure version stamp — the field
+        // is additive and absent in old blobs decodes to its `false` default, so existing
+        // installs keep the calorie feature off until the rider opts in. Nothing to rewrite.
+        c = c.copy(configVersion = 23)
+        Timber.i("KSafeConfig migrated v%d→v23 (HR-based calorie estimate)", originalVersion)
     }
 
     return c

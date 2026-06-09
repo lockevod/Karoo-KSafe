@@ -152,28 +152,9 @@ private const val SESSION_BURN_DEADBAND_G: Double = 5.0
  *  accept a visibly toothed graph in exchange for fewer writes. */
 private const val FIT_RECORD_WRITE_INTERVAL_MS: Long = 1_000L
 
-/** Deadband on `CarbFuelingState.cumBurnedG` for the fueling-persistence loop.
- *  Persisted state is restored after a process kill (FUELING_RESTORE_MAX_AGE_MS).
- *
- *  Sizing: at 50 g/h moderate-intensity, the integrator advances ~0.42 g per
- *  30 s persist cycle. The deadband must comfortably exceed the per-cycle delta
- *  or it never fires while moving — that's the [B5] fix territory. 5 g is the
- *  binding choice: it gives ~6 minutes of integration between writes at moderate
- *  intensity, ~3.3 minutes at the 90 g/h absorption-cap. Worst-case loss on an
- *  unexpected process kill is therefore ≤ 5 g of carb burn — well below the
- *  10-15 % error band of the burn estimator itself (Keytel / Swain), so it's
- *  rider-invisible noise. Pre-v18.2 this was 1 g, which over-targeted accuracy
- *  vs DataStore writes — ~400 persists/5h ride instead of ~50. */
-private const val PERSIST_CARB_BURN_DEADBAND_G: Float = 5.0f
-
-/** Same as [PERSIST_CARB_BURN_DEADBAND_G] for the hydration target accumulator.
- *  At the default 750 ml/h, the integrator advances ~6.25 ml per 30 s cycle.
- *  60 ml = ~4.8 minutes between writes at default rate, well above the
- *  per-cycle delta. Pre-v18.2 this was 10 ml — too tight to be the binding
- *  constraint (write fired every ~48 s, dominating the persist rate even after
- *  the carb deadband was raised). Worst-case loss on process kill: ≤ 60 ml,
- *  within the SweatEstimator's ±20 % accuracy on a 750 ml/h baseline. */
-private const val PERSIST_HYD_TARGET_DEADBAND_ML: Float = 60.0f
+// Fueling-persistence deadband constants and the zero-skip / unchanged / deadband
+// decision now live in [com.enderthor.kSafe.extension.util.FuelingPersistPolicy]
+// (pure + unit-tested) — see the persistence loop below.
 
 class KSafeExtension : KarooExtension("ksafe", BuildConfig.VERSION_NAME), CoroutineScope {
 
@@ -425,6 +406,8 @@ class KSafeExtension : KarooExtension("ksafe", BuildConfig.VERSION_NAME), Corout
             com.enderthor.kSafe.datatype.CombinedFuelLogDataType("combined-log-1", applicationContext, karooSystem, slot = 1),
             com.enderthor.kSafe.datatype.CombinedFuelLogDataType("combined-log-2", applicationContext, karooSystem, slot = 2),
             com.enderthor.kSafe.datatype.HydrationStatusDataType("hyd-status", applicationContext, karooSystem),
+            com.enderthor.kSafe.datatype.CaloriesTotalDataType("calories-total", applicationContext),
+            com.enderthor.kSafe.datatype.CaloriesRateDataType("calories-rate", applicationContext),
         )
     }
 
@@ -741,46 +724,17 @@ class KSafeExtension : KarooExtension("ksafe", BuildConfig.VERSION_NAME), Corout
                 if (!this@KSafeExtension::carbsTracker.isInitialized) continue
                 val carbState = carbsTracker.getPersistableState()
                 val hydState  = hydrationTracker.getPersistableState()
-                // Skip the write if both trackers are at zero — no accumulation worth
-                // persisting yet (e.g. rider just pressed Start, hasn't moved).
-                if (carbState.cumBurnedG <= 0f && carbState.cumLoggedG == 0 &&
-                    hydState.cumTargetMl <= 0f && hydState.cumLoggedMl == 0) continue
-                // Skip if neither tracker has changed since the last successful write.
-                // Note: we deliberately compare the trackers' state slices, NOT the
-                // wrapper FuelingState, because `savedAtMs` would otherwise force a
-                // write on every cycle.
-                if (carbState == lastPersistedCarb && hydState == lastPersistedHyd) continue
-                // Deadband: if the ONLY thing that changed is a small accumulator
-                // delta, defer the write. Compare a normalised copy where the
-                // protected field(s) are forced equal to the prior value — if that
-                // copy matches the prior snapshot exactly, the real diff is the
-                // accumulator alone, and it's within the deadband.
-                //
-                // B5 fix (post-v18.2 audit): `CarbFuelingState.activeIntegrationMs`
-                // also advances every tick (one tick worth of ms when moving) and
-                // is NOT itself deadband-protected. Without normalising it, the
-                // data-class equality below would ALWAYS fail while moving and the
-                // deadband would silently never fire — exactly the case it's meant
-                // to optimise. Force it equal to the prior value alongside
-                // `cumBurnedG` so the comparison sees only the rider-visible /
-                // event-driven fields (cumLoggedG, lastTimeAlertFireMs, etc.).
-                // Worst case on process kill is now bounded by the deadband + the
-                // 30 s cycle: ≤ 5 g of burn AND ≤ 30 s of integration-time loss.
-                val prevCarb = lastPersistedCarb
-                val prevHyd  = lastPersistedHyd
-                if (prevCarb != null && prevHyd != null) {
-                    val burnDelta   = carbState.cumBurnedG - prevCarb.cumBurnedG
-                    val targetDelta = hydState.cumTargetMl - prevHyd.cumTargetMl
-                    val carbOtherUnchanged = carbState.copy(
-                        cumBurnedG = prevCarb.cumBurnedG,
-                        activeIntegrationMs = prevCarb.activeIntegrationMs,
-                    ) == prevCarb
-                    val hydOtherUnchanged  = hydState.copy(cumTargetMl = prevHyd.cumTargetMl) == prevHyd
-                    val withinDeadband = carbOtherUnchanged && hydOtherUnchanged &&
-                        burnDelta   in 0f..PERSIST_CARB_BURN_DEADBAND_G &&
-                        targetDelta in 0f..PERSIST_HYD_TARGET_DEADBAND_ML
-                    if (withinDeadband) continue
-                }
+                // Zero-skip + unchanged-skip + per-accumulator deadband, all in the
+                // pure (unit-tested) [FuelingPersistPolicy]. Deltas are measured vs the
+                // last SUCCESSFUL write (lastPersisted*), so a monotonic accumulator's
+                // worst-case loss on a process kill stays bounded by its band.
+                if (!com.enderthor.kSafe.extension.util.FuelingPersistPolicy.shouldPersist(
+                        prevCarb = lastPersistedCarb,
+                        prevHyd  = lastPersistedHyd,
+                        curCarb  = carbState,
+                        curHyd   = hydState,
+                    )
+                ) continue
                 configManager.saveFuelingState(
                     com.enderthor.kSafe.data.FuelingState(
                         carb = carbState,
@@ -2714,11 +2668,24 @@ class KSafeExtension : KarooExtension("ksafe", BuildConfig.VERSION_NAME), Corout
         // The average is computed live by [CarbsTracker.computeAvgBurnRateGph]
         // and shown on the Karoo via the `carb-avg-burn-rate` data field during
         // the ride. fieldDefinitionNumber=7 is therefore reserved (not used).
+        // HR-based calorie estimate. Number 8 is the first free slot (7 reserved).
+        // Immutable once shipped (public API). Written only when the rider enabled the
+        // calorie feature — otherwise omitted entirely so riders who don't use it get
+        // no extra column.
+        val caloriesField = DeveloperField(
+            fieldDefinitionNumber = 8,
+            fitBaseTypeId = 136,
+            fieldName = "ksafe_calories_kcal",
+            units = "kcal",
+            nativeFieldNum = null,
+            developerDataIndex = 0,
+        )
+        val writeCalories = activeConfig.hrCaloriesEnabled
 
         calibLogger.log(CalibrationLogger.Event.FIT_WRITER_START) {
             // Field-definition numbers are public-API once shipped; record them so the CSV
             // can be cross-referenced with the developer-field schema in the resulting FIT.
-            "fields=0,1,2,3,4,5,6"
+            "fields=0,1,2,3,4,5,6${if (writeCalories) ",8" else ""}"
         }
         // Dispatchers.IO: every emit is a karoo-ext `Emitter.onNext`, which serialises the
         // effect and makes a BLOCKING (non-oneway) Binder round-trip to the Karoo recording
@@ -2749,6 +2716,7 @@ class KSafeExtension : KarooExtension("ksafe", BuildConfig.VERSION_NAME), Corout
             var lastSesCarbsBurnedG = Double.NaN
             var lastSesMaxDriftPct  = Double.NaN
             var lastSesFires        = Double.NaN
+            var lastSesKcal         = Double.NaN
 
             karooSystem.streamDataFlow(DataType.Type.ELAPSED_TIME)
                 .mapNotNull { (it as? StreamState.Streaming)?.dataPoint?.singleValue }
@@ -2767,6 +2735,7 @@ class KSafeExtension : KarooExtension("ksafe", BuildConfig.VERSION_NAME), Corout
                     val carbsG       = (carbStatus?.cumLoggedG ?: 0).toDouble()
                     val carbsBurnedG = (carbStatus?.cumBurnedG ?: 0).toDouble()
                     val burnRateGph  = (carbStatus?.burnRateGph ?: 0).toDouble()
+                    val kcal         = (carbStatus?.kcalTotal ?: 0).toDouble()
                     val hydMl  = (hydrationTrackerOrNull()?.statusFlow?.value?.cumLoggedMl ?: 0).toDouble()
                     val wellness = wellnessMonitorOrNull()?.summaryFlow?.value
                     val driftPct    = wellness?.currentDriftPct?.toDouble() ?: 0.0
@@ -2793,13 +2762,15 @@ class KSafeExtension : KarooExtension("ksafe", BuildConfig.VERSION_NAME), Corout
                             // zero-filling hosts, while bounding write cost (see header + constant).
                             val nowMs = System.currentTimeMillis()
                             if (nowMs - lastRecordWriteMs >= FIT_RECORD_WRITE_INTERVAL_MS) {
-                                emitter.onNext(WriteToRecordMesg(listOf(
+                                val recordFields = mutableListOf(
                                     FieldValue(carbField,         carbsG),
                                     FieldValue(hydField,          hydMl),
                                     FieldValue(carbsBurnedField,  carbsBurnedG),
                                     FieldValue(burnRateField,     burnRateGph),
                                     FieldValue(hrDriftField,      driftPct),
-                                )))
+                                )
+                                if (writeCalories) recordFields.add(FieldValue(caloriesField, kcal))
+                                emitter.onNext(WriteToRecordMesg(recordFields))
                                 lastRecordWriteMs = nowMs
                             }
                             // Session (single-value activity-header summary): totals at
@@ -2849,20 +2820,24 @@ class KSafeExtension : KarooExtension("ksafe", BuildConfig.VERSION_NAME), Corout
                                 carbsG      != lastSesCarbsG      ||
                                 hydMl       != lastSesHydMl       ||
                                 maxDriftPct != lastSesMaxDriftPct ||
-                                fires       != lastSesFires
+                                fires       != lastSesFires       ||
+                                (writeCalories && kcal != lastSesKcal)
                             if (burnSignificant || otherSesChanged) {
-                                emitter.onNext(WriteToSessionMesg(listOf(
+                                val sessionFields = mutableListOf(
                                     FieldValue(carbField,         carbsG),
                                     FieldValue(hydField,          hydMl),
                                     FieldValue(carbsBurnedField,  carbsBurnedG),
                                     FieldValue(maxDriftField,     maxDriftPct),
                                     FieldValue(firesField,        fires),
-                                )))
+                                )
+                                if (writeCalories) sessionFields.add(FieldValue(caloriesField, kcal))
+                                emitter.onNext(WriteToSessionMesg(sessionFields))
                                 lastSesCarbsG       = carbsG
                                 lastSesHydMl        = hydMl
                                 lastSesCarbsBurnedG = carbsBurnedG
                                 lastSesMaxDriftPct  = maxDriftPct
                                 lastSesFires        = fires
+                                lastSesKcal         = kcal
                             }
                         }
                         else -> { /* Paused / Idle / null: don't emit */ }

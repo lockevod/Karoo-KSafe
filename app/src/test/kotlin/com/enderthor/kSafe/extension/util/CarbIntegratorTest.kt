@@ -193,6 +193,33 @@ class CarbIntegratorTest {
     }
 
     @Test
+    fun `gatedDtMs equals dt when moving even with zero burn`() {
+        // Fallback regime: CarbBurnEstimator returns NONE (gph 0) so deltaActiveMs
+        // stays 0, but the calorie accumulator must still advance — gatedDtMs
+        // carries the movement-gated dt independent of burn.
+        val step = CarbIntegrator.integrate(
+            burnGph = 0.0,
+            dtMs = 15_000L,
+            speedKmh = 25.0,
+            speedStale = false,
+        )
+        assertEquals(15_000L, step.gatedDtMs)
+        assertEquals(0L, step.deltaActiveMs)
+    }
+
+    @Test
+    fun `gatedDtMs is zero when stationary, stale, or first tick`() {
+        assertEquals(0L, CarbIntegrator.integrate(60.0, 15_000L, 1.5, false).gatedDtMs)   // stationary
+        assertEquals(0L, CarbIntegrator.integrate(60.0, 15_000L, 30.0, true).gatedDtMs)   // GPS-stale
+        assertEquals(0L, CarbIntegrator.integrate(60.0, 0L, 25.0, false).gatedDtMs)       // first tick / dt<=0
+    }
+
+    @Test
+    fun `gatedDtMs equals dt on a normal moving burning tick`() {
+        assertEquals(15_000L, CarbIntegrator.integrate(60.0, 15_000L, 25.0, false).gatedDtMs)
+    }
+
+    @Test
     fun `cumulative float drift across a 4h ride stays below 0_05 g`() {
         // Pre-empts a future regression that changes the accumulator's
         // numeric type. 4 h × 50 g/h = 200 g target. 960 ticks of 15 s,
