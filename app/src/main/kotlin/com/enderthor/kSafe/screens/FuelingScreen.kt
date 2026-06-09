@@ -59,6 +59,7 @@ fun FuelingScreen(vm: MainViewModel) {
 
     // Carbs state
     var carbsEnabled         by remember(config.carbsTrackerEnabled)        { mutableStateOf(config.carbsTrackerEnabled) }
+    var caloriesEnabled      by remember(config.hrCaloriesEnabled)          { mutableStateOf(config.hrCaloriesEnabled) }
     var carbAlertBgColor     by remember(config.carbAlertBgColor)           { mutableStateOf(config.carbAlertBgColor) }
     var carbDeficitOn        by remember(config.carbDeficitAlertEnabled)    { mutableStateOf(config.carbDeficitAlertEnabled) }
     var carbDeficitThreshold by remember(config.carbDeficitThresholdG)      { mutableStateOf(config.carbDeficitThresholdG.toString()) }
@@ -163,7 +164,25 @@ fun FuelingScreen(vm: MainViewModel) {
                         }
                     )
                 }
-                if (carbsEnabled) {
+                FuelingRow(label = stringResource(R.string.fueling_calories_label)) {
+                    Switch(
+                        checked = caloriesEnabled,
+                        onCheckedChange = {
+                            caloriesEnabled = it
+                            vm.updateConfig { cfg -> cfg.copy(hrCaloriesEnabled = it) }
+                        }
+                    )
+                }
+                if (caloriesEnabled) {
+                    Text(
+                        text = stringResource(R.string.fueling_calories_hint),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+                // Shared physiology (age/sex) — Keytel drives BOTH carb burn AND the
+                // HR-calorie estimate, so show it when either feature is on.
+                if (carbsEnabled || caloriesEnabled) {
                 // v18: carbs target removed. Burn is now computed from physiology
                 // (power if paired, else Keytel with age+sex, else Swain). Surface
                 // the rider's age/sex here — Keytel needs both.
@@ -183,6 +202,8 @@ fun FuelingScreen(vm: MainViewModel) {
                     selected = riderSex,
                     onSelected = { riderSex = it; vm.updateConfig { cfg -> cfg.copy(riderSex = it) } },
                 )
+                }  // end if (carbsEnabled || caloriesEnabled) — shared physiology
+                if (carbsEnabled) {
                 HorizontalDivider()
                 FuelingRow(label = stringResource(R.string.fueling_alert_deficit_label)) {
                     Switch(

@@ -55,7 +55,7 @@
     <string name="settings_master_hint">Cuando está OFF la extensión deja de monitorizar todo — choque, parada prolongada, check-in, Salud (FC), Nutrición. Las notificaciones ya configuradas (inicio/fin de ruta, mensajes, webhooks) también se silencian. Déjalo ON salvo que quieras una parada total.</string>
     <string name="actions_section_karoo_live">Notificaciones Karoo Live</string>
     <string name="actions_section_karoo_live_tests">Probar notificaciones de ruta</string>
-    <string name="fueling_fit_export_hint">Desactivado por defecto — actívalo antes de la ruta. Escribe los datos de KSafe en el FIT grabado como developer fields. Intervals.icu y TrainingPeaks los muestran junto a FC y potencia; Strava NO muestra campos de datos personalizados y los ignora. Incluye carbohidratos acumulados (g), carbohidratos quemados (g), tasa actual de quema (g/h) e hidratación (ml); y, con wellness activo, la deriva de FC actual (%), la deriva máxima de la ruta y el nº de alertas de wellness.</string>
+    <string name="fueling_fit_export_hint">Desactivado por defecto — actívalo antes de la ruta. Escribe los datos de KSafe en el FIT grabado como developer fields. Intervals.icu y TrainingPeaks los muestran junto a FC y potencia; Strava NO muestra campos de datos personalizados y los ignora. Incluye carbohidratos acumulados (g), carbohidratos quemados (g), tasa actual de quema (g/h) e hidratación (ml); y, con wellness activo, la deriva de FC actual (%), la deriva máxima de la ruta y el nº de alertas de wellness. Si las calorías por FC están activas, también escribe las calorías acumuladas (kcal).</string>
     <string name="simulate_crash_label">Simular choque (enviar alerta ya)</string>
     <string name="simulate_crash_confirm_title">¿Enviar una alerta real?</string>
     <string name="simulate_crash_confirm_body">Esto envía el mensaje de emergencia configurado por tu proveedor activo — sin cuenta atrás, sin cancelar. Úsalo solo para verificar que el canal funciona de principio a fin.</string>
@@ -68,6 +68,8 @@
     <string name="fueling_carb_section">Carbohidratos</string>
     <string name="fueling_hyd_section">Hidratación</string>
     <string name="fueling_physiology_hint">La quema de carbohidratos se estima con tu potenciómetro (lo más preciso) o FC + edad + sexo (Keytel) o FC + FC máx/reposo (Swain).</string>
+    <string name="fueling_calories_label">Calorías por FC</string>
+    <string name="fueling_calories_hint">Estima calorías a partir de la frecuencia cardíaca (Keytel, con respaldo %FCmax) — útil cuando no hay medidor de potencia. Añade dos campos de datos (kcal totales, kcal/h) y, si la exportación FIT está activa, las escribe en el FIT como un campo aparte. Para mayor precisión, indica tu edad y sexo abajo.</string>
     <string name="fueling_rider_age_label">Edad (años)</string>
     <string name="fueling_rider_sex_label">Sexo (para el cálculo Keytel solo con FC)</string>
     <string name="fueling_rider_sex_male">Hombre</string>

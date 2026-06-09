@@ -52,7 +52,7 @@
     <string name="settings_master_hint">When OFF the extension stops monitoring everything — crash, speed-drop, check-in, Health (HR), Fueling. Notifications already configured (ride start/end, custom messages, webhooks) are also suppressed. Leave ON unless you want a hard stop.</string>
     <string name="actions_section_karoo_live">Karoo Live notifications</string>
     <string name="actions_section_karoo_live_tests">Test ride notifications</string>
-    <string name="fueling_fit_export_hint">Off by default — turn it on before the ride. Writes KSafe data into the recorded FIT as developer fields. Intervals.icu and TrainingPeaks can plot these alongside HR and power; Strava does NOT display custom data fields and will ignore them. Includes cumulative carbs logged (g), cumulative carbs burned (g), current carb burn rate (g/h) and hydration (ml); plus, when wellness is enabled, current HR drift (%), max drift this ride, and wellness alert count.</string>
+    <string name="fueling_fit_export_hint">Off by default — turn it on before the ride. Writes KSafe data into the recorded FIT as developer fields. Intervals.icu and TrainingPeaks can plot these alongside HR and power; Strava does NOT display custom data fields and will ignore them. Includes cumulative carbs logged (g), cumulative carbs burned (g), current carb burn rate (g/h) and hydration (ml); plus, when wellness is enabled, current HR drift (%), max drift this ride, and wellness alert count. When HR-based calories is on, also writes cumulative calories (kcal).</string>
     <string name="simulate_crash_label">Simulate Crash (send alert now)</string>
     <string name="simulate_crash_confirm_title">Send a real alert?</string>
     <string name="simulate_crash_confirm_body">This sends the configured emergency message through your active provider — no countdown, no cancel. Use this only to verify the channel works end-to-end.</string>
@@ -68,6 +68,8 @@
          former strings are kept as comments above so any in-flight translations
          have a reference point if they need to be retired downstream. -->
     <string name="fueling_physiology_hint">Carb burn is estimated from your power meter (most accurate) or HR + age + sex (Keytel) or HR + max/resting HR (Swain).</string>
+    <string name="fueling_calories_label">HR-based calories</string>
+    <string name="fueling_calories_hint">Estimates calories from heart rate (Keytel, with a %HRmax fallback) — useful when no power meter is paired. Adds two data fields (total kcal, kcal/h) and, when FIT export is on, writes them to the recorded FIT as a separate field. For best accuracy set your age and sex below.</string>
     <string name="fueling_rider_age_label">Age (years)</string>
     <string name="fueling_rider_sex_label">Sex (for Keytel HR-only fallback)</string>
     <string name="fueling_rider_sex_male">Male</string>
