@@ -66,10 +66,12 @@
     <string name="fueling_title">Nutrición</string>
     <string name="fueling_info_banner">Los carbohidratos usan zonas de FC/potencia si están disponibles para un objetivo según intensidad; sin sensores el objetivo es proporcional al tiempo. La hidratación siempre es proporcional al tiempo — ajusta el objetivo a mano en días calurosos.</string>
     <string name="fueling_carb_section">Carbohidratos</string>
+    <string name="fueling_calories_section">Calorías</string>
+    <string name="fueling_physiology_section">Fisiología del ciclista</string>
     <string name="fueling_hyd_section">Hidratación</string>
-    <string name="fueling_physiology_hint">La quema de carbohidratos se estima con tu potenciómetro (lo más preciso) o FC + edad + sexo (Keytel) o FC + FC máx/reposo (Swain).</string>
+    <string name="fueling_physiology_hint">Se usa el potenciómetro si está emparejado (lo más preciso); si no, FC + edad + sexo (Keytel) o FC + FC máx/reposo (Swain). Sirve tanto para la quema de carbohidratos como para la estimación de calorías.</string>
     <string name="fueling_calories_label">Calorías por FC</string>
-    <string name="fueling_calories_hint">Estima calorías a partir de la frecuencia cardíaca (Keytel, con respaldo %FCmax) — útil cuando no hay medidor de potencia. Añade dos campos de datos (kcal totales, kcal/h) y, si la exportación FIT está activa, las escribe en el FIT como un campo aparte. Para mayor precisión, indica tu edad y sexo abajo.</string>
+    <string name="fueling_calories_hint">Estima el total de calorías quemadas. Usa tu potenciómetro si está emparejado (lo más preciso) y solo recurre a la frecuencia cardíaca (Keytel / %FCmax) cuando no hay potencia — no sustituye a la potencia. Añade dos campos de datos (kcal totales, kcal/h) y, con la exportación FIT activa, los escribe en el FIT. Para estimaciones por FC precisas, indica tu edad y sexo abajo.</string>
     <string name="fueling_rider_age_label">Edad (años)</string>
     <string name="fueling_rider_sex_label">Sexo (para el cálculo Keytel solo con FC)</string>
     <string name="fueling_rider_sex_male">Hombre</string>

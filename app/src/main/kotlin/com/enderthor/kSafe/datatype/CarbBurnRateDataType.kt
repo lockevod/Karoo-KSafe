@@ -1,8 +1,6 @@
 package com.enderthor.kSafe.datatype
 
 import android.content.Context
-import android.graphics.Color
-import android.view.View
 import android.widget.RemoteViews
 import com.enderthor.kSafe.R
 import com.enderthor.kSafe.extension.KSafeExtension
@@ -48,29 +46,11 @@ class CarbBurnRateDataType(
     private val context: Context,
 ) : DataTypeImpl("ksafe", datatype) {
 
-    private fun buildView(viewConfig: ViewConfig, main: String, hint: String): RemoteViews {
-        // Passive info readout: respects the rider's per-field alignment from the
-        // Karoo profile editor (LEFT / CENTER / RIGHT — default RIGHT, matching
-        // native Karoo numeric fields). Text colour is set explicitly to contrast
-        // with the host's day/night background — see field_view_auto.xml for why
-        // we don't use ?android:attr/textColorPrimary.
-        val gravity = viewConfig.fieldGravity()
-        val dark = context.isKarooNightMode()
-        return RemoteViews(context.packageName, R.layout.field_view_auto).apply {
-            // No setBackgroundColor — let the host theme show through.
-            // take(11): the numeric values are short (≤"90"), but the
-            // "Pair HR/Pwr" label is 11 chars — a take(9) clipped it to
-            // "Pair HR/P". The layout auto-sizes (6–22sp) and wraps to 2 lines,
-            // so 11 fits without overflow.
-            setTextViewText(R.id.field_text_main, main.take(11))
-            setTextViewText(R.id.field_text_hint, hint.take(9))
-            setViewVisibility(R.id.field_text_hint, if (hint.isEmpty()) View.GONE else View.VISIBLE)
-            setInt(R.id.field_text_main, "setGravity", gravity)
-            setInt(R.id.field_text_hint, "setGravity", gravity)
-            setTextColor(R.id.field_text_main, if (dark) Color.WHITE else Color.BLACK)
-            setTextColor(R.id.field_text_hint, if (dark) 0xCCFFFFFF.toInt() else 0xCC000000.toInt())
-        }
-    }
+    // Standard-Karoo readout: units on top, big value below, sized from the host's
+    // ViewConfig.textSize. Respects the rider's per-field alignment. See
+    // [buildReadoutView] for the shared rendering contract.
+    private fun buildView(viewConfig: ViewConfig, main: String, hint: String): RemoteViews =
+        context.buildReadoutView(viewConfig, main, hint, R.drawable.ic_readout_carbs)
 
     override fun startView(context: Context, config: ViewConfig, emitter: ViewEmitter) {
         val scopeJob = Job()

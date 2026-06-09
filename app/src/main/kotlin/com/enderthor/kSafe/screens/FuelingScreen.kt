@@ -164,45 +164,6 @@ fun FuelingScreen(vm: MainViewModel) {
                         }
                     )
                 }
-                FuelingRow(label = stringResource(R.string.fueling_calories_label)) {
-                    Switch(
-                        checked = caloriesEnabled,
-                        onCheckedChange = {
-                            caloriesEnabled = it
-                            vm.updateConfig { cfg -> cfg.copy(hrCaloriesEnabled = it) }
-                        }
-                    )
-                }
-                if (caloriesEnabled) {
-                    Text(
-                        text = stringResource(R.string.fueling_calories_hint),
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
-                }
-                // Shared physiology (age/sex) — Keytel drives BOTH carb burn AND the
-                // HR-calorie estimate, so show it when either feature is on.
-                if (carbsEnabled || caloriesEnabled) {
-                // v18: carbs target removed. Burn is now computed from physiology
-                // (power if paired, else Keytel with age+sex, else Swain). Surface
-                // the rider's age/sex here — Keytel needs both.
-                Text(
-                    text = stringResource(R.string.fueling_physiology_hint),
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-                IntField(
-                    label = stringResource(R.string.fueling_rider_age_label),
-                    text = riderAge,
-                    range = 12..99,
-                    onCommit = { riderAge = it; vm.updateConfig { cfg -> cfg.copy(riderAge = it.toInt()) } },
-                    onTextChange = { riderAge = it },
-                )
-                RiderSexRow(
-                    selected = riderSex,
-                    onSelected = { riderSex = it; vm.updateConfig { cfg -> cfg.copy(riderSex = it) } },
-                )
-                }  // end if (carbsEnabled || caloriesEnabled) — shared physiology
                 if (carbsEnabled) {
                 HorizontalDivider()
                 FuelingRow(label = stringResource(R.string.fueling_alert_deficit_label)) {
@@ -338,6 +299,72 @@ fun FuelingScreen(vm: MainViewModel) {
                 }
                 }  // end if (carbsEnabled)
             }
+        }
+
+        // Calories card — independent of the carb tracker. The estimate uses your
+        // power meter when paired (most accurate) and only falls back to HR, so it
+        // does NOT replace power; HR just covers the no-power-meter case.
+        Card(elevation = CardDefaults.cardElevation(defaultElevation = 2.dp)) {
+            Column(
+                modifier = Modifier.padding(10.dp),
+                verticalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                Text(
+                    text = stringResource(R.string.fueling_calories_section),
+                    style = MaterialTheme.typography.titleSmall,
+                    fontWeight = FontWeight.Bold,
+                )
+                FuelingRow(label = stringResource(R.string.fueling_enabled_label)) {
+                    Switch(
+                        checked = caloriesEnabled,
+                        onCheckedChange = {
+                            caloriesEnabled = it
+                            vm.updateConfig { cfg -> cfg.copy(hrCaloriesEnabled = it) }
+                        }
+                    )
+                }
+                if (caloriesEnabled) {
+                    Text(
+                        text = stringResource(R.string.fueling_calories_hint),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+            }
+        }
+
+        // Rider physiology — shared input. Power is used when paired; otherwise age +
+        // sex feed Keytel for BOTH carb burn AND the calorie estimate, so show it
+        // whenever either feature is on.
+        if (carbsEnabled || caloriesEnabled) {
+        Card(elevation = CardDefaults.cardElevation(defaultElevation = 2.dp)) {
+            Column(
+                modifier = Modifier.padding(10.dp),
+                verticalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                Text(
+                    text = stringResource(R.string.fueling_physiology_section),
+                    style = MaterialTheme.typography.titleSmall,
+                    fontWeight = FontWeight.Bold,
+                )
+                Text(
+                    text = stringResource(R.string.fueling_physiology_hint),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                IntField(
+                    label = stringResource(R.string.fueling_rider_age_label),
+                    text = riderAge,
+                    range = 12..99,
+                    onCommit = { riderAge = it; vm.updateConfig { cfg -> cfg.copy(riderAge = it.toInt()) } },
+                    onTextChange = { riderAge = it },
+                )
+                RiderSexRow(
+                    selected = riderSex,
+                    onSelected = { riderSex = it; vm.updateConfig { cfg -> cfg.copy(riderSex = it) } },
+                )
+            }
+        }
         }
 
         // Hydration card
