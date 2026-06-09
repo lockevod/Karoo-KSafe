@@ -825,6 +825,13 @@ data class CarbFuelingState(
      * makes the average start fresh on the next tick after restart.
      */
     val activeIntegrationMs: Long = 0L,
+    /**
+     * Cumulative HR-based energy estimate for this session (kcal). Additive field —
+     * old snapshots deserialise with 0f (no data loss; calories simply start from 0
+     * after a pre-feature restart). Integrated from CarbBurnEstimator.kcalPerHour
+     * (or the HrCalorieFallback %HRmax estimate) by CarbsTracker.tick.
+     */
+    val cumKcal: Float = 0f,
 )
 
 @Serializable
