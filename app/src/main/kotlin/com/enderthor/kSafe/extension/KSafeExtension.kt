@@ -425,6 +425,8 @@ class KSafeExtension : KarooExtension("ksafe", BuildConfig.VERSION_NAME), Corout
             com.enderthor.kSafe.datatype.CombinedFuelLogDataType("combined-log-1", applicationContext, karooSystem, slot = 1),
             com.enderthor.kSafe.datatype.CombinedFuelLogDataType("combined-log-2", applicationContext, karooSystem, slot = 2),
             com.enderthor.kSafe.datatype.HydrationStatusDataType("hyd-status", applicationContext, karooSystem),
+            com.enderthor.kSafe.datatype.CaloriesTotalDataType("calories-total", applicationContext),
+            com.enderthor.kSafe.datatype.CaloriesRateDataType("calories-rate", applicationContext),
         )
     }
 

@@ -148,6 +148,10 @@
     <string name="carbs_burned_datatype_name">KSafe Carbos quemados</string>
     <string name="carbs_burned_datatype_desc">Carbohidratos quemados acumulados esta sesión en gramos, del estimador fisiológico de quema. Complemento del campo Estado carbos (déficit).</string>
     <string name="carb_no_sensor_label">Empareja FC</string>
+    <string name="calories_total_datatype_name">KSafe Calorías (FC)</string>
+    <string name="calories_total_datatype_desc">Calorías acumuladas de la ruta, estimadas por frecuencia cardíaca (Keytel / %FCmax). Independientes de las calorías por potencia del Karoo; útiles cuando no hay medidor de potencia.</string>
+    <string name="calories_rate_datatype_name">KSafe Ritmo Calorías (FC)</string>
+    <string name="calories_rate_datatype_desc">Gasto energético instantáneo en kcal/h, estimado por frecuencia cardíaca. Muestra Empareja FC cuando ningún sensor puede alimentar la estimación.</string>
     <string name="hyd_log_1_datatype_name">KSafe Bebida 1</string>
     <string name="hyd_log_2_datatype_name">KSafe Bebida 2</string>
     <string name="hyd_log_datatype_desc">Toca para registrar una bebida configurada (p. ej. trago, botella). Cuenta para tu objetivo por hora.</string>
