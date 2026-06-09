@@ -541,8 +541,13 @@ class CarbsTracker(
         val burnRateGph = burn.gph
             .coerceAtMost(ABSORPTION_CAP_GPH.toDouble())
             .toInt()
-        val kcalH = effectiveKcalPerHour(burn)
-        val calorieSource = CalorieSource.from(burn.confidence, kcalH)
+        // Gate the calorie outputs on the feature toggle so the calorie data fields
+        // show nothing live when the rider hasn't enabled it. Without this, the rate
+        // field would display a live kcal/h (the monitor may be running for carbs /
+        // hydration) while the total field shows 0 — the two siblings would disagree.
+        val caloriesOn = config.hrCaloriesEnabled
+        val kcalH = if (caloriesOn) effectiveKcalPerHour(burn) else 0.0
+        val calorieSource = if (caloriesOn) CalorieSource.from(burn.confidence, kcalH) else CalorieSource.NONE
         return CarbStatus(
             cumBurnedG = cumBurnedG.toInt(),
             cumLoggedG = cumLoggedG,
@@ -561,6 +566,7 @@ class CarbsTracker(
                     (System.currentTimeMillis() - lastSpeedChangeMs) > SPEED_STALE_MS
                 !stale && speed >= MOVING_GATE_KMH
             },
+            caloriesEnabled = caloriesOn,
             kcalTotal = cumKcal.toInt(),
             kcalPerHour = kcalH.toInt(),
             calorieSource = calorieSource,
@@ -934,6 +940,10 @@ data class CarbStatus(
      *  (burn rate, burned, status) coherent: if integration is paused, every
      *  field is frozen; if it's running, every field shows a live number. */
     val isIntegrating: Boolean,
+    /** True when the HR-calorie feature is enabled. The calorie data fields render
+     *  `---` when false, so a disabled feature never shows a live number even though
+     *  the monitor may be running for carbs / hydration. */
+    val caloriesEnabled: Boolean,
     /** Cumulative HR-based energy this session (kcal). 0 until any accrues. */
     val kcalTotal: Int,
     /** Instantaneous energy expenditure (kcal/h). 0 when no HR/power (→ field shows `---`). */

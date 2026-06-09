@@ -6,10 +6,11 @@
 -keep class com.enderthor.kSafe.activity.FieldTapReceiver { *; }
 
 # ─── DataTypes registered via extension_info.xml ─────────────────────────────
-# All 16 DataTypes declared in res/xml/extension_info.xml (SOS, Safety Timer,
+# All DataTypes declared in res/xml/extension_info.xml (SOS, Safety Timer,
 # Custom Message ×3, Webhook ×2, Carb Log ×3, Carb Status, Carb Burn Rate,
-# Carbs Burned, Hydration Log ×2, Hydration Status) plus the shared state
-# objects and Glance ActionCallback subclasses living in the same package.
+# Carb Avg Burn, Carbs Burned, Hydration Log ×2, Combined Log ×2, Hydration
+# Status, Calories total/rate) plus the shared state objects and Glance
+# ActionCallback subclasses living in the same package.
 # The wildcard covers slot variants so adding a new slot or a new sibling
 # DataType in this package does not require a new rule.
 -keep class com.enderthor.kSafe.datatype.** { *; }

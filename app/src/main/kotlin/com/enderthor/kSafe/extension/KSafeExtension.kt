@@ -175,6 +175,14 @@ private const val PERSIST_CARB_BURN_DEADBAND_G: Float = 5.0f
  *  within the SweatEstimator's ±20 % accuracy on a 750 ml/h baseline. */
 private const val PERSIST_HYD_TARGET_DEADBAND_ML: Float = 60.0f
 
+/** Same idea as [PERSIST_CARB_BURN_DEADBAND_G] for the HR-calorie accumulator. kcal
+ *  accrues faster than carb grams (e.g. ~10 kcal per 30 s cycle at 600 kcal/h), so a
+ *  10 kcal band keeps the deadband from firing on a near-stationary rider while
+ *  bounding worst-case loss on process kill to ≤ 10 kcal — negligible against a
+ *  multi-thousand-kcal ride. Without a calorie term here a calories-only ride would
+ *  either never persist (zero-skip below) or write every cycle (deadband defeated). */
+private const val PERSIST_KCAL_DEADBAND_KCAL: Float = 10.0f
+
 class KSafeExtension : KarooExtension("ksafe", BuildConfig.VERSION_NAME), CoroutineScope {
 
     private val job = SupervisorJob()
@@ -746,6 +754,7 @@ class KSafeExtension : KarooExtension("ksafe", BuildConfig.VERSION_NAME), Corout
                 // Skip the write if both trackers are at zero — no accumulation worth
                 // persisting yet (e.g. rider just pressed Start, hasn't moved).
                 if (carbState.cumBurnedG <= 0f && carbState.cumLoggedG == 0 &&
+                    carbState.cumKcal <= 0f &&
                     hydState.cumTargetMl <= 0f && hydState.cumLoggedMl == 0) continue
                 // Skip if neither tracker has changed since the last successful write.
                 // Note: we deliberately compare the trackers' state slices, NOT the
@@ -773,14 +782,22 @@ class KSafeExtension : KarooExtension("ksafe", BuildConfig.VERSION_NAME), Corout
                 if (prevCarb != null && prevHyd != null) {
                     val burnDelta   = carbState.cumBurnedG - prevCarb.cumBurnedG
                     val targetDelta = hydState.cumTargetMl - prevHyd.cumTargetMl
+                    val kcalDelta   = carbState.cumKcal - prevCarb.cumKcal
+                    // cumKcal advances every moving tick when calories are on, so it must
+                    // be normalised out of the "other fields unchanged" comparison (like
+                    // cumBurnedG / activeIntegrationMs) AND given its own delta bound —
+                    // otherwise a calories-only ride either writes every cycle (band
+                    // defeated) or, if normalised without a bound, never writes at all.
                     val carbOtherUnchanged = carbState.copy(
                         cumBurnedG = prevCarb.cumBurnedG,
                         activeIntegrationMs = prevCarb.activeIntegrationMs,
+                        cumKcal = prevCarb.cumKcal,
                     ) == prevCarb
                     val hydOtherUnchanged  = hydState.copy(cumTargetMl = prevHyd.cumTargetMl) == prevHyd
                     val withinDeadband = carbOtherUnchanged && hydOtherUnchanged &&
                         burnDelta   in 0f..PERSIST_CARB_BURN_DEADBAND_G &&
-                        targetDelta in 0f..PERSIST_HYD_TARGET_DEADBAND_ML
+                        targetDelta in 0f..PERSIST_HYD_TARGET_DEADBAND_ML &&
+                        kcalDelta   in 0f..PERSIST_KCAL_DEADBAND_KCAL
                     if (withinDeadband) continue
                 }
                 configManager.saveFuelingState(

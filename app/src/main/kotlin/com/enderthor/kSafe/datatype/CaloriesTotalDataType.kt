@@ -65,6 +65,8 @@ class CaloriesTotalDataType(
                 tracker.statusFlow.collectLatest { status ->
                     val main = when {
                         status == null -> "---"
+                        // Feature disabled → neutral, never a stale/live number.
+                        !status.caloriesEnabled -> "---"
                         // No HR (or no weight) → no estimate possible yet.
                         status.calorieSource == CalorieSource.NONE && status.kcalTotal == 0 ->
                             context.getString(R.string.carb_no_sensor_label)
