@@ -658,13 +658,22 @@ class CarbsTracker(
             speedKmh = lastSpeedKmh,
             speedStale = stale,
         )
-        cumBurnedG += step.deltaG
-        activeIntegrationMs += step.deltaActiveMs
+        // Carb burn accrues ONLY when the carb tracker is enabled. The monitor may
+        // be running solely for the HR-calorie counter (an independent feature), in
+        // which case carbs must NOT accumulate and no carb/deficit alert may fire —
+        // see the alert block below.
+        if (config.carbsTrackerEnabled) {
+            cumBurnedG += step.deltaG
+            activeIntegrationMs += step.deltaActiveMs
+        }
         // Calorie accumulator: integrate energy expenditure over the movement-gated
         // dt (gatedDtMs), which advances even in the fallback regime where carb burn
         // (and deltaActiveMs) is 0. effectiveKcalPerHour falls back to %HRmax so the
-        // counter keeps moving whenever HR + weight are present.
-        cumKcal += (effectiveKcalPerHour(burn) * step.gatedDtMs / 3_600_000.0).toFloat()
+        // counter keeps moving whenever HR + weight are present. Fully independent of
+        // the carb tracker: gated on its own toggle, no alerts.
+        if (config.hrCaloriesEnabled) {
+            cumKcal += (effectiveKcalPerHour(burn) * step.gatedDtMs / 3_600_000.0).toFloat()
+        }
         // Update lastTickMs on every tick (moving or not) so a stationary→moving
         // transition doesn't claim the entire stationary period in one big dt.
         lastTickMs = now
@@ -677,19 +686,25 @@ class CarbsTracker(
         // in quick succession and see only the time alert (which visually
         // overlays the deficit one in the Karoo SDK's alert area). Mirrors the
         // same logic in `HydrationTracker.tick`.
-        val deficitFired = evaluateDeficitAlert(now)
-        if (deficitFired) {
-            if (currentDueTimeTick(now) != 0L) {
-                // Mark the time tick consumed: `now >= currentTickAt` (otherwise
-                // currentDueTimeTick would have returned 0L), so setting
-                // `lastTimeAlertFireMs = now` satisfies the "already fired this
-                // tick" guard on subsequent calls. The next grid point
-                // (sessionStartMs + (N+1)·interval) is unaffected because the
-                // stored value will then be strictly less than it.
-                lastTimeAlertFireMs = now
+        //
+        // Gated on carbsTrackerEnabled: a calories-only session (carb tracker off)
+        // must never fire a carb deficit/time alert, even though carbDeficitAlertEnabled
+        // defaults to true. Enabling/disabling HR-calories has no effect on these.
+        if (config.carbsTrackerEnabled) {
+            val deficitFired = evaluateDeficitAlert(now)
+            if (deficitFired) {
+                if (currentDueTimeTick(now) != 0L) {
+                    // Mark the time tick consumed: `now >= currentTickAt` (otherwise
+                    // currentDueTimeTick would have returned 0L), so setting
+                    // `lastTimeAlertFireMs = now` satisfies the "already fired this
+                    // tick" guard on subsequent calls. The next grid point
+                    // (sessionStartMs + (N+1)·interval) is unaffected because the
+                    // stored value will then be strictly less than it.
+                    lastTimeAlertFireMs = now
+                }
+            } else {
+                evaluateTimeAlert(now)
             }
-        } else {
-            evaluateTimeAlert(now)
         }
         maybePeriodicLog(now)
         // Re-publish at the end so subscribers see the updated deficit, burn rate,
