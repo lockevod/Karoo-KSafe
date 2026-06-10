@@ -54,6 +54,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.filter
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.mapNotNull
 import kotlinx.coroutines.launch
@@ -108,18 +109,28 @@ private const val CALIBRATION_MAX_CHUNK_BYTES: Int = 72_000
 
 /** Wait this long after KarooSystemService connects before checking for updates —
  *  the Karoo takes ≥30 s to boot and the tethered-phone link lags; 45 s gives
- *  connectivity time to come up. */
+ *  connectivity time to come up. If there is still no internet, tryFetchAndShow
+ *  returns false and scheduleUpdateCheck retries up to UPDATE_CHECK_MAX_RETRIES
+ *  times with UPDATE_CHECK_RETRY_DELAY_MS between attempts. */
 private const val UPDATE_CHECK_STARTUP_DELAY_MS: Long = 45_000L
-/** Show the update notice on every Nth service start (combined with a ≤1/day cap). */
-private const val UPDATE_CHECK_EVERY_N_RESTARTS: Int = 3
-/** Auto-dismiss the update overlay after this long (rider may also tap to close). */
-private const val UPDATE_NOTICE_AUTODISMISS_MS: Long = 10_000L
+/** How many times to retry after a network failure before giving up until next boot. */
+private const val UPDATE_CHECK_MAX_RETRIES: Int = 4
+/** How long to wait between retry attempts when there is no internet. 5 minutes. */
+private const val UPDATE_CHECK_RETRY_DELAY_MS: Long = 5 * 60_000L
+/** Minimum days between two update notices. 3 = show at most once every 3 days. */
+private const val UPDATE_NOTICE_MIN_DAYS: Long = 3L
+/** Auto-dismiss the update overlay after this long (rider may also tap Dismiss). */
+private const val UPDATE_NOTICE_AUTODISMISS_MS: Long = 20_000L
 /** Hard cap on the manifest GET so a hung tethered link can't leave the check
  *  coroutine suspended until service teardown. */
 private const val UPDATE_CHECK_HTTP_TIMEOUT_MS: Long = 15_000L
-/** OTA manifest describing the latest published build. */
+/** OTA manifest describing the latest published build.
+ *  IMPORTANT: must NOT be a github.com/releases/latest/download URL — that URL chain
+ *  returns HTTP 302 redirects which the Karoo SDK's httpRequest treats as a non-2xx
+ *  response and silently aborts. raw.githubusercontent.com serves the file directly
+ *  (no redirect) and is the pattern used by Ki2 and other working Karoo extensions. */
 private const val UPDATE_MANIFEST_URL: String =
-    "https://github.com/lockevod/Karoo-KSafe/releases/latest/download/manifest.json"
+    "https://raw.githubusercontent.com/lockevod/Karoo-KSafe/main/app/manifest.json"
 
 /** Per-cycle ceiling on the number of chunks the periodic loop will send back-to-back
  *  when catching up after one or more failed windows. Without a cap a rider whose
@@ -2862,58 +2873,118 @@ class KSafeExtension : KarooExtension("ksafe", BuildConfig.VERSION_NAME), Corout
         }
     }
 
-    /** Schedules the one-shot, delayed update check. Called once from initializeSystem. */
+    /** Schedules the update check with automatic retry on network failure.
+     *  All gate checks (toggle, 3-day cap) run ONCE per boot before any network
+     *  attempt; only the HTTP request retries up to UPDATE_CHECK_MAX_RETRIES times
+     *  with UPDATE_CHECK_RETRY_DELAY_MS between attempts. */
     private fun scheduleUpdateCheck() {
         launch {
             kotlinx.coroutines.delay(UPDATE_CHECK_STARTUP_DELAY_MS)
-            runUpdateCheck()
+
+            // ── Gate checks — run ONCE per boot, no network involved ──────────
+
+            if (!activeConfig.updateCheckEnabled) {
+                Timber.d("Update check: skipped — toggle disabled")
+                return@launch
+            }
+            // Epoch-day (UTC), avoid java.time (API 26) on minSdk 23.
+            val today = System.currentTimeMillis() / 86_400_000L
+            val daysSinceLast = today - configManager.getUpdateNoticeEpochDay()
+            if (daysSinceLast < UPDATE_NOTICE_MIN_DAYS) {
+                Timber.d("Update check: skipped — shown ${daysSinceLast}d ago (min=${UPDATE_NOTICE_MIN_DAYS}d)")
+                return@launch
+            }
+
+            // ── Network retry loop — only this part retries ───────────────────
+            for (attempt in 1..UPDATE_CHECK_MAX_RETRIES) {
+                val done = tryFetchAndShow(today)
+                if (done) {
+                    Timber.d("Update check: done on attempt $attempt")
+                    break
+                }
+                if (attempt < UPDATE_CHECK_MAX_RETRIES) {
+                    Timber.d("Update check: no internet on attempt $attempt/$UPDATE_CHECK_MAX_RETRIES — retrying in ${UPDATE_CHECK_RETRY_DELAY_MS / 60_000}min")
+                    kotlinx.coroutines.delay(UPDATE_CHECK_RETRY_DELAY_MS)
+                } else {
+                    Timber.w("Update check: giving up after $UPDATE_CHECK_MAX_RETRIES attempts — will retry next boot")
+                }
+            }
         }
     }
 
-    private suspend fun runUpdateCheck() {
-        try {
-            // Always advance the restart counter (drives the cadence) before the cheap gates.
-            val restartCount = configManager.incrementUpdateRestartCount()
-            if (!activeConfig.updateCheckEnabled) return
-            if (UPDATE_CHECK_EVERY_N_RESTARTS <= 0 || restartCount % UPDATE_CHECK_EVERY_N_RESTARTS != 0) return
-            // Epoch-day (UTC). Uses System.currentTimeMillis() to match the codebase convention
-            // and avoid java.time (API 26) on minSdk 23 — a UTC day boundary is fine for a ≤1/day cap.
-            val today = System.currentTimeMillis() / 86_400_000L
-            if (configManager.getUpdateNoticeEpochDay() == today) return  // ≤1 notice/day
-
-            // Only now is a network round-trip worth it. Bounded so a hung tethered link
-            // can't leave this coroutine suspended until teardown (null → skip silently).
+    /**
+     * Single network attempt: fetch manifest → parse → (wait for ride end if needed) → show.
+     * Returns true  = done (update shown, no update, or non-retriable error).
+     * Returns false = transient network error (caller should retry after a delay).
+     */
+    private suspend fun tryFetchAndShow(today: Long): Boolean {
+        return try {
+            Timber.d("Update check: fetching $UPDATE_MANIFEST_URL")
             val response = kotlinx.coroutines.withTimeoutOrNull(UPDATE_CHECK_HTTP_TIMEOUT_MS) {
                 karooSystem.httpRequest("GET", UPDATE_MANIFEST_URL)
-            } ?: return
-            if (response.statusCode !in 200..299) return
-            val manifest = UpdateChecker.parseManifest(response.body?.toString(Charsets.UTF_8) ?: "") ?: return
+            }
+            if (response == null) {
+                Timber.w("Update check: HTTP timeout — no internet yet")
+                return false  // transient → retry
+            }
+            // Only retry on 5xx (server-side transient errors). 4xx (404, 401…) are
+            // permanent misconfigurations that won't improve with retries — give up until next boot.
+            if (response.statusCode in 500..599) {
+                Timber.w("Update check: HTTP ${response.statusCode} — server error, will retry")
+                return false  // transient → retry
+            }
+            if (response.statusCode !in 200..299) {
+                Timber.w("Update check: HTTP ${response.statusCode} — permanent error, giving up until next boot")
+                return true   // non-retriable → done
+            }
+
+            val bodyStr = response.body?.toString(Charsets.UTF_8) ?: ""
+            Timber.d("Update check: HTTP ${response.statusCode}, body=${bodyStr.take(120)}")
+
+            val manifest = UpdateChecker.parseManifest(bodyStr) ?: run {
+                // Malformed JSON won't be fixed by retrying — give up until next boot.
+                Timber.w("Update check: manifest parse failed — giving up until next boot")
+                return true   // non-retriable → done
+            }
+
             val isNewer = UpdateChecker.isNewer(manifest.latestVersionCode, BuildConfig.VERSION_CODE)
-            val rideActive = currentRideState is RideState.Recording || currentRideState is RideState.Paused
+            Timber.d("Update check: latest=${manifest.latestVersionCode} current=${BuildConfig.VERSION_CODE} isNewer=$isNewer")
+            if (!isNewer) return true  // up to date — done
 
-            if (!UpdateChecker.shouldNotify(
-                    enabled = activeConfig.updateCheckEnabled,
-                    restartCount = restartCount,
-                    everyN = UPDATE_CHECK_EVERY_N_RESTARTS,
-                    lastNoticeEpochDay = configManager.getUpdateNoticeEpochDay(),
-                    todayEpochDay = today,
-                    isNewer = isNewer,
-                    rideActive = rideActive,
-                )
-            ) return
+            // Update available. If a ride is active, suspend until it ends — zero CPU cost,
+            // the coroutine just waits for the next Idle emission from the SDK.
+            if (currentRideState is RideState.Recording || currentRideState is RideState.Paused) {
+                Timber.d("Update check: update found but ride active — suspending until ride ends")
+                karooSystem.streamRide()
+                    .filter { it is RideState.Idle }
+                    .first()
+                Timber.d("Update check: ride ended — showing notice now")
+            }
 
+            // Mark as shown before displaying to prevent re-firing on restart.
             configManager.setUpdateNoticeEpochDay(today)
-            // Auto-dismiss via showInfo's own guarded timer (removes only if this exact overlay
-            // is still showing) instead of a separate launch{ delay; removeInfoOverlay }.
-            updateOverlay.showInfo(
-                title = getString(R.string.update_available_title),
-                message = getString(R.string.update_available_message, manifest.latestVersion),
-                autoDismissMs = UPDATE_NOTICE_AUTODISMISS_MS,
-            )
+            val updateTitle = getString(R.string.update_available_title)
+            val updateMessage = getString(R.string.update_available_message, manifest.latestVersion)
+
+            if (android.provider.Settings.canDrawOverlays(applicationContext)) {
+                updateOverlay.showInfo(
+                    title = updateTitle,
+                    message = updateMessage,
+                    autoDismissMs = UPDATE_NOTICE_AUTODISMISS_MS,
+                )
+            } else {
+                Timber.w("Update check: SYSTEM_ALERT_WINDOW not granted — falling back to SystemNotification")
+                karooSystem.dispatch(SystemNotification(
+                    id = "ksafe-update-${manifest.latestVersionCode}",
+                    message = updateMessage,
+                    header = updateTitle,
+                ))
+            }
             Timber.i("Update notice shown: v${manifest.latestVersion} (code ${manifest.latestVersionCode} > ${BuildConfig.VERSION_CODE})")
+            true
         } catch (e: Exception) {
-            // No connectivity at boot / SDK error → silent; retried next eligible start.
-            Timber.d(e, "Update check skipped (no connectivity or error)")
+            Timber.w(e, "Update check: unexpected error — will retry")
+            false
         }
     }
 
