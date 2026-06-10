@@ -109,7 +109,7 @@ private const val CALIBRATION_MAX_CHUNK_BYTES: Int = 72_000
 
 /** Wait this long after KarooSystemService connects before checking for updates —
  *  the Karoo takes ≥30 s to boot and the tethered-phone link lags; 45 s gives
- *  connectivity time to come up. If there is still no internet, runUpdateCheck
+ *  connectivity time to come up. If there is still no internet, tryFetchAndShow
  *  returns false and scheduleUpdateCheck retries up to UPDATE_CHECK_MAX_RETRIES
  *  times with UPDATE_CHECK_RETRY_DELAY_MS between attempts. */
 private const val UPDATE_CHECK_STARTUP_DELAY_MS: Long = 45_000L
@@ -117,9 +117,6 @@ private const val UPDATE_CHECK_STARTUP_DELAY_MS: Long = 45_000L
 private const val UPDATE_CHECK_MAX_RETRIES: Int = 4
 /** How long to wait between retry attempts when there is no internet. 5 minutes. */
 private const val UPDATE_CHECK_RETRY_DELAY_MS: Long = 5 * 60_000L
-/** Show the update notice on every Nth service start (combined with a ≤3-day cap).
- *  1 = check on every start; the 3-day cap prevents repeated notifications. */
-private const val UPDATE_CHECK_EVERY_N_RESTARTS: Int = 1
 /** Minimum days between two update notices. 3 = show at most once every 3 days. */
 private const val UPDATE_NOTICE_MIN_DAYS: Long = 3L
 /** Auto-dismiss the update overlay after this long (rider may also tap Dismiss). */
@@ -2885,8 +2882,6 @@ class KSafeExtension : KarooExtension("ksafe", BuildConfig.VERSION_NAME), Corout
             kotlinx.coroutines.delay(UPDATE_CHECK_STARTUP_DELAY_MS)
 
             // ── Gate checks — run ONCE per boot, no network involved ──────────
-            val restartCount = configManager.incrementUpdateRestartCount()
-            Timber.d("Update check: restartCount=$restartCount")
 
             if (!activeConfig.updateCheckEnabled) {
                 Timber.d("Update check: skipped — toggle disabled")
@@ -2930,19 +2925,26 @@ class KSafeExtension : KarooExtension("ksafe", BuildConfig.VERSION_NAME), Corout
             }
             if (response == null) {
                 Timber.w("Update check: HTTP timeout — no internet yet")
-                return false  // retry
+                return false  // transient → retry
+            }
+            // Only retry on 5xx (server-side transient errors). 4xx (404, 401…) are
+            // permanent misconfigurations that won't improve with retries — give up until next boot.
+            if (response.statusCode in 500..599) {
+                Timber.w("Update check: HTTP ${response.statusCode} — server error, will retry")
+                return false  // transient → retry
             }
             if (response.statusCode !in 200..299) {
-                Timber.w("Update check: HTTP ${response.statusCode} — will retry")
-                return false  // retry
+                Timber.w("Update check: HTTP ${response.statusCode} — permanent error, giving up until next boot")
+                return true   // non-retriable → done
             }
 
             val bodyStr = response.body?.toString(Charsets.UTF_8) ?: ""
             Timber.d("Update check: HTTP ${response.statusCode}, body=${bodyStr.take(120)}")
 
             val manifest = UpdateChecker.parseManifest(bodyStr) ?: run {
-                Timber.w("Update check: manifest parse failed — will retry")
-                return false  // retry
+                // Malformed JSON won't be fixed by retrying — give up until next boot.
+                Timber.w("Update check: manifest parse failed — giving up until next boot")
+                return true   // non-retriable → done
             }
 
             val isNewer = UpdateChecker.isNewer(manifest.latestVersionCode, BuildConfig.VERSION_CODE)
