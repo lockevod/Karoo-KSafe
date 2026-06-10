@@ -1283,8 +1283,12 @@ class KSafeExtension : KarooExtension("ksafe", BuildConfig.VERSION_NAME), Corout
                 emergencyManager.stopAll(preserveAlertJob = true)
                 medicalDetector.stop()
                 wellnessMonitor.stop()
-                carbsTracker.stop()
-                hydrationTracker.stop()
+                // endOfSession: marks the retained totals as belonging to a FINISHED ride
+                // so a later resume() (master/feature toggled on next ride) starts fresh
+                // instead of reviving them. Mid-ride master/feature stops keep the default
+                // false — their retained state is still this ride's live session.
+                carbsTracker.stop(endOfSession = true)
+                hydrationTracker.stop(endOfSession = true)
                 // Ride ended cleanly — drop the persisted fueling snapshot so the next ride
                 // starts from zero. Fire-and-forget on IO; if the write loses to a process
                 // kill the next boot's stale-age check (FUELING_RESTORE_MAX_AGE_MS) catches it.
@@ -2660,10 +2664,12 @@ class KSafeExtension : KarooExtension("ksafe", BuildConfig.VERSION_NAME), Corout
      * be premature complexity for a setting riders almost never flip mid-ride.
      */
     override fun startFit(emitter: Emitter<FitEffect>) {
-        if (!activeConfig.fuelingFitExportEnabled) {
-            emitter.setCancellable { }
-            return
-        }
+        // The export/calories toggles are sampled INSIDE the IO coroutine below, after a
+        // bounded wait on the DataStore config seed — startFit fires on a mid-ride service
+        // rebind too, where activeConfig may still be the constructor default
+        // (fuelingFitExportEnabled = false): sampling here silently disabled the export
+        // (or dropped just the calories column via a stale hrCaloriesEnabled) for the
+        // rest of the ride for a rider who opted in.
 
         val carbField = DeveloperField(
             fieldDefinitionNumber = 0,
@@ -2749,19 +2755,28 @@ class KSafeExtension : KarooExtension("ksafe", BuildConfig.VERSION_NAME), Corout
             nativeFieldNum = null,
             developerDataIndex = 0,
         )
-        val writeCalories = activeConfig.hrCaloriesEnabled
-
-        calibLogger.log(CalibrationLogger.Event.FIT_WRITER_START) {
-            // Field-definition numbers are public-API once shipped; record them so the CSV
-            // can be cross-referenced with the developer-field schema in the resulting FIT.
-            "fields=0,1,2,3,4,5,6${if (writeCalories) ",8" else ""}"
-        }
         // Dispatchers.IO: every emit is a karoo-ext `Emitter.onNext`, which serialises the
         // effect and makes a BLOCKING (non-oneway) Binder round-trip to the Karoo recording
         // service. At the per-record cadence below that would otherwise run ~1×/s on the Main
         // thread for the whole ride (where crash detection + the countdown also live). The
         // collector only reads volatile StateFlow snapshots and emits, so IO is safe.
+        var fitWriterStarted = false
         val job: Job = launch(Dispatchers.IO) {
+            // Bounded config-seed wait — same contract as the ride-state collector's gate:
+            // never make things worse than not waiting (5 s cap, then proceed with
+            // whatever activeConfig holds).
+            if (withTimeoutOrNull(CONFIG_SEED_TIMEOUT_MS) { configSeeded.await() } == null) {
+                Timber.w("startFit: configSeeded not ready after ${CONFIG_SEED_TIMEOUT_MS}ms — proceeding with current activeConfig")
+            }
+            if (!activeConfig.fuelingFitExportEnabled) return@launch
+            val writeCalories = activeConfig.hrCaloriesEnabled
+            fitWriterStarted = true
+
+            calibLogger.log(CalibrationLogger.Event.FIT_WRITER_START) {
+                // Field-definition numbers are public-API once shipped; record them so the CSV
+                // can be cross-referenced with the developer-field schema in the resulting FIT.
+                "fields=0,1,2,3,4,5,6${if (writeCalories) ",8" else ""}"
+            }
             // FIT developer-field writer.
             //
             // RECORD message: re-emitted on a fixed [FIT_RECORD_WRITE_INTERVAL_MS] cadence
@@ -2915,7 +2930,10 @@ class KSafeExtension : KarooExtension("ksafe", BuildConfig.VERSION_NAME), Corout
         }
         emitter.setCancellable {
             job.cancel()
-            calibLogger.log(CalibrationLogger.Event.FIT_WRITER_STOP) { "" }
+            // Only pair a STOP row with a real START — when the export was disabled the
+            // coroutine returned before logging START, and an orphan STOP would confuse
+            // CSV analysis.
+            if (fitWriterStarted) calibLogger.log(CalibrationLogger.Event.FIT_WRITER_STOP) { "" }
         }
     }
 

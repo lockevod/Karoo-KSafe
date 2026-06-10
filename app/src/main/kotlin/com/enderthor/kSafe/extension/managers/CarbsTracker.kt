@@ -262,6 +262,7 @@ class CarbsTracker(
             lastDeficitAlertFireMs = 0L
             activeIntegrationMs = 0L
         }
+        sessionEnded = false             // a live session now exists for this ride
         lastTickMs = 0L                  // 0 = "no previous tick"; first tick won't accumulate
         lastPeriodicLogMs = 0L
         lastZoneSnapshot = ZoneSnapshot(ZoneSource.NONE, -1, 0, 1f)
@@ -324,10 +325,25 @@ class CarbsTracker(
         cumKcal = cumKcal,
     )
 
-    fun stop() {
+    /** True when no ride session is live for THIS ride: set on construction and by
+     *  [stop] with `endOfSession = true` (ride end), cleared by [start]. Lets [resume]
+     *  and the feature-toggle path distinguish "monitor briefly off mid-ride → preserve
+     *  totals" from "no session / previous ride's retained totals → fresh start". */
+    @Volatile private var sessionEnded = true
+
+    /**
+     * @param endOfSession true on the RIDE-END path: marks the retained accumulators as
+     *  belonging to a finished ride so a later [resume] (master/feature toggled ON in a
+     *  future ride that started with them off) falls through to a fresh [start] instead
+     *  of reviving the previous ride's totals. The master-switch / feature-toggle OFF
+     *  paths pass false — their retained state is still this ride's live session and a
+     *  quick re-enable must preserve it.
+     */
+    fun stop(endOfSession: Boolean = false) {
         monitorJob?.cancel()
         monitorJob = null
-        Timber.d("CarbsTracker stopped")
+        if (endOfSession) sessionEnded = true
+        Timber.d("CarbsTracker stopped (endOfSession=$endOfSession)")
         // State is intentionally retained so getSummary() / getStatus() remain readable
         // for the post-ride summary. Reset happens on the next start().
         // Publish so subscribers see isIntegrating = false (monitorJob is now null).
@@ -343,6 +359,17 @@ class CarbsTracker(
     fun resume(config: KSafeConfig) {
         this.config = config
         if (!config.fuelMonitorEnabled()) return
+        // No live session to resume — either this tracker never started this ride
+        // (master/feature was OFF at ride start: sessionStartMs is 0 on a fresh
+        // process, or holds the PREVIOUS ride's retained value) or the last ride
+        // already ended. Resuming would revive stale totals (carried-over grams) or,
+        // with sessionStartMs == 0, make the alert scheduler see sinceStart ≈ epoch
+        // and fire a spurious time alert on the first tick. Fresh start instead.
+        if (sessionEnded || sessionStartMs == 0L) {
+            Timber.d("CarbsTracker.resume with no live session — starting fresh")
+            start(config)
+            return
+        }
         val oldJob = monitorJob
         lastTickMs = 0L
         monitorJob = scope.launch {
@@ -369,7 +396,11 @@ class CarbsTracker(
         val wasEnabled = old.fuelMonitorEnabled()
         this.config = config
         val nowEnabled = config.fuelMonitorEnabled()
-        if (!wasEnabled && nowEnabled && isRecording) start(config)
+        // OFF→ON mid-ride is a RESUME, not a fresh start — the rider toggling a feature
+        // off and back on (fat-finger, quick A/B of settings) must not lose the session's
+        // logged/burned totals. resume() itself falls back to start() when there is no
+        // live session for this ride. Mirrors the master-switch semantics.
+        if (!wasEnabled && nowEnabled && isRecording) resume(config)
         else if (wasEnabled && !nowEnabled) stop()
         // Re-publish when a display-relevant enable bit flipped so the fields reflect
         // the toggle immediately instead of on the next 15-s tick (master kill / feature
