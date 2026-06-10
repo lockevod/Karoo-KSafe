@@ -90,6 +90,7 @@ class SafetyTimerDataType(
     }
 
     override fun startView(context: Context, config: ViewConfig, emitter: ViewEmitter) {
+        val startViewAtMs = System.currentTimeMillis()
         // Synchronous seed frame BEFORE launching any coroutine — see SOSDataType /
         // CarbStatusDataType for the blank-white-field rationale (host paints its
         // theme bg until the first Dispatchers.Default emission; day mode → white
@@ -153,9 +154,18 @@ class SafetyTimerDataType(
                 // on the same integer second after sub-second drift). Worth ~1 emit/min
                 // saved continuously across long rides.
                 var lastEmitKey: String? = null
-                fun emit(bgColor: Int, main: String, hint: String, clickable: Boolean) {
+                suspend fun emit(bgColor: Int, main: String, hint: String, clickable: Boolean) {
                     val key = "$bgColor|$main|$hint|$clickable"
                     if (key == lastEmitKey) return
+                    // Coalescing guard (see SOSDataType / COALESCE_GUARD_MS): the host keeps
+                    // only the first updateView in its ~170 ms window, but lastEmitKey
+                    // advances regardless — a dropped frame (typically the okColorFlow
+                    // emission with the rider's configured colour, landing right after the
+                    // seed) then stayed wrong until the next minute rollover. Holding the
+                    // emit until the window has passed makes every frame stick; no
+                    // steady-state cost (only runs in the first 250 ms after attach).
+                    val sinceAttach = System.currentTimeMillis() - startViewAtMs
+                    if (sinceAttach < COALESCE_GUARD_MS) delay(COALESCE_GUARD_MS - sinceAttach)
                     lastEmitKey = key
                     emitter.updateView(buildView(context, config, bgColor, main, hint, clickable))
                 }

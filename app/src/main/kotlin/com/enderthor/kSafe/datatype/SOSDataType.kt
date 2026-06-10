@@ -36,6 +36,10 @@ import timber.log.Timber
 private const val COLOR_COUNTDOWN = 0xFFE65100.toInt()
 private const val COLOR_ALERTING  = 0xFFB71C1C.toInt()
 
+/** Margin over the Karoo host's ~170 ms updateView coalescing window (keeps only the
+ *  first frame inside it) — renders held until this has passed are never dropped. */
+internal const val COALESCE_GUARD_MS = 250L
+
 class SOSDataType(
     datatype: String,
     private val context: Context,
@@ -96,6 +100,7 @@ class SOSDataType(
         // re-attaches (page swap, ride-app restart). The configured idle colour is
         // only available asynchronously (DataStore), so the IDLE seed uses the
         // default green and the real colour lands on the colorFlow emission below.
+        val startViewAtMs = System.currentTimeMillis()
         val seedState = EmergencyManager.uiState.value
         when (seedState.status) {
             EmergencyStatus.COUNTDOWN -> emitter.updateView(buildView(
@@ -140,6 +145,20 @@ class SOSDataType(
                     val state = EmergencyManager.uiState.value
                     when (state.status) {
                         EmergencyStatus.IDLE -> {
+                            // Coalescing guard: the host keeps only the FIRST updateView
+                            // inside its ~170 ms window. The DataStore colour emission
+                            // typically lands within that window of the seed frame, so the
+                            // re-render carrying the rider's configured colour (or AUTO)
+                            // was dropped — and with renderedColor already advanced, the
+                            // merge below never re-emitted while IDLE: the field kept the
+                            // default green for the rest of the ride. Holding any IDLE
+                            // render until the window has passed guarantees it sticks.
+                            // No steady-state cost — the delay only runs in the first
+                            // 250 ms after attach.
+                            val sinceAttach = System.currentTimeMillis() - startViewAtMs
+                            if (sinceAttach < COALESCE_GUARD_MS) {
+                                kotlinx.coroutines.delay(COALESCE_GUARD_MS - sinceAttach)
+                            }
                             val renderedColor = colorFlow.value
                             emitter.updateView(buildView(
                                 context, config, renderedColor,

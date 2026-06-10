@@ -17,6 +17,7 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.awaitCancellation
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.flow.collectLatest
+import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.filterNotNull
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
@@ -66,9 +67,15 @@ class CarbAvgBurnRateDataType(
         val viewJob = scope.launch {
             try {
                 val tracker = KSafeExtension.carbsTrackerFlow.filterNotNull().first()
-                tracker.statusFlow.collectLatest { status ->
+                // Merged with nightModeFlow — see CarbBurnRateDataType (theme passthrough
+                // text colour is baked at build time; a day/night flip needs a re-render).
+                combine(tracker.statusFlow, KSafeExtension.nightModeFlow) { s, _ -> s }
+                    .collectLatest { status ->
                     val main = when {
                         status == null -> "---"
+                        // Master OFF / carb feature off — see CarbBurnRateDataType.
+                        !status.masterEnabled -> context.getString(R.string.fueling_field_off)
+                        !status.carbsEnabled -> "---"
                         // "Pair HR/Pwr" ONLY when the rider has never had a sensor
                         // paired this session (cumBurnedG == 0).
                         status.burnConfidence == CarbBurnEstimator.Confidence.NONE &&

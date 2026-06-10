@@ -29,6 +29,7 @@ private const val COLOR_AHEAD = 0xFF1565C0.toInt()
 private const val COLOR_OK    = 0xFF2E7D32.toInt()
 private const val COLOR_AMBER = 0xFFE65100.toInt()
 private const val COLOR_RED   = 0xFFB71C1C.toInt()
+private const val COLOR_DISABLED = 0xFF616161.toInt() // grey — extension/feature off
 
 class HydrationStatusDataType(
     datatype: String,
@@ -64,13 +65,42 @@ class HydrationStatusDataType(
         }
     }
 
+    /** Single render rule shared by the synchronous seed and the collect loop — see
+     *  CarbStatusDataType.statusView for the waiting/disabled/live semantics. */
+    private fun statusView(config: ViewConfig, status: HydrationStatus?): RemoteViews = when {
+        status == null -> buildView(config, COLOR_OK, "---", "hyd")
+        !status.masterEnabled || !status.hydrationEnabled ->
+            buildView(config, COLOR_DISABLED, context.getString(R.string.fueling_field_off), "hyd")
+        else -> {
+            // Leading "~" = the sweat estimate is running at LOW confidence,
+            // i.e. with NO live HR/power sensor — the target is a rough
+            // temperature + weight default rather than HR/power-driven. The
+            // deficit still accrues and alerts still fire (hydration doesn't
+            // require a sensor), but the "~" tells the rider the number is
+            // approximate so they can read a frozen/absent sensor as the
+            // cause. estimateConfidence is null in fixed mode (deliberate
+            // config, not "unknown") → no marker there.
+            val approx = if (status.estimateConfidence == SweatConfidence.LOW) "~" else ""
+            buildView(
+                config,
+                colorFor(status.deficitMl, status.deficitThresholdMl),
+                approx + displayMain(status.deficitMl),
+                "hyd",
+            )
+        }
+    }
+
     override fun startView(context: Context, config: ViewConfig, emitter: ViewEmitter) {
         // Synchronous seed frame BEFORE launching any coroutine. Without this, Karoo
         // paints the host theme background (white in day mode) while waiting for the
         // first Dispatchers.Default emission, and field_view.xml's hard-coded white
         // text renders invisible on white. Night mode masked the bug because the host
         // theme is dark there.
-        emitter.updateView(buildView(config, COLOR_OK, "---", "hyd"))
+        // Seed with the REAL current status when the tracker is already live — see
+        // CarbStatusDataType: the host's ~170 ms updateView coalescing kept the '---'
+        // seed and dropped the StateFlow's replay frame on mid-ride re-entry, leaving
+        // the field stuck on '---' until the next CHANGED status.
+        emitter.updateView(statusView(config, KSafeExtension.hydrationTrackerFlow.value?.statusFlow?.value))
 
         val scopeJob = Job()
         val scope = CoroutineScope(Dispatchers.Default + scopeJob)
@@ -86,25 +116,9 @@ class HydrationStatusDataType(
                 // Push-based — see CarbStatusDataType for the rationale.
                 val tracker = KSafeExtension.hydrationTrackerFlow.filterNotNull().first()
                 tracker.statusFlow.collectLatest { status ->
-                    val view = if (status == null) {
-                        // See CarbStatusDataType — '---' beats 'off' so the rider doesn't
-                        // read 'off' as 'I disabled this'. Colour stays COLOR_OK because
-                        // the field is waiting for data, not disabled.
-                        buildView(config, COLOR_OK, "---", "hyd")
-                    } else {
-                        val color = colorFor(status.deficitMl, status.deficitThresholdMl)
-                        // Leading "~" = the sweat estimate is running at LOW confidence,
-                        // i.e. with NO live HR/power sensor — the target is a rough
-                        // temperature + weight default rather than HR/power-driven. The
-                        // deficit still accrues and alerts still fire (hydration doesn't
-                        // require a sensor), but the "~" tells the rider the number is
-                        // approximate so they can read a frozen/absent sensor as the
-                        // cause. estimateConfidence is null in fixed mode (deliberate
-                        // config, not "unknown") → no marker there.
-                        val approx = if (status.estimateConfidence == SweatConfidence.LOW) "~" else ""
-                        buildView(config, color, approx + displayMain(status.deficitMl), "hyd")
-                    }
-                    emitter.updateView(view)
+                    // Render rules (waiting '---' vs disabled grey vs live semaphore)
+                    // live in [statusView], shared with the synchronous seed above.
+                    emitter.updateView(statusView(config, status))
                 }
             } catch (_: CancellationException) {
                 // normal

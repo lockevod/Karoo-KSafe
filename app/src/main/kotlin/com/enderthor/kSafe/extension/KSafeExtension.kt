@@ -428,6 +428,22 @@ class KSafeExtension : KarooExtension("ksafe", BuildConfig.VERSION_NAME), Corout
         // Seed the night-mode flow so AUTO-colour fields start with the correct text colour.
         nightModeFlow.value = isKarooNightMode()
 
+        // Reset the process-static per-slot tap-feedback states. They survive a service
+        // destroy/recreate within the same process, but the auto-revert jobs that would
+        // return them to IDLE ran on the OLD service scope (cancelled in onDestroy) — a
+        // restart landing inside a flash window otherwise left a field stuck forever on
+        // "Sending…" (unclickable) or offering an undo against a fresh tracker that
+        // never logged anything.
+        for (slot in 1..3) {
+            CustomMessageState.update(slot, CustomMessageState.IDLE)
+            com.enderthor.kSafe.datatype.CarbLogState.update(slot, com.enderthor.kSafe.datatype.CarbLogState.IDLE)
+        }
+        for (slot in 1..2) {
+            com.enderthor.kSafe.datatype.HydrationLogState.update(slot, com.enderthor.kSafe.datatype.HydrationLogState.IDLE)
+            com.enderthor.kSafe.datatype.CombinedFuelLogState.update(slot, com.enderthor.kSafe.datatype.CombinedFuelLogState.IDLE)
+            WebhookState.update(slot, WebhookState.IDLE)
+        }
+
         karooSystem = KarooSystemService(applicationContext)
         configManager = ConfigurationManager(applicationContext)
         locationManager = LocationManager(karooSystem, this)

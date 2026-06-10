@@ -365,11 +365,23 @@ class CarbsTracker(
      * on the auto-start branch. Same shape, same reason.
      */
     fun updateConfig(config: KSafeConfig, isRecording: Boolean) {
-        val wasEnabled = this.config.fuelMonitorEnabled()
+        val old = this.config
+        val wasEnabled = old.fuelMonitorEnabled()
         this.config = config
         val nowEnabled = config.fuelMonitorEnabled()
         if (!wasEnabled && nowEnabled && isRecording) start(config)
         else if (wasEnabled && !nowEnabled) stop()
+        // Re-publish when a display-relevant enable bit flipped so the fields reflect
+        // the toggle immediately instead of on the next 15-s tick (master kill / feature
+        // toggle showed the stale snapshot — e.g. "Pair HR/Pwr" — for up to 15 s, or
+        // indefinitely while no monitor was running). Gated on a prior publish so a
+        // boot-time config seed can't materialise a snapshot before the first start()
+        // — fields must keep their '---' waiting state pre-ride.
+        if (_statusFlow.value != null && (
+                old.isActive != config.isActive ||
+                old.carbsTrackerEnabled != config.carbsTrackerEnabled ||
+                old.hrCaloriesEnabled != config.hrCaloriesEnabled)
+        ) publishStatus()
     }
 
     fun updateUserProfile(p: UserProfile) { lastUserProfile = p }
@@ -567,6 +579,8 @@ class CarbsTracker(
                 !stale && speed >= MOVING_GATE_KMH
             },
             caloriesEnabled = caloriesOn,
+            masterEnabled = config.isActive,
+            carbsEnabled = config.carbsTrackerEnabled,
             kcalTotal = cumKcal.toInt(),
             kcalPerHour = kcalH.toInt(),
             calorieSource = calorieSource,
@@ -944,6 +958,18 @@ data class CarbStatus(
      *  `---` when false, so a disabled feature never shows a live number even though
      *  the monitor may be running for carbs / hydration. */
     val caloriesEnabled: Boolean,
+    /** True when the extension master switch is ON. When false every fueling field
+     *  renders the disabled "OFF" state — without this flag a master kill left the
+     *  fields on whatever the last snapshot implied (e.g. "Pair HR/Pwr" from a
+     *  confidence=NONE snapshot), which read as a sensor problem instead of
+     *  "you turned the extension off". Defaults true so test fixtures stay valid. */
+    val masterEnabled: Boolean = true,
+    /** True when the carb-deficit feature is enabled. Mirror of [caloriesEnabled] for
+     *  the carb-side fields: in a calories-only session (hrCaloriesEnabled=true,
+     *  carbsTrackerEnabled=false) the monitor runs and burnRateGph is live, but the
+     *  cumulative/deficit stay frozen at 0 — the carb fields must render neutral
+     *  instead of a live rate that disagrees with its frozen siblings. */
+    val carbsEnabled: Boolean = true,
     /** Cumulative HR-based energy this session (kcal). 0 until any accrues. */
     val kcalTotal: Int,
     /** Instantaneous energy expenditure (kcal/h). 0 when no HR/power (→ field shows `---`). */

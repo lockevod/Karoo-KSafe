@@ -17,6 +17,7 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.awaitCancellation
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.flow.collectLatest
+import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.filterNotNull
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
@@ -51,9 +52,14 @@ class CaloriesTotalDataType(
         val viewJob = scope.launch {
             try {
                 val tracker = KSafeExtension.carbsTrackerFlow.filterNotNull().first()
-                tracker.statusFlow.collectLatest { status ->
+                // Merged with nightModeFlow — see CarbBurnRateDataType (theme passthrough
+                // text colour is baked at build time; a day/night flip needs a re-render).
+                combine(tracker.statusFlow, KSafeExtension.nightModeFlow) { s, _ -> s }
+                    .collectLatest { status ->
                     val main = when {
                         status == null -> "---"
+                        // Master OFF → explicit disabled state — see CarbBurnRateDataType.
+                        !status.masterEnabled -> context.getString(R.string.fueling_field_off)
                         // Feature disabled → neutral, never a stale/live number.
                         !status.caloriesEnabled -> "---"
                         // No HR (or no weight) → no estimate possible yet.
@@ -62,7 +68,9 @@ class CaloriesTotalDataType(
                         status.kcalTotal == 0 -> "---"
                         else -> "${status.kcalTotal}"
                     }
-                    emitter.updateView(buildView(config, main, "kcal"))
+                    // "CALORIES" (not "kcal") — matches the Karoo's native calories field
+                    // label so the readout reads as the same metric family.
+                    emitter.updateView(buildView(config, main, "CALORIES"))
                 }
             } catch (_: CancellationException) {
                 // normal

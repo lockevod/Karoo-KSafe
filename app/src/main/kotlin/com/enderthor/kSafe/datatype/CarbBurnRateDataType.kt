@@ -17,6 +17,7 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.awaitCancellation
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.flow.collectLatest
+import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.filterNotNull
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
@@ -66,7 +67,12 @@ class CarbBurnRateDataType(
             try {
                 // Push-based — see CarbStatusDataType for the rationale.
                 val tracker = KSafeExtension.carbsTrackerFlow.filterNotNull().first()
-                tracker.statusFlow.collectLatest { status ->
+                // Merged with nightModeFlow (see its KDoc): this is a Karoo-theme
+                // passthrough field whose text colour is baked in at build time, so a
+                // sunset/sunrise theme flip needs a re-render — statusFlow alone only
+                // re-emits on a CHANGED status (stuck black-on-black while autopaused).
+                combine(tracker.statusFlow, KSafeExtension.nightModeFlow) { s, _ -> s }
+                    .collectLatest { status ->
                     // v18: explicit "Pair HR/Pwr" label when neither power nor HR
                     // can drive the estimator. The estimator returns gph=0 and
                     // confidence=NONE in that case — showing "0" would mislead
@@ -84,6 +90,15 @@ class CarbBurnRateDataType(
                     // whichever tier can still run).
                     val main = when {
                         status == null -> "---"
+                        // Master switch OFF → explicit disabled state. Without this the
+                        // last snapshot's branches below win (often "Pair HR/Pwr"), which
+                        // reads as a sensor problem instead of "extension is off".
+                        !status.masterEnabled -> context.getString(R.string.fueling_field_off)
+                        // Carb feature off (calories-only session): the monitor runs and
+                        // the live rate exists, but the cumulative/deficit siblings are
+                        // frozen at 0 — render neutral so the family agrees (mirror of
+                        // the caloriesEnabled gate on the calorie fields).
+                        !status.carbsEnabled -> "---"
                         // Never had a usable sensor this session → prompt to pair.
                         status.burnConfidence == CarbBurnEstimator.Confidence.NONE &&
                             status.cumBurnedG == 0 ->

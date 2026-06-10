@@ -280,10 +280,17 @@ class HydrationTracker(
      * mid-ride must take effect immediately.
      */
     fun updateConfig(config: KSafeConfig, isRecording: Boolean) {
-        val wasEnabled = this.config.hydrationTrackerEnabled
+        val old = this.config
+        val wasEnabled = old.hydrationTrackerEnabled
         this.config = config
         if (!wasEnabled && config.hydrationTrackerEnabled && isRecording) start(config)
         else if (wasEnabled && !config.hydrationTrackerEnabled) stop()
+        // See CarbsTracker.updateConfig — immediate re-publish on display-relevant enable
+        // flips, gated on a prior publish so pre-ride fields keep their '---' state.
+        if (_statusFlow.value != null && (
+                old.isActive != config.isActive ||
+                old.hydrationTrackerEnabled != config.hydrationTrackerEnabled)
+        ) publishStatus()
     }
 
     // ─── Dynamic-estimate input updaters ────────────────────────────────────
@@ -454,6 +461,8 @@ class HydrationTracker(
                 (System.currentTimeMillis() - lastSpeedChangeMs) > SPEED_STALE_MS
             !stale && speed >= MOVING_GATE_KMH
         },
+        masterEnabled = config.isActive,
+        hydrationEnabled = config.hydrationTrackerEnabled,
     )
 
     fun getSummary(): HydrationSummary = HydrationSummary(
@@ -708,6 +717,11 @@ data class HydrationStatus(
      *  the tracker is running. Lets a future hydration-rate field stay coherent
      *  with the burn-rate field on the carbs side. */
     val isIntegrating: Boolean = false,
+    /** See [CarbStatus.masterEnabled] — false when the extension master switch is OFF;
+     *  the hydration field renders the disabled "OFF" state instead of a stale snapshot. */
+    val masterEnabled: Boolean = true,
+    /** See [CarbStatus.carbsEnabled] — false when the hydration feature toggle is off. */
+    val hydrationEnabled: Boolean = true,
 )
 
 /** Totals captured at end-of-ride for the post-ride summary InRideAlert. */
