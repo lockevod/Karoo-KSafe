@@ -6,8 +6,10 @@ import com.enderthor.kSafe.R
 import com.enderthor.kSafe.extension.KSafeExtension
 import com.enderthor.kSafe.extension.util.CalorieSource
 import io.hammerhead.karooext.extension.DataTypeImpl
+import io.hammerhead.karooext.internal.Emitter
 import io.hammerhead.karooext.internal.ViewEmitter
 import io.hammerhead.karooext.models.ShowCustomStreamState
+import io.hammerhead.karooext.models.StreamState
 import io.hammerhead.karooext.models.UpdateGraphicConfig
 import io.hammerhead.karooext.models.ViewConfig
 import kotlinx.coroutines.CancellationException
@@ -38,6 +40,18 @@ class CaloriesTotalDataType(
     // ViewConfig.textSize. See [buildReadoutView] for the shared rendering contract.
     private fun buildView(viewConfig: ViewConfig, main: String, hint: String): RemoteViews =
         context.buildReadoutView(viewConfig, main, hint, R.drawable.ic_readout_calories)
+
+    // Published as a numeric stream (cumulative kcal) — see [startFuelingStream].
+    // The total keeps streaming through sensor dropouts: it is accrued value, not
+    // live data, so freezing at the last total is honest (mirrors the view).
+    override fun startStream(emitter: Emitter<StreamState>) =
+        startFuelingStream(emitter, KSafeExtension.carbsTrackerFlow, { it.statusFlow }) { s ->
+            when {
+                !s.masterEnabled || !s.caloriesEnabled -> StreamState.NotAvailable
+                s.calorieSource == CalorieSource.NONE && s.kcalTotal == 0 -> StreamState.Searching
+                else -> streamingSingle(s.kcalTotal)
+            }
+        }
 
     override fun startView(context: Context, config: ViewConfig, emitter: ViewEmitter) {
         val scopeJob = Job()

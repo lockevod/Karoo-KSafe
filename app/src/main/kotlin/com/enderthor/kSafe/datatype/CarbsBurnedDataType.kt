@@ -5,8 +5,10 @@ import android.widget.RemoteViews
 import com.enderthor.kSafe.R
 import com.enderthor.kSafe.extension.KSafeExtension
 import io.hammerhead.karooext.extension.DataTypeImpl
+import io.hammerhead.karooext.internal.Emitter
 import io.hammerhead.karooext.internal.ViewEmitter
 import io.hammerhead.karooext.models.ShowCustomStreamState
+import io.hammerhead.karooext.models.StreamState
 import io.hammerhead.karooext.models.UpdateGraphicConfig
 import io.hammerhead.karooext.models.ViewConfig
 import kotlinx.coroutines.CancellationException
@@ -40,6 +42,19 @@ class CarbsBurnedDataType(
     // ViewConfig.textSize. See [buildReadoutView] for the shared rendering contract.
     private fun buildView(viewConfig: ViewConfig, main: String, hint: String): RemoteViews =
         context.buildReadoutView(viewConfig, main, hint, R.drawable.ic_readout_carbs)
+
+    // Published as a numeric stream (cumulative g burned) — see [startFuelingStream].
+    // Accrued value: keeps streaming through sensor dropouts (the total freezes,
+    // which is honest), Searching only while nothing has ever been measured.
+    override fun startStream(emitter: Emitter<StreamState>) =
+        startFuelingStream(emitter, KSafeExtension.carbsTrackerFlow, { it.statusFlow }) { s ->
+            when {
+                !s.masterEnabled || !s.carbsEnabled -> StreamState.NotAvailable
+                s.burnConfidence == com.enderthor.kSafe.extension.util.CarbBurnEstimator.Confidence.NONE &&
+                    s.cumBurnedG == 0 -> StreamState.Searching
+                else -> streamingSingle(s.cumBurnedG)
+            }
+        }
 
     override fun startView(context: Context, config: ViewConfig, emitter: ViewEmitter) {
         val scopeJob = Job()

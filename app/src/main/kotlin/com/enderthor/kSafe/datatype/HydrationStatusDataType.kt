@@ -9,8 +9,10 @@ import com.enderthor.kSafe.extension.managers.HydrationStatus
 import com.enderthor.kSafe.extension.util.SweatConfidence
 import io.hammerhead.karooext.KarooSystemService
 import io.hammerhead.karooext.extension.DataTypeImpl
+import io.hammerhead.karooext.internal.Emitter
 import io.hammerhead.karooext.internal.ViewEmitter
 import io.hammerhead.karooext.models.ShowCustomStreamState
+import io.hammerhead.karooext.models.StreamState
 import io.hammerhead.karooext.models.UpdateGraphicConfig
 import io.hammerhead.karooext.models.ViewConfig
 import kotlinx.coroutines.CancellationException
@@ -91,6 +93,17 @@ class HydrationStatusDataType(
             )
         }
     }
+
+    // Published as a numeric stream (deficit in ml; negative = surplus, same sign
+    // convention as the view's −/+ rendering) — see [startFuelingStream]. The LOW
+    // confidence "~" marker is a view-only nuance; the stream carries the number.
+    override fun startStream(emitter: Emitter<StreamState>) =
+        startFuelingStream(emitter, KSafeExtension.hydrationTrackerFlow, { it.statusFlow }) { s ->
+            when {
+                !s.masterEnabled || !s.hydrationEnabled -> StreamState.NotAvailable
+                else -> streamingSingle(s.deficitMl)
+            }
+        }
 
     override fun startView(context: Context, config: ViewConfig, emitter: ViewEmitter) {
         // Synchronous seed frame BEFORE launching any coroutine. Without this, Karoo

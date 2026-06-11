@@ -6,8 +6,10 @@ import com.enderthor.kSafe.R
 import com.enderthor.kSafe.extension.KSafeExtension
 import com.enderthor.kSafe.extension.util.CalorieSource
 import io.hammerhead.karooext.extension.DataTypeImpl
+import io.hammerhead.karooext.internal.Emitter
 import io.hammerhead.karooext.internal.ViewEmitter
 import io.hammerhead.karooext.models.ShowCustomStreamState
+import io.hammerhead.karooext.models.StreamState
 import io.hammerhead.karooext.models.UpdateGraphicConfig
 import io.hammerhead.karooext.models.ViewConfig
 import kotlinx.coroutines.CancellationException
@@ -38,6 +40,19 @@ class CaloriesRateDataType(
     // ViewConfig.textSize. See [buildReadoutView] for the shared rendering contract.
     private fun buildView(viewConfig: ViewConfig, main: String, hint: String): RemoteViews =
         context.buildReadoutView(viewConfig, main, hint, R.drawable.ic_readout_calories)
+
+    // Published as a numeric stream so other extensions can consume the kcal/h value —
+    // see [startFuelingStream] for the shared semantics. 0 while the movement gate
+    // blocks integration: the rider is not accruing, and the frozen last rate would lie.
+    override fun startStream(emitter: Emitter<StreamState>) =
+        startFuelingStream(emitter, KSafeExtension.carbsTrackerFlow, { it.statusFlow }) { s ->
+            when {
+                !s.masterEnabled || !s.caloriesEnabled -> StreamState.NotAvailable
+                s.calorieSource == CalorieSource.NONE -> StreamState.Searching
+                !s.isIntegrating -> streamingSingle(0)
+                else -> streamingSingle(s.kcalPerHour)
+            }
+        }
 
     override fun startView(context: Context, config: ViewConfig, emitter: ViewEmitter) {
         val scopeJob = Job()

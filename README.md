@@ -118,6 +118,22 @@ The Safety Timer **pauses automatically** when the ride is paused.
 > [!NOTE]
 > **Calories (HR) is independent of the carb tracker** *(v2.1)*. Turn it on with **Fueling → "Calories (HR)"** even if you keep the carb deficit tracker off — the two share the rider physiology block (age / sex / weight) but track separately. The estimate falls back through power → Keytel (HR + age + sex + weight) → Swain (HR + max/resting HR) → %HRmax, so it produces a figure from HR alone when no power meter is paired. When enabled it is also written to the FIT file as the `ksafe_calories_kcal` developer field (see Settings → FIT export).
 
+#### For developers: fueling values are streamed
+
+All seven fueling status fields also publish their value as a **karoo-ext data stream**, so any other extension can consume them live (the same inter-extension composition pattern karoo-headwind uses for wind data). Subscribe with `streamDataFlow` / `OnStreamState` using these IDs:
+
+| Stream ID (`TYPE_EXT::…`) | Value (`Field.SINGLE`) |
+|---------------------------|------------------------|
+| `ksafe::carb-status` | Carb deficit in g (negative = surplus) |
+| `ksafe::carb-burn-rate` | Instantaneous carb burn in g/h (0 while integration is paused) |
+| `ksafe::carb-avg-burn-rate` | Session-average carb burn in g/h |
+| `ksafe::carbs-burned` | Cumulative carbs burned this ride in g |
+| `ksafe::calories-total` | Cumulative HR-based calories in kcal |
+| `ksafe::calories-rate` | Instantaneous energy expenditure in kcal/h (0 while paused) |
+| `ksafe::hyd-status` | Fluid deficit in ml (negative = surplus) |
+
+Stream states mirror the on-screen fields: `Searching` while the tracker is booting or no usable sensor is paired, `NotAvailable` when the extension master switch or the feature toggle is off, `Streaming` otherwise. Streams only run while at least one consumer subscribes, so they cost nothing when unused.
+
 **Fourteen of the 21 fields have a rider-pickable idle background** — SOS, Safety Timer, Custom Message 1–3, Webhook 1–2, Carb Log 1–3, Hydration Log 1–2, Combined Fuel Log 1–2 — picked from a palette in the corresponding tab. The first entry is **Karoo default (auto day/night)** — the new default for fresh installs — which makes the field render with no custom background and theme-aware text (black on white during the day, white on black at night) so it matches native Karoo fields. Below it sits a 20-hue painted palette for riders who want a coloured tap target. Reserved state colours (red error, orange countdown, amber warning, green success, grey OFF) can't be selected — they belong to the state machine. The remaining 7 fields have no picker: **Carb burn rate**, **Carb avg burn**, **Carbs burned**, **Calories (HR)** and **Calorie Rate (HR)** are always Karoo-theme (passive readouts that should look native); **Carb status** and **Hydration status** are always coloured by deficit level (blue ahead / green within margin / amber approaching threshold / red over). The five Karoo-theme readout fields also respect the **per-field horizontal alignment** (left / center / right) the rider sets in the Karoo profile editor; every other field is always centered because they're tap targets or coloured state indicators where alignment makes the field look off-balance next to its neighbours.
 
 ## Hardware buttons (SRAM AXS)
