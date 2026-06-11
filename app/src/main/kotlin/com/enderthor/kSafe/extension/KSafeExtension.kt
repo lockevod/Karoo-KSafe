@@ -46,6 +46,7 @@ import io.hammerhead.karooext.models.FitEffect
 import io.hammerhead.karooext.models.InRideAlert
 import io.hammerhead.karooext.models.RideState
 import io.hammerhead.karooext.models.StreamState
+import io.hammerhead.karooext.models.PlayBeepPattern
 import io.hammerhead.karooext.models.SystemNotification
 import io.hammerhead.karooext.models.WriteToRecordMesg
 import io.hammerhead.karooext.models.WriteToSessionMesg
@@ -122,6 +123,14 @@ private const val UPDATE_CHECK_RETRY_DELAY_MS: Long = 5 * 60_000L
 private const val UPDATE_NOTICE_MIN_DAYS: Long = 3L
 /** Auto-dismiss the update overlay after this long (rider may also tap Dismiss). */
 private const val UPDATE_NOTICE_AUTODISMISS_MS: Long = 20_000L
+/** Gentle two-tone chime played when the update overlay is shown. Goes through the SDK
+ *  [PlayBeepPattern] (NOT the HAL bypass), so it is subject to the Karoo's mute toggle —
+ *  a muted rider stays silent. This is an informational notice, never an emergency. */
+private val UPDATE_NOTICE_BEEP = PlayBeepPattern(listOf(
+    PlayBeepPattern.Tone(frequency = 880, durationMs = 150),
+    PlayBeepPattern.Tone(frequency = null, durationMs = 80),
+    PlayBeepPattern.Tone(frequency = 1320, durationMs = 220),
+))
 /** Hard cap on the manifest GET so a hung tethered link can't leave the check
  *  coroutine suspended until service teardown. */
 private const val UPDATE_CHECK_HTTP_TIMEOUT_MS: Long = 15_000L
@@ -3064,9 +3073,14 @@ class KSafeExtension : KarooExtension("ksafe", BuildConfig.VERSION_NAME), Corout
             // Epoch-day (UTC), avoid java.time (API 26) on minSdk 23.
             val today = System.currentTimeMillis() / 86_400_000L
             val daysSinceLast = today - configManager.getUpdateNoticeEpochDay()
-            if (daysSinceLast < UPDATE_NOTICE_MIN_DAYS) {
+            // DEBUG builds bypass the inter-notice throttle so the update flow can be
+            // tested on demand (every boot). Release keeps the 3-day spacing.
+            if (!BuildConfig.DEBUG && daysSinceLast < UPDATE_NOTICE_MIN_DAYS) {
                 Timber.d("Update check: skipped — shown ${daysSinceLast}d ago (min=${UPDATE_NOTICE_MIN_DAYS}d)")
                 return@launch
+            }
+            if (BuildConfig.DEBUG && daysSinceLast < UPDATE_NOTICE_MIN_DAYS) {
+                Timber.d("Update check: throttle bypassed (DEBUG) — last shown ${daysSinceLast}d ago")
             }
 
             // ── Network retry loop — only this part retries ───────────────────
@@ -3141,6 +3155,10 @@ class KSafeExtension : KarooExtension("ksafe", BuildConfig.VERSION_NAME), Corout
             val updateMessage = getString(R.string.update_available_message, manifest.latestVersion)
 
             if (android.provider.Settings.canDrawOverlays(applicationContext)) {
+                // Mute-respecting chime so a glance-away rider notices the overlay. The
+                // SystemNotification fallback below already makes the Karoo's own
+                // notification sound, so only the overlay path needs an explicit beep.
+                karooSystem.dispatch(UPDATE_NOTICE_BEEP)
                 updateOverlay.showInfo(
                     title = updateTitle,
                     message = updateMessage,
