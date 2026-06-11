@@ -1193,7 +1193,15 @@ class KSafeExtension : KarooExtension("ksafe", BuildConfig.VERSION_NAME), Corout
 
     private fun handleRideState(state: RideState) {
         currentRideState = state
-        rideActiveFlow.value = state is RideState.Recording || state is RideState.Paused
+        val rideActive = state is RideState.Recording || state is RideState.Paused
+        // Flip to false BEFORE the teardown below (stream consumers must stop seeing
+        // Streaming as early as possible at ride end) but to true only AFTER the
+        // branches ran: the trackers' start()/resume() publish their reset status
+        // synchronously inside the Recording branch, while the fueling stream
+        // collectors run on Dispatchers.Default in parallel — an early true let them
+        // emit one frame of LAST ride's retained totals (statusFlow keeps them for
+        // the post-ride summary) as live Streaming data at the start of the next ride.
+        if (!rideActive) rideActiveFlow.value = false
         Timber.d("Ride state: $state")
         when (state) {
             is RideState.Recording -> {
@@ -1370,6 +1378,9 @@ class KSafeExtension : KarooExtension("ksafe", BuildConfig.VERSION_NAME), Corout
                 }
             }
         }
+        // See the note at the top of this function: true only after the Recording
+        // branch has started/reset the trackers (their status publish is synchronous).
+        if (rideActive) rideActiveFlow.value = true
     }
 
     /**

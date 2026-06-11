@@ -31,7 +31,13 @@ import timber.log.Timber
  *  - no active ride (Karoo idle / post-ride)  → [StreamState.Idle] — the trackers
  *    retain their accumulators after ride end (post-ride summary, cross-toggle
  *    restore), but a consumer must NOT receive last ride's totals as live data
- *  - tracker not published yet / status null  → [StreamState.Searching] (view: `---`)
+ *  - extension still booting (no tracker yet) → [StreamState.Searching]
+ *  - ride active but status never published   → [StreamState.NotAvailable]: the
+ *    rideActiveFlow flips true only AFTER the Recording branch started the trackers
+ *    (whose first status publish is synchronous), so a still-null status during an
+ *    active ride means the tracker never started — master switch or every fueling
+ *    feature off. (Transient corner: a service rebind landing mid-autopause reports
+ *    NotAvailable until the rider resumes, because trackers start on Recording.)
  *  - master switch / feature toggle off       → [StreamState.NotAvailable] (view: OFF / `---`)
  *  - no usable sensor for the estimate        → [StreamState.Searching] (view: `Pair HR/Pwr`)
  *  - otherwise                                → [StreamState.Streaming] with the field's value
@@ -60,7 +66,9 @@ internal fun <T : Any, S : Any> DataTypeImpl.startFuelingStream(
             combine(statusFlowOf(tracker), KSafeExtension.rideActiveFlow) { status, rideActive ->
                 when {
                     !rideActive -> StreamState.Idle
-                    status == null -> StreamState.Searching
+                    // Ride active + never-published status = the tracker didn't start
+                    // (master / all fueling features off) — see the KDoc above.
+                    status == null -> StreamState.NotAvailable
                     else -> mapState(status)
                 }
             }.collectLatest { emitter.onNext(it) }
