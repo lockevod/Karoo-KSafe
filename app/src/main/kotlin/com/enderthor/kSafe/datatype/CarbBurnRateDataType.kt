@@ -89,6 +89,8 @@ class CarbBurnRateDataType(
                     // will be 0 until the sensor reconnects, or the rate from
                     // whichever tier can still run).
                     val main = when {
+                        // Profile-editor gallery: neutral waiting frame, never live/OFF/stale data.
+                        config.preview -> "---"
                         status == null -> "---"
                         // Master switch OFF → explicit disabled state. Without this the
                         // last snapshot's branches below win (often "Pair HR/Pwr"), which

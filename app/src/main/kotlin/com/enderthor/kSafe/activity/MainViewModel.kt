@@ -200,10 +200,15 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             } ?: KSafeConfig()
 
             val senderConfigs = if ("senderConfigs" in root) {
-                // Legacy format: flat List<SenderConfig>
+                // Legacy format: flat List<SenderConfig>. `ifEmpty` matters: an explicit
+                // `"senderConfigs": []` decodes to emptyList (the ?: only covers
+                // null/missing), and persisting a literal [] is the ONLY way the stored
+                // sender list can become genuinely empty — which ProviderScreen's
+                // cold-load guard then reads as "not loaded yet" and silently skips
+                // every credential save thereafter.
                 root["senderConfigs"]?.let {
                     jsonWithUnknownKeys.decodeFromJsonElement<List<SenderConfig>>(it)
-                } ?: defaultSenderConfigs
+                }?.ifEmpty { defaultSenderConfigs } ?: defaultSenderConfigs
             } else {
                 // New per-provider format
                 jsonWithUnknownKeys.decodeFromJsonElement<KSafeBackupExport>(root)

@@ -68,6 +68,8 @@ class HydrationStatusDataType(
     /** Single render rule shared by the synchronous seed and the collect loop — see
      *  CarbStatusDataType.statusView for the waiting/disabled/live semantics. */
     private fun statusView(config: ViewConfig, status: HydrationStatus?): RemoteViews = when {
+        // Profile-editor gallery — neutral waiting frame; see CarbStatusDataType.
+        config.preview -> buildView(config, COLOR_OK, "---", "hyd")
         status == null -> buildView(config, COLOR_OK, "---", "hyd")
         !status.masterEnabled || !status.hydrationEnabled ->
             buildView(config, COLOR_DISABLED, context.getString(R.string.fueling_field_off), "hyd")

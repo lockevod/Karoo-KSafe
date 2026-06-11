@@ -84,11 +84,12 @@ internal fun Context.buildReadoutView(
     // A word-y state (e.g. "Pair HR/Pwr") carries a space; numbers and "---" do not.
     // Shrink only the word-y states so they fit the width; numbers get the full size.
     val hostSize = viewConfig.textSize.coerceAtLeast(1)
-    // Only the word-y placeholder ("Pair HR/Pwr") needs to shrink to fit the width.
-    // Detect it by an ASCII letter — NOT by a space, because a real value like the
-    // avg-burn "ø 76" carries a space (and "ø" itself is a Unicode letter), and both
-    // must render at the full host size.
-    val wordy = value.any { it in 'a'..'z' || it in 'A'..'Z' }
+    // Only the LONG word-y placeholder ("Pair HR/Pwr") needs to shrink to fit the
+    // width. Detect it by an ASCII letter — NOT by a space, because a real value like
+    // the avg-burn "ø 76" carries a space (and "ø" itself is a Unicode letter) — AND
+    // by length: short word states like "OFF" fit at full size, and shrinking them to
+    // 42 % next to full-size '---' siblings looked broken.
+    val wordy = value.length > 4 && value.any { it in 'a'..'z' || it in 'A'..'Z' }
     val valueSizeSp = if (wordy) hostSize * 0.42f else hostSize.toFloat()
     return RemoteViews(packageName, R.layout.field_view_readout).apply {
         if (iconRes != 0) {

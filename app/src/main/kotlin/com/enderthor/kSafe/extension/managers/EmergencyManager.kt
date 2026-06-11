@@ -600,12 +600,13 @@ class EmergencyManager(
      */
     fun stopAll(preserveAlertJob: Boolean = false) {
         countdownJob?.cancel()
+        val preservedJobAlive = preserveAlertJob && alertJob?.isActive == true
         if (!preserveAlertJob) {
             // Capture-and-null before cancel — see cancelEmergency for rationale.
             val previousAlertJob = alertJob
             alertJob = null
             previousAlertJob?.cancel()
-        } else if (alertJob?.isActive == true) {
+        } else if (preservedJobAlive) {
             Timber.w("stopAll(preserveAlertJob): outbound alert retry still running — left alive")
         }
         checkinJob?.cancel()
@@ -613,7 +614,15 @@ class EmergencyManager(
         checkinStartTimeMs = 0L
         checkinPausedAtMs = 0L
         currentStatus = EmergencyStatus.IDLE
-        currentReason = null
+        // G3 invariant: while an alertJob is alive, currentReason must keep identifying it —
+        // a later cancelEmergency of the preserved post-ride retry reads it to emit the
+        // CRASH_CANCELLED/INCIDENT_CANCELLED calibration row and to clear the crash cooldown
+        // (crashMonitorOutsideRide keeps detection running post-ride). Nulling it here sent
+        // that cancel down the `when (null) -> Unit` branch. The reason is cleared when the
+        // job completes (its finally) or when the next emergency arms.
+        if (!preservedJobAlive) {
+            currentReason = null
+        }
         countdownStartedAt = 0L
         sosOverlay.removeOverlay()
         // Clear any lingering "SOS delivery failed" info overlay on full teardown / ride end
@@ -629,6 +638,26 @@ class EmergencyManager(
             catch (e: CancellationException) { throw e }
             catch (e: Exception) { Timber.e(e, "Failed to persist IDLE emergency state") }
         }
+    }
+
+    /**
+     * Detaches a still-running PRESERVED alert retry (left alive by the ride-end
+     * `stopAll(preserveAlertJob = true)`) from the tap heuristics before a NEW ride
+     * starts. Without this, the first SOS/Timer tap of the next ride landed in the
+     * `alertJobActive()` branch and silently ABORTED the previous ride's undelivered
+     * SOS instead of arming a new emergency — recreating the silent non-send in a
+     * worse place. The job itself keeps running to completion (delivering the old SOS
+     * stays the priority), but it no longer owns [alertJob]: its finally identity
+     * guard goes false, so its completion/failure UI is suppressed via the superseded
+     * path while the H7 calibration row is still written unconditionally.
+     */
+    fun detachAlertJob() {
+        if (alertJob?.isActive != true) return
+        Timber.w("Detaching preserved alert retry — new ride starting; old SOS keeps retrying headless")
+        alertJob = null
+        // The detached job is no longer cancellable through the tap/bonus paths, so the
+        // G3 keep-the-reason contract no longer applies — the new ride starts clean.
+        currentReason = null
     }
 
     /**
@@ -1055,25 +1084,6 @@ class EmergencyManager(
         sosOverlay.removeOverlay()
         val alertingState = EmergencyState(status = EmergencyStatus.ALERTING, reason = reason.label)
         _uiState.value = alertingState
-        // H1 — see startCountdown for rationale: disk-full IOException from
-        // saveEmergencyState must NOT abort the entire sendAlerts coroutine before
-        // the alertJob is launched. The persisted state is recovery metadata; the
-        // outbound alert is the safety-critical work and must always be attempted.
-        try {
-            configManager.saveEmergencyState(alertingState)
-        } catch (e: CancellationException) {
-            // CRITICAL: a rider Cancel landing while we're suspended in this persist must
-            // propagate. The generic catch below used to swallow it and execution carried
-            // on to `scope.launch { sender.sendAlert(...) }` — a child of the SERVICE scope,
-            // not the cancelled countdownJob — so a cancelled SOS could still retry for
-            // ~30 min and reach contacts while the rider's UI showed everything cancelled.
-            throw e
-        } catch (e: Exception) {
-            Timber.e(e, "Failed to persist ALERTING state; continuing with in-memory state only")
-        }
-
-        val message = buildMessage(config, reason)
-
         Timber.d("Sending emergency alert via ${config.activeProvider}")
 
         // Capture the local Job reference for identity-guarded cleanup in finally.
@@ -1085,6 +1095,26 @@ class EmergencyManager(
         lateinit var myJob: kotlinx.coroutines.Job
         myJob = scope.launch {
             try {
+                // The ALERTING persist and the message build run INSIDE the alert job:
+                // both suspend (DataStore write; buildMessage waits up to ~5 s for a
+                // fresh GPS fix) and sendAlerts itself runs inside countdownJob — so a
+                // ride-end stopAll(preserveAlertJob = true) or any countdownJob cancel
+                // landing in that window used to kill the alert BEFORE alertJob existed:
+                // nothing was preserved and no failure feedback ever fired. Inside myJob
+                // (registered synchronously below, before this body first suspends) the
+                // prep is covered by the same cancel/preserve semantics as the send.
+                //
+                // H1 — disk-full IOException from the persist must not abort the alert
+                // (recovery metadata only); a rider Cancel (CancellationException) must
+                // propagate so a cancelled SOS can never carry on to the send.
+                try {
+                    configManager.saveEmergencyState(alertingState)
+                } catch (e: kotlinx.coroutines.CancellationException) {
+                    throw e
+                } catch (e: Exception) {
+                    Timber.e(e, "Failed to persist ALERTING state; continuing with in-memory state only")
+                }
+                val message = buildMessage(config, reason)
                 val outcome = sender.sendAlert(message, config.activeProvider)
                 if (!outcome.anyOk) {
                     // H7 — ALWAYS log the delivery failure to the calibration trail.
@@ -1176,6 +1206,12 @@ class EmergencyManager(
                         } catch (e: Exception) {
                             Timber.e(e, "Failed to persist IDLE after alert job finished; in-memory state already cleared")
                         }
+                    } else if (currentStatus == EmergencyStatus.IDLE) {
+                        // The timed rollback (or a preserving stopAll) already moved us to
+                        // IDLE but deliberately kept currentReason for the G3 cancel path.
+                        // The job is now actually done — nothing left to cancel — so the
+                        // reason can finally be cleared.
+                        currentReason = null
                     }
                     alertJob = null
                 }

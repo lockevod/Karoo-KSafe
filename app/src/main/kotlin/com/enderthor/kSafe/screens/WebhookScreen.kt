@@ -48,6 +48,16 @@ import kotlinx.coroutines.launch
 internal fun String.toGeoDoubleOrNull(): Double? =
     trim().replace(',', '.').toDoubleOrNull()?.takeIf { it.isFinite() }
 
+/**
+ * Save-time coordinate resolution. Blank = the rider cleared the field → 0.0 (unset,
+ * the storage convention). Unparseable NON-blank = a typo / edit in progress (isError
+ * is showing) → KEEP the previously stored coordinate: persisting 0.0 here destroyed a
+ * valid geo-fence target mid-edit, and the `remember(config.…)` re-seed then wiped the
+ * rider's typed text in place.
+ */
+internal fun String.geoOrStored(stored: Double): Double =
+    if (isBlank()) 0.0 else toGeoDoubleOrNull() ?: stored
+
 @Composable
 fun ActionsScreen(vm: MainViewModel) {
     val config by vm.config.collectAsState()
@@ -147,8 +157,8 @@ fun ActionsScreen(vm: MainViewModel) {
                 webhook1Headers  = webhook1Headers,
                 webhook1Body     = webhook1Body,
                 webhook1GeoEnabled  = webhook1GeoEnabled,
-                webhook1GeoLat      = webhook1GeoLat.toGeoDoubleOrNull() ?: 0.0,
-                webhook1GeoLon      = webhook1GeoLon.toGeoDoubleOrNull() ?: 0.0,
+                webhook1GeoLat      = webhook1GeoLat.geoOrStored(current.webhook1GeoLat),
+                webhook1GeoLon      = webhook1GeoLon.geoOrStored(current.webhook1GeoLon),
                 webhook1GeoRadiusM  = webhook1GeoRadius.toIntOrNull()?.coerceAtLeast(1) ?: 50,
                 webhook1AlertEnabled = webhook1AlertEnabled,
                 webhook1AlertText    = webhook1AlertText,
@@ -159,8 +169,8 @@ fun ActionsScreen(vm: MainViewModel) {
                 webhook2Headers  = webhook2Headers,
                 webhook2Body     = webhook2Body,
                 webhook2GeoEnabled  = webhook2GeoEnabled,
-                webhook2GeoLat      = webhook2GeoLat.toGeoDoubleOrNull() ?: 0.0,
-                webhook2GeoLon      = webhook2GeoLon.toGeoDoubleOrNull() ?: 0.0,
+                webhook2GeoLat      = webhook2GeoLat.geoOrStored(current.webhook2GeoLat),
+                webhook2GeoLon      = webhook2GeoLon.geoOrStored(current.webhook2GeoLon),
                 webhook2GeoRadiusM  = webhook2GeoRadius.toIntOrNull()?.coerceAtLeast(1) ?: 50,
                 webhook2AlertEnabled = webhook2AlertEnabled,
                 webhook2AlertText    = webhook2AlertText,

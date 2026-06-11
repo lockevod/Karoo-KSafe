@@ -131,6 +131,15 @@ class SOSDataType(
 
         val viewJob = scope.launch {
             try {
+                // Last updateView CALL time — the coalescing guard below is anchored to
+                // this, NOT to attach time: a guarded frame held to t=250 ms would
+                // otherwise open a NEW ~170 ms window of its own, and a colour emission
+                // landing right after it (cold DataStore, 250-420 ms) was dropped with
+                // renderedColor already advanced — configured colour lost for the ride.
+                // Anchoring to the last render guarantees every emitted frame is ≥250 ms
+                // after the previous one, so no frame we emit can ever be coalesced away.
+                // Seeded with the synchronous seed frame's timestamp.
+                var lastRenderMs = startViewAtMs
                 // Track config-driven idle colour in its own StateFlow so the IDLE branch
                 // can suspend on `merge(uiState, colorFlow)` instead of polling every 5 s.
                 // Previous code did `withTimeoutOrNull(5_000L) { uiState.first { ≠ IDLE } }`
@@ -152,14 +161,15 @@ class SOSDataType(
                             // was dropped — and with renderedColor already advanced, the
                             // merge below never re-emitted while IDLE: the field kept the
                             // default green for the rest of the ride. Holding any IDLE
-                            // render until the window has passed guarantees it sticks.
-                            // No steady-state cost — the delay only runs in the first
-                            // 250 ms after attach.
-                            val sinceAttach = System.currentTimeMillis() - startViewAtMs
-                            if (sinceAttach < COALESCE_GUARD_MS) {
-                                kotlinx.coroutines.delay(COALESCE_GUARD_MS - sinceAttach)
+                            // render until ≥250 ms after the PREVIOUS render guarantees it
+                            // sticks (and colorFlow is read AFTER the hold, so the frame
+                            // carries the freshest colour). Zero steady-state cost.
+                            val sinceLast = System.currentTimeMillis() - lastRenderMs
+                            if (sinceLast < COALESCE_GUARD_MS) {
+                                kotlinx.coroutines.delay(COALESCE_GUARD_MS - sinceLast)
                             }
                             val renderedColor = colorFlow.value
+                            lastRenderMs = System.currentTimeMillis()
                             emitter.updateView(buildView(
                                 context, config, renderedColor,
                                 context.getString(R.string.sos_safe),
@@ -181,6 +191,11 @@ class SOSDataType(
                         }
                         EmergencyStatus.COUNTDOWN -> {
                             val secs = state.countdownRemaining()
+                            // No guard here (a countdown must paint immediately; the 1 Hz
+                            // tick self-heals a coalesced frame within a second) but the
+                            // anchor IS updated so the next IDLE render can't land inside
+                            // this frame's window.
+                            lastRenderMs = System.currentTimeMillis()
                             emitter.updateView(buildView(
                                 context, config, COLOR_COUNTDOWN,
                                 context.getString(R.string.sos_countdown, secs),
@@ -189,6 +204,7 @@ class SOSDataType(
                             kotlinx.coroutines.delay(1_000L)
                         }
                         EmergencyStatus.ALERTING -> {
+                            lastRenderMs = System.currentTimeMillis()
                             emitter.updateView(buildView(
                                 context, config, COLOR_ALERTING,
                                 context.getString(R.string.sos_alerting),

@@ -617,6 +617,16 @@ class KSafeExtension : KarooExtension("ksafe", BuildConfig.VERSION_NAME), Corout
                         val effIdle = effectiveCrashConfig(config)
                         applyIdleMonitoring(effIdle)
                         crashEffectiveRunning = crashShouldBeRunningNow(effIdle)
+                        // Master OFF while Idle must also abort a PRESERVED post-ride alert
+                        // retry. The ride-end stopAll(preserveAlertJob = true) deliberately
+                        // leaves the retry running; if the rider then flips the master
+                        // switch OFF as their way of standing down, only the Recording/
+                        // Paused transitions used to honour the "disable all safety alerts
+                        // ⇒ abort the outbound alert" contract — on Idle the invisible
+                        // retry kept going and could reach contacts ~30 min later.
+                        if (prevActive && !config.isActive) {
+                            emergencyManager.stopAll()
+                        }
                     }
                     is RideState.Recording -> applyMasterSwitchTransition(prevActive)
                     is RideState.Paused -> applyMasterSwitchTransitionPaused(prevActive)
@@ -1197,23 +1207,30 @@ class KSafeExtension : KarooExtension("ksafe", BuildConfig.VERSION_NAME), Corout
                     } else {
                         wellnessMonitor.start(activeConfig)
                         // Consume the pending fueling restore (if any) on the FIRST Recording
-                        // event after extension boot. `null` falls through to the fresh-start
-                        // path inside each tracker. We zero out the field after this branch
+                        // event after extension boot. We zero out the field after this branch
                         // so a future Recording (new ride) does NOT re-apply the same totals.
-                        // Age is RE-CHECKED here, not just at boot: the boot-time check passes
-                        // for a snapshot a few minutes old, but if this Recording arrives hours
-                        // later (device sat idle after boot), the snapshot belongs to a ride
-                        // long over — seeding it would fire a bogus "you're behind" alert
-                        // minutes into the fresh ride.
-                        val restore = pendingFuelingRestore?.takeIf {
-                            val age = System.currentTimeMillis() - it.savedAtMs
-                            (age in 0..com.enderthor.kSafe.data.FUELING_RESTORE_MAX_AGE_MS).also { fresh ->
-                                if (!fresh) Timber.i("Pending fueling restore expired at consume time (age=${age / 1000}s) — starting fresh")
-                            }
-                        }
+                        // NO age re-check here: the boot-time filter plus the Idle-branch
+                        // nulling cover every stale path (a "Recording hours after boot"
+                        // necessarily saw an Idle emission, which dropped the restore). A
+                        // consume-time re-check could only ever discard LEGITIMATE same-ride
+                        // restores — e.g. the extension rebooting during a >30 min lunch
+                        // pause, where savedAtMs froze at the last Recording tick.
+                        val restore = pendingFuelingRestore
                         pendingFuelingRestore = null
-                        carbsTracker.start(activeConfig, restore?.carb)
-                        hydrationTracker.start(activeConfig, restore?.hyd)
+                        if (restore != null) {
+                            carbsTracker.start(activeConfig, restore.carb)
+                            hydrationTracker.start(activeConfig, restore.hyd)
+                        } else {
+                            // resume(), not start(): falls back to a fresh start() when no
+                            // live session exists (sessionEnded), and PRESERVES a session
+                            // created mid-ride by a master-switch ON flip — which this
+                            // branch otherwise misclassifies as a fresh ride at the first
+                            // unpause (isResumeFromPause keys off rideStartNotificationSent,
+                            // which stays false while the master was OFF at ride start) and
+                            // start() would wipe the totals the flip just accumulated.
+                            carbsTracker.resume(activeConfig)
+                            hydrationTracker.resume(activeConfig)
+                        }
                     }
                     // Same first-start vs resume distinction as the trackers above:
                     // on a Paused→Recording resume the check-in must continue with its
@@ -1229,6 +1246,11 @@ class KSafeExtension : KarooExtension("ksafe", BuildConfig.VERSION_NAME), Corout
                         // Clear any sticky SOS delivery-failure/partial overlay left from a
                         // previous ride so it can't bleed into this one.
                         emergencyManager.clearDeliveryNotice()
+                        // Detach a preserved post-ride alert retry from the tap heuristics:
+                        // without this, the first SOS/Timer tap of THIS ride would silently
+                        // abort the previous ride's still-retrying SOS instead of acting.
+                        // The old retry keeps running headless to completion.
+                        emergencyManager.detachAlertJob()
                         sendRideStartNotification()
                         // Safety net: if the selected provider's credentials are incomplete,
                         // every emergency would silently fast-fail (NO_CREDENTIALS) — warn the
@@ -2760,7 +2782,11 @@ class KSafeExtension : KarooExtension("ksafe", BuildConfig.VERSION_NAME), Corout
         // service. At the per-record cadence below that would otherwise run ~1×/s on the Main
         // thread for the whole ride (where crash detection + the countdown also live). The
         // collector only reads volatile StateFlow snapshots and emits, so IO is safe.
-        var fitWriterStarted = false
+        // AtomicBoolean (not a plain captured var): written on the IO worker, read in the
+        // cancellable on an arbitrary host thread — a plain var has no happens-before edge
+        // and could log an orphan/missing FIT_WRITER_STOP row. Set AFTER the START log so
+        // a cancel landing between the two can't produce a STOP-without-START either.
+        val fitWriterStarted = java.util.concurrent.atomic.AtomicBoolean(false)
         val job: Job = launch(Dispatchers.IO) {
             // Bounded config-seed wait — same contract as the ride-state collector's gate:
             // never make things worse than not waiting (5 s cap, then proceed with
@@ -2770,13 +2796,13 @@ class KSafeExtension : KarooExtension("ksafe", BuildConfig.VERSION_NAME), Corout
             }
             if (!activeConfig.fuelingFitExportEnabled) return@launch
             val writeCalories = activeConfig.hrCaloriesEnabled
-            fitWriterStarted = true
 
             calibLogger.log(CalibrationLogger.Event.FIT_WRITER_START) {
                 // Field-definition numbers are public-API once shipped; record them so the CSV
                 // can be cross-referenced with the developer-field schema in the resulting FIT.
                 "fields=0,1,2,3,4,5,6${if (writeCalories) ",8" else ""}"
             }
+            fitWriterStarted.set(true)
             // FIT developer-field writer.
             //
             // RECORD message: re-emitted on a fixed [FIT_RECORD_WRITE_INTERVAL_MS] cadence
@@ -2933,7 +2959,7 @@ class KSafeExtension : KarooExtension("ksafe", BuildConfig.VERSION_NAME), Corout
             // Only pair a STOP row with a real START — when the export was disabled the
             // coroutine returned before logging START, and an orphan STOP would confuse
             // CSV analysis.
-            if (fitWriterStarted) calibLogger.log(CalibrationLogger.Event.FIT_WRITER_STOP) { "" }
+            if (fitWriterStarted.get()) calibLogger.log(CalibrationLogger.Event.FIT_WRITER_STOP) { "" }
         }
     }
 

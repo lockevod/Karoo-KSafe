@@ -57,6 +57,8 @@ class CaloriesTotalDataType(
                 combine(tracker.statusFlow, KSafeExtension.nightModeFlow) { s, _ -> s }
                     .collectLatest { status ->
                     val main = when {
+                        // Profile-editor gallery: neutral waiting frame, never live/OFF/stale data.
+                        config.preview -> "---"
                         status == null -> "---"
                         // Master OFF → explicit disabled state — see CarbBurnRateDataType.
                         !status.masterEnabled -> context.getString(R.string.fueling_field_off)

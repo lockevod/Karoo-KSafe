@@ -72,6 +72,10 @@ class CarbStatusDataType(
     /** Single render rule shared by the synchronous seed and the collect loop so the
      *  two can never disagree on how a given status snapshot is displayed. */
     private fun statusView(config: ViewConfig, status: CarbStatus?): RemoteViews = when {
+        // Profile-editor gallery: always the neutral waiting frame. Without this gate
+        // the preview rendered whatever the live StateFlow held — last ride's deficit,
+        // or the grey OFF while the rider configures fields with the master switch off.
+        config.preview -> buildView(config, COLOR_OK, "---", "carbs")
         // Tracker not running yet (extension still booting, or no ride started).
         // '---' in the normal colour = waiting for data, NOT disabled.
         status == null -> buildView(config, COLOR_OK, "---", "carbs")
