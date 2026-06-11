@@ -1,5 +1,6 @@
 package com.enderthor.kSafe.datatype
 
+import com.enderthor.kSafe.extension.KSafeExtension
 import io.hammerhead.karooext.extension.DataTypeImpl
 import io.hammerhead.karooext.internal.Emitter
 import io.hammerhead.karooext.models.DataPoint
@@ -12,6 +13,7 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.collectLatest
+import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.filterNotNull
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
@@ -26,13 +28,17 @@ import timber.log.Timber
  * The host only starts the stream when something subscribes to it, so this costs
  * nothing while no consumer exists. Stream-state semantics mirror the view rules:
  *
+ *  - no active ride (Karoo idle / post-ride)  → [StreamState.Idle] — the trackers
+ *    retain their accumulators after ride end (post-ride summary, cross-toggle
+ *    restore), but a consumer must NOT receive last ride's totals as live data
  *  - tracker not published yet / status null  → [StreamState.Searching] (view: `---`)
  *  - master switch / feature toggle off       → [StreamState.NotAvailable] (view: OFF / `---`)
  *  - no usable sensor for the estimate        → [StreamState.Searching] (view: `Pair HR/Pwr`)
  *  - otherwise                                → [StreamState.Streaming] with the field's value
  *
  * Each DataType supplies only its status→state mapping; the boot suspension,
- * collect loop and cancellation are identical across the family and live here.
+ * ride-state gate, collect loop and cancellation are identical across the family
+ * and live here.
  */
 internal fun <T : Any, S : Any> DataTypeImpl.startFuelingStream(
     emitter: Emitter<StreamState>,
@@ -48,9 +54,16 @@ internal fun <T : Any, S : Any> DataTypeImpl.startFuelingStream(
             // (one suspension on the published reference — same pattern as the views).
             emitter.onNext(StreamState.Searching)
             val tracker = trackerFlow.filterNotNull().first()
-            statusFlowOf(tracker).collectLatest { status ->
-                emitter.onNext(status?.let(mapState) ?: StreamState.Searching)
-            }
+            // Combined (not read at collect time) so the stream flips to Idle on the
+            // ride-end transition itself — the tracker stops emitting after stop(),
+            // so a status-only collect would freeze on the last mid-ride snapshot.
+            combine(statusFlowOf(tracker), KSafeExtension.rideActiveFlow) { status, rideActive ->
+                when {
+                    !rideActive -> StreamState.Idle
+                    status == null -> StreamState.Searching
+                    else -> mapState(status)
+                }
+            }.collectLatest { emitter.onNext(it) }
         } catch (_: CancellationException) {
             // normal
         } catch (e: Exception) {

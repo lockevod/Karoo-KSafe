@@ -365,6 +365,15 @@ class KSafeExtension : KarooExtension("ksafe", BuildConfig.VERSION_NAME), Corout
         val hydrationTrackerFlow = kotlinx.coroutines.flow.MutableStateFlow<
             com.enderthor.kSafe.extension.managers.HydrationTracker?>(null)
 
+        /** True while a ride is active (Recording or Paused), republished by
+         *  [handleRideState]. The fueling `startStream` publishers combine this so
+         *  they flip to [io.hammerhead.karooext.models.StreamState.Idle] outside a
+         *  ride — the trackers retain their accumulators after ride end (for the
+         *  post-ride summary and cross-toggle restore), and without this gate a
+         *  consumer extension kept receiving last ride's totals as live Streaming
+         *  data while the Karoo sat idle. */
+        val rideActiveFlow = kotlinx.coroutines.flow.MutableStateFlow(false)
+
         /** Current Karoo night-mode (dark) state, republished by the service's
          *  [onConfigurationChanged]. The combine-based AUTO-colour data fields merge this so
          *  they re-render on a day↔night flip — they otherwise only re-emit on a state/config
@@ -1176,6 +1185,7 @@ class KSafeExtension : KarooExtension("ksafe", BuildConfig.VERSION_NAME), Corout
 
     private fun handleRideState(state: RideState) {
         currentRideState = state
+        rideActiveFlow.value = state is RideState.Recording || state is RideState.Paused
         Timber.d("Ride state: $state")
         when (state) {
             is RideState.Recording -> {
@@ -3119,6 +3129,7 @@ class KSafeExtension : KarooExtension("ksafe", BuildConfig.VERSION_NAME), Corout
         // the new extension instance to republish them.
         carbsTrackerFlow.value = null
         hydrationTrackerFlow.value = null
+        rideActiveFlow.value = false
         instance = null
         super.onDestroy()
     }
