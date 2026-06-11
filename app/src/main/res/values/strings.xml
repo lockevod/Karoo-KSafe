@@ -117,6 +117,12 @@
     <string name="fueling_combined_concentration_label">Carbs per 500 ml (g)</string>
     <string name="fueling_combined_hint">One tap logs a drink + its carbs. Set the carb concentration once; each button\'s carbs auto-fill from its volume (still editable). Active when carbs and/or hydration tracking is on.</string>
     <string name="fueling_fit_export_label">Write KSafe data to FIT (Intervals.icu / TrainingPeaks)</string>
+    <string name="settings_fit_std_cal_label">Calories as standard FIT field</string>
+    <string name="settings_fit_std_cal_off">Off</string>
+    <string name="settings_fit_std_cal_hr">KSafe (HR)</string>
+    <string name="settings_fit_std_cal_karoo">Karoo (pwr)</string>
+    <string name="settings_fit_std_cal_hint">Writes total calories into the FIT session as the standard field every platform imports (Suunto and others ignore developer fields). KSafe (HR) uses the KSafe estimate; Karoo (pwr) mirrors the Karoo\'s own power-based calories. Independent of the developer-field export above.</string>
+    <string name="settings_fit_std_cal_requires">Enable Calories in the Fueling tab to choose a source.</string>
 
     <!-- Readiness at ride start -->
     <string name="readiness_at_ride_start_label">Readiness advice at ride start</string>

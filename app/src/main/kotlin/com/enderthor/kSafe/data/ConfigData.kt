@@ -114,8 +114,12 @@ const val KAROO_LIVE_BASE_URL = "https://dashboard.hammerhead.io/live/"
  *  v20 → v21: combined fuel-log fields added (combinedCarbConcentrationPer500ml + the
  *             combined1/2 Label/Ml/Carbs/Color set) for the combined drink+carbs tap field.
  *             Pure version stamp; all fields have defaults, so existing installs are unaffected.
+ *  v23 → v24: fitStandardCaloriesSource added (default NONE) — write the ride's calories
+ *             into the FIT session message as the STANDARD total_calories field so
+ *             platforms that ignore developer fields (Suunto, …) import them.
+ *             Pure version stamp; absent in old blobs decodes to NONE (off).
  */
-const val CONFIG_VERSION = 23
+const val CONFIG_VERSION = 24
 
 /**
  * Canonical minSpeedForCrashKmh value per preset.
@@ -291,6 +295,13 @@ enum class CrashSensitivity {
  */
 @Serializable
 enum class IncidentResponseLevel { SILENT, WARNING, EMERGENCY }
+
+/** Source for the STANDARD FIT session `total_calories` field (field num 11). The Karoo
+ *  does not write this field itself, so platforms that ignore developer fields (Suunto, …)
+ *  import no calories at all. NONE = don't write (default); HR = KSafe's own estimate
+ *  ([KSafeConfig.hrCaloriesEnabled] must be on for it to produce a value); KAROO = the
+ *  Karoo's native power-based calories, mirrored from its CALORIES stream. */
+enum class FitCaloriesSource { NONE, HR, KAROO }
 
 @Serializable
 enum class EmergencyStatus { IDLE, COUNTDOWN, ALERTING }
@@ -618,6 +629,10 @@ data class KSafeConfig(
      *  Independent of [carbsTrackerEnabled]: when either is on, the fueling monitor runs.
      *  Opt-in, off by default — consistent with the carb / hydration siblings. */
     val hrCaloriesEnabled: Boolean = false,
+    /** Write the ride's calories into the FIT session message as the STANDARD
+     *  `total_calories` field — see [FitCaloriesSource]. Independent of
+     *  [fuelingFitExportEnabled], which only governs the ksafe_* developer fields. */
+    val fitStandardCaloriesSource: FitCaloriesSource = FitCaloriesSource.NONE,
     /**
      * Config schema version — used to detect stale saved configs and apply migrations.
      * Default 0 ensures that any pre-versioning config (JSON without this field) triggers migration.
@@ -1379,6 +1394,14 @@ fun KSafeConfig.migrateToLatest(): KSafeConfig {
         // installs keep the calorie feature off until the rider opts in. Nothing to rewrite.
         c = c.copy(configVersion = 23)
         Timber.i("KSafeConfig migrated v%d→v23 (HR-based calorie estimate)", originalVersion)
+    }
+
+    if (c.configVersion < 24) {
+        // v23 → v24: fitStandardCaloriesSource added (default NONE). Pure version stamp —
+        // additive field, absent in old blobs decodes to NONE so the standard FIT calories
+        // write stays off until the rider opts in. Nothing to rewrite.
+        c = c.copy(configVersion = 24)
+        Timber.i("KSafeConfig migrated v%d→v24 (standard FIT calories field)", originalVersion)
     }
 
     return c

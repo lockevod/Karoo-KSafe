@@ -116,7 +116,7 @@ The Safety Timer **pauses automatically** when the ride is paused.
 | **Hydration status** | Current fluid deficit (ml behind target). Same `---` waiting behaviour as Carb status |
 
 > [!NOTE]
-> **Calories (HR) is independent of the carb tracker** *(v2.1)*. Turn it on with **Fueling → "Calories (HR)"** even if you keep the carb deficit tracker off — the two share the rider physiology block (age / sex / weight) but track separately. The estimate falls back through power → Keytel (HR + age + sex + weight) → Swain (HR + max/resting HR) → %HRmax, so it produces a figure from HR alone when no power meter is paired. When enabled it is also written to the FIT file as the `ksafe_calories_kcal` developer field (see Settings → FIT export).
+> **Calories (HR) is independent of the carb tracker** *(v2.1)*. Turn it on with **Fueling → "Calories (HR)"** even if you keep the carb deficit tracker off — the two share the rider physiology block (age / sex / weight) but track separately. The estimate falls back through power → Keytel (HR + age + sex + weight) → Swain (HR + max/resting HR) → %HRmax, so it produces a figure from HR alone when no power meter is paired. When enabled it is also written to the FIT file as the `ksafe_calories_kcal` developer field (see Settings → FIT export). Additionally, **Settings → "Calories as standard FIT field"** *(v2.1.5)* can write the ride's total calories into the FIT session as the **standard** `total_calories` field — the one every platform imports (Suunto and others ignore developer fields, and the Karoo does not write this field itself). Source is selectable: the KSafe estimate (HR) or the Karoo's own power-based calories.
 
 #### For developers: fueling values are streamed
 

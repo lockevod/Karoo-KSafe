@@ -109,6 +109,12 @@
     <string name="fueling_combined_concentration_label">Carbos por 500 ml (g)</string>
     <string name="fueling_combined_hint">Un toque registra una bebida + sus carbohidratos. Fija la concentración una vez; los carbos de cada botón se autocompletan según su volumen (editable). Activo cuando el seguimiento de carbos y/o hidratación está ON.</string>
     <string name="fueling_fit_export_label">Escribir datos KSafe en FIT (Intervals.icu / TrainingPeaks)</string>
+    <string name="settings_fit_std_cal_label">Calorías como campo estándar del FIT</string>
+    <string name="settings_fit_std_cal_off">Off</string>
+    <string name="settings_fit_std_cal_hr">KSafe (FC)</string>
+    <string name="settings_fit_std_cal_karoo">Karoo (pot)</string>
+    <string name="settings_fit_std_cal_hint">Escribe las calorías totales en la sesión del FIT como campo estándar, el que importan todas las plataformas (Suunto y otras ignoran los developer fields). KSafe (FC) usa la estimación de KSafe; Karoo (pot) replica las calorías por potencia del propio Karoo. Independiente de la exportación de developer fields de arriba.</string>
+    <string name="settings_fit_std_cal_requires">Activa Calorías en la pestaña Fueling para elegir la fuente.</string>
 
     <!-- Consejo de forma al inicio -->
     <string name="readiness_at_ride_start_label">Consejo de forma al iniciar la ruta</string>

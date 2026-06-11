@@ -5,6 +5,7 @@ import com.enderthor.kSafe.R
 import com.enderthor.kSafe.data.EmergencyReason
 import com.enderthor.kSafe.data.EmergencyState
 import com.enderthor.kSafe.data.EmergencyStatus
+import com.enderthor.kSafe.data.FitCaloriesSource
 import com.enderthor.kSafe.extension.util.EmergencyResume
 import com.enderthor.kSafe.extension.util.decideResume
 import com.enderthor.kSafe.extension.util.formatUs
@@ -148,6 +149,13 @@ private const val CALIBRATION_PERIODIC_MAX_CHUNKS_PER_CYCLE: Int = 6
  *  most 5 g behind the true total (sub-2 % error on a typical 300 g ride) and
  *  the session-write rate drops ~5× vs writing on every gram increment. */
 private const val SESSION_BURN_DEADBAND_G: Double = 5.0
+
+/** STANDARD FIT field number of `total_calories` (uint16, kcal) in the SessionMesg —
+ *  FIT SDK `SessionMesg.TotalCaloriesFieldNum`. The Karoo's ride app does not write
+ *  this field, so platforms that ignore developer fields (Suunto, …) import no
+ *  calories at all; when [com.enderthor.kSafe.data.FitCaloriesSource] is not NONE,
+ *  KSafe writes it via a standard (non-developer) [FieldValue]. */
+private const val FIT_SESSION_TOTAL_CALORIES_FIELD_NUM = 11
 
 /** Minimum spacing between FIT RECORD-message writes (carry-forward cadence). The record
  *  dev-fields are re-emitted at this interval regardless of whether the value changed.
@@ -2804,15 +2812,38 @@ class KSafeExtension : KarooExtension("ksafe", BuildConfig.VERSION_NAME), Corout
             if (withTimeoutOrNull(CONFIG_SEED_TIMEOUT_MS) { configSeeded.await() } == null) {
                 Timber.w("startFit: configSeeded not ready after ${CONFIG_SEED_TIMEOUT_MS}ms — proceeding with current activeConfig")
             }
-            if (!activeConfig.fuelingFitExportEnabled) return@launch
-            val writeCalories = activeConfig.hrCaloriesEnabled
+            // Two independent opt-ins share this writer: the ksafe_* developer-field
+            // export, and the STANDARD session total_calories field (Suunto et al.
+            // ignore developer fields, so without it they import no calories at all).
+            val writeDevFields = activeConfig.fuelingFitExportEnabled
+            // Gated on the calorie feature: the Settings selector is only enabled while
+            // "Calories" is on in Fueling, and a leftover selection must not keep
+            // writing after the rider turns the feature off.
+            val stdCalSource = if (activeConfig.hrCaloriesEnabled) activeConfig.fitStandardCaloriesSource
+                               else FitCaloriesSource.NONE
+            if (!writeDevFields && stdCalSource == FitCaloriesSource.NONE) return@launch
+            val writeCalories = writeDevFields && activeConfig.hrCaloriesEnabled
 
             calibLogger.log(CalibrationLogger.Event.FIT_WRITER_START) {
                 // Field-definition numbers are public-API once shipped; record them so the CSV
                 // can be cross-referenced with the developer-field schema in the resulting FIT.
-                "fields=0,1,2,3,4,5,6${if (writeCalories) ",8" else ""}"
+                "fields=${if (writeDevFields) "0,1,2,3,4,5,6" else "-"}" +
+                    "${if (writeCalories) ",8" else ""},std_cal=${stdCalSource.name}"
             }
             fitWriterStarted.set(true)
+
+            // Mirror of the Karoo's native (power-based) cumulative calories, fed by a
+            // child collector only when that source is selected. MutableStateFlow (not a
+            // captured var) for the cross-thread visibility between the child collector
+            // and the ELAPSED_TIME collect below.
+            val karooKcalFlow = kotlinx.coroutines.flow.MutableStateFlow(0.0)
+            if (stdCalSource == FitCaloriesSource.KAROO) {
+                launch {
+                    karooSystem.streamDataFlow(DataType.Type.CALORIES)
+                        .mapNotNull { (it as? StreamState.Streaming)?.dataPoint?.singleValue }
+                        .collect { karooKcalFlow.value = it }
+                }
+            }
             // FIT developer-field writer.
             //
             // RECORD message: re-emitted on a fixed [FIT_RECORD_WRITE_INTERVAL_MS] cadence
@@ -2837,6 +2868,7 @@ class KSafeExtension : KarooExtension("ksafe", BuildConfig.VERSION_NAME), Corout
             var lastSesMaxDriftPct  = Double.NaN
             var lastSesFires        = Double.NaN
             var lastSesKcal         = Double.NaN
+            var lastSesStdKcal      = Double.NaN
 
             karooSystem.streamDataFlow(DataType.Type.ELAPSED_TIME)
                 .mapNotNull { (it as? StreamState.Streaming)?.dataPoint?.singleValue }
@@ -2881,7 +2913,7 @@ class KSafeExtension : KarooExtension("ksafe", BuildConfig.VERSION_NAME), Corout
                             // records carries the field and the curves draw as clean lines on
                             // zero-filling hosts, while bounding write cost (see header + constant).
                             val nowMs = System.currentTimeMillis()
-                            if (nowMs - lastRecordWriteMs >= FIT_RECORD_WRITE_INTERVAL_MS) {
+                            if (writeDevFields && nowMs - lastRecordWriteMs >= FIT_RECORD_WRITE_INTERVAL_MS) {
                                 val recordFields = mutableListOf(
                                     FieldValue(carbField,         carbsG),
                                     FieldValue(hydField,          hydMl),
@@ -2933,6 +2965,15 @@ class KSafeExtension : KarooExtension("ksafe", BuildConfig.VERSION_NAME), Corout
                             // next FIT-close. Worst case: the final cumBurnedG in the header is
                             // up to 5 g less than the true ride total — sub-2 % error on a
                             // typical 300 g ride.
+                            // STANDARD session total_calories source value. HR uses the same
+                            // running estimate as developer field 8; KAROO mirrors the native
+                            // power-based stream. 0.0 (no data yet) is never written — a
+                            // premature 0 in the header would read as "no calories burned".
+                            val stdKcal = when (stdCalSource) {
+                                FitCaloriesSource.NONE  -> 0.0
+                                FitCaloriesSource.HR    -> kcal
+                                FitCaloriesSource.KAROO -> karooKcalFlow.value
+                            }
                             val burnDelta = if (lastSesCarbsBurnedG.isNaN()) Double.POSITIVE_INFINITY
                                             else carbsBurnedG - lastSesCarbsBurnedG
                             val burnSignificant = burnDelta >= SESSION_BURN_DEADBAND_G
@@ -2941,23 +2982,33 @@ class KSafeExtension : KarooExtension("ksafe", BuildConfig.VERSION_NAME), Corout
                                 hydMl       != lastSesHydMl       ||
                                 maxDriftPct != lastSesMaxDriftPct ||
                                 fires       != lastSesFires       ||
-                                (writeCalories && kcal != lastSesKcal)
+                                (writeCalories && kcal != lastSesKcal) ||
+                                (stdCalSource != FitCaloriesSource.NONE && stdKcal != lastSesStdKcal)
                             if (burnSignificant || otherSesChanged) {
-                                val sessionFields = mutableListOf(
-                                    FieldValue(carbField,         carbsG),
-                                    FieldValue(hydField,          hydMl),
-                                    FieldValue(carbsBurnedField,  carbsBurnedG),
-                                    FieldValue(maxDriftField,     maxDriftPct),
-                                    FieldValue(firesField,        fires),
-                                )
-                                if (writeCalories) sessionFields.add(FieldValue(caloriesField, kcal))
-                                emitter.onNext(WriteToSessionMesg(sessionFields))
+                                val sessionFields = mutableListOf<FieldValue>()
+                                if (writeDevFields) {
+                                    sessionFields.add(FieldValue(carbField,        carbsG))
+                                    sessionFields.add(FieldValue(hydField,         hydMl))
+                                    sessionFields.add(FieldValue(carbsBurnedField, carbsBurnedG))
+                                    sessionFields.add(FieldValue(maxDriftField,    maxDriftPct))
+                                    sessionFields.add(FieldValue(firesField,       fires))
+                                    if (writeCalories) sessionFields.add(FieldValue(caloriesField, kcal))
+                                }
+                                if (stdCalSource != FitCaloriesSource.NONE && stdKcal > 0.0) {
+                                    sessionFields.add(
+                                        FieldValue(FIT_SESSION_TOTAL_CALORIES_FIELD_NUM, stdKcal),
+                                    )
+                                }
+                                if (sessionFields.isNotEmpty()) {
+                                    emitter.onNext(WriteToSessionMesg(sessionFields))
+                                }
                                 lastSesCarbsG       = carbsG
                                 lastSesHydMl        = hydMl
                                 lastSesCarbsBurnedG = carbsBurnedG
                                 lastSesMaxDriftPct  = maxDriftPct
                                 lastSesFires        = fires
                                 lastSesKcal         = kcal
+                                lastSesStdKcal      = stdKcal
                             }
                         }
                         else -> { /* Paused / Idle / null: don't emit */ }
