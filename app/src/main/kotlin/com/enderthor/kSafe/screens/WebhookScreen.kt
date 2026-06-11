@@ -39,6 +39,25 @@ import com.enderthor.kSafe.extension.util.safeTake
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
+/**
+ * Locale-tolerant coordinate parse. On comma-decimal locales (the es translation shipped)
+ * a KeyboardType.Decimal field emits "41,38"; plain `toDoubleOrNull()` rejected it, so the
+ * geo-fence target silently persisted as 0.0/0.0 (Null Island) and a geo-fenced webhook
+ * never fired. Comma is normalised to dot; NaN/Inf rejected.
+ */
+internal fun String.toGeoDoubleOrNull(): Double? =
+    trim().replace(',', '.').toDoubleOrNull()?.takeIf { it.isFinite() }
+
+/**
+ * Save-time coordinate resolution. Blank = the rider cleared the field → 0.0 (unset,
+ * the storage convention). Unparseable NON-blank = a typo / edit in progress (isError
+ * is showing) → KEEP the previously stored coordinate: persisting 0.0 here destroyed a
+ * valid geo-fence target mid-edit, and the `remember(config.…)` re-seed then wiped the
+ * rider's typed text in place.
+ */
+internal fun String.geoOrStored(stored: Double): Double =
+    if (isBlank()) 0.0 else toGeoDoubleOrNull() ?: stored
+
 @Composable
 fun ActionsScreen(vm: MainViewModel) {
     val config by vm.config.collectAsState()
@@ -138,8 +157,8 @@ fun ActionsScreen(vm: MainViewModel) {
                 webhook1Headers  = webhook1Headers,
                 webhook1Body     = webhook1Body,
                 webhook1GeoEnabled  = webhook1GeoEnabled,
-                webhook1GeoLat      = webhook1GeoLat.toDoubleOrNull() ?: 0.0,
-                webhook1GeoLon      = webhook1GeoLon.toDoubleOrNull() ?: 0.0,
+                webhook1GeoLat      = webhook1GeoLat.geoOrStored(current.webhook1GeoLat),
+                webhook1GeoLon      = webhook1GeoLon.geoOrStored(current.webhook1GeoLon),
                 webhook1GeoRadiusM  = webhook1GeoRadius.toIntOrNull()?.coerceAtLeast(1) ?: 50,
                 webhook1AlertEnabled = webhook1AlertEnabled,
                 webhook1AlertText    = webhook1AlertText,
@@ -150,8 +169,8 @@ fun ActionsScreen(vm: MainViewModel) {
                 webhook2Headers  = webhook2Headers,
                 webhook2Body     = webhook2Body,
                 webhook2GeoEnabled  = webhook2GeoEnabled,
-                webhook2GeoLat      = webhook2GeoLat.toDoubleOrNull() ?: 0.0,
-                webhook2GeoLon      = webhook2GeoLon.toDoubleOrNull() ?: 0.0,
+                webhook2GeoLat      = webhook2GeoLat.geoOrStored(current.webhook2GeoLat),
+                webhook2GeoLon      = webhook2GeoLon.geoOrStored(current.webhook2GeoLon),
                 webhook2GeoRadiusM  = webhook2GeoRadius.toIntOrNull()?.coerceAtLeast(1) ?: 50,
                 webhook2AlertEnabled = webhook2AlertEnabled,
                 webhook2AlertText    = webhook2AlertText,
@@ -631,7 +650,10 @@ private fun WebhookSlotFields(
                     placeholder = { Text(stringResource(R.string.webhook_geo_lat_placeholder), style = MaterialTheme.typography.bodySmall) },
                     modifier = Modifier.weight(1f),
                     singleLine = true,
-                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal)
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+                    // Non-blank but unparseable (even after comma normalisation) would
+                    // persist as 0.0 — surface it instead of failing silently.
+                    isError = geoLat.isNotBlank() && geoLat.toGeoDoubleOrNull() == null
                 )
                 OutlinedTextField(
                     value = geoLon,
@@ -640,7 +662,8 @@ private fun WebhookSlotFields(
                     placeholder = { Text(stringResource(R.string.webhook_geo_lon_placeholder), style = MaterialTheme.typography.bodySmall) },
                     modifier = Modifier.weight(1f),
                     singleLine = true,
-                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal)
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+                    isError = geoLon.isNotBlank() && geoLon.toGeoDoubleOrNull() == null
                 )
             }
             OutlinedTextField(

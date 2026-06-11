@@ -188,6 +188,7 @@ class HydrationTracker(
             lastTimeAlertFireMs = 0L
             lastDeficitAlertFireMs = 0L
         }
+        sessionEnded = false             // a live session now exists for this ride
         lastTickMs = 0L
         lastPeriodicLogMs = 0L
         for (i in lastLoggedMlBySlot.indices) {
@@ -233,10 +234,15 @@ class HydrationTracker(
         lastDeficitAlertFireMs = lastDeficitAlertFireMs,
     )
 
-    fun stop() {
+    /** See [CarbsTracker.sessionEnded] — same live-session bookkeeping. */
+    @Volatile private var sessionEnded = true
+
+    /** See [CarbsTracker.stop] — `endOfSession = true` only on the ride-end path. */
+    fun stop(endOfSession: Boolean = false) {
         monitorJob?.cancel()
         monitorJob = null
-        Timber.d("HydrationTracker stopped")
+        if (endOfSession) sessionEnded = true
+        Timber.d("HydrationTracker stopped (endOfSession=$endOfSession)")
         // State is intentionally retained so getSummary() / getStatus() remain readable
         // for the post-ride summary.
         publishStatus()
@@ -252,6 +258,14 @@ class HydrationTracker(
     fun resume(config: KSafeConfig) {
         this.config = config
         if (!config.hydrationTrackerEnabled) return
+        // See [CarbsTracker.resume] — no live session for THIS ride means a resume would
+        // revive the previous ride's retained totals (or run with sessionStartMs == 0,
+        // firing a spurious time alert on the first tick). Fresh start instead.
+        if (sessionEnded || sessionStartMs == 0L) {
+            Timber.d("HydrationTracker.resume with no live session — starting fresh")
+            start(config)
+            return
+        }
         val oldJob = monitorJob
         lastTickMs = 0L
         monitorJob = scope.launch {
@@ -280,10 +294,19 @@ class HydrationTracker(
      * mid-ride must take effect immediately.
      */
     fun updateConfig(config: KSafeConfig, isRecording: Boolean) {
-        val wasEnabled = this.config.hydrationTrackerEnabled
+        val old = this.config
+        val wasEnabled = old.hydrationTrackerEnabled
         this.config = config
-        if (!wasEnabled && config.hydrationTrackerEnabled && isRecording) start(config)
+        // OFF→ON mid-ride is a RESUME (preserves session totals; falls back to start()
+        // when no live session exists) — see CarbsTracker.updateConfig.
+        if (!wasEnabled && config.hydrationTrackerEnabled && isRecording) resume(config)
         else if (wasEnabled && !config.hydrationTrackerEnabled) stop()
+        // See CarbsTracker.updateConfig — immediate re-publish on display-relevant enable
+        // flips, gated on a prior publish so pre-ride fields keep their '---' state.
+        if (_statusFlow.value != null && (
+                old.isActive != config.isActive ||
+                old.hydrationTrackerEnabled != config.hydrationTrackerEnabled)
+        ) publishStatus()
     }
 
     // ─── Dynamic-estimate input updaters ────────────────────────────────────
@@ -454,6 +477,8 @@ class HydrationTracker(
                 (System.currentTimeMillis() - lastSpeedChangeMs) > SPEED_STALE_MS
             !stale && speed >= MOVING_GATE_KMH
         },
+        masterEnabled = config.isActive,
+        hydrationEnabled = config.hydrationTrackerEnabled,
     )
 
     fun getSummary(): HydrationSummary = HydrationSummary(
@@ -708,6 +733,11 @@ data class HydrationStatus(
      *  the tracker is running. Lets a future hydration-rate field stay coherent
      *  with the burn-rate field on the carbs side. */
     val isIntegrating: Boolean = false,
+    /** See [CarbStatus.masterEnabled] — false when the extension master switch is OFF;
+     *  the hydration field renders the disabled "OFF" state instead of a stale snapshot. */
+    val masterEnabled: Boolean = true,
+    /** See [CarbStatus.carbsEnabled] — false when the hydration feature toggle is off. */
+    val hydrationEnabled: Boolean = true,
 )
 
 /** Totals captured at end-of-ride for the post-ride summary InRideAlert. */

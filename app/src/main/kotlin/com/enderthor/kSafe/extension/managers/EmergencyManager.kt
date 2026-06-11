@@ -22,6 +22,7 @@ import io.hammerhead.karooext.models.PlayBeepPattern
 import io.hammerhead.karooext.models.InRideAlert
 import io.hammerhead.karooext.models.SystemNotification
 import io.hammerhead.karooext.models.TurnScreenOn
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
@@ -99,6 +100,14 @@ class EmergencyManager(
      * construction route to the overlay/notification path.
      */
     private val isOnRideScreen: () -> Boolean = { false },
+    /**
+     * True only while the ride is actively Recording (NOT Paused, NOT Idle). Used by
+     * [cancelEmergency] to decide the post-cancel check-in re-arm posture: a dead-man's-
+     * switch re-armed while the ride is Idle (crash-monitor-outside-ride FP cancelled
+     * during transport, boot-time mini-confirm cancel) would expire unattended and send
+     * a false CHECKIN_EXPIRED SOS to contacts. Defaults to false for unit tests.
+     */
+    private val isRecording: () -> Boolean = { false },
 ) {
     companion object {
 
@@ -255,11 +264,32 @@ class EmergencyManager(
         // on the next successful saveEmergencyState.
         try {
             configManager.saveEmergencyState(EmergencyState())
+        } catch (e: CancellationException) {
+            // Cancellation is NOT a disk error — it must propagate (the in-memory
+            // state above is already IDLE, which is the safe terminal state).
+            throw e
         } catch (e: Exception) {
             Timber.e(e, "Failed to persist IDLE state after cancel; in-memory state already cleared")
         }
         if (config?.checkinEnabled == true) {
-            startCheckinJobs(config)
+            // Ride-state-aware re-arm. The previous unconditional startCheckinJobs()
+            // re-armed the dead-man's-switch even when the cancel happened OFF-ride
+            // (crash-monitor-outside-ride FP cancelled during car transport, boot-time
+            // mini-confirm cancel) — the timer then expired unattended 10+ min later
+            // and sent a false CHECKIN_EXPIRED SOS. Nothing would ever stop it because
+            // stopAll() only runs on a *transition* to Idle, which already happened.
+            when {
+                isRecording() -> startCheckinJobs(config)
+                isOnRideScreen() -> {
+                    // Paused (café stop / autopause): re-arm in the frozen posture so the
+                    // countdown doesn't elapse through the pause — mirrors pauseCheckinTimer's
+                    // contract. startCheckinJobs stamps the fields; pauseCheckinTimer cancels
+                    // the live jobs and stamps the pause instant for resumeCheckinTimer.
+                    startCheckinJobs(config)
+                    pauseCheckinTimer()
+                }
+                else -> Timber.d("Post-cancel check-in re-arm skipped — no active ride")
+            }
         }
 
         Timber.d("Emergency cancelled by user (reason=$cancelledReason, after ${howLongMs}ms)")
@@ -420,12 +450,23 @@ class EmergencyManager(
         // than the full interval, and a resume past the deadline fires promptly.
         val elapsed = (System.currentTimeMillis() - startTime).coerceIn(0L, intervalMs)
         val expiryDelay = intervalMs - elapsed
+        // Mirror of pauseCheckinTimer's IDLE guard: a live crash/medical COUNTDOWN owns
+        // _uiState AND the persisted recovery record. Crash countdowns deliberately survive
+        // autopause, so a Paused→Recording flicker around a low-speed incident reaches here
+        // via resumeCheckinTimer while the countdown is ticking — overwriting _uiState blanked
+        // the SOS/Timer fields mid-countdown, and overwriting the persisted COUNTDOWN state
+        // meant a process kill in that window could no longer recover the countdown
+        // (decideResume saw a checkin-only record). The timer math fields and the jobs are
+        // still armed; only the display + persist are skipped while the emergency owns them.
+        val emergencyOwnsState = currentStatus != EmergencyStatus.IDLE
         // Update UI state synchronously so TimerDataType sees the checkin state immediately.
-        _uiState.value = EmergencyState(
-            checkinEnabled = true,
-            checkinStartTime = startTime,
-            checkinIntervalMinutes = config.checkinIntervalMinutes
-        )
+        if (!emergencyOwnsState) {
+            _uiState.value = EmergencyState(
+                checkinEnabled = true,
+                checkinStartTime = startTime,
+                checkinIntervalMinutes = config.checkinIntervalMinutes
+            )
+        }
 
         // Escalating pre-expiry warnings at -5 and -1 min. The original single -10 min beep
         // was being missed on long rides — field data showed one rider let the check-in expire
@@ -497,13 +538,19 @@ class EmergencyManager(
             // persisted copy is recovery metadata that heals on the next write, but if the throw
             // escaped, the dead-man's-switch coroutine would die silently and never fire.
             try {
-                configManager.saveEmergencyState(
-                    EmergencyState(
-                        checkinEnabled = true,
-                        checkinStartTime = startTime,
-                        checkinIntervalMinutes = config.checkinIntervalMinutes
+                // Skipped while a COUNTDOWN/ALERTING owns the persisted record — see
+                // emergencyOwnsState above. The check-in record heals on the next re-arm.
+                if (!emergencyOwnsState) {
+                    configManager.saveEmergencyState(
+                        EmergencyState(
+                            checkinEnabled = true,
+                            checkinStartTime = startTime,
+                            checkinIntervalMinutes = config.checkinIntervalMinutes
+                        )
                     )
-                )
+                }
+            } catch (e: CancellationException) {
+                throw e   // re-arm cancelled (normal churn) — not a disk error
             } catch (e: Exception) {
                 Timber.e(e, "Failed to persist check-in state; dead-man's-switch continues in-memory")
             }
@@ -534,22 +581,48 @@ class EmergencyManager(
             // IOException on a fire-and-forget cleanup launch would otherwise reach the default
             // uncaught handler on the service scope.
             try { configManager.saveEmergencyState(EmergencyState()) }
+            catch (e: CancellationException) { throw e }
             catch (e: Exception) { Timber.e(e, "Failed to persist IDLE emergency state") }
         }
     }
 
-    fun stopAll() {
+    /**
+     * @param preserveAlertJob when true, an in-flight outbound alert retry (alertJob) is
+     *  left running instead of being cancelled. The RIDE-END path passes true: a crash
+     *  alert that is still retrying through a coverage gap when the ride is stopped (often
+     *  by a helper) must keep trying to reach contacts — cancelling it there was a silent
+     *  non-send with no rider feedback (the cancellation rethrow suppresses both
+     *  notifyDeliveryFailure and the ALERT_DELIVERY_FAILED calibration row). The retry
+     *  outliving the ride is the designed behaviour notifyDeliveryFailure already expects
+     *  ("the ~30 min retry loop usually gives up after the ride" → overlay channel).
+     *  The MASTER-SWITCH-OFF paths keep the default false — that is an explicit rider
+     *  "disable all safety alerts" intent, which must abort the outbound alert too.
+     */
+    fun stopAll(preserveAlertJob: Boolean = false) {
         countdownJob?.cancel()
-        // Capture-and-null before cancel — see cancelEmergency for rationale.
-        val previousAlertJob = alertJob
-        alertJob = null
-        previousAlertJob?.cancel()
+        val preservedJobAlive = preserveAlertJob && alertJob?.isActive == true
+        if (!preserveAlertJob) {
+            // Capture-and-null before cancel — see cancelEmergency for rationale.
+            val previousAlertJob = alertJob
+            alertJob = null
+            previousAlertJob?.cancel()
+        } else if (preservedJobAlive) {
+            Timber.w("stopAll(preserveAlertJob): outbound alert retry still running — left alive")
+        }
         checkinJob?.cancel()
         checkinWarningJob?.cancel()
         checkinStartTimeMs = 0L
         checkinPausedAtMs = 0L
         currentStatus = EmergencyStatus.IDLE
-        currentReason = null
+        // G3 invariant: while an alertJob is alive, currentReason must keep identifying it —
+        // a later cancelEmergency of the preserved post-ride retry reads it to emit the
+        // CRASH_CANCELLED/INCIDENT_CANCELLED calibration row and to clear the crash cooldown
+        // (crashMonitorOutsideRide keeps detection running post-ride). Nulling it here sent
+        // that cancel down the `when (null) -> Unit` branch. The reason is cleared when the
+        // job completes (its finally) or when the next emergency arms.
+        if (!preservedJobAlive) {
+            currentReason = null
+        }
         countdownStartedAt = 0L
         sosOverlay.removeOverlay()
         // Clear any lingering "SOS delivery failed" info overlay on full teardown / ride end
@@ -562,8 +635,29 @@ class EmergencyManager(
             // IOException on a fire-and-forget cleanup launch would otherwise reach the default
             // uncaught handler on the service scope.
             try { configManager.saveEmergencyState(EmergencyState()) }
+            catch (e: CancellationException) { throw e }
             catch (e: Exception) { Timber.e(e, "Failed to persist IDLE emergency state") }
         }
+    }
+
+    /**
+     * Detaches a still-running PRESERVED alert retry (left alive by the ride-end
+     * `stopAll(preserveAlertJob = true)`) from the tap heuristics before a NEW ride
+     * starts. Without this, the first SOS/Timer tap of the next ride landed in the
+     * `alertJobActive()` branch and silently ABORTED the previous ride's undelivered
+     * SOS instead of arming a new emergency — recreating the silent non-send in a
+     * worse place. The job itself keeps running to completion (delivering the old SOS
+     * stays the priority), but it no longer owns [alertJob]: its finally identity
+     * guard goes false, so its completion/failure UI is suppressed via the superseded
+     * path while the H7 calibration row is still written unconditionally.
+     */
+    fun detachAlertJob() {
+        if (alertJob?.isActive != true) return
+        Timber.w("Detaching preserved alert retry — new ride starting; old SOS keeps retrying headless")
+        alertJob = null
+        // The detached job is no longer cancellable through the tap/bonus paths, so the
+        // G3 keep-the-reason contract no longer applies — the new ride starts clean.
+        currentReason = null
     }
 
     /**
@@ -743,6 +837,11 @@ class EmergencyManager(
             // dropping the beeps, overlay, and outbound alert.
             try {
                 configManager.saveEmergencyState(countdownState)
+            } catch (e: CancellationException) {
+                // A rider Cancel landing while we're suspended in this persist must
+                // propagate — the generic catch below would otherwise treat it as a
+                // disk error and carry on to re-show the overlay + beep after cancel.
+                throw e
             } catch (e: Exception) {
                 Timber.e(e, "Failed to persist COUNTDOWN state; continuing with in-memory state only")
             }
@@ -985,18 +1084,6 @@ class EmergencyManager(
         sosOverlay.removeOverlay()
         val alertingState = EmergencyState(status = EmergencyStatus.ALERTING, reason = reason.label)
         _uiState.value = alertingState
-        // H1 — see startCountdown for rationale: disk-full IOException from
-        // saveEmergencyState must NOT abort the entire sendAlerts coroutine before
-        // the alertJob is launched. The persisted state is recovery metadata; the
-        // outbound alert is the safety-critical work and must always be attempted.
-        try {
-            configManager.saveEmergencyState(alertingState)
-        } catch (e: Exception) {
-            Timber.e(e, "Failed to persist ALERTING state; continuing with in-memory state only")
-        }
-
-        val message = buildMessage(config, reason)
-
         Timber.d("Sending emergency alert via ${config.activeProvider}")
 
         // Capture the local Job reference for identity-guarded cleanup in finally.
@@ -1008,6 +1095,26 @@ class EmergencyManager(
         lateinit var myJob: kotlinx.coroutines.Job
         myJob = scope.launch {
             try {
+                // The ALERTING persist and the message build run INSIDE the alert job:
+                // both suspend (DataStore write; buildMessage waits up to ~5 s for a
+                // fresh GPS fix) and sendAlerts itself runs inside countdownJob — so a
+                // ride-end stopAll(preserveAlertJob = true) or any countdownJob cancel
+                // landing in that window used to kill the alert BEFORE alertJob existed:
+                // nothing was preserved and no failure feedback ever fired. Inside myJob
+                // (registered synchronously below, before this body first suspends) the
+                // prep is covered by the same cancel/preserve semantics as the send.
+                //
+                // H1 — disk-full IOException from the persist must not abort the alert
+                // (recovery metadata only); a rider Cancel (CancellationException) must
+                // propagate so a cancelled SOS can never carry on to the send.
+                try {
+                    configManager.saveEmergencyState(alertingState)
+                } catch (e: kotlinx.coroutines.CancellationException) {
+                    throw e
+                } catch (e: Exception) {
+                    Timber.e(e, "Failed to persist ALERTING state; continuing with in-memory state only")
+                }
+                val message = buildMessage(config, reason)
                 val outcome = sender.sendAlert(message, config.activeProvider)
                 if (!outcome.anyOk) {
                     // H7 — ALWAYS log the delivery failure to the calibration trail.
@@ -1089,11 +1196,22 @@ class EmergencyManager(
                         // Wrapped like every other persist site (H1/J2): a disk-full
                         // IOException here must NOT skip `alertJob = null` below — that
                         // would leak a stale reference to this already-completed job.
+                        // CancellationException is deliberately swallowed too (unlike the
+                        // other persist sites): we're in a finally during teardown and the
+                        // `alertJob = null` cleanup below must run. Reachable only on scope
+                        // cancellation — cancelEmergency/stopAll null the reference first,
+                        // so the identity guard above is false on those paths.
                         try {
                             configManager.saveEmergencyState(EmergencyState())
                         } catch (e: Exception) {
                             Timber.e(e, "Failed to persist IDLE after alert job finished; in-memory state already cleared")
                         }
+                    } else if (currentStatus == EmergencyStatus.IDLE) {
+                        // The timed rollback (or a preserving stopAll) already moved us to
+                        // IDLE but deliberately kept currentReason for the G3 cancel path.
+                        // The job is now actually done — nothing left to cancel — so the
+                        // reason can finally be cleared.
+                        currentReason = null
                     }
                     alertJob = null
                 }
@@ -1135,6 +1253,8 @@ class EmergencyManager(
             // sendAlerts coroutine — the persisted copy heals on the next successful write.
             try {
                 configManager.saveEmergencyState(EmergencyState())
+            } catch (e: CancellationException) {
+                throw e   // in-memory state already IDLE — safe to propagate
             } catch (e: Exception) {
                 Timber.e(e, "Failed to persist IDLE after timed ALERTING rollback; in-memory state already cleared")
             }

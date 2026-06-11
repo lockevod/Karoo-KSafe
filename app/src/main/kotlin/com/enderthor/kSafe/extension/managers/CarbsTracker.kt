@@ -262,6 +262,7 @@ class CarbsTracker(
             lastDeficitAlertFireMs = 0L
             activeIntegrationMs = 0L
         }
+        sessionEnded = false             // a live session now exists for this ride
         lastTickMs = 0L                  // 0 = "no previous tick"; first tick won't accumulate
         lastPeriodicLogMs = 0L
         lastZoneSnapshot = ZoneSnapshot(ZoneSource.NONE, -1, 0, 1f)
@@ -324,10 +325,25 @@ class CarbsTracker(
         cumKcal = cumKcal,
     )
 
-    fun stop() {
+    /** True when no ride session is live for THIS ride: set on construction and by
+     *  [stop] with `endOfSession = true` (ride end), cleared by [start]. Lets [resume]
+     *  and the feature-toggle path distinguish "monitor briefly off mid-ride → preserve
+     *  totals" from "no session / previous ride's retained totals → fresh start". */
+    @Volatile private var sessionEnded = true
+
+    /**
+     * @param endOfSession true on the RIDE-END path: marks the retained accumulators as
+     *  belonging to a finished ride so a later [resume] (master/feature toggled ON in a
+     *  future ride that started with them off) falls through to a fresh [start] instead
+     *  of reviving the previous ride's totals. The master-switch / feature-toggle OFF
+     *  paths pass false — their retained state is still this ride's live session and a
+     *  quick re-enable must preserve it.
+     */
+    fun stop(endOfSession: Boolean = false) {
         monitorJob?.cancel()
         monitorJob = null
-        Timber.d("CarbsTracker stopped")
+        if (endOfSession) sessionEnded = true
+        Timber.d("CarbsTracker stopped (endOfSession=$endOfSession)")
         // State is intentionally retained so getSummary() / getStatus() remain readable
         // for the post-ride summary. Reset happens on the next start().
         // Publish so subscribers see isIntegrating = false (monitorJob is now null).
@@ -343,6 +359,17 @@ class CarbsTracker(
     fun resume(config: KSafeConfig) {
         this.config = config
         if (!config.fuelMonitorEnabled()) return
+        // No live session to resume — either this tracker never started this ride
+        // (master/feature was OFF at ride start: sessionStartMs is 0 on a fresh
+        // process, or holds the PREVIOUS ride's retained value) or the last ride
+        // already ended. Resuming would revive stale totals (carried-over grams) or,
+        // with sessionStartMs == 0, make the alert scheduler see sinceStart ≈ epoch
+        // and fire a spurious time alert on the first tick. Fresh start instead.
+        if (sessionEnded || sessionStartMs == 0L) {
+            Timber.d("CarbsTracker.resume with no live session — starting fresh")
+            start(config)
+            return
+        }
         val oldJob = monitorJob
         lastTickMs = 0L
         monitorJob = scope.launch {
@@ -365,11 +392,27 @@ class CarbsTracker(
      * on the auto-start branch. Same shape, same reason.
      */
     fun updateConfig(config: KSafeConfig, isRecording: Boolean) {
-        val wasEnabled = this.config.fuelMonitorEnabled()
+        val old = this.config
+        val wasEnabled = old.fuelMonitorEnabled()
         this.config = config
         val nowEnabled = config.fuelMonitorEnabled()
-        if (!wasEnabled && nowEnabled && isRecording) start(config)
+        // OFF→ON mid-ride is a RESUME, not a fresh start — the rider toggling a feature
+        // off and back on (fat-finger, quick A/B of settings) must not lose the session's
+        // logged/burned totals. resume() itself falls back to start() when there is no
+        // live session for this ride. Mirrors the master-switch semantics.
+        if (!wasEnabled && nowEnabled && isRecording) resume(config)
         else if (wasEnabled && !nowEnabled) stop()
+        // Re-publish when a display-relevant enable bit flipped so the fields reflect
+        // the toggle immediately instead of on the next 15-s tick (master kill / feature
+        // toggle showed the stale snapshot — e.g. "Pair HR/Pwr" — for up to 15 s, or
+        // indefinitely while no monitor was running). Gated on a prior publish so a
+        // boot-time config seed can't materialise a snapshot before the first start()
+        // — fields must keep their '---' waiting state pre-ride.
+        if (_statusFlow.value != null && (
+                old.isActive != config.isActive ||
+                old.carbsTrackerEnabled != config.carbsTrackerEnabled ||
+                old.hrCaloriesEnabled != config.hrCaloriesEnabled)
+        ) publishStatus()
     }
 
     fun updateUserProfile(p: UserProfile) { lastUserProfile = p }
@@ -567,6 +610,8 @@ class CarbsTracker(
                 !stale && speed >= MOVING_GATE_KMH
             },
             caloriesEnabled = caloriesOn,
+            masterEnabled = config.isActive,
+            carbsEnabled = config.carbsTrackerEnabled,
             kcalTotal = cumKcal.toInt(),
             kcalPerHour = kcalH.toInt(),
             calorieSource = calorieSource,
@@ -902,14 +947,21 @@ class CarbsTracker(
         calibLogger.log(CalibrationLogger.Event.FUELING_CARB_PERIODIC) {
             // Locale.US — see fireAlert above. v18 payload mirrors FUELING_CARB_FIRED:
             // confidence + kcal_h + cho_fraction replace the vestigial `multiplier`.
+            // carbs_enabled/calories_enabled: the monitor runs when EITHER feature is on,
+            // and in a calories-only session burn_rate_gph logs live while cum_burned
+            // stays 0 — without the flags, log analysis had to INFER the mode from
+            // `cum_burned==0 ∧ burn_rate>0` (first seen in the field on session
+            // 786c16_12fb6d, v2.1.3). cum_kcal completes the calorie picture.
             String.format(
                 java.util.Locale.US,
                 "cum_burned=%d,cum_logged=%d,deficit=%d,burn_rate_gph=%d," +
-                    "confidence=%s,kcal_h=%.0f,cho_fraction=%.2f,zone_source=%s,zone_idx=%d,zone_total=%d,hr=%d,power=%d",
+                    "confidence=%s,kcal_h=%.0f,cho_fraction=%.2f,zone_source=%s,zone_idx=%d,zone_total=%d,hr=%d,power=%d," +
+                    "carbs_enabled=%b,calories_enabled=%b,cum_kcal=%d",
                 cumBurnedG.toInt(), cumLoggedG, deficit, burnRateGph,
                 burn.confidence, burn.kcalPerHour, burn.choFraction,
                 lastZoneSnapshot.source, lastZoneSnapshot.index, lastZoneSnapshot.total,
                 lastHrBpm ?: -1, lastPowerW ?: -1,
+                config.carbsTrackerEnabled, config.hrCaloriesEnabled, cumKcal.toInt(),
             )
         }
     }
@@ -944,6 +996,18 @@ data class CarbStatus(
      *  `---` when false, so a disabled feature never shows a live number even though
      *  the monitor may be running for carbs / hydration. */
     val caloriesEnabled: Boolean,
+    /** True when the extension master switch is ON. When false every fueling field
+     *  renders the disabled "OFF" state — without this flag a master kill left the
+     *  fields on whatever the last snapshot implied (e.g. "Pair HR/Pwr" from a
+     *  confidence=NONE snapshot), which read as a sensor problem instead of
+     *  "you turned the extension off". Defaults true so test fixtures stay valid. */
+    val masterEnabled: Boolean = true,
+    /** True when the carb-deficit feature is enabled. Mirror of [caloriesEnabled] for
+     *  the carb-side fields: in a calories-only session (hrCaloriesEnabled=true,
+     *  carbsTrackerEnabled=false) the monitor runs and burnRateGph is live, but the
+     *  cumulative/deficit stay frozen at 0 — the carb fields must render neutral
+     *  instead of a live rate that disagrees with its frozen siblings. */
+    val carbsEnabled: Boolean = true,
     /** Cumulative HR-based energy this session (kcal). 0 until any accrues. */
     val kcalTotal: Int,
     /** Instantaneous energy expenditure (kcal/h). 0 when no HR/power (→ field shows `---`). */

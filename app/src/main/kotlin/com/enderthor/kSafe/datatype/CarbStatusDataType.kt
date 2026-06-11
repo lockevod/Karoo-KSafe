@@ -28,6 +28,7 @@ private const val COLOR_AHEAD  = 0xFF1565C0.toInt()  // blue — surplus, no con
 private const val COLOR_OK     = 0xFF2E7D32.toInt()  // green — within margin
 private const val COLOR_AMBER  = 0xFFE65100.toInt()  // amber — approaching threshold
 private const val COLOR_RED    = 0xFFB71C1C.toInt()  // red — over threshold
+private const val COLOR_DISABLED = 0xFF616161.toInt() // grey — extension/feature off
 
 class CarbStatusDataType(
     datatype: String,
@@ -68,12 +69,43 @@ class CarbStatusDataType(
         }
     }
 
+    /** Single render rule shared by the synchronous seed and the collect loop so the
+     *  two can never disagree on how a given status snapshot is displayed. */
+    private fun statusView(config: ViewConfig, status: CarbStatus?): RemoteViews = when {
+        // Profile-editor gallery: always the neutral waiting frame. Without this gate
+        // the preview rendered whatever the live StateFlow held — last ride's deficit,
+        // or the grey OFF while the rider configures fields with the master switch off.
+        config.preview -> buildView(config, COLOR_OK, "---", "carbs")
+        // Tracker not running yet (extension still booting, or no ride started).
+        // '---' in the normal colour = waiting for data, NOT disabled.
+        status == null -> buildView(config, COLOR_OK, "---", "carbs")
+        // Master switch OFF, or the carb feature itself toggled off → the documented
+        // disabled-grey, like webhooks/custom messages. Without this the field kept
+        // rendering the last deficit (e.g. a green "0g") which read as live data.
+        !status.masterEnabled || !status.carbsEnabled ->
+            buildView(config, COLOR_DISABLED, context.getString(R.string.fueling_field_off), "carbs")
+        else -> buildView(
+            config,
+            colorFor(status.deficitG, status.deficitThresholdG),
+            displayMain(status.deficitG),
+            "carbs",
+        )
+    }
+
     override fun startView(context: Context, config: ViewConfig, emitter: ViewEmitter) {
         // Synchronous seed frame BEFORE launching any coroutine. See HydrationStatusDataType
         // for the rationale — without this, Karoo paints the host theme background while
         // waiting for the first Dispatchers.Default emission, which in day mode shows up
         // as a fully white field (white text on white host bg).
-        emitter.updateView(buildView(config, COLOR_OK, "---", "carbs"))
+        //
+        // Seed with the REAL current status when the tracker is already live (mid-ride
+        // re-entry: page swap, profile switch). The host coalesces updateView calls inside
+        // its ~170 ms window and keeps only the FIRST — a '---' seed followed milliseconds
+        // later by the StateFlow's replay of the current status meant the real frame was
+        // dropped, and since the StateFlow dedupes by equality the field sat on '---' until
+        // the next CHANGED status (indefinitely while autopaused). '---' only when no
+        // tracker/status exists yet (extension cold boot, no ride).
+        emitter.updateView(statusView(config, KSafeExtension.carbsTrackerFlow.value?.statusFlow?.value))
 
         val scopeJob = Job()
         val scope = CoroutineScope(Dispatchers.Default + scopeJob)
@@ -96,19 +128,9 @@ class CarbStatusDataType(
                 // 1-Hz polling loop.
                 val tracker = KSafeExtension.carbsTrackerFlow.filterNotNull().first()
                 tracker.statusFlow.collectLatest { status ->
-                    val view = if (status == null) {
-                        // Tracker not running yet (extension still booting, or no ride
-                        // started). Show '---' so the rider doesn't read 'off' as
-                        // 'I disabled this', but keep COLOR_OK — this field is not
-                        // *disabled*, it's *waiting for data*. The disabled-style grey
-                        // belongs to fields that actually got turned off in config
-                        // (webhooks, custom messages, log slots).
-                        buildView(config, COLOR_OK, "---", "carbs")
-                    } else {
-                        val color = colorFor(status.deficitG, status.deficitThresholdG)
-                        buildView(config, color, displayMain(status.deficitG), "carbs")
-                    }
-                    emitter.updateView(view)
+                    // Render rules (waiting '---' vs disabled grey vs live semaphore)
+                    // live in [statusView], shared with the synchronous seed above.
+                    emitter.updateView(statusView(config, status))
                 }
             } catch (_: CancellationException) {
                 // normal

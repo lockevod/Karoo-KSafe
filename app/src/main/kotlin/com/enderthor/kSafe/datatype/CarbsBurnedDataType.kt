@@ -16,6 +16,7 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.awaitCancellation
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.flow.collectLatest
+import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.filterNotNull
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
@@ -54,9 +55,17 @@ class CarbsBurnedDataType(
             try {
                 // Push-based — see CarbStatusDataType for the rationale.
                 val tracker = KSafeExtension.carbsTrackerFlow.filterNotNull().first()
-                tracker.statusFlow.collectLatest { status ->
+                // Merged with nightModeFlow — see CarbBurnRateDataType (theme passthrough
+                // text colour is baked at build time; a day/night flip needs a re-render).
+                combine(tracker.statusFlow, KSafeExtension.nightModeFlow) { s, _ -> s }
+                    .collectLatest { status ->
                     val main = when {
+                        // Profile-editor gallery: neutral waiting frame, never live/OFF/stale data.
+                        config.preview -> "---"
                         status == null -> "---"
+                        // Master OFF / carb feature off — see CarbBurnRateDataType.
+                        !status.masterEnabled -> context.getString(R.string.fueling_field_off)
+                        !status.carbsEnabled -> "---"
                         // Show "Pair HR/Pwr" ONLY when the rider has never had a
                         // sensor paired (cumBurnedG still 0). A mid-ride disconnect
                         // after some burn keeps showing the running total — flipping

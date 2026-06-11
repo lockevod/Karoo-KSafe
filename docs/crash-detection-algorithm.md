@@ -33,7 +33,7 @@ Two new mechanisms in this revision:
 | **Accelerometer** (`TYPE_ACCELEROMETER`) | ~50 Hz (`SENSOR_DELAY_GAME`) | Primary crash trigger + stillness confirmation |
 | **Gyroscope** (`TYPE_GYROSCOPE`) | ~50 Hz | Gate between IMPACT → SILENCE_CHECK |
 | **GPS/speed** (Karoo SDK `TYPE_SPEED_ID`) | Variable | Speed drop confirmation in all phases |
-| **Cadence** (Karoo SDK `TYPE_CADENCE_ID`) | Variable (~1 Hz) | **False-positive gate in SILENCE_CHECK**: if cadence > 20 RPM the rider is still pedalling → immediate false-alarm exit. Optional — algorithm falls back gracefully when no cadence sensor is paired. |
+| **Cadence** (Karoo SDK `TYPE_CADENCE_ID`) | Variable (~1 Hz) | **False-positive gate in SILENCE_CHECK**: if cadence > 20 RPM the rider is still pedalling → immediate false-alarm exit. Optional — algorithm falls back gracefully when no cadence sensor is paired. Two guards refine the gate: (1) **freshness-by-change** (`isCadenceActive`) — the gate only fires when the cadence value has actually *fluctuated* recently (≤ 10 s since the last bit-exact change, and at least one genuine change observed since session start); a sensor repeating its last value after signal loss, or one that never changed since connecting, is treated as stuck and ignored. (2) **On-side suppression** (`lastCadenceGateSuppressed`, 2026-05-25 FN fix) — when the live orientation angle vs the pre-impact reference is ≥ 45° (decisively non-upright), CAD_GATE is suppressed: a bike on its side cannot be pedalled, so a "fresh" post-impact cadence reading is phantom (SDK echo or impact-induced revolutions). Each suppression emits a rate-limited `CAD_GATE_SUPPRESSED` calibration row. |
 | **Road grade** (Karoo SDK `TYPE_ELEVATION_GRADE_ID`) | Variable (~1 Hz) | **Proactive descent boost**: the peak-impact threshold is raised on descents (grade < −4 %) to suppress terrain-noise spikes before the reactive TERRAIN_CLUSTER mechanism fires. |
 
 > Note: `TYPE_ACCELEROMETER` is required (includes gravity). The whole stillness logic compares magnitude against 9.81 m/s². If anyone ever changes this to `TYPE_LINEAR_ACCELERATION`, the algorithm breaks silently.
@@ -200,15 +200,21 @@ Once the device has appeared to settle, the algorithm requires **uninterrupted s
 ```kotlin
 val gpsStale = isGpsStale()
 val effectiveDeviationMax = if (gpsStale) GPS_STALE_DEVIATION_MAX else SILENCE_DEVIATION_MAX
-val effectiveSilenceMs    = computeEffectiveSilenceMs(gpsStale)   // see below
 val deviation             = abs(magnitude - GRAVITY)
-val isStill               = deviation <= effectiveDeviationMax && isSpeedDropConfirmed()
+val accelOk               = deviation <= effectiveDeviationMax
+val effectiveSilenceMs    = computeEffectiveSilenceMs(gpsStale)   // see below; may latch
+val onSideRelaxed         = lockedEffectiveSilenceMs > 0 &&
+                            lastOrientationAngleDeg >= onSideRelaxationAngleDeg   // 60°, R7-B
+val isStill               = if (onSideRelaxed) accelOk
+                            else accelOk && isSpeedDropConfirmed()
 ```
+
+The `onSideRelaxed` carve-out (R7-B): once the silence-window latch has decided AND the latched orientation angle is ≥ `onSideRelaxationAngleDeg` (60° — decisively on the ground), the speed-drop gate is dropped and `isStill = accelOk` alone, **at any speed** — a bike on its side cannot be ridden, so a speed rise is the bike rolling, not the rider riding. There is no speed ceiling on this carve-out (the 25 km/h ceiling applies only at the IMPACT-phase gate — see the on-side relaxation sections below).
 
 | Mode | Deviation max | Required stillness | Notes |
 |------|--------------|-------------------|-------|
 | GPS fresh (normal) | 4.0 m/s² | 4,500 / 20,000 ms | Duration chosen by `computeEffectiveSilenceMs` (see orientation section) |
-| GPS stale (>10s no update) | 1.5 m/s² | 8,000 / 20,000 ms | Hardened deviation; gap/orientation regimes still apply |
+| GPS stale (>10s without a value change) | 1.5 m/s² | 8,000 / 20,000 ms | Hardened deviation; gap/orientation regimes still apply |
 
 ### Why the gyroscope is intentionally NOT evaluated in SILENCE_CHECK
 
@@ -245,7 +251,15 @@ isSpeedDropConfirmed():
 │   (no speed data received yet AND now - startTime < 8,000ms)
 │   └─ return false  ← block confirmation, not safe to trust speed=0.0
 │
-├─ GPS stale? (speedLastUpdatedTime > 0 AND now - speedLastUpdatedTime > 10,000ms)
+├─ GPS stale? (speedLastChangeMs > 0 AND now - speedLastChangeMs > 10,000ms)
+│   speedLastChangeMs is stamped only when the speed VALUE actually changes —
+│   not on every emission — plus an explicit-zero whitelist (a rider stopped at
+│   lights re-emits 0.0 bit-exact and still counts as fresh) and a first-emission
+│   bootstrap. The SDK replays the last known speed bit-exact when GPS lock is
+│   lost, so a stretch of identical non-zero emissions is the staleness tell-tale
+│   that the old emission-stamped detector could never trip on. The flag is
+│   computed in the facade (CrashDetectionManager.isGpsStale) and pushed into the
+│   state machine on transition (setSpeedGpsStale).
 │   └─ return true  ← bypass speed gate, accel takes over with HARDENED thresholds
 │      ⚠ Caller (SILENCE_CHECK) is expected to switch to GPS_STALE_DEVIATION_MAX
 │        and GPS_STALE_SILENCE_DURATION_MS to compensate.
@@ -358,7 +372,7 @@ Captures the scenario where the rider falls and is unconscious at low speed (e.g
 | GPS frozen at last known value mid-ride | GPS-stale fallback: bypass speed gate, harden accel thresholds |
 | Speed-drop poll lands on lucky moment | Stable-stillness accumulator (60s continuous) |
 | Rough terrain single-frame spikes on descents | Grade-aware proactive peak boost (+2/+5/+8 m/s² at −4/−7/−10% grade) |
-| Rider still pedalling during crash confirmation | Cadence gate: >20 RPM in SILENCE_CHECK → instant false-alarm exit |
+| Rider still pedalling during crash confirmation | Cadence gate: >20 RPM in SILENCE_CHECK → instant false-alarm exit (only when the value is fresh-by-change — stuck sensors ignored — and the bike is not decisively on its side; see the Sensors table) |
 | Bump+brake+stop (gravel / off-road) | Gap regime: impact→stop gap > 8 s → 20 s silence window; rider who rides on after the bump does not confirm |
 | Upright stop after impact (traffic light, check) | Orientation regime: bike still upright vs pre-impact reference → 20 s window |
 | Real crash, bike rolls past auto-pause (auto-resume residual) | IMPACT-phase + SILENCE_CHECK on-side relaxation (revision 7): decisive on-side evidence (angle ≥ 60°, ≥ 25 samples in IMPACT or latched in SILENCE_CHECK) bypasses the speed gate so a rolling bike does not block confirmation |
@@ -441,25 +455,22 @@ Captures the scenario where the rider falls and is unconscious at low speed (e.g
 
 ## Threading & Concurrency Notes
 
-The class is accessed from multiple threads:
-- **Sensor thread** — `onSensorChanged` callbacks for accel and gyro
-- **Karoo SDK thread** — `updateSpeed()`, `resetSpeedDropOnPause()`
-- **Coroutine on `scope`** — speed-drop monitor (reads accel and speed state)
-- **Main thread** — `start()`, `stop()`, `updateConfig()`
+Since the refactor, the algorithm is split across five collaborating classes:
 
-All shared mutable fields are marked `@Volatile`:
+- **`CrashDetectionManager`** — the facade. Owns config, cooldown, threshold rebuilds, calibration logging, and wires the rest together.
+- **`CrashStateMachine`** — the pure MONITORING → IMPACT → SILENCE_CHECK state machine (no Android imports, no coroutines, no I/O).
+- **`SensorReader`** — `SensorEventListener` registration, the smoothing/variance/pre-impact ring buffers, and the stable-stillness tracker.
+- **`SpeedDropMonitor`** — the independent zero-speed watchdog coroutine.
+- **`Thresholds`** — immutable data class of tunables, swapped atomically through a `@Volatile` reference (a partially-written value is impossible).
 
-```
-state, impactTime, silenceStartTime, lastCrashTime,
-currentSpeedKmh, config, lastLogTime,
-speedDataReceived, startTime,
-lastGyroMag, lastAccelDeviation, accelStillSinceMs,
-speedDropStartTime, speedLastUpdatedTime
-```
+Threads in play:
 
-This guarantees cross-thread visibility (writes are not held in a CPU cache) and atomicity of Long/Double reads — neither of which the JVM guarantees by default.
+- **Sensor callbacks** are registered with `handler = null`, so Android delivers them on the **main looper**. Together with the Karoo SDK flows (`updateSpeed()`, `updateCadence()`, ride-state callbacks) collected on `Dispatchers.Main` and the lifecycle methods (`start()`, `stop()`, `updateConfig()`), this means **all state-machine access is main-thread-confined**.
+- **The speed-drop coroutine on `scope`** polls every 30 s and reads cross-thread state (`accelStillSinceMs`, window timestamps) through `@Volatile` fields.
 
-The class does not use locks. The algorithm tolerates slightly stale reads across threads (e.g. an accelerometer event firing immediately after a speed update may evaluate against the previous speed value), which is acceptable given the 50 Hz sample rate and the multi-sample confirmation pipeline.
+Shared mutable fields are marked `@Volatile` for cross-thread visibility and atomicity of Long/Double reads. One lock exists: the rolling TMO-cluster deque is accessed under `synchronized(recentTmoTimestamps)` — the read-modify-write in the IMPACT_TIMEOUT branch vs `clear()` in the start/resume/stop lifecycle methods — so the cluster bookkeeping cannot be torn. The pre-impact vector ring needs no lock: the sensor thread is its sole mutator, and pause-time invalidation only raises a `@Volatile` floor timestamp (see the lifecycle section).
+
+Everything else tolerates slightly stale reads across threads (e.g. an accelerometer event firing immediately after a speed update may evaluate against the previous speed value), which is acceptable given the 50 Hz sample rate and the multi-sample confirmation pipeline.
 
 ---
 
@@ -470,8 +481,8 @@ The class does not use locks. The algorithm tolerates slightly stale reads acros
 | ID | Change | Status |
 |----|--------|--------|
 | **R7-A** | **I3: preserve mid-IMPACT / mid-SILENCE_CHECK across auto-pause + auto-resume.** Auto-pause no longer wipes the state machine; only an explicit manual pause does. A real crash whose bike rolls long enough to trip Karoo autopause now continues its in-flight detection on resume instead of dropping back to MONITORING. | ✅ Implemented |
-| **R7-B** | **SILENCE_CHECK on-side speed-rise relaxation.** Once the orientation latch fires on-side (angle ≥ `onSideRelaxationAngleDeg = 60°`), `isStill` ignores the speed-drop gate inside SILENCE_CHECK **while `lastSpeedKmh < onSideRelaxationMaxSpeedKmh = 25 km/h` (or GPS stale)**. Closes the residual where the bike rolls after the rider goes down without bypassing the speed gate at implausibly-fast tumble speeds. CR2 preserves the on-side latch across within-budget silence breaks for the same reason. | ✅ Implemented |
-| **R7-C** | **IMPACT-phase on-side relaxation.** `handleImpact`'s IMPACT → SILENCE_CHECK gate becomes `accelOk && gyroOk && timeOk && (speedDropOk || onSideRelaxed)`, where `onSideRelaxed = orientationSampleCount >= 25 && angle ≥ 60°`. Allows the transition when the bike has been decisively flat for ~500 ms even with speed still up — closes the autoresume-mid-IMPACT residual. New companion-object constant `IMPACT_RELAXATION_MIN_SAMPLES = 25`; new `Thresholds` field `onSideRelaxationAngleDeg = 60.0`. The orientation accumulator (`orientationSum*` / `orientationSampleCount`, renamed from `silenceWindow*`) now fills during IMPACT (gated on `accelOk`) in addition to SILENCE_CHECK. The transition carries the accumulator forward on the on-side relaxation path so the SILENCE_CHECK latch is reachable while the bike is still rolling. | ✅ Implemented |
+| **R7-B** | **SILENCE_CHECK on-side speed-rise relaxation.** Once the orientation latch fires on-side (angle ≥ `onSideRelaxationAngleDeg = 60°`), `isStill` ignores the speed-drop gate inside SILENCE_CHECK — `isStill = accelOk` alone, **at any speed** while GPS data is fresh. The `onSideRelaxationMaxSpeedKmh = 25 km/h` ceiling applies ONLY at the IMPACT → SILENCE_CHECK gate (R7-C / `handleImpact`), not here. The residual asymmetry is deliberate and FN-safe: the latch already required decisive on-side evidence to engage, and re-imposing a speed ceiling mid-window would drop a genuine crash whose escaped bike accelerates downhill. Closes the residual where the bike rolls after the rider goes down. CR2 preserves the on-side latch across within-budget silence breaks for the same reason. | ✅ Implemented |
+| **R7-C** | **IMPACT-phase on-side relaxation.** `handleImpact`'s IMPACT → SILENCE_CHECK gate becomes `accelOk && gyroOk && timeOk && (speedDropOk || onSideRelaxed)`, where `onSideRelaxed = orientationSampleCount >= 25 && angle ≥ 60° && (lastSpeedKmh < onSideRelaxationMaxSpeedKmh || gpsStale)` — the 25 km/h ceiling lives at this gate only. Allows the transition when the bike has been decisively flat for ~500 ms even with speed still up — closes the autoresume-mid-IMPACT residual. New companion-object constant `IMPACT_RELAXATION_MIN_SAMPLES = 25`; new `Thresholds` field `onSideRelaxationAngleDeg = 60.0`. The orientation accumulator (`orientationSum*` / `orientationSampleCount`, renamed from `silenceWindow*`) now fills during IMPACT (gated on `accelOk`) in addition to SILENCE_CHECK. The transition carries the accumulator forward on the on-side relaxation path so the SILENCE_CHECK latch is reachable while the bike is still rolling. | ✅ Implemented |
 | **R7-D** | **CR1: IMPACT-timeout accumulator reset.** On `timeSinceImpact > impactWindowMs`, the accumulator is wiped along with the timers. Without this, the next impact's `currentOrientationAngleDeg()` would compute against stale X/Y/Z averages bound to the previous pre-impact reference, and the IMPACT relaxation could fire with as few as ~5 fresh samples. | ✅ Implemented |
 | **R7-E** | **MedicalEpisode: FLATLINE suppression on active pedalling/power.** FLATLINE is not raised when cadence > threshold or power > threshold — a flat-HR rider who is still actively pedalling is a sensor-loss case, not a medical event. | ✅ Implemented (MedicalEpisodeDetector) |
 | **R7-F** | **Actions debounce.** SOS arming and webhook / custom-message taps are debounced to prevent double-tap self-cancel and double-fire on the field-tap broadcast path. | ✅ Implemented (FieldTapReceiver / EmergencyManager) |
@@ -493,7 +504,7 @@ The class does not use locks. The algorithm tolerates slightly stale reads acros
 
 | ID | Change | Status |
 |----|--------|--------|
-| **C5** | **Cadence gate in SILENCE_CHECK.** If `cadenceDataReceived && cadence > 20 RPM`, the rider is actively pedalling → instant false-alarm exit with `CAD_GATE` log event. Guard: only active when a cadence sensor/provider has been detected at least once (first data point lifts `cadenceDataReceived`). No cadence sensor = algorithm unchanged. | ✅ Implemented |
+| **C5** | **Cadence gate in SILENCE_CHECK.** If `cadenceDataReceived && cadence > 20 RPM`, the rider is actively pedalling → instant false-alarm exit with `CAD_GATE` log event. Guard: only active when a cadence sensor/provider has been detected at least once (first data point lifts `cadenceDataReceived`). No cadence sensor = algorithm unchanged. Later refinements: `isCadenceActive` adds a freshness-by-change stuck-sensor guard (the value must have genuinely fluctuated, ≤ 10 s ago in sample time — a sensor repeating its last value bit-exact after signal loss is ignored), and the 2026-05-25 FN fix added on-side CAD_GATE suppression (`lastCadenceGateSuppressed`: live orientation ≥ 45° vs the pre-impact reference → the gate is unsafe and is skipped; see the Sensors table). | ✅ Implemented |
 | **C6** | **Grade-aware proactive peak boost.** The single-frame peak threshold is raised by +2/+5/+8 m/s² for descents of −4/−7/−10% respectively. This pre-empts the first TERRAIN_CLUSTER false alarm on bad descents. The smooth threshold is untouched — a real crash on a descent still fires via the smooth path. | ✅ Implemented |
 | **C7** | **Deceleration tracking in `updateSpeed()`.** `lastDecelerationKmhPerS = Δspeed/Δt` is computed on every speed update and logged at `IMPACT_ENTER`. Not used as a gate (GPS ~1 Hz is too coarse), but large negative values (< −10 km/h/s) at impact are strong calibration evidence. | ✅ Implemented (logging only) |
 | **C8** | **Enriched calibration logs.** All major events (`IMPACT_ENTER`, `IMPACT_TMO`, `CRASH_CONFIRMED`, `PERIODIC`, `HIGH_MAG_NORISING`) now include `grade`, `cadence`, `grade_boost`, and `decel` fields. Gives full contextual picture for each event. | ✅ Implemented |
@@ -692,7 +703,7 @@ On the sensor thread, every accelerometer sample is appended to a primitive ring
 
 `PreImpactRef` is an immutable data class `(x, y, z, valid)`. The averaging is extracted as a pure function so it is unit-testable on the JVM without constructing `SensorEvent` (which is not instantiable in unit tests).
 
-The ring is cleared in `onPause()` and `stop()`. An impact within ~1–2 s of ride start or of a resume yields `valid = false`.
+The ring is never cleared on pause. The listener stays registered across a pause, and the facade's `onPause` (BOTH auto and manual) instead calls `invalidateVectorRing()`, which raises a `@Volatile` floor timestamp (`vectorRingFloorMs`) — entries captured before the floor are simply ignored when computing the reference. This keeps the sensor thread the ring's sole mutator (lock-free, hot path untouched), and because the ring keeps filling with the bike's stationary samples during the pause, a valid reference is available essentially immediately after any pause longer than the ~2.25 s averaging window. Only `stop()` (which unregisters the listener first) actually clears the ring and resets the floor. An impact within ~1–2 s of ride start, or within ~2.25 s of a very brief pause, yields `valid = false`.
 
 ### Gap capture (`CrashStateMachine`)
 
@@ -755,11 +766,11 @@ The IMPACT → SILENCE_CHECK transition on the **on-side relaxation path** does 
 
 | Event | Effect on pre-impact reference | Effect on silence window / orientation accumulator |
 |-------|-------------------------------|----------------------------------------------------|
-| First `Recording` of session | RESET (ring cleared) | RESET |
-| `Paused (manual) → Recording` resume | RESET (ring cleared in `onPause`) | RESET (manual pause wipes the state machine — I3 fix) |
-| `Paused (auto) → Recording` resume | PRESERVED (auto-pause does not call `onPause` on the SM) | **PRESERVED** — mid-IMPACT or mid-SILENCE_CHECK survives the autopause + auto-resume cycle (I3 + auto-resume residual fixes). A real crash whose bike rolls long enough to trip autopause continues its in-flight detection on resume |
-| `Recording → Paused (manual)` | RESET (ring cleared in `onPause`) | RESET |
-| `Recording → Paused (auto)` | PRESERVED (auto-pause does not reach `onPause`) | PRESERVED |
+| First `Recording` of session | RESET (ring cleared by the previous `stop()`; floor reset) | RESET |
+| `Paused (manual) → Recording` resume | Ring floor was raised at pause; the ring kept filling during the pause, so a valid reference is available right after resume. The SM's captured reference was wiped at pause | RESET (manual pause wipes the state machine — I3 fix) |
+| `Paused (auto) → Recording` resume | Captured reference PRESERVED (auto-pause does not call `onPause` on the SM); ring floor was raised at pause but the ring refills during it | **PRESERVED** — mid-IMPACT or mid-SILENCE_CHECK survives the autopause + auto-resume cycle (I3 + auto-resume residual fixes). A real crash whose bike rolls long enough to trip autopause continues its in-flight detection on resume |
+| `Recording → Paused (manual)` | Ring INVALIDATED (floor raised in `invalidateVectorRing` — listener stays registered, ring NOT cleared); SM's captured reference wiped by `stateMachine.onPause()` | RESET |
+| `Recording → Paused (auto)` | Ring INVALIDATED (the facade raises the floor on auto pauses too — harmless to an in-flight event, whose reference was already captured at IMPACT entry); SM's captured reference PRESERVED | PRESERVED |
 | Impact detected (`Decision.EnterImpact`) | **CAPTURED** from ring buffer at this moment | Orientation accumulator starts filling (gated on `accelOk`) |
 | IMPACT → SILENCE_CHECK (speed-drop path) | Reference already set; gap is recorded | Accumulator **reset** — SILENCE_CHECK rebuilds the latch from its own samples |
 | IMPACT → SILENCE_CHECK (on-side relaxation path) | Reference already set; gap is recorded | Accumulator **carries forward** — the ≥25 on-side IMPACT samples are durable evidence; only `lockedEffectiveSilenceMs` and `lastOrientationAngleDeg` are cleared so the latch re-evaluates cleanly from the preserved data |
@@ -771,7 +782,7 @@ The IMPACT → SILENCE_CHECK transition on the **on-side relaxation path** does 
 
 ### False-negative analysis
 
-The on-side branch uses the same 4.5 s threshold as Revision 4 and prior. Real crashes that lay the bike on its side (the majority — ~70–85 % per cycling-incident literature) confirm with the same latency as before. The rare crash where the bike stays upright (pinned against a wall or car, OTB with bike standing) confirms at ~20 s instead of ~4.5 s — a 15.5 s delay, well within the irrelevant range for emergency response.
+The on-side branch uses the same 4.5 s threshold as Revision 4 and prior. Real crashes that lay the bike on its side (the majority — ~70–85 % per cycling-incident literature) confirm with the same latency as before. The rare crash where the bike stays upright (pinned against a wall or car, OTB with bike standing) is treated by where it lands relative to the R6-G prompt-stop upright veto: if the bike ends within 15° of its pre-impact orientation AND the impact produced no violent rotation (peak gyro < 3.0 rad/s), the 20 s confirm is now **vetoed** — that case no longer confirms at all, and the SpeedDropMonitor (if enabled) is the only remaining backstop. A high-rotation OTB that ends wheels-up still confirms (the gyro gate keeps it firing), and a bike knocked to 15–45° still confirms at ~20 s instead of ~4.5 s — a 15.5 s delay, well within the irrelevant range for emergency response.
 
 The `silenceDurationUprightMs` requirement is reset by ANY accel deviation > `silenceDeviationMax` (4.0 m/s²): a rider in an upright-bike crash who shifts position even slightly is detected; a rider stopped at a traffic light typically shifts within 20 s.
 
@@ -794,7 +805,8 @@ Edge cases that yield delayed-but-not-blocked confirm:
 The following events gain new fields:
 
 - **`SILENCE_ENTER`** (`SIL_IN`) — gains `gap_ms` (impact→stillness gap), `pre_valid` (boolean), `pre_x / pre_y / pre_z` (pre-impact reference vector).
-- **`CRASH_CONFIRMED`** (`CRASH_OK`) — gains `gap_ms`, `pre_impact_angle` (degrees between pre-impact reference and silence-window gravity average), `decided_by` (one of `GAP` / `ORIENT_UPRIGHT` / `ORIENT_ONSIDE` / `UNKNOWN`). The existing `effective_silence_ms` field is retained.
+- **`CRASH_CONFIRMED`** (`CRASH_OK`) — gains `gap_ms`, `pre_impact_angle` (degrees between pre-impact reference and silence-window gravity average), `decided_by` (one of `GAP` / `ORIENT_UPRIGHT` / `ORIENT_ONSIDE` / `UNKNOWN`). The existing `effective_silence_ms` field is retained, alongside `silence_path` (`UPRIGHT` / `GPS_STALE` / `LEGACY` / `UNKNOWN`, derived from which window duration fired). Since commit `d1df70e` the row also carries `sil_x / sil_y / sil_z` — the averaged silence-window gravity vector — next to `pre_x / pre_y / pre_z`, so `pre_impact_angle` is independently verifiable from the raw geometry (the gap regime used to log only `pre_impact_angle=-1.0`).
+- **`GAP_UPRIGHT_VETO`** (`GAP_VETO`) — since `d1df70e` carries `sil_x / sil_y / sil_z` too, plus `regime` (`GAP` = R6-F delayed stop \| `PROMPT` = R6-G prompt stop) and `gyro_peak` / `gyro_thr` (the impact→silence peak rotation vs the R6-G gate; informational only on a GAP veto), alongside the original `angle`, `veto_thr`, `speed`, `deviation`, `cadence`.
 - **`IMPACT_TIMEOUT`** (`IMPACT_TMO`) — gains `pre_valid`.
 
 The `ORIENTATION_BASELINE` (`ORIENT_BASE`) event no longer exists — there is no learned baseline to announce.
@@ -809,7 +821,7 @@ The `ORIENTATION_BASELINE` (`ORIENT_BASE`) event no longer exists — there is n
 | `uprightAngleThresholdDegrees` | 45.0° | Angle below which the bike is classified as "still upright" |
 | `delayedStopGapMs` | 8 000 ms | Impact→stillness gap above which the stop is treated as delayed (long 20 s window) |
 | `onSideRelaxationAngleDeg` | 60.0° | Angle from the pre-impact reference above which the bike is "decisively on the ground". Used to bypass the speed gate in BOTH the SILENCE_CHECK speed-rise relaxation AND the IMPACT-phase on-side relaxation. Stricter than `uprightAngleThresholdDegrees` so merely-leaned bikes do not relax the speed check. |
-| `onSideRelaxationMaxSpeedKmh` | 25.0 km/h | Speed ceiling on the SILENCE_CHECK speed-rise relaxation: even when the bike is decisively on-side (angle ≥ 60°), `isStill` only ignores the speed-drop gate while `lastSpeedKmh < 25 km/h` OR while GPS is stale. Above this threshold the standard speed gate re-engages — a fast-tumbling object far above realistic rolling-bike speeds is more likely a sensor anomaly than a downed rider, and the on-side relaxation should not bypass safety on that input. The GPS-stale bypass is preserved so a rider whose GPS drops out at high speed during a crash still benefits from the relaxation. |
+| `onSideRelaxationMaxSpeedKmh` | 25.0 km/h | Speed ceiling on the **IMPACT-phase** on-side relaxation (`handleImpact` only): even when the bike is decisively on-side (≥ 25 samples, angle ≥ 60°), the IMPACT → SILENCE_CHECK speed-gate bypass only engages while `lastSpeedKmh < 25 km/h` OR while GPS is stale. Above this threshold the standard speed gate re-engages — a sustained ≥ 25 km/h "on-side" reading through the whole IMPACT window is a rough-descent forward-lean artefact, not a rolling escaped bike (2026-05-25 FP at 34.7 km/h; the four real falls in the same log were all < 15 km/h). The GPS-stale bypass is preserved so a rider whose GPS drops out at high speed during a crash still benefits from the relaxation. The ceiling is **not** applied inside SILENCE_CHECK: once the on-side latch has engaged there, `isStill = accelOk` at any speed with fresh GPS — a deliberate, FN-safe asymmetry (the latch needed decisive evidence to engage, and a mid-window ceiling would drop a genuine crash whose bike accelerates downhill). |
 
 Companion-object constants (in `CrashStateMachine`, not `Thresholds`):
 
@@ -829,10 +841,11 @@ The IMPACT-phase relaxation closes that gap symmetrically:
 ```
 onSideRelaxed = (orientationSampleCount >= IMPACT_RELAXATION_MIN_SAMPLES)
               AND (currentOrientationAngleDeg() >= onSideRelaxationAngleDeg)   // 60°
+              AND (lastSpeedKmh < onSideRelaxationMaxSpeedKmh OR gpsStale)     // 25 km/h ceiling
 gateOk        = accelOk AND gyroOk AND timeOk AND (speedDropOk OR onSideRelaxed)
 ```
 
-Decisive on-side evidence (≥25 samples = ~500 ms of sustained `accelOk` on-side accumulation, angle ≥ 60° from the pre-impact reference) allows the IMPACT → SILENCE_CHECK transition to bypass the speed gate. Rationale: a bike that is decisively on the ground cannot be ridden — if the bike is moving while flat, the bike has escaped the downed rider.
+Decisive on-side evidence (≥25 samples = ~500 ms of sustained `accelOk` on-side accumulation, angle ≥ 60° from the pre-impact reference) allows the IMPACT → SILENCE_CHECK transition to bypass the speed gate, as long as the current speed is below the `onSideRelaxationMaxSpeedKmh` ceiling (25 km/h; GPS-stale bypasses the ceiling). This ceiling exists only at this IMPACT-phase gate — the SILENCE_CHECK on-side relaxation has none (see the tuning table). Rationale: a bike that is decisively on the ground cannot be ridden — if the bike is moving while flat, the bike has escaped the downed rider; but an escaped bike decelerates within seconds, so a sustained ≥ 25 km/h reading through the IMPACT window is a rough-descent artefact instead.
 
 **Why this preserves false-positive safety:**
 
