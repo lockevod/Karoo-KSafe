@@ -947,14 +947,21 @@ class CarbsTracker(
         calibLogger.log(CalibrationLogger.Event.FUELING_CARB_PERIODIC) {
             // Locale.US — see fireAlert above. v18 payload mirrors FUELING_CARB_FIRED:
             // confidence + kcal_h + cho_fraction replace the vestigial `multiplier`.
+            // carbs_enabled/calories_enabled: the monitor runs when EITHER feature is on,
+            // and in a calories-only session burn_rate_gph logs live while cum_burned
+            // stays 0 — without the flags, log analysis had to INFER the mode from
+            // `cum_burned==0 ∧ burn_rate>0` (first seen in the field on session
+            // 786c16_12fb6d, v2.1.3). cum_kcal completes the calorie picture.
             String.format(
                 java.util.Locale.US,
                 "cum_burned=%d,cum_logged=%d,deficit=%d,burn_rate_gph=%d," +
-                    "confidence=%s,kcal_h=%.0f,cho_fraction=%.2f,zone_source=%s,zone_idx=%d,zone_total=%d,hr=%d,power=%d",
+                    "confidence=%s,kcal_h=%.0f,cho_fraction=%.2f,zone_source=%s,zone_idx=%d,zone_total=%d,hr=%d,power=%d," +
+                    "carbs_enabled=%b,calories_enabled=%b,cum_kcal=%d",
                 cumBurnedG.toInt(), cumLoggedG, deficit, burnRateGph,
                 burn.confidence, burn.kcalPerHour, burn.choFraction,
                 lastZoneSnapshot.source, lastZoneSnapshot.index, lastZoneSnapshot.total,
                 lastHrBpm ?: -1, lastPowerW ?: -1,
+                config.carbsTrackerEnabled, config.hrCaloriesEnabled, cumKcal.toInt(),
             )
         }
     }
