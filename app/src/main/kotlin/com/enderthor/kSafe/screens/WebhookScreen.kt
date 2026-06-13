@@ -104,9 +104,15 @@ fun ActionsScreen(vm: MainViewModel) {
     var customMsg3Color by remember(config.customMsg3Color) { mutableStateOf(config.customMsg3Color) }
 
     // ── Webhook slots 1–4 ─────────────────────────────────────────────────────
-    // Seeded from config on each config identity change. Using a SnapshotStateList so
-    // mutations inside WebhookSlotFields recompose only the affected slot.
-    val webhookSlots: SnapshotStateList<WebhookUiSlot> = remember(config) {
+    // Reseed ONLY when a webhook slot's STORED content actually changes (WebhookSlot is a
+    // data class → structural equality), NOT on every unrelated config save. Keying on the
+    // whole `config` object would reseed the list whenever an unrelated field on this screen
+    // (custom message, Karoo Live) debounce-saved, wiping the rider's in-flight webhook edits.
+    // This mirrors the per-field `remember(config.X)` scoping used elsewhere on this screen.
+    val webhookSlots: SnapshotStateList<WebhookUiSlot> = remember(
+        config.webhookSlot(1), config.webhookSlot(2),
+        config.webhookSlot(3), config.webhookSlot(4),
+    ) {
         (1..WEBHOOK_SLOT_COUNT).map { i -> config.webhookSlot(i).toUiSlot() }.toMutableStateList()
     }
 
@@ -445,6 +451,13 @@ fun ActionsScreen(vm: MainViewModel) {
                 )
                 val webhookTestLabel = stringResource(R.string.webhook_test)
 
+                // Always mutate from the CURRENT list element, never a composition-time capture:
+                // reading `webhookSlots[idx]` fresh inside the lambda prevents a stale-`uiSlot`
+                // closure from clobbering a sibling field's just-applied edit on rapid input.
+                fun mutateSlot(idx: Int, transform: (WebhookUiSlot) -> WebhookUiSlot) {
+                    webhookSlots[idx] = transform(webhookSlots[idx])
+                }
+
                 for (slotIndex in 0 until WEBHOOK_SLOT_COUNT) {
                     if (slotIndex > 0) {
                         HorizontalDivider(modifier = Modifier.padding(vertical = 2.dp))
@@ -453,32 +466,32 @@ fun ActionsScreen(vm: MainViewModel) {
                     val uiSlot = webhookSlots[slotIndex]
                     WebhookSlotFields(
                         enabled = uiSlot.slot.enabled,
-                        onEnabledChange = { webhookSlots[slotIndex] = uiSlot.copy(slot = uiSlot.slot.copy(enabled = it)) },
+                        onEnabledChange = { mutateSlot(slotIndex) { s -> s.copy(slot = s.slot.copy(enabled = it)) } },
                         enableLabel = webhookEnableLabels[slotIndex],
                         label = uiSlot.slot.label,
-                        onLabelChange = { webhookSlots[slotIndex] = uiSlot.copy(slot = uiSlot.slot.copy(label = it)) },
+                        onLabelChange = { mutateSlot(slotIndex) { s -> s.copy(slot = s.slot.copy(label = it)) } },
                         url = uiSlot.slot.url,
-                        onUrlChange = { webhookSlots[slotIndex] = uiSlot.copy(slot = uiSlot.slot.copy(url = it)) },
+                        onUrlChange = { mutateSlot(slotIndex) { s -> s.copy(slot = s.slot.copy(url = it)) } },
                         method = uiSlot.slot.method,
-                        onMethodChange = { webhookSlots[slotIndex] = uiSlot.copy(slot = uiSlot.slot.copy(method = it)) },
+                        onMethodChange = { mutateSlot(slotIndex) { s -> s.copy(slot = s.slot.copy(method = it)) } },
                         headers = uiSlot.slot.headers,
-                        onHeadersChange = { webhookSlots[slotIndex] = uiSlot.copy(slot = uiSlot.slot.copy(headers = it)) },
+                        onHeadersChange = { mutateSlot(slotIndex) { s -> s.copy(slot = s.slot.copy(headers = it)) } },
                         body = uiSlot.slot.body,
-                        onBodyChange = { webhookSlots[slotIndex] = uiSlot.copy(slot = uiSlot.slot.copy(body = it)) },
+                        onBodyChange = { mutateSlot(slotIndex) { s -> s.copy(slot = s.slot.copy(body = it)) } },
                         geoEnabled = uiSlot.slot.geoEnabled,
-                        onGeoEnabledChange = { webhookSlots[slotIndex] = uiSlot.copy(slot = uiSlot.slot.copy(geoEnabled = it)) },
+                        onGeoEnabledChange = { mutateSlot(slotIndex) { s -> s.copy(slot = s.slot.copy(geoEnabled = it)) } },
                         geoLat = uiSlot.geoLatText,
-                        onGeoLatChange = { webhookSlots[slotIndex] = uiSlot.copy(geoLatText = it) },
+                        onGeoLatChange = { mutateSlot(slotIndex) { s -> s.copy(geoLatText = it) } },
                         geoLon = uiSlot.geoLonText,
-                        onGeoLonChange = { webhookSlots[slotIndex] = uiSlot.copy(geoLonText = it) },
+                        onGeoLonChange = { mutateSlot(slotIndex) { s -> s.copy(geoLonText = it) } },
                         geoRadius = uiSlot.geoRadiusText,
-                        onGeoRadiusChange = { webhookSlots[slotIndex] = uiSlot.copy(geoRadiusText = it) },
+                        onGeoRadiusChange = { mutateSlot(slotIndex) { s -> s.copy(geoRadiusText = it) } },
                         alertEnabled = uiSlot.slot.alertEnabled,
-                        onAlertEnabledChange = { webhookSlots[slotIndex] = uiSlot.copy(slot = uiSlot.slot.copy(alertEnabled = it)) },
+                        onAlertEnabledChange = { mutateSlot(slotIndex) { s -> s.copy(slot = s.slot.copy(alertEnabled = it)) } },
                         alertText = uiSlot.slot.alertText,
-                        onAlertTextChange = { webhookSlots[slotIndex] = uiSlot.copy(slot = uiSlot.slot.copy(alertText = it)) },
+                        onAlertTextChange = { mutateSlot(slotIndex) { s -> s.copy(slot = s.slot.copy(alertText = it)) } },
                         fieldColor = uiSlot.slot.color,
-                        onFieldColorChange = { webhookSlots[slotIndex] = uiSlot.copy(slot = uiSlot.slot.copy(color = it)) },
+                        onFieldColorChange = { mutateSlot(slotIndex) { s -> s.copy(slot = s.slot.copy(color = it)) } },
                         onTest = {
                             val ext = KSafeExtension.getInstance()
                                 ?: return@WebhookSlotFields "Extension not connected — wait a moment."
