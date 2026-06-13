@@ -31,6 +31,8 @@
     <string name="custom_message_datatype_desc">Custom message button. Tap to send your configured message instantly to your contacts.</string>
     <string name="webhook_1_datatype_name">KSafe Webhook 1</string>
     <string name="webhook_2_datatype_name">KSafe Webhook 2</string>
+    <string name="webhook_3_datatype_name">KSafe Webhook 3</string>
+    <string name="webhook_4_datatype_name">KSafe Webhook 4</string>
     <string name="webhook_datatype_desc">Webhook action button. Tap to fire the configured HTTP request (garage door, smart home, etc.).</string>
     <string name="custom_message_2_datatype_name">KSafe Message 2</string>
     <string name="custom_message_3_datatype_name">KSafe Message 3</string>

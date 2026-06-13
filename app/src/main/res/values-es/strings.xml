@@ -34,6 +34,8 @@
     <string name="custom_message_datatype_desc">Botón de mensaje personalizado. Tócalo para enviar al instante tu mensaje configurado a tus contactos.</string>
     <string name="webhook_1_datatype_name">KSafe Webhook 1</string>
     <string name="webhook_2_datatype_name">KSafe Webhook 2</string>
+    <string name="webhook_3_datatype_name">KSafe Webhook 3</string>
+    <string name="webhook_4_datatype_name">KSafe Webhook 4</string>
     <string name="webhook_datatype_desc">Botón de acción webhook. Tócalo para lanzar la petición HTTP configurada (puerta de garaje, domótica, etc.).</string>
     <string name="custom_message_2_datatype_name">KSafe Mensaje 2</string>
     <string name="custom_message_3_datatype_name">KSafe Mensaje 3</string>
