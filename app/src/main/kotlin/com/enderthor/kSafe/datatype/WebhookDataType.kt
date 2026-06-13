@@ -60,7 +60,7 @@ class WebhookDataType(
         else -> FieldTapReceiver.ACTION_WEBHOOK_4
     }
 
-    private val requestCode = 105 + slot  // 106 for slot1, 107 for slot2
+    private val requestCode = 105 + slot  // 106..109 for slots 1..4
 
     // Cached PendingIntent — see CarbLogDataType.
     @Volatile private var cachedPi: PendingIntent? = null

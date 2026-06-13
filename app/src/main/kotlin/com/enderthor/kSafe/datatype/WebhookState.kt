@@ -1,5 +1,6 @@
 package com.enderthor.kSafe.datatype
 
+import com.enderthor.kSafe.data.WEBHOOK_SLOT_COUNT
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 
@@ -19,7 +20,7 @@ enum class WebhookState {
     ERROR;     // failed — red, "tap=retry"
 
     companion object {
-        private const val SLOT_COUNT = 4
+        private const val SLOT_COUNT = WEBHOOK_SLOT_COUNT
         private val flows = Array(SLOT_COUNT) { MutableStateFlow(WebhookStateData(IDLE)) }
 
         fun flowForSlot(slot: Int): StateFlow<WebhookStateData> =
