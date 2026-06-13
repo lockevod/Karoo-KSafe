@@ -12,6 +12,7 @@ import com.enderthor.kSafe.extension.util.formatUs
 import com.enderthor.kSafe.data.KSafeConfig
 import com.enderthor.kSafe.data.ProviderType
 import com.enderthor.kSafe.data.RideWellnessRecord
+import com.enderthor.kSafe.data.webhookSlot
 import android.content.res.Configuration
 import com.enderthor.kSafe.datatype.CustomMessageDataType
 import com.enderthor.kSafe.datatype.CustomMessageState
@@ -322,10 +323,10 @@ class KSafeExtension : KarooExtension("ksafe", BuildConfig.VERSION_NAME), Corout
      *  the T+0 revert job fires at T+4 s and clobbers FIRING mid-HTTP. The
      *  cancel-before-launch pattern (see [scheduleWebhookRevert] / [scheduleCustomRevert])
      *  closes the race.
-     *  Webhook has slots 1..2 (array size 3, index 0 unused); custom message has
+     *  Webhook has slots 1..4 (array size 5, index 0 unused); custom message has
      *  slots 1..3 (array size 4, index 0 unused). Touched only on the Main
      *  dispatcher, so plain arrays are safe. */
-    private val webhookRevertJobs: Array<kotlinx.coroutines.Job?> = arrayOfNulls(3)
+    private val webhookRevertJobs: Array<kotlinx.coroutines.Job?> = arrayOfNulls(5)
     private val customRevertJobs: Array<kotlinx.coroutines.Job?> = arrayOfNulls(4)
 
     /** Schedules a delayed revert of the webhook slot's field state to IDLE, cancelling
@@ -431,6 +432,8 @@ class KSafeExtension : KarooExtension("ksafe", BuildConfig.VERSION_NAME), Corout
             CustomMessageDataType("custom-message-field-3", applicationContext, karooSystem, slot = 3),
             WebhookDataType("webhook-field-1", applicationContext, karooSystem, slot = 1),
             WebhookDataType("webhook-field-2", applicationContext, karooSystem, slot = 2),
+            WebhookDataType("webhook-field-3", applicationContext, karooSystem, slot = 3),
+            WebhookDataType("webhook-field-4", applicationContext, karooSystem, slot = 4),
             com.enderthor.kSafe.datatype.CarbLogDataType("carb-log-1", applicationContext, karooSystem, slot = 1),
             com.enderthor.kSafe.datatype.CarbLogDataType("carb-log-2", applicationContext, karooSystem, slot = 2),
             com.enderthor.kSafe.datatype.CarbLogDataType("carb-log-3", applicationContext, karooSystem, slot = 3),
@@ -467,6 +470,8 @@ class KSafeExtension : KarooExtension("ksafe", BuildConfig.VERSION_NAME), Corout
         for (slot in 1..2) {
             com.enderthor.kSafe.datatype.HydrationLogState.update(slot, com.enderthor.kSafe.datatype.HydrationLogState.IDLE)
             com.enderthor.kSafe.datatype.CombinedFuelLogState.update(slot, com.enderthor.kSafe.datatype.CombinedFuelLogState.IDLE)
+        }
+        for (slot in 1..4) {
             WebhookState.update(slot, WebhookState.IDLE)
         }
 
@@ -2235,8 +2240,7 @@ class KSafeExtension : KarooExtension("ksafe", BuildConfig.VERSION_NAME), Corout
         }
         try {
             val config = activeConfig
-            val label = if (slot == 1) config.webhook1Label.ifBlank { "Action 1" }
-                        else config.webhook2Label.ifBlank { "Action 2" }
+            val label = config.webhookSlot(slot).label.ifBlank { "Action $slot" }
 
             if (!config.isActive) {
                 Timber.d("handleWebhookTap slot=$slot blocked — master switch OFF")
@@ -2252,7 +2256,7 @@ class KSafeExtension : KarooExtension("ksafe", BuildConfig.VERSION_NAME), Corout
             }
 
             // ── Enabled check ─────────────────────────────────────────────────
-            val enabled = if (slot == 1) config.webhook1Enabled else config.webhook2Enabled
+            val enabled = config.webhookSlot(slot).enabled
             if (!enabled) {
                 Timber.d("handleWebhookTap slot=$slot disabled")
                 WebhookState.update(slot, WebhookState.ERROR, "disabled")
@@ -2267,7 +2271,7 @@ class KSafeExtension : KarooExtension("ksafe", BuildConfig.VERSION_NAME), Corout
             }
 
             // ── URL check ─────────────────────────────────────────────────────
-            val url = if (slot == 1) config.webhook1Url else config.webhook2Url
+            val url = config.webhookSlot(slot).url
             if (url.isBlank()) {
                 Timber.d("handleWebhookTap slot=$slot no URL")
                 WebhookState.update(slot, WebhookState.ERROR, "no URL")
@@ -2282,11 +2286,12 @@ class KSafeExtension : KarooExtension("ksafe", BuildConfig.VERSION_NAME), Corout
             }
 
             // ── Geo-fence check ───────────────────────────────────────────────
-            val geoEnabled = if (slot == 1) config.webhook1GeoEnabled else config.webhook2GeoEnabled
+            val wSlot = config.webhookSlot(slot)
+            val geoEnabled = wSlot.geoEnabled
             if (geoEnabled) {
-                val targetLat = if (slot == 1) config.webhook1GeoLat else config.webhook2GeoLat
-                val targetLon = if (slot == 1) config.webhook1GeoLon else config.webhook2GeoLon
-                val radiusM   = if (slot == 1) config.webhook1GeoRadiusM else config.webhook2GeoRadiusM
+                val targetLat = wSlot.geoLat
+                val targetLon = wSlot.geoLon
+                val radiusM   = wSlot.geoRadiusM
                 // G8 — gate on nullability rather than coordinate-equality with (0,0).
                 // Aliasing 'no fix' with 'fix at Null Island' permanently locks riders
                 // physically near (0,0) Gulf of Guinea out of geo-fenced webhooks, AND
@@ -2359,8 +2364,8 @@ class KSafeExtension : KarooExtension("ksafe", BuildConfig.VERSION_NAME), Corout
                 bgColorRes = if (result.success) R.color.alert_green else R.color.alert_red,
             )
             if (result.success) {
-                val alertEnabled = if (slot == 1) config.webhook1AlertEnabled else config.webhook2AlertEnabled
-                val alertText    = if (slot == 1) config.webhook1AlertText    else config.webhook2AlertText
+                val alertEnabled = wSlot.alertEnabled
+                val alertText    = wSlot.alertText
                 if (alertEnabled && alertText.isNotBlank()) {
                     dispatchWebhookFeedback(
                         id = "ksafe-webhook-$slot-alert",
@@ -2383,10 +2388,9 @@ class KSafeExtension : KarooExtension("ksafe", BuildConfig.VERSION_NAME), Corout
      */
     suspend fun testWebhook(slot: Int): String {
         val config = activeConfig
-        val enabled = if (slot == 1) config.webhook1Enabled else config.webhook2Enabled
-        val url = if (slot == 1) config.webhook1Url else config.webhook2Url
-        if (!enabled) return "Webhook $slot is disabled — enable it first."
-        if (url.isBlank()) return "No URL configured."
+        val tSlot = config.webhookSlot(slot)
+        if (!tSlot.enabled) return "Webhook $slot is disabled — enable it first."
+        if (tSlot.url.isBlank()) return "No URL configured."
         val result = webhookManager.trigger(slot, config)
         return if (result.success) result.message else "Failed: ${result.message}"
     }
