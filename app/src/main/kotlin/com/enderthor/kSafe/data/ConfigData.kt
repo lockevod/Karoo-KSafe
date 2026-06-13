@@ -118,8 +118,12 @@ const val KAROO_LIVE_BASE_URL = "https://dashboard.hammerhead.io/live/"
  *             into the FIT session message as the STANDARD total_calories field so
  *             platforms that ignore developer fields (Suunto, …) import them.
  *             Pure version stamp; absent in old blobs decodes to NONE (off).
+ *  v24 → v25: webhook slots 3 & 4 added (tap-only, no BonusAction). 26 additive fields
+ *             with sensible defaults (disabled, "Action 3/4") — existing installs
+ *             behave identically until the rider configures the new slots.
+ *             Pure version stamp.
  */
-const val CONFIG_VERSION = 24
+const val CONFIG_VERSION = 25
 
 /**
  * Canonical minSpeedForCrashKmh value per preset.
@@ -462,6 +466,8 @@ data class KSafeConfig(
     val customMsg3Color: Int = FIELD_COLOR_AUTO,
     val webhook1Color: Int = FIELD_COLOR_AUTO,
     val webhook2Color: Int = FIELD_COLOR_AUTO,
+    val webhook3Color: Int = FIELD_COLOR_AUTO,
+    val webhook4Color: Int = FIELD_COLOR_AUTO,
     // Webhook actions — generic HTTP buttons assignable to Karoo hardware buttons.
     // Each action fires a single HTTP request (GET or POST) to any endpoint.
     // Compatible with Home Assistant, ntfy, IFTTT, n8n, Make, and any webhook service.
@@ -477,6 +483,18 @@ data class KSafeConfig(
     val webhook2Method: String = "POST",
     val webhook2Headers: String = "",
     val webhook2Body: String = "",
+    val webhook3Enabled: Boolean = false,
+    val webhook3Label: String = "Action 3",
+    val webhook3Url: String = "",
+    val webhook3Method: String = "POST",
+    val webhook3Headers: String = "",
+    val webhook3Body: String = "",
+    val webhook4Enabled: Boolean = false,
+    val webhook4Label: String = "Action 4",
+    val webhook4Url: String = "",
+    val webhook4Method: String = "POST",
+    val webhook4Headers: String = "",
+    val webhook4Body: String = "",
     // Geo-fence for webhook triggers — when enabled the webhook only fires if the device
     // is within [webhookNGeoRadiusM] metres of the configured target coordinates.
     val webhook1GeoEnabled: Boolean = false,
@@ -487,12 +505,24 @@ data class KSafeConfig(
     val webhook2GeoLat: Double = 0.0,
     val webhook2GeoLon: Double = 0.0,
     val webhook2GeoRadiusM: Int = 50,
+    val webhook3GeoEnabled: Boolean = false,
+    val webhook3GeoLat: Double = 0.0,
+    val webhook3GeoLon: Double = 0.0,
+    val webhook3GeoRadiusM: Int = 50,
+    val webhook4GeoEnabled: Boolean = false,
+    val webhook4GeoLat: Double = 0.0,
+    val webhook4GeoLon: Double = 0.0,
+    val webhook4GeoRadiusM: Int = 50,
     // Ride alert — when enabled a SystemNotification with a custom text is shown after the webhook fires.
     // Useful as an accidental-press warning: the user sees exactly what action was triggered.
     val webhook1AlertEnabled: Boolean = false,
     val webhook1AlertText: String = "",
     val webhook2AlertEnabled: Boolean = false,
     val webhook2AlertText: String = "",
+    val webhook3AlertEnabled: Boolean = false,
+    val webhook3AlertText: String = "",
+    val webhook4AlertEnabled: Boolean = false,
+    val webhook4AlertText: String = "",
     // ─── Carbs tracker (real carb burn from physiology) ─────────────────────
     /** Master toggle. Opt-in feature, off by default. */
     val carbsTrackerEnabled: Boolean = false,
@@ -1402,6 +1432,14 @@ fun KSafeConfig.migrateToLatest(): KSafeConfig {
         // write stays off until the rider opts in. Nothing to rewrite.
         c = c.copy(configVersion = 24)
         Timber.i("KSafeConfig migrated v%d→v24 (standard FIT calories field)", originalVersion)
+    }
+
+    if (c.configVersion < 25) {
+        // v24 → v25: webhook slots 3 & 4 added (tap-only, no BonusAction). Pure version
+        // stamp — all 26 new fields are additive with sensible defaults (disabled, "Action 3/4"),
+        // so existing installs behave identically until the rider configures the new slots.
+        c = c.copy(configVersion = 25)
+        Timber.i("KSafeConfig migrated v%d→v25 (webhook slots 3 & 4)", originalVersion)
     }
 
     return c

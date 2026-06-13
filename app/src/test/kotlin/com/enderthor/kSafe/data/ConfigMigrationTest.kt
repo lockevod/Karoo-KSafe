@@ -222,7 +222,7 @@ class ConfigMigrationTest {
     @Test
     fun `v23 stamps to v24 and defaults fitStandardCaloriesSource to NONE`() {
         val migrated = KSafeConfig(configVersion = 23).migrateToLatest()
-        assertEquals(24, migrated.configVersion)
+        assertEquals(25, migrated.configVersion)
         assertEquals(CONFIG_VERSION, migrated.configVersion)
         assertEquals(FitCaloriesSource.NONE, migrated.fitStandardCaloriesSource)
     }
@@ -235,5 +235,25 @@ class ConfigMigrationTest {
         ).migrateToLatest()
         assertEquals(CONFIG_VERSION, migrated.configVersion)
         assertEquals(FitCaloriesSource.KAROO, migrated.fitStandardCaloriesSource)
+    }
+
+    @Test
+    fun `v24 migrates to current and webhook 3 and 4 arrive at defaults`() {
+        val old = KSafeConfig(
+            configVersion = 24,
+            webhook1Enabled = true,
+            webhook1Label = "My WH1",
+            webhook1Url = "https://example.com/1",
+        )
+        val migrated = old.migrateToLatest()
+        assertEquals(CONFIG_VERSION, migrated.configVersion)
+        assertEquals(true, migrated.webhook1Enabled)
+        assertEquals("My WH1", migrated.webhook1Label)
+        assertEquals("https://example.com/1", migrated.webhook1Url)
+        assertEquals(false, migrated.webhook3Enabled)
+        assertEquals("Action 3", migrated.webhook3Label)
+        assertEquals("", migrated.webhook3Url)
+        assertEquals(false, migrated.webhook4Enabled)
+        assertEquals("Action 4", migrated.webhook4Label)
     }
 }
