@@ -114,6 +114,10 @@ const val KAROO_LIVE_BASE_URL = "https://dashboard.hammerhead.io/live/"
  *  v20 → v21: combined fuel-log fields added (combinedCarbConcentrationPer500ml + the
  *             combined1/2 Label/Ml/Carbs/Color set) for the combined drink+carbs tap field.
  *             Pure version stamp; all fields have defaults, so existing installs are unaffected.
+ *  v21 → v22: updateCheckEnabled added (default ON). Pure version stamp; absent in old blobs
+ *             decodes to the `true` default, so existing installs get the update notice.
+ *  v22 → v23: hrCaloriesEnabled added (default OFF). Pure version stamp; absent in old blobs
+ *             decodes to `false`, so the HR-based calorie estimate stays off until opted in.
  *  v23 → v24: fitStandardCaloriesSource added (default NONE) — write the ride's calories
  *             into the FIT session message as the STANDARD total_calories field so
  *             platforms that ignore developer fields (Suunto, …) import them.
