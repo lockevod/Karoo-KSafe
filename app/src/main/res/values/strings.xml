@@ -432,6 +432,8 @@
     <string name="webhook_hint">Trigger any HTTP endpoint from a Karoo hardware button. Works with Home Assistant, ntfy, IFTTT, n8n, Make, or any webhook. The request is sent via the Karoo network bridge — works over Bluetooth tether when not on Wi-Fi.</string>
     <string name="webhook_1_label">Enable Webhook 1</string>
     <string name="webhook_2_label">Enable Webhook 2</string>
+    <string name="webhook_3_label">Enable Webhook 3</string>
+    <string name="webhook_4_label">Enable Webhook 4</string>
     <string name="webhook_label_hint">Action label (shown in alerts)</string>
     <string name="webhook_url_hint">URL</string>
     <string name="webhook_url_example">e.g. https://ha.example.com/api/services/cover/toggle</string>
