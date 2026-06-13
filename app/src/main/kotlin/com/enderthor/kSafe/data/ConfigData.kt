@@ -305,6 +305,7 @@ enum class IncidentResponseLevel { SILENT, WARNING, EMERGENCY }
  *  import no calories at all. NONE = don't write (default); HR = KSafe's own estimate
  *  ([KSafeConfig.hrCaloriesEnabled] must be on for it to produce a value); KAROO = the
  *  Karoo's native power-based calories, mirrored from its CALORIES stream. */
+@Serializable
 enum class FitCaloriesSource { NONE, HR, KAROO }
 
 @Serializable
