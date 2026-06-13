@@ -4,7 +4,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 
 /**
- * Shared in-memory state for the Webhook data fields (slots 1–2).
+ * Shared in-memory state for the Webhook data fields (slots 1–4).
  * Carries an optional [message] shown as the field hint in ERROR/FIRING/SUCCESS states.
  */
 data class WebhookStateData(
@@ -19,14 +19,15 @@ enum class WebhookState {
     ERROR;     // failed — red, "tap=retry"
 
     companion object {
-        private val _flow1 = MutableStateFlow(WebhookStateData(IDLE))
-        private val _flow2 = MutableStateFlow(WebhookStateData(IDLE))
+        private const val SLOT_COUNT = 4
+        private val flows = Array(SLOT_COUNT) { MutableStateFlow(WebhookStateData(IDLE)) }
 
-        fun flowForSlot(slot: Int): StateFlow<WebhookStateData> = if (slot == 2) _flow2 else _flow1
+        fun flowForSlot(slot: Int): StateFlow<WebhookStateData> =
+            flows[(slot - 1).coerceIn(0, SLOT_COUNT - 1)]
 
         fun update(slot: Int, state: WebhookState, message: String = "") {
-            val data = WebhookStateData(state, message)
-            if (slot == 2) _flow2.value = data else _flow1.value = data
+            val idx = (slot - 1).coerceIn(0, SLOT_COUNT - 1)
+            flows[idx].value = WebhookStateData(state, message)
         }
     }
 }
