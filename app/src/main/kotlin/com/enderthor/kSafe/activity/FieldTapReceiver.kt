@@ -49,6 +49,14 @@ class FieldTapReceiver : BroadcastReceiver() {
                 Timber.d("FieldTapReceiver: Webhook tap (slot 2)")
                 ext.launch { ext.handleWebhookTap(2) }
             }
+            ACTION_WEBHOOK_3 -> {
+                Timber.d("FieldTapReceiver: Webhook tap (slot 3)")
+                ext.launch { ext.handleWebhookTap(3) }
+            }
+            ACTION_WEBHOOK_4 -> {
+                Timber.d("FieldTapReceiver: Webhook tap (slot 4)")
+                ext.launch { ext.handleWebhookTap(4) }
+            }
             ACTION_CARB_LOG_1 -> {
                 Timber.d("FieldTapReceiver: Carb log tap (slot 1)")
                 ext.handleCarbLogTap(1)
@@ -88,6 +96,8 @@ class FieldTapReceiver : BroadcastReceiver() {
         const val ACTION_CUSTOM_MESSAGE_3 = "com.enderthor.kSafe.TAP_CUSTOM_MESSAGE_3"
         const val ACTION_WEBHOOK_1        = "com.enderthor.kSafe.TAP_WEBHOOK_1"
         const val ACTION_WEBHOOK_2        = "com.enderthor.kSafe.TAP_WEBHOOK_2"
+        const val ACTION_WEBHOOK_3        = "com.enderthor.kSafe.TAP_WEBHOOK_3"
+        const val ACTION_WEBHOOK_4        = "com.enderthor.kSafe.TAP_WEBHOOK_4"
         const val ACTION_CARB_LOG_1       = "com.enderthor.kSafe.TAP_CARB_LOG_1"
         const val ACTION_CARB_LOG_2       = "com.enderthor.kSafe.TAP_CARB_LOG_2"
         const val ACTION_CARB_LOG_3       = "com.enderthor.kSafe.TAP_CARB_LOG_3"
