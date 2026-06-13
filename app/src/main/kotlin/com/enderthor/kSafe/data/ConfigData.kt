@@ -1445,6 +1445,44 @@ fun KSafeConfig.migrateToLatest(): KSafeConfig {
     return c
 }
 
+// ─── Webhook slot accessor + write-back helper ────────────────────────────────
+
+/** Read-only view of one webhook slot's 13 flat fields. Lets consumers stop branching on slot. */
+data class WebhookSlot(
+    val color: Int,
+    val enabled: Boolean,
+    val label: String,
+    val url: String,
+    val method: String,
+    val headers: String,
+    val body: String,
+    val geoEnabled: Boolean,
+    val geoLat: Double,
+    val geoLon: Double,
+    val geoRadiusM: Int,
+    val alertEnabled: Boolean,
+    val alertText: String,
+)
+
+/** Webhook slots are 1..4. */
+const val WEBHOOK_SLOT_COUNT = 4
+
+fun KSafeConfig.webhookSlot(n: Int): WebhookSlot = when (n) {
+    1 -> WebhookSlot(webhook1Color, webhook1Enabled, webhook1Label, webhook1Url, webhook1Method, webhook1Headers, webhook1Body, webhook1GeoEnabled, webhook1GeoLat, webhook1GeoLon, webhook1GeoRadiusM, webhook1AlertEnabled, webhook1AlertText)
+    2 -> WebhookSlot(webhook2Color, webhook2Enabled, webhook2Label, webhook2Url, webhook2Method, webhook2Headers, webhook2Body, webhook2GeoEnabled, webhook2GeoLat, webhook2GeoLon, webhook2GeoRadiusM, webhook2AlertEnabled, webhook2AlertText)
+    3 -> WebhookSlot(webhook3Color, webhook3Enabled, webhook3Label, webhook3Url, webhook3Method, webhook3Headers, webhook3Body, webhook3GeoEnabled, webhook3GeoLat, webhook3GeoLon, webhook3GeoRadiusM, webhook3AlertEnabled, webhook3AlertText)
+    4 -> WebhookSlot(webhook4Color, webhook4Enabled, webhook4Label, webhook4Url, webhook4Method, webhook4Headers, webhook4Body, webhook4GeoEnabled, webhook4GeoLat, webhook4GeoLon, webhook4GeoRadiusM, webhook4AlertEnabled, webhook4AlertText)
+    else -> throw IllegalArgumentException("webhook slot $n out of range 1..$WEBHOOK_SLOT_COUNT")
+}
+
+fun KSafeConfig.withWebhookSlot(n: Int, s: WebhookSlot): KSafeConfig = when (n) {
+    1 -> copy(webhook1Color = s.color, webhook1Enabled = s.enabled, webhook1Label = s.label, webhook1Url = s.url, webhook1Method = s.method, webhook1Headers = s.headers, webhook1Body = s.body, webhook1GeoEnabled = s.geoEnabled, webhook1GeoLat = s.geoLat, webhook1GeoLon = s.geoLon, webhook1GeoRadiusM = s.geoRadiusM, webhook1AlertEnabled = s.alertEnabled, webhook1AlertText = s.alertText)
+    2 -> copy(webhook2Color = s.color, webhook2Enabled = s.enabled, webhook2Label = s.label, webhook2Url = s.url, webhook2Method = s.method, webhook2Headers = s.headers, webhook2Body = s.body, webhook2GeoEnabled = s.geoEnabled, webhook2GeoLat = s.geoLat, webhook2GeoLon = s.geoLon, webhook2GeoRadiusM = s.geoRadiusM, webhook2AlertEnabled = s.alertEnabled, webhook2AlertText = s.alertText)
+    3 -> copy(webhook3Color = s.color, webhook3Enabled = s.enabled, webhook3Label = s.label, webhook3Url = s.url, webhook3Method = s.method, webhook3Headers = s.headers, webhook3Body = s.body, webhook3GeoEnabled = s.geoEnabled, webhook3GeoLat = s.geoLat, webhook3GeoLon = s.geoLon, webhook3GeoRadiusM = s.geoRadiusM, webhook3AlertEnabled = s.alertEnabled, webhook3AlertText = s.alertText)
+    4 -> copy(webhook4Color = s.color, webhook4Enabled = s.enabled, webhook4Label = s.label, webhook4Url = s.url, webhook4Method = s.method, webhook4Headers = s.headers, webhook4Body = s.body, webhook4GeoEnabled = s.geoEnabled, webhook4GeoLat = s.geoLat, webhook4GeoLon = s.geoLon, webhook4GeoRadiusM = s.geoRadiusM, webhook4AlertEnabled = s.alertEnabled, webhook4AlertText = s.alertText)
+    else -> throw IllegalArgumentException("webhook slot $n out of range 1..$WEBHOOK_SLOT_COUNT")
+}
+
 /**
  * Returns a copy of this config with empty alert-customisation fields pre-filled with their
  * current localised default strings. Used by the JSON export so the user sees the actual
