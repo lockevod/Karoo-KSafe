@@ -185,4 +185,22 @@ data class Thresholds(
      *     long-duration speed=0 windows regardless of this gate.
      */
     val onSideRelaxationMaxSpeedKmh: Double = 25.0,
+
+    /**
+     * Moving-vigilance trust gate. An on-side confirm's angle is only trustworthy when the
+     * settled silence orientation was sampled AT REST: a bike at rest reads ‖a‖ ≈ GRAVITY
+     * (9.81). Field FPs read far below it (8.49, 1.78 m/s²) because the angle was sampled
+     * mid-motion. Below this floor, the confirm is diverted into a speed-gated window instead
+     * of firing. Default ≈ 0.90 × GRAVITY.
+     */
+    val onSideTrustMinAccel: Double = 8.83,
+
+    /** Moving-vigilance window: how long sustained riding speed must hold to silent-clear. */
+    val movingVigilanceWindowMs: Long = 4_000L,
+
+    /**
+     * Moving-vigilance "clearly still riding" speed floor (km/h). Speed must stay at/above this
+     * AND be fresh on every sample to silent-clear; otherwise escalate (fail-safe, no FN).
+     */
+    val movingVigilanceSpeedKmh: Double = 8.0,
 )
