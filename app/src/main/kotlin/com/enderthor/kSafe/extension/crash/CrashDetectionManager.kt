@@ -669,10 +669,10 @@ class CrashDetectionManager(
                 logImpactEnter(sample, decision.reason, boostActive)
             }
             is CrashStateMachine.Decision.Confirm -> {
-                logCrashConfirmed(sample)
                 if (confirmReadInMotion()) {
                     if (!movingVigilance.isArmed) {
-                        // Angle sampled mid-motion → verify before alarming (FN-safe: any doubt escalates).
+                        // First mid-motion confirm of this event → log the suspect CRASH_OK and verify.
+                        logCrashConfirmed(sample)
                         movingVigilance.arm(now)
                         val sx = stateMachine.lastSilenceOrientX
                         val sy = stateMachine.lastSilenceOrientY
@@ -682,14 +682,23 @@ class CrashDetectionManager(
                             "sil_mag=%.2f,trust_min=${stateMachine.thresholds.onSideTrustMinAccel},speed=%.1f,window_ms=${stateMachine.thresholds.movingVigilanceWindowMs}".formatUs(mag, currentSpeedKmh)
                         }
                     }
+                    // else: a 2nd mid-motion confirm during the open window — already being verified.
+                    // Deliberately log NOTHING (a bare CRASH_OK here would orphan in calibration analysis)
+                    // and do not re-arm (keeps the original 4 s clock).
                 } else {
-                    // A trustworthy at-rest confirm fires now; clear any pending vigilance window so a
-                    // later stale-window tick can't fire a second emergency after the rider cancels.
-                    movingVigilance.reset()
+                    // Trustworthy at-rest confirm fires now. If a vigilance window was open, close it with a
+                    // named row so the VIGIL_ARM isn't left dangling, then fire.
+                    if (movingVigilance.isArmed) {
+                        calibLogger?.log(CalibrationLogger.Event.VIGILANCE_CLEAR) {
+                            "reason=preempted_by_at_rest_confirm,speed=%.1f".formatUs(currentSpeedKmh)
+                        }
+                        movingVigilance.reset()
+                    }
                     // alreadyLogged=true: logCrashConfirmed already emitted the canonical
                     // CRASH_CONFIRMED row with full context. confirmCrash must NOT emit a
                     // duplicate (gate-level) CRASH_CONFIRMED for the IMPACT_CONFIRMED path
                     // or downstream consumers that count crashes will double-count.
+                    logCrashConfirmed(sample)
                     confirmCrash(CrashSource.IMPACT_CONFIRMED, alreadyLogged = true)
                 }
             }
