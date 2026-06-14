@@ -60,6 +60,18 @@
         icon="@drawable/ic_ksafe"
         typeId="webhook-field-2" />
     <DataType
+        description="@string/webhook_datatype_desc"
+        displayName="@string/webhook_3_datatype_name"
+        graphical="true"
+        icon="@drawable/ic_ksafe"
+        typeId="webhook-field-3" />
+    <DataType
+        description="@string/webhook_datatype_desc"
+        displayName="@string/webhook_4_datatype_name"
+        graphical="true"
+        icon="@drawable/ic_ksafe"
+        typeId="webhook-field-4" />
+    <DataType
         description="@string/carb_log_datatype_desc"
         displayName="@string/carb_log_1_datatype_name"
         graphical="true"

@@ -5,12 +5,15 @@ import com.enderthor.kSafe.R
 import com.enderthor.kSafe.data.EmergencyReason
 import com.enderthor.kSafe.data.EmergencyState
 import com.enderthor.kSafe.data.EmergencyStatus
+import com.enderthor.kSafe.data.FitCaloriesSource
 import com.enderthor.kSafe.extension.util.EmergencyResume
 import com.enderthor.kSafe.extension.util.decideResume
 import com.enderthor.kSafe.extension.util.formatUs
 import com.enderthor.kSafe.data.KSafeConfig
 import com.enderthor.kSafe.data.ProviderType
 import com.enderthor.kSafe.data.RideWellnessRecord
+import com.enderthor.kSafe.data.WEBHOOK_SLOT_COUNT
+import com.enderthor.kSafe.data.webhookSlot
 import android.content.res.Configuration
 import com.enderthor.kSafe.datatype.CustomMessageDataType
 import com.enderthor.kSafe.datatype.CustomMessageState
@@ -45,6 +48,7 @@ import io.hammerhead.karooext.models.FitEffect
 import io.hammerhead.karooext.models.InRideAlert
 import io.hammerhead.karooext.models.RideState
 import io.hammerhead.karooext.models.StreamState
+import io.hammerhead.karooext.models.PlayBeepPattern
 import io.hammerhead.karooext.models.SystemNotification
 import io.hammerhead.karooext.models.WriteToRecordMesg
 import io.hammerhead.karooext.models.WriteToSessionMesg
@@ -121,6 +125,14 @@ private const val UPDATE_CHECK_RETRY_DELAY_MS: Long = 5 * 60_000L
 private const val UPDATE_NOTICE_MIN_DAYS: Long = 3L
 /** Auto-dismiss the update overlay after this long (rider may also tap Dismiss). */
 private const val UPDATE_NOTICE_AUTODISMISS_MS: Long = 20_000L
+/** Gentle two-tone chime played when the update overlay is shown. Goes through the SDK
+ *  [PlayBeepPattern] (NOT the HAL bypass), so it is subject to the Karoo's mute toggle —
+ *  a muted rider stays silent. This is an informational notice, never an emergency. */
+private val UPDATE_NOTICE_BEEP = PlayBeepPattern(listOf(
+    PlayBeepPattern.Tone(frequency = 880, durationMs = 150),
+    PlayBeepPattern.Tone(frequency = null, durationMs = 80),
+    PlayBeepPattern.Tone(frequency = 1320, durationMs = 220),
+))
 /** Hard cap on the manifest GET so a hung tethered link can't leave the check
  *  coroutine suspended until service teardown. */
 private const val UPDATE_CHECK_HTTP_TIMEOUT_MS: Long = 15_000L
@@ -148,6 +160,13 @@ private const val CALIBRATION_PERIODIC_MAX_CHUNKS_PER_CYCLE: Int = 6
  *  most 5 g behind the true total (sub-2 % error on a typical 300 g ride) and
  *  the session-write rate drops ~5× vs writing on every gram increment. */
 private const val SESSION_BURN_DEADBAND_G: Double = 5.0
+
+/** STANDARD FIT field number of `total_calories` (uint16, kcal) in the SessionMesg —
+ *  FIT SDK `SessionMesg.TotalCaloriesFieldNum`. The Karoo's ride app does not write
+ *  this field, so platforms that ignore developer fields (Suunto, …) import no
+ *  calories at all; when [com.enderthor.kSafe.data.FitCaloriesSource] is not NONE,
+ *  KSafe writes it via a standard (non-developer) [FieldValue]. */
+private const val FIT_SESSION_TOTAL_CALORIES_FIELD_NUM = 11
 
 /** Minimum spacing between FIT RECORD-message writes (carry-forward cadence). The record
  *  dev-fields are re-emitted at this interval regardless of whether the value changed.
@@ -305,10 +324,10 @@ class KSafeExtension : KarooExtension("ksafe", BuildConfig.VERSION_NAME), Corout
      *  the T+0 revert job fires at T+4 s and clobbers FIRING mid-HTTP. The
      *  cancel-before-launch pattern (see [scheduleWebhookRevert] / [scheduleCustomRevert])
      *  closes the race.
-     *  Webhook has slots 1..2 (array size 3, index 0 unused); custom message has
+     *  Webhook has slots 1..4 (array size 5, index 0 unused); custom message has
      *  slots 1..3 (array size 4, index 0 unused). Touched only on the Main
      *  dispatcher, so plain arrays are safe. */
-    private val webhookRevertJobs: Array<kotlinx.coroutines.Job?> = arrayOfNulls(3)
+    private val webhookRevertJobs: Array<kotlinx.coroutines.Job?> = arrayOfNulls(5)
     private val customRevertJobs: Array<kotlinx.coroutines.Job?> = arrayOfNulls(4)
 
     /** Schedules a delayed revert of the webhook slot's field state to IDLE, cancelling
@@ -365,6 +384,15 @@ class KSafeExtension : KarooExtension("ksafe", BuildConfig.VERSION_NAME), Corout
         val hydrationTrackerFlow = kotlinx.coroutines.flow.MutableStateFlow<
             com.enderthor.kSafe.extension.managers.HydrationTracker?>(null)
 
+        /** True while a ride is active (Recording or Paused), republished by
+         *  [handleRideState]. The fueling `startStream` publishers combine this so
+         *  they flip to [io.hammerhead.karooext.models.StreamState.Idle] outside a
+         *  ride — the trackers retain their accumulators after ride end (for the
+         *  post-ride summary and cross-toggle restore), and without this gate a
+         *  consumer extension kept receiving last ride's totals as live Streaming
+         *  data while the Karoo sat idle. */
+        val rideActiveFlow = kotlinx.coroutines.flow.MutableStateFlow(false)
+
         /** Current Karoo night-mode (dark) state, republished by the service's
          *  [onConfigurationChanged]. The combine-based AUTO-colour data fields merge this so
          *  they re-render on a day↔night flip — they otherwise only re-emit on a state/config
@@ -405,6 +433,8 @@ class KSafeExtension : KarooExtension("ksafe", BuildConfig.VERSION_NAME), Corout
             CustomMessageDataType("custom-message-field-3", applicationContext, karooSystem, slot = 3),
             WebhookDataType("webhook-field-1", applicationContext, karooSystem, slot = 1),
             WebhookDataType("webhook-field-2", applicationContext, karooSystem, slot = 2),
+            WebhookDataType("webhook-field-3", applicationContext, karooSystem, slot = 3),
+            WebhookDataType("webhook-field-4", applicationContext, karooSystem, slot = 4),
             com.enderthor.kSafe.datatype.CarbLogDataType("carb-log-1", applicationContext, karooSystem, slot = 1),
             com.enderthor.kSafe.datatype.CarbLogDataType("carb-log-2", applicationContext, karooSystem, slot = 2),
             com.enderthor.kSafe.datatype.CarbLogDataType("carb-log-3", applicationContext, karooSystem, slot = 3),
@@ -441,6 +471,8 @@ class KSafeExtension : KarooExtension("ksafe", BuildConfig.VERSION_NAME), Corout
         for (slot in 1..2) {
             com.enderthor.kSafe.datatype.HydrationLogState.update(slot, com.enderthor.kSafe.datatype.HydrationLogState.IDLE)
             com.enderthor.kSafe.datatype.CombinedFuelLogState.update(slot, com.enderthor.kSafe.datatype.CombinedFuelLogState.IDLE)
+        }
+        for (slot in 1..4) {
             WebhookState.update(slot, WebhookState.IDLE)
         }
 
@@ -1176,6 +1208,15 @@ class KSafeExtension : KarooExtension("ksafe", BuildConfig.VERSION_NAME), Corout
 
     private fun handleRideState(state: RideState) {
         currentRideState = state
+        val rideActive = state is RideState.Recording || state is RideState.Paused
+        // Flip to false BEFORE the teardown below (stream consumers must stop seeing
+        // Streaming as early as possible at ride end) but to true only AFTER the
+        // branches ran: the trackers' start()/resume() publish their reset status
+        // synchronously inside the Recording branch, while the fueling stream
+        // collectors run on Dispatchers.Default in parallel — an early true let them
+        // emit one frame of LAST ride's retained totals (statusFlow keeps them for
+        // the post-ride summary) as live Streaming data at the start of the next ride.
+        if (!rideActive) rideActiveFlow.value = false
         Timber.d("Ride state: $state")
         when (state) {
             is RideState.Recording -> {
@@ -1352,6 +1393,9 @@ class KSafeExtension : KarooExtension("ksafe", BuildConfig.VERSION_NAME), Corout
                 }
             }
         }
+        // See the note at the top of this function: true only after the Recording
+        // branch has started/reset the trackers (their status publish is synchronous).
+        if (rideActive) rideActiveFlow.value = true
     }
 
     /**
@@ -2197,8 +2241,7 @@ class KSafeExtension : KarooExtension("ksafe", BuildConfig.VERSION_NAME), Corout
         }
         try {
             val config = activeConfig
-            val label = if (slot == 1) config.webhook1Label.ifBlank { "Action 1" }
-                        else config.webhook2Label.ifBlank { "Action 2" }
+            val label = config.webhookSlot(slot).label.ifBlank { "Action $slot" }
 
             if (!config.isActive) {
                 Timber.d("handleWebhookTap slot=$slot blocked — master switch OFF")
@@ -2214,7 +2257,7 @@ class KSafeExtension : KarooExtension("ksafe", BuildConfig.VERSION_NAME), Corout
             }
 
             // ── Enabled check ─────────────────────────────────────────────────
-            val enabled = if (slot == 1) config.webhook1Enabled else config.webhook2Enabled
+            val enabled = config.webhookSlot(slot).enabled
             if (!enabled) {
                 Timber.d("handleWebhookTap slot=$slot disabled")
                 WebhookState.update(slot, WebhookState.ERROR, "disabled")
@@ -2229,7 +2272,7 @@ class KSafeExtension : KarooExtension("ksafe", BuildConfig.VERSION_NAME), Corout
             }
 
             // ── URL check ─────────────────────────────────────────────────────
-            val url = if (slot == 1) config.webhook1Url else config.webhook2Url
+            val url = config.webhookSlot(slot).url
             if (url.isBlank()) {
                 Timber.d("handleWebhookTap slot=$slot no URL")
                 WebhookState.update(slot, WebhookState.ERROR, "no URL")
@@ -2244,11 +2287,12 @@ class KSafeExtension : KarooExtension("ksafe", BuildConfig.VERSION_NAME), Corout
             }
 
             // ── Geo-fence check ───────────────────────────────────────────────
-            val geoEnabled = if (slot == 1) config.webhook1GeoEnabled else config.webhook2GeoEnabled
+            val wSlot = config.webhookSlot(slot)
+            val geoEnabled = wSlot.geoEnabled
             if (geoEnabled) {
-                val targetLat = if (slot == 1) config.webhook1GeoLat else config.webhook2GeoLat
-                val targetLon = if (slot == 1) config.webhook1GeoLon else config.webhook2GeoLon
-                val radiusM   = if (slot == 1) config.webhook1GeoRadiusM else config.webhook2GeoRadiusM
+                val targetLat = wSlot.geoLat
+                val targetLon = wSlot.geoLon
+                val radiusM   = wSlot.geoRadiusM
                 // G8 — gate on nullability rather than coordinate-equality with (0,0).
                 // Aliasing 'no fix' with 'fix at Null Island' permanently locks riders
                 // physically near (0,0) Gulf of Guinea out of geo-fenced webhooks, AND
@@ -2321,8 +2365,8 @@ class KSafeExtension : KarooExtension("ksafe", BuildConfig.VERSION_NAME), Corout
                 bgColorRes = if (result.success) R.color.alert_green else R.color.alert_red,
             )
             if (result.success) {
-                val alertEnabled = if (slot == 1) config.webhook1AlertEnabled else config.webhook2AlertEnabled
-                val alertText    = if (slot == 1) config.webhook1AlertText    else config.webhook2AlertText
+                val alertEnabled = wSlot.alertEnabled
+                val alertText    = wSlot.alertText
                 if (alertEnabled && alertText.isNotBlank()) {
                     dispatchWebhookFeedback(
                         id = "ksafe-webhook-$slot-alert",
@@ -2344,11 +2388,11 @@ class KSafeExtension : KarooExtension("ksafe", BuildConfig.VERSION_NAME), Corout
      * Returns a human-readable result string.
      */
     suspend fun testWebhook(slot: Int): String {
+        if (slot !in 1..WEBHOOK_SLOT_COUNT) return "Invalid webhook slot $slot"
         val config = activeConfig
-        val enabled = if (slot == 1) config.webhook1Enabled else config.webhook2Enabled
-        val url = if (slot == 1) config.webhook1Url else config.webhook2Url
-        if (!enabled) return "Webhook $slot is disabled — enable it first."
-        if (url.isBlank()) return "No URL configured."
+        val tSlot = config.webhookSlot(slot)
+        if (!tSlot.enabled) return "Webhook $slot is disabled — enable it first."
+        if (tSlot.url.isBlank()) return "No URL configured."
         val result = webhookManager.trigger(slot, config)
         return if (result.success) result.message else "Failed: ${result.message}"
     }
@@ -2794,15 +2838,38 @@ class KSafeExtension : KarooExtension("ksafe", BuildConfig.VERSION_NAME), Corout
             if (withTimeoutOrNull(CONFIG_SEED_TIMEOUT_MS) { configSeeded.await() } == null) {
                 Timber.w("startFit: configSeeded not ready after ${CONFIG_SEED_TIMEOUT_MS}ms — proceeding with current activeConfig")
             }
-            if (!activeConfig.fuelingFitExportEnabled) return@launch
-            val writeCalories = activeConfig.hrCaloriesEnabled
+            // Two independent opt-ins share this writer: the ksafe_* developer-field
+            // export, and the STANDARD session total_calories field (Suunto et al.
+            // ignore developer fields, so without it they import no calories at all).
+            val writeDevFields = activeConfig.fuelingFitExportEnabled
+            // Gated on the calorie feature: the Settings selector is only enabled while
+            // "Calories" is on in Fueling, and a leftover selection must not keep
+            // writing after the rider turns the feature off.
+            val stdCalSource = if (activeConfig.hrCaloriesEnabled) activeConfig.fitStandardCaloriesSource
+                               else FitCaloriesSource.NONE
+            if (!writeDevFields && stdCalSource == FitCaloriesSource.NONE) return@launch
+            val writeCalories = writeDevFields && activeConfig.hrCaloriesEnabled
 
             calibLogger.log(CalibrationLogger.Event.FIT_WRITER_START) {
                 // Field-definition numbers are public-API once shipped; record them so the CSV
                 // can be cross-referenced with the developer-field schema in the resulting FIT.
-                "fields=0,1,2,3,4,5,6${if (writeCalories) ",8" else ""}"
+                "fields=${if (writeDevFields) "0,1,2,3,4,5,6" else "-"}" +
+                    "${if (writeCalories) ",8" else ""},std_cal=${stdCalSource.name}"
             }
             fitWriterStarted.set(true)
+
+            // Mirror of the Karoo's native (power-based) cumulative calories, fed by a
+            // child collector only when that source is selected. MutableStateFlow (not a
+            // captured var) for the cross-thread visibility between the child collector
+            // and the ELAPSED_TIME collect below.
+            val karooKcalFlow = kotlinx.coroutines.flow.MutableStateFlow(0.0)
+            if (stdCalSource == FitCaloriesSource.KAROO) {
+                launch {
+                    karooSystem.streamDataFlow(DataType.Type.CALORIES)
+                        .mapNotNull { (it as? StreamState.Streaming)?.dataPoint?.singleValue }
+                        .collect { karooKcalFlow.value = it }
+                }
+            }
             // FIT developer-field writer.
             //
             // RECORD message: re-emitted on a fixed [FIT_RECORD_WRITE_INTERVAL_MS] cadence
@@ -2827,6 +2894,7 @@ class KSafeExtension : KarooExtension("ksafe", BuildConfig.VERSION_NAME), Corout
             var lastSesMaxDriftPct  = Double.NaN
             var lastSesFires        = Double.NaN
             var lastSesKcal         = Double.NaN
+            var lastSesStdKcal      = Double.NaN
 
             karooSystem.streamDataFlow(DataType.Type.ELAPSED_TIME)
                 .mapNotNull { (it as? StreamState.Streaming)?.dataPoint?.singleValue }
@@ -2871,7 +2939,7 @@ class KSafeExtension : KarooExtension("ksafe", BuildConfig.VERSION_NAME), Corout
                             // records carries the field and the curves draw as clean lines on
                             // zero-filling hosts, while bounding write cost (see header + constant).
                             val nowMs = System.currentTimeMillis()
-                            if (nowMs - lastRecordWriteMs >= FIT_RECORD_WRITE_INTERVAL_MS) {
+                            if (writeDevFields && nowMs - lastRecordWriteMs >= FIT_RECORD_WRITE_INTERVAL_MS) {
                                 val recordFields = mutableListOf(
                                     FieldValue(carbField,         carbsG),
                                     FieldValue(hydField,          hydMl),
@@ -2923,6 +2991,15 @@ class KSafeExtension : KarooExtension("ksafe", BuildConfig.VERSION_NAME), Corout
                             // next FIT-close. Worst case: the final cumBurnedG in the header is
                             // up to 5 g less than the true ride total — sub-2 % error on a
                             // typical 300 g ride.
+                            // STANDARD session total_calories source value. HR uses the same
+                            // running estimate as developer field 8; KAROO mirrors the native
+                            // power-based stream. 0.0 (no data yet) is never written — a
+                            // premature 0 in the header would read as "no calories burned".
+                            val stdKcal = when (stdCalSource) {
+                                FitCaloriesSource.NONE  -> 0.0
+                                FitCaloriesSource.HR    -> kcal
+                                FitCaloriesSource.KAROO -> karooKcalFlow.value
+                            }
                             val burnDelta = if (lastSesCarbsBurnedG.isNaN()) Double.POSITIVE_INFINITY
                                             else carbsBurnedG - lastSesCarbsBurnedG
                             val burnSignificant = burnDelta >= SESSION_BURN_DEADBAND_G
@@ -2931,23 +3008,33 @@ class KSafeExtension : KarooExtension("ksafe", BuildConfig.VERSION_NAME), Corout
                                 hydMl       != lastSesHydMl       ||
                                 maxDriftPct != lastSesMaxDriftPct ||
                                 fires       != lastSesFires       ||
-                                (writeCalories && kcal != lastSesKcal)
+                                (writeCalories && kcal != lastSesKcal) ||
+                                (stdCalSource != FitCaloriesSource.NONE && stdKcal != lastSesStdKcal)
                             if (burnSignificant || otherSesChanged) {
-                                val sessionFields = mutableListOf(
-                                    FieldValue(carbField,         carbsG),
-                                    FieldValue(hydField,          hydMl),
-                                    FieldValue(carbsBurnedField,  carbsBurnedG),
-                                    FieldValue(maxDriftField,     maxDriftPct),
-                                    FieldValue(firesField,        fires),
-                                )
-                                if (writeCalories) sessionFields.add(FieldValue(caloriesField, kcal))
-                                emitter.onNext(WriteToSessionMesg(sessionFields))
+                                val sessionFields = mutableListOf<FieldValue>()
+                                if (writeDevFields) {
+                                    sessionFields.add(FieldValue(carbField,        carbsG))
+                                    sessionFields.add(FieldValue(hydField,         hydMl))
+                                    sessionFields.add(FieldValue(carbsBurnedField, carbsBurnedG))
+                                    sessionFields.add(FieldValue(maxDriftField,    maxDriftPct))
+                                    sessionFields.add(FieldValue(firesField,       fires))
+                                    if (writeCalories) sessionFields.add(FieldValue(caloriesField, kcal))
+                                }
+                                if (stdCalSource != FitCaloriesSource.NONE && stdKcal > 0.0) {
+                                    sessionFields.add(
+                                        FieldValue(FIT_SESSION_TOTAL_CALORIES_FIELD_NUM, stdKcal),
+                                    )
+                                }
+                                if (sessionFields.isNotEmpty()) {
+                                    emitter.onNext(WriteToSessionMesg(sessionFields))
+                                }
                                 lastSesCarbsG       = carbsG
                                 lastSesHydMl        = hydMl
                                 lastSesCarbsBurnedG = carbsBurnedG
                                 lastSesMaxDriftPct  = maxDriftPct
                                 lastSesFires        = fires
                                 lastSesKcal         = kcal
+                                lastSesStdKcal      = stdKcal
                             }
                         }
                         else -> { /* Paused / Idle / null: don't emit */ }
@@ -2992,9 +3079,14 @@ class KSafeExtension : KarooExtension("ksafe", BuildConfig.VERSION_NAME), Corout
             // Epoch-day (UTC), avoid java.time (API 26) on minSdk 23.
             val today = System.currentTimeMillis() / 86_400_000L
             val daysSinceLast = today - configManager.getUpdateNoticeEpochDay()
-            if (daysSinceLast < UPDATE_NOTICE_MIN_DAYS) {
+            // DEBUG builds bypass the inter-notice throttle so the update flow can be
+            // tested on demand (every boot). Release keeps the 3-day spacing.
+            if (!BuildConfig.DEBUG && daysSinceLast < UPDATE_NOTICE_MIN_DAYS) {
                 Timber.d("Update check: skipped — shown ${daysSinceLast}d ago (min=${UPDATE_NOTICE_MIN_DAYS}d)")
                 return@launch
+            }
+            if (BuildConfig.DEBUG && daysSinceLast < UPDATE_NOTICE_MIN_DAYS) {
+                Timber.d("Update check: throttle bypassed (DEBUG) — last shown ${daysSinceLast}d ago")
             }
 
             // ── Network retry loop — only this part retries ───────────────────
@@ -3069,6 +3161,10 @@ class KSafeExtension : KarooExtension("ksafe", BuildConfig.VERSION_NAME), Corout
             val updateMessage = getString(R.string.update_available_message, manifest.latestVersion)
 
             if (android.provider.Settings.canDrawOverlays(applicationContext)) {
+                // Mute-respecting chime so a glance-away rider notices the overlay. The
+                // SystemNotification fallback below already makes the Karoo's own
+                // notification sound, so only the overlay path needs an explicit beep.
+                karooSystem.dispatch(UPDATE_NOTICE_BEEP)
                 updateOverlay.showInfo(
                     title = updateTitle,
                     message = updateMessage,
@@ -3119,6 +3215,7 @@ class KSafeExtension : KarooExtension("ksafe", BuildConfig.VERSION_NAME), Corout
         // the new extension instance to republish them.
         carbsTrackerFlow.value = null
         hydrationTrackerFlow.value = null
+        rideActiveFlow.value = false
         instance = null
         super.onDestroy()
     }

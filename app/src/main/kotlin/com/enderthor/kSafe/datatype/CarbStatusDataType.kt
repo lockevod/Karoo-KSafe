@@ -8,8 +8,10 @@ import com.enderthor.kSafe.extension.KSafeExtension
 import com.enderthor.kSafe.extension.managers.CarbStatus
 import io.hammerhead.karooext.KarooSystemService
 import io.hammerhead.karooext.extension.DataTypeImpl
+import io.hammerhead.karooext.internal.Emitter
 import io.hammerhead.karooext.internal.ViewEmitter
 import io.hammerhead.karooext.models.ShowCustomStreamState
+import io.hammerhead.karooext.models.StreamState
 import io.hammerhead.karooext.models.UpdateGraphicConfig
 import io.hammerhead.karooext.models.ViewConfig
 import kotlinx.coroutines.CancellationException
@@ -91,6 +93,16 @@ class CarbStatusDataType(
             "carbs",
         )
     }
+
+    // Published as a numeric stream (deficit in g; negative = surplus, same sign
+    // convention as the view's −/+ rendering) — see [startFuelingStream].
+    override fun startStream(emitter: Emitter<StreamState>) =
+        startFuelingStream(emitter, KSafeExtension.carbsTrackerFlow, { it.statusFlow }) { s ->
+            when {
+                !s.masterEnabled || !s.carbsEnabled -> StreamState.NotAvailable
+                else -> streamingSingle(s.deficitG)
+            }
+        }
 
     override fun startView(context: Context, config: ViewConfig, emitter: ViewEmitter) {
         // Synchronous seed frame BEFORE launching any coroutine. See HydrationStatusDataType

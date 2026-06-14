@@ -33,13 +33,15 @@
             android:scaleType="fitCenter"
             android:contentDescription="@null" />
 
+        <!-- No fontFamily: default Roboto bold, same as field_view.xml and what the
+             Karoo host / KDouble / Headwind render — the forced XML "monospace" made
+             the units line ("CALORIES", "g/h") look alien next to native fields. -->
         <TextView
             android:id="@+id/field_text_hint"
             android:layout_width="0dp"
             android:layout_height="wrap_content"
             android:layout_weight="1"
             android:ellipsize="end"
-            android:fontFamily="monospace"
             android:maxLines="1"
             android:textColor="#CCFFFFFF"
             android:textSize="20sp"
@@ -58,11 +60,11 @@
         android:gravity="center_vertical"
         android:orientation="vertical">
 
+        <!-- No fontFamily — see the hint TextView above. -->
         <TextView
             android:id="@+id/field_text_main"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:fontFamily="monospace"
             android:maxLines="1"
             android:textColor="#FFFFFF"
             android:textStyle="bold" />

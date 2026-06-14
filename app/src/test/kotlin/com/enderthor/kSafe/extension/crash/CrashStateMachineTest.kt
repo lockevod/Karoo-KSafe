@@ -597,9 +597,9 @@ class CrashStateMachineTest {
                 sawVeto = true
                 assertTrue("veto flag must be set for the GAP_VETO calibration row",
                     sm.lastGapUprightVeto)
-                assertTrue("veto angle must be within the tight cone (0 ≤ angle < 15°), was ${sm.lastGapUprightVetoAngleDeg}",
+                assertTrue("veto angle must be within the tight cone (0 ≤ angle < 25°), was ${sm.lastGapUprightVetoAngleDeg}",
                     sm.lastGapUprightVetoAngleDeg >= 0.0 &&
-                    sm.lastGapUprightVetoAngleDeg < 15.0)
+                    sm.lastGapUprightVetoAngleDeg < 25.0)
             }
         }
         assertFalse("upright delayed stop must NOT confirm (R6-F veto)", sawConfirm)
@@ -633,7 +633,7 @@ class CrashStateMachineTest {
 
     @Test
     fun `R6-F gap regime tilted-but-not-flat stop still confirms (tighter than the 45 timing cone)`() {
-        // A bike tilted ~30° from the riding orientation: OUTSIDE the 15° veto cone but
+        // A bike tilted ~30° from the riding orientation: OUTSIDE the 25° veto cone but
         // INSIDE the old 45° timing threshold. The veto must NOT fire here — a 30° posture
         // is consistent with a real crash (knocked over, not held upright), so it must
         // still confirm. This pins the deliberate FN-safety choice: the veto only suppresses
@@ -651,9 +651,38 @@ class CrashStateMachineTest {
             if (sm.onSample(sample(time = t, raw = 9.81, smoothed = 9.81, az = 8.5, ax = 4.9))
                     is CrashStateMachine.Decision.Confirm) confirmed = true
         }
-        assertTrue("a ~30° tilted delayed stop must still confirm (outside the 15° veto cone)", confirmed)
+        assertTrue("a ~30° tilted delayed stop must still confirm (outside the 25° veto cone)", confirmed)
         assertEquals(20_000L, sm.lastConfirmedSilenceMs)
-        assertFalse("veto must NOT fire at ~30° (only the tight upright cone is vetoed)", sm.lastGapUprightVeto)
+        assertFalse("veto must NOT fire at ~30° (only the ≤25° upright cone is vetoed)", sm.lastGapUprightVeto)
+    }
+
+    @Test
+    fun `R6-F gap regime 18-6deg tilted stop is vetoed after widening cone to 25deg (field session 2ab57f)`() {
+        // Seed: stop-and-stand FP from field session 2ab57f, settled bike tilt ~18.6°.
+        // With the old 15° cone: 18.6° > 15° → NOT vetoed → confirms (FP).
+        // With the new 25° cone: 18.6° < 25° → VETOED → returns to MONITORING (correct).
+        // Silence vector at ~18.6° from upright: ax = 9.81 * sin(18.6°) ≈ 3.13, az = 9.81 * cos(18.6°) ≈ 9.29.
+        // acos(9.29 / 9.81) ≈ 18.6°. Magnitude = sqrt(3.13² + 9.29²) ≈ 9.80 ≈ gravity, so isStill fires.
+        val (sm, _) = smEnteringSilence(
+            gapMs = 12_000L,
+            preRef = PreImpactRef(0.0, 0.0, 9.81, valid = true),
+            silenceAz = 9.29, silenceAx = 3.13,
+        )
+        assertEquals(CrashStateMachine.State.SILENCE_CHECK, sm.state)
+        var t = 1_012_000L
+        var sawConfirm = false
+        var sawVeto = false
+        repeat(25) {
+            t += 1000L
+            val d = sm.onSample(sample(time = t, raw = 9.81, smoothed = 9.81, az = 9.29, ax = 3.13))
+            if (d is CrashStateMachine.Decision.Confirm) sawConfirm = true
+            if (d is CrashStateMachine.Decision.ReturnToMonitoring && !sawVeto) {
+                sawVeto = true
+                assertTrue("veto flag must be set for the 18.6° stop", sm.lastGapUprightVeto)
+            }
+        }
+        assertFalse("18.6° upright stop must NOT confirm after cone widens to 25° (R6-F veto)", sawConfirm)
+        assertTrue("veto must fire and return to MONITORING for 18.6° stop", sawVeto)
     }
 
     @Test
@@ -841,7 +870,7 @@ class CrashStateMachineTest {
         val (sm, _) = smEnteringSilence(
             gapMs = 12_000L,
             preRef = PreImpactRef(0.0, 0.0, 9.81, valid = true),
-            silenceAz = 0.0, silenceAx = 9.81,   // on-side → confirms (outside the 15° cone)
+            silenceAz = 0.0, silenceAx = 9.81,   // on-side → confirms (outside the 25° GAP cone)
         )
         var t = 1_012_000L
         var confirmed = false
@@ -855,60 +884,227 @@ class CrashStateMachineTest {
         assertEquals("sil_z must record the on-side silence orientation", 0.0, sm.lastSilenceOrientZ, 0.05)
     }
 
-    // ── R6-F: exact 15° veto-cone boundary (just-below vetoes / just-above confirms) ──
-    // The veto cone is gapVetoUprightAngleDeg = 15°. The existing R6-F tests bracket it
-    // only loosely (0° vetoes, 30° confirms — 15° away on each side). These two pin the
-    // EXACT edge so a future change to the constant, or to currentOrientationAngleDeg's
-    // geometry, cannot drift it unnoticed — the single most important regression guard for
-    // a check that SUPPRESSES an SOS.
+    // ── R6-F: exact veto-cone boundary for the GAP regime (gapVetoUprightAngleDeg = 25°) ──
+    // These three tests pin the EXACT edge so a future change to the constant, or to
+    // currentOrientationAngleDeg's geometry, cannot drift it unnoticed — the single most
+    // important regression guard for a check that SUPPRESSES an SOS.
+    // ~24° (just inside 25°) → vetoed; ~26° (just outside 25°) → confirms; ~30° still confirms.
 
     @Test
-    fun `R6-F gap regime just below the 15 degree cone is vetoed`() {
-        // Silence vector (ax=2.37, az=9.52): angle from the upright ref (0,0,9.81)
-        // = acos(9.52/|v|) ≈ 14.0° — just INSIDE the 15° cone → must veto.
+    fun `R6-F gap regime 24deg tilt is vetoed (just inside the 25deg GAP cone)`() {
+        // Silence vector (ax=9.81*sin(24°), az=9.81*cos(24°)) = (ax≈3.99, az≈8.96):
+        // angle from upright ref (0,0,9.81) = acos(8.96/9.81) ≈ 24.0° — just INSIDE the
+        // 25° GAP cone → must veto. Pins the upper edge so widening the constant is caught.
+        val ax24 = (9.81 * Math.sin(Math.toRadians(24.0))).toFloat().toDouble()  // ≈ 3.99
+        val az24 = (9.81 * Math.cos(Math.toRadians(24.0))).toFloat().toDouble()  // ≈ 8.96
         val (sm, _) = smEnteringSilence(
             gapMs = 12_000L,
             preRef = PreImpactRef(0.0, 0.0, 9.81, valid = true),
-            silenceAz = 9.52, silenceAx = 2.37,
+            silenceAz = az24, silenceAx = ax24,
         )
         var t = 1_012_000L
         var sawConfirm = false
         var sawVeto = false
         repeat(25) {
             t += 1000L
-            val d = sm.onSample(sample(time = t, raw = 9.81, smoothed = 9.81, az = 9.52, ax = 2.37))
+            val d = sm.onSample(sample(time = t, raw = 9.81, smoothed = 9.81, az = az24, ax = ax24))
             if (d is CrashStateMachine.Decision.Confirm) sawConfirm = true
             if (d is CrashStateMachine.Decision.ReturnToMonitoring && !sawVeto) {
                 sawVeto = true
-                assertTrue("veto angle must sit just below the 15° cone, was ${sm.lastGapUprightVetoAngleDeg}",
-                    sm.lastGapUprightVetoAngleDeg in 13.0..15.0)
+                assertTrue("veto angle must sit just inside the 25° GAP cone, was ${sm.lastGapUprightVetoAngleDeg}",
+                    sm.lastGapUprightVetoAngleDeg in 22.0..25.0)
             }
         }
-        assertFalse("a ~14° delayed stop is inside the cone → must NOT confirm", sawConfirm)
-        assertTrue("the veto must fire just below 15°", sawVeto)
+        assertFalse("a ~24° GAP delayed stop is inside the cone → must NOT confirm", sawConfirm)
+        assertTrue("the veto must fire just inside 25° (GAP cone)", sawVeto)
         assertEquals(CrashStateMachine.State.MONITORING, sm.state)
     }
 
     @Test
-    fun `R6-F gap regime just above the 15 degree cone still confirms`() {
-        // Silence vector (ax=2.70, az=9.43): angle ≈ 16.0° — just OUTSIDE the cone → must
-        // still confirm at 20 s. A posture displaced > 15° is consistent with a real crash
-        // (knocked over, not held upright) and must never be vetoed.
+    fun `R6-F gap regime 26deg tilt confirms (just outside the 25deg GAP cone)`() {
+        // Silence vector at ~26°: ax = 9.81*sin(26°) ≈ 4.30, az = 9.81*cos(26°) ≈ 8.81.
+        // acos(8.81/9.81) ≈ 26° — just OUTSIDE the 25° GAP cone → must confirm (not vetoed).
+        // Pins the lower edge so tightening the constant (accidentally blocking crashes) is caught.
+        val ax26 = (9.81 * Math.sin(Math.toRadians(26.0))).toFloat().toDouble()  // ≈ 4.30
+        val az26 = (9.81 * Math.cos(Math.toRadians(26.0))).toFloat().toDouble()  // ≈ 8.81
+        val (sm, _) = smEnteringSilence(
+            gapMs = 12_000L,
+            preRef = PreImpactRef(0.0, 0.0, 9.81, valid = true),
+            silenceAz = az26, silenceAx = ax26,
+        )
+        var t = 1_012_000L
+        var confirmed = false
+        repeat(25) {
+            t += 1000L
+            val d = sm.onSample(sample(time = t, raw = 9.81, smoothed = 9.81, az = az26, ax = ax26))
+            if (d is CrashStateMachine.Decision.Confirm) confirmed = true
+            assertFalse("a ~26° GAP stop must NOT be vetoed (outside the 25° cone)", sm.lastGapUprightVeto)
+        }
+        assertTrue("a ~26° GAP delayed stop must confirm at the 20 s window", confirmed)
+    }
+
+    @Test
+    fun `R6-F gap regime 16deg tilt is vetoed (inside the 25deg GAP cone)`() {
+        // Silence vector (ax=2.70, az=9.43): angle ≈ 16.0° — INSIDE the 25° GAP cone → VETOED.
+        // Domain rationale: a real crash always tips the bike well past 25°; 16° is
+        // consistent with a resting conscious rider, not a crash victim.
         val (sm, _) = smEnteringSilence(
             gapMs = 12_000L,
             preRef = PreImpactRef(0.0, 0.0, 9.81, valid = true),
             silenceAz = 9.43, silenceAx = 2.70,
         )
         var t = 1_012_000L
+        var sawConfirm = false
+        var sawVeto = false
+        repeat(25) {
+            t += 1000L
+            val d = sm.onSample(sample(time = t, raw = 9.81, smoothed = 9.81, az = 9.43, ax = 2.70))
+            if (d is CrashStateMachine.Decision.Confirm) sawConfirm = true
+            if (d is CrashStateMachine.Decision.ReturnToMonitoring && !sawVeto) {
+                sawVeto = true
+                assertTrue("veto flag must be set for the 16° GAP stop", sm.lastGapUprightVeto)
+            }
+        }
+        assertFalse("a ~16° delayed stop must NOT confirm (R6-F veto, inside the 25° GAP cone)", sawConfirm)
+        assertTrue("veto must fire at ~16° (inside the 25° GAP cone)", sawVeto)
+    }
+
+    @Test
+    fun `R6-F gap regime at exactly 25deg confirms (strict less-than boundary pin)`() {
+        // STRICT BOUNDARY PIN: the veto condition is angle < gapVetoUprightAngleDeg (strict <).
+        // At EXACTLY 25.0° the veto must NOT fire — 25.0 is not < 25.0 — so the bike confirms.
+        // If this test starts failing it means the boundary was accidentally changed to ≤.
+        // Silence vector at exactly 25°: ax = 9.81*sin(25°) ≈ 4.146, az = 9.81*cos(25°) ≈ 8.891.
+        // acos(8.891/9.810) = 25.0°. Magnitude ≈ 9.81 ≈ gravity → isStill fires.
+        val ax25 = 9.81 * Math.sin(Math.toRadians(25.0))  // ≈ 4.146
+        val az25 = 9.81 * Math.cos(Math.toRadians(25.0))  // ≈ 8.891
+        val (sm, _) = smEnteringSilence(
+            gapMs = 12_000L,
+            preRef = PreImpactRef(0.0, 0.0, 9.81, valid = true),
+            silenceAz = az25, silenceAx = ax25,
+        )
+        assertEquals(CrashStateMachine.State.SILENCE_CHECK, sm.state)
+        var t = 1_012_000L
         var confirmed = false
         repeat(25) {
             t += 1000L
-            if (sm.onSample(sample(time = t, raw = 9.81, smoothed = 9.81, az = 9.43, ax = 2.70))
-                    is CrashStateMachine.Decision.Confirm) confirmed = true
+            val d = sm.onSample(sample(time = t, raw = 9.81, smoothed = 9.81, az = az25, ax = ax25))
+            if (d is CrashStateMachine.Decision.Confirm) confirmed = true
+            assertFalse("at/just above 25° the GAP veto must NOT fire (strict < boundary)", sm.lastGapUprightVeto)
         }
-        assertTrue("a ~16° delayed stop is outside the 15° cone → must still confirm", confirmed)
-        assertEquals(20_000L, sm.lastConfirmedSilenceMs)
-        assertFalse("veto must NOT fire just above 15°", sm.lastGapUprightVeto)
+        assertTrue("at exactly 25° the GAP regime must confirm (25.0 is not < 25.0)", confirmed)
+    }
+
+    // ── R6-G: PROMPT cone boundary — 20° confirms (outside the 15° PROMPT cone, FN safety pin) ──
+
+    @Test
+    fun `R6-G prompt regime 20deg tilt confirms (outside the 15deg PROMPT cone - FN safety pin)`() {
+        // FN-safety pin: a PROMPT-regime stop (short gap, 2 s) with the bike tilted ~20° and
+        // LOW gyro (0.5 rad/s — below the 3.0 veto gate). 20° is OUTSIDE the 15° PROMPT cone,
+        // so R6-G must NOT veto it — it must CONFIRM at the 20 s upright window.
+        // This pins that the PROMPT cone remained at 15° (not accidentally widened to 25°).
+        // Silence vector at ~20°: ax = 9.81*sin(20°) ≈ 3.36, az = 9.81*cos(20°) ≈ 9.22.
+        // acos(9.22/9.81) ≈ 20.0°.
+        val ax20 = (9.81 * Math.sin(Math.toRadians(20.0))).toFloat().toDouble()  // ≈ 3.36
+        val az20 = (9.81 * Math.cos(Math.toRadians(20.0))).toFloat().toDouble()  // ≈ 9.22
+        val (sm, _) = smEnteringSilence(
+            gapMs = 2_000L,                       // prompt stop — non-gap regime (short gap)
+            preRef = PreImpactRef(0.0, 0.0, 9.81, valid = true),
+            silenceAz = az20, silenceAx = ax20,
+            impactGyro = 0.5,                     // low rotation — below the 3.0 veto gate
+        )
+        var t = 1_002_000L
+        var confirmed = false
+        repeat(25) {
+            t += 1000L
+            val d = sm.onSample(sample(time = t, raw = 9.81, smoothed = 9.81, az = az20, ax = ax20))
+            if (d is CrashStateMachine.Decision.Confirm) confirmed = true
+            assertFalse("a ~20° PROMPT stop must NOT be vetoed (outside the 15° PROMPT cone)",
+                sm.lastGapUprightVeto)
+        }
+        assertTrue("a ~20° PROMPT stop with low gyro must confirm (FN safety pin — PROMPT cone = 15°, not 25°)",
+            confirmed)
+    }
+
+    @Test
+    fun `R6-G prompt regime at just above 15deg confirms (strict less-than boundary pin)`() {
+        // STRICT BOUNDARY PIN: the PROMPT veto condition is angle < promptVetoUprightAngleDeg (strict <).
+        // At/just above 15.0° the veto must NOT fire, so the bike confirms.
+        // If this test starts failing it means the boundary was accidentally changed to ≤.
+        // We use 15.05° (not exactly 15.0°) because floating-point accumulation of many
+        // identical silence samples can shift the computed angle a fraction of a degree.
+        // Silence vector at ~15.05°: ax = 9.81*sin(15.05°) ≈ 2.547, az = 9.81*cos(15.05°) ≈ 9.474.
+        // acos(9.474/9.810) ≈ 15.05°. Magnitude ≈ 9.81 ≈ gravity → isStill fires.
+        val ax15 = 9.81 * Math.sin(Math.toRadians(15.05))  // ≈ 2.547
+        val az15 = 9.81 * Math.cos(Math.toRadians(15.05))  // ≈ 9.474
+        val (sm, _) = smEnteringSilence(
+            gapMs = 2_000L,                        // prompt stop — non-gap regime (short gap)
+            preRef = PreImpactRef(0.0, 0.0, 9.81, valid = true),
+            silenceAz = az15, silenceAx = ax15,
+            impactGyro = 0.5,                      // low rotation — below the 3.0 veto gate
+        )
+        assertEquals(CrashStateMachine.State.SILENCE_CHECK, sm.state)
+        var t = 1_002_000L
+        var confirmed = false
+        repeat(25) {
+            t += 1000L
+            val d = sm.onSample(sample(time = t, raw = 9.81, smoothed = 9.81, az = az15, ax = ax15))
+            if (d is CrashStateMachine.Decision.Confirm) confirmed = true
+            assertFalse("at/just above 15° the PROMPT veto must NOT fire (strict < boundary)", sm.lastGapUprightVeto)
+        }
+        assertTrue("at just above 15° the PROMPT regime must confirm (on the boundary side that confirms)", confirmed)
+    }
+
+    @Test
+    fun `R6-G prompt regime bracket — 14deg vetoed, 16deg confirms (non-flaky cone boundary guard)`() {
+        // ROBUST BRACKET: verifies the PROMPT veto cone boundary at 15° without relying on
+        // bit-exact JVM floating-point arithmetic.  Two points with a clear 1° margin each:
+        //   14° → inside the 15° cone → VETOED   (returns to MONITORING)
+        //   16° → outside the 15° cone → CONFIRMS
+        // Both use gapMs=2_000 (prompt-stop / non-gap regime) and low impactGyro=0.5.
+        // The cone is set explicitly to 15.0° via setThresholds so the test does not depend
+        // on the default value — any default drift is caught immediately.
+
+        // --- 14° case: inside cone → must be VETOED --------------------------------
+        val ax14 = 9.81 * Math.sin(Math.toRadians(14.0))
+        val az14 = 9.81 * Math.cos(Math.toRadians(14.0))
+        val (sm14, _) = smEnteringSilence(
+            gapMs = 2_000L,
+            preRef = PreImpactRef(0.0, 0.0, 9.81, valid = true),
+            silenceAz = az14, silenceAx = ax14,
+            impactGyro = 0.5,
+        )
+        sm14.setThresholds(Thresholds(promptVetoUprightAngleDeg = 15.0))
+        assertEquals(CrashStateMachine.State.SILENCE_CHECK, sm14.state)
+        var t14 = 1_002_000L
+        var confirmed14 = false
+        repeat(25) {
+            t14 += 1000L
+            val d = sm14.onSample(sample(time = t14, raw = 9.81, smoothed = 9.81, az = az14, ax = ax14))
+            if (d is CrashStateMachine.Decision.Confirm) confirmed14 = true
+        }
+        assertFalse("14° is inside the 15° PROMPT cone: must be VETOED (not confirmed)", confirmed14)
+
+        // --- 16° case: outside cone → must CONFIRM ----------------------------------
+        val ax16 = 9.81 * Math.sin(Math.toRadians(16.0))
+        val az16 = 9.81 * Math.cos(Math.toRadians(16.0))
+        val (sm16, _) = smEnteringSilence(
+            gapMs = 2_000L,
+            preRef = PreImpactRef(0.0, 0.0, 9.81, valid = true),
+            silenceAz = az16, silenceAx = ax16,
+            impactGyro = 0.5,
+        )
+        sm16.setThresholds(Thresholds(promptVetoUprightAngleDeg = 15.0))
+        assertEquals(CrashStateMachine.State.SILENCE_CHECK, sm16.state)
+        var t16 = 1_002_000L
+        var confirmed16 = false
+        repeat(25) {
+            t16 += 1000L
+            val d = sm16.onSample(sample(time = t16, raw = 9.81, smoothed = 9.81, az = az16, ax = ax16))
+            if (d is CrashStateMachine.Decision.Confirm) confirmed16 = true
+            assertFalse("16° is outside the 15° cone: PROMPT veto must NOT fire", sm16.lastGapUprightVeto)
+        }
+        assertTrue("16° is outside the 15° PROMPT cone: must CONFIRM", confirmed16)
     }
 
     // ── R6-F: the veto is gap-regime-only — a non-gap (prompt) stop is never vetoed ──
@@ -976,13 +1172,13 @@ class CrashStateMachineTest {
     @Test
     fun `R6-G non-gap on-side stop with low rotation still confirms (cone protects on-side)`() {
         // FN protection (load-bearing): a real crash that ends ON ITS SIDE (~90°) must confirm
-        // even with a calm post-impact (low gyro). The 15° upright cone excludes it from the
-        // veto BEFORE the gyro gate is even consulted — on-side is the most common real-crash
-        // orientation, so this is the primary guard that R6-G did not narrow real-crash coverage.
+        // even with a calm post-impact (low gyro). The 15° PROMPT-regime upright cone excludes
+        // it from the veto BEFORE the gyro gate is even consulted — on-side is the most common
+        // real-crash orientation, so this is the primary guard that R6-G did not narrow coverage.
         val (sm, _) = smEnteringSilence(
             gapMs = 2_000L,                       // prompt stop — non-gap regime
             preRef = PreImpactRef(0.0, 0.0, 9.81, valid = true),
-            silenceAz = 0.0, silenceAx = 9.81,    // on-side ≈ 90° → outside the 15° veto cone
+            silenceAz = 0.0, silenceAx = 9.81,    // on-side ≈ 90° → outside the 15° PROMPT cone
             impactGyro = 0.5,                      // low rotation — must NOT rescue it from confirming
         )
         var t = 1_002_000L

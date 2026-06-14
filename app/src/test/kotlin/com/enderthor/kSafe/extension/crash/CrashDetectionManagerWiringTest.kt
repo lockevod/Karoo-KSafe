@@ -8,12 +8,15 @@ import com.enderthor.kSafe.extension.util.Clock
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.test.TestScope
+import kotlinx.coroutines.test.advanceUntilIdle
+import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import org.mockito.Mockito.`when`
 import org.mockito.Mockito.mock
+import java.util.concurrent.atomic.AtomicInteger
 
 /**
  * Narrow, facade-level wiring tests for [CrashDetectionManager]. Two contracts
@@ -70,6 +73,59 @@ class CrashDetectionManagerWiringTest {
             calibLogger = null,
             clock = clock,
         )
+    }
+
+    /**
+     * Build a manager whose [onCrashDetected] increments [counter] and whose coroutine
+     * scope is the [TestScope] supplied by [runTest] so [advanceUntilIdle] drains the
+     * `scope.launch { onCrashDetected() }` call inside [CrashDetectionManager.confirmCrash].
+     */
+    private fun newManagerForVigilance(
+        testScope: TestScope,
+        counter: AtomicInteger,
+        clock: FakeClock = FakeClock(),
+    ): CrashDetectionManager {
+        val sensorManager = mock(SensorManager::class.java)
+        val accel = mock(Sensor::class.java).also {
+            `when`(it.type).thenReturn(Sensor.TYPE_ACCELEROMETER)
+        }
+        val gyro = mock(Sensor::class.java).also {
+            `when`(it.type).thenReturn(Sensor.TYPE_GYROSCOPE)
+        }
+        `when`(sensorManager.getDefaultSensor(Sensor.TYPE_ACCELEROMETER)).thenReturn(accel)
+        `when`(sensorManager.getDefaultSensor(Sensor.TYPE_GYROSCOPE)).thenReturn(gyro)
+        val context = mock(Context::class.java)
+        `when`(context.getSystemService(Context.SENSOR_SERVICE)).thenReturn(sensorManager)
+        return CrashDetectionManager(
+            context = context,
+            scope = testScope as CoroutineScope,
+            onCrashDetected = { counter.incrementAndGet() },
+            calibLogger = null,
+            clock = clock,
+        )
+    }
+
+    /**
+     * Arm [MovingVigilance] on [manager] via reflection. The field is `private` — there is
+     * NO public API path that arms it without injecting a real sensor event through the
+     * Android SensorManager (whose [SensorEvent] constructor is a JVM stub). Reflection is
+     * the only way to set up the vigilance-armed precondition so the downstream escalate
+     * paths in [CrashDetectionManager.stop] and [CrashDetectionManager.onPause] can be
+     * tested against a truthful armed state.
+     *
+     * This helper does NOT exercise the `Decision.Confirm → movingVigilance.arm()`
+     * divert in [CrashDetectionManager.onSensorSample]. That path is unreachable from
+     * any public surface in the JVM harness; the tests that call this helper are
+     * explicitly testing the ESCALATE-ON-ABANDON and ESCALATE-ON-MANUAL-PAUSE paths,
+     * not the divert trigger. See the DONE_WITH_CONCERNS note on tests 3 & 4 for the
+     * full blockage description.
+     */
+    private fun armVigilanceViaReflection(manager: CrashDetectionManager, nowMs: Long) {
+        val field = CrashDetectionManager::class.java.getDeclaredField("movingVigilance")
+        field.isAccessible = true
+        val vigilance = field.get(manager) as MovingVigilance
+        vigilance.arm(nowMs)
+        check(vigilance.isArmed) { "reflection arm() failed — vigilance not armed" }
     }
 
     // ── T1: clearCrashCooldown ───────────────────────────────────────────────
@@ -266,5 +322,206 @@ class CrashDetectionManagerWiringTest {
         // Inspection-only follow-up: `stateMachine.lastSpeedGpsStale` is now false
         // (re-read from `isGpsStale(now) == false` and pushed via setSpeedGpsStale).
         // Field is private — not asserted here. See I-NEW-1 in resume() for the wiring.
+    }
+
+    // ── MV-1: stop() while vigilance armed escalates ─────────────────────────
+
+    /**
+     * Pins the escalate-on-abandon contract: when [MovingVigilance] is armed and the ride
+     * stops (KSafe extension stopped, app killed, user disabled crash detection), the
+     * manager must call [CrashDetectionManager.confirmCrash] rather than silently dropping
+     * the suspected event. Silence = false negative for an incapacitated rider.
+     *
+     * Wiring: [CrashDetectionManager.stop] checks `movingVigilance.isArmed` and routes
+     * through `confirmCrash(CrashSource.IMPACT_CONFIRMED)` before resetting state.
+     *
+     * **Harness note**: [MovingVigilance] is armed via reflection because there is no
+     * public API path that arms it without injecting real sensor events through the
+     * Android [SensorManager] (its [android.hardware.SensorEvent] constructor is a JVM
+     * stub). The reflection call sets up a truthful armed state; the code exercised is the
+     * production stop() → confirmCrash() → onCrashDetected() chain. The divert that
+     * normally arms vigilance (Decision.Confirm inside onSensorSample, requiring a
+     * sub-gravity silence orientation) is unreachable from the JVM harness — see the
+     * DONE_WITH_CONCERNS section on tests MV-3/MV-4.
+     */
+    @Test
+    fun `stop() while vigilance armed escalates to onCrashDetected`() = runTest {
+        val crashCount = AtomicInteger(0)
+        val clock = FakeClock(now = 1_000_000L)
+        val manager = newManagerForVigilance(this, crashCount, clock)
+
+        // Arm vigilance to represent a mid-motion on-side confirm that is still
+        // under verification. Reflection is required because the arm path runs
+        // through the private onSensorSample callback (see helper KDoc).
+        armVigilanceViaReflection(manager, nowMs = clock.now)
+        // Verify the precondition: vigilance IS armed before stop().
+        val mvField = CrashDetectionManager::class.java.getDeclaredField("movingVigilance")
+        mvField.isAccessible = true
+        val vigilance = mvField.get(manager) as MovingVigilance
+        assertTrue("precondition: vigilance must be armed before stop()", vigilance.isArmed)
+
+        manager.stop()
+        // confirmCrash launches onCrashDetected on the TestScope — drain it.
+        advanceUntilIdle()
+
+        assertEquals(
+            "stop() with armed vigilance must escalate — the rider may be down; " +
+                "silently abandoning an armed MovingVigilance is a false negative.",
+            1, crashCount.get()
+        )
+    }
+
+    // ── MV-2: manual pause while vigilance armed escalates ───────────────────
+
+    /**
+     * Pins the escalate-on-manual-pause contract: an [onPause] call with `auto=false`
+     * (rider tapped pause) while [MovingVigilance] is armed must still escalate rather
+     * than drop the suspected event. A downed rider cannot be assumed conscious merely
+     * because a pause signal arrived; a false negative is unacceptable.
+     *
+     * Contrast with an auto-pause: [onPause(auto=true)] does NOT wipe [MovingVigilance]
+     * — auto-pause fires when speed reaches 0, which is also what a real crash does.
+     * The manual-pause branch explicitly escalates because it wipes the state machine.
+     *
+     * Wiring: [CrashDetectionManager.onPause] with `auto=false` reaches
+     * `if (movingVigilance.isArmed) confirmCrash(...)` before `movingVigilance.reset()`.
+     *
+     * [lastCrashTime] is a reliable side-effect indicator here because [onPause] does NOT
+     * clear it at the end (unlike [stop]). A non-COOLDOWN_INACTIVE value proves
+     * confirmCrash was called. The [onCrashDetected] counter additionally confirms the
+     * coroutine was dispatched.
+     */
+    @Test
+    fun `manual pause while vigilance armed escalates to onCrashDetected`() = runTest {
+        val crashCount = AtomicInteger(0)
+        val clock = FakeClock(now = 2_000_000L)
+        val manager = newManagerForVigilance(this, crashCount, clock)
+
+        // Arm vigilance (reflection required — see MV-1 KDoc).
+        armVigilanceViaReflection(manager, nowMs = clock.now)
+        val mvField = CrashDetectionManager::class.java.getDeclaredField("movingVigilance")
+        mvField.isAccessible = true
+        val vigilance = mvField.get(manager) as MovingVigilance
+        assertTrue("precondition: vigilance must be armed before onPause(auto=false)", vigilance.isArmed)
+
+        manager.onPause(auto = false)
+        advanceUntilIdle()
+
+        assertEquals(
+            "onPause(auto=false) with armed vigilance must escalate — a manual pause " +
+                "wipes the state machine; any armed MovingVigilance must not be silently " +
+                "discarded since the downed rider cannot be assumed conscious.",
+            1, crashCount.get()
+        )
+        // Bonus: lastCrashTime was stamped by confirmCrash (onPause does NOT clear it, unlike stop).
+        // COOLDOWN_INACTIVE = Long.MIN_VALUE / 2; a real stamped value is near clock.now.
+        val lastCrash = manager.lastCrashTime
+        assertTrue(
+            "lastCrashTime must be near clock.now after confirm (not COOLDOWN_INACTIVE=${ Long.MIN_VALUE / 2 }), was $lastCrash",
+            lastCrash > 0L
+        )
+    }
+
+    // ── Freshness gate unit tests (isSpeedFreshForVigilance) ────────────────────
+
+    /**
+     * A GPS frozen at a non-zero value stops changing its reported speed value while
+     * still reading "not stale" for up to GPS_STALE_MS (10 s). The freshness gate catches
+     * this: when [speedLastChangeMs] has not advanced for >= [freshMs], the gate returns
+     * false and vigilance escalates rather than clearing.
+     *
+     * These tests drive [CrashDetectionManager.isSpeedFreshForVigilance] directly — now
+     * that the inline expression has been extracted into a companion function, no sensor
+     * event injection is required.
+     */
+
+    /**
+     * Frozen GPS value: speedLastChangeMs did NOT advance, elapsed >= freshMs.
+     * gpsStale=false (within GPS_STALE_MS window) but value stopped changing → false
+     * (escalate, not clear).
+     */
+    @Test
+    fun `isSpeedFreshForVigilance returns false when speed value frozen beyond freshMs`() {
+        val freshMs = 4_000L
+        val nowMs = 100_000L
+        val speedLastChangeMs = nowMs - freshMs   // exactly at boundary → elapsed == freshMs, strict < → false
+        val result = CrashDetectionManager.isSpeedFreshForVigilance(
+            nowMs = nowMs,
+            gpsStale = false,
+            speedLastChangeMs = speedLastChangeMs,
+            freshMs = freshMs,
+        )
+        assertEquals(
+            "A frozen speed value (elapsed == freshMs) must return false — " +
+                "the gate is strict < so equality does NOT count as fresh.",
+            false, result,
+        )
+    }
+
+    /**
+     * Genuinely fresh speed: speedLastChangeMs advanced recently (elapsed < freshMs),
+     * gpsStale=false → true (clear is allowed).
+     */
+    @Test
+    fun `isSpeedFreshForVigilance returns true when speed recently changed and GPS not stale`() {
+        val freshMs = 4_000L
+        val nowMs = 100_000L
+        val speedLastChangeMs = nowMs - (freshMs - 1)   // elapsed = freshMs-1, strictly inside window
+        val result = CrashDetectionManager.isSpeedFreshForVigilance(
+            nowMs = nowMs,
+            gpsStale = false,
+            speedLastChangeMs = speedLastChangeMs,
+            freshMs = freshMs,
+        )
+        assertEquals(
+            "A recently-changed speed (elapsed < freshMs, GPS not stale) must return true — " +
+                "the vigilance window should be clearable.",
+            true, result,
+        )
+    }
+
+    /**
+     * GPS stale: even when speedLastChangeMs is very recent, gpsStale=true must force
+     * the gate to false so a GPS that went stale mid-ride never clears vigilance.
+     */
+    @Test
+    fun `isSpeedFreshForVigilance returns false when GPS is stale regardless of recency`() {
+        val freshMs = 4_000L
+        val nowMs = 100_000L
+        val speedLastChangeMs = nowMs - 1L   // 1 ms ago — maximally recent
+        val result = CrashDetectionManager.isSpeedFreshForVigilance(
+            nowMs = nowMs,
+            gpsStale = true,
+            speedLastChangeMs = speedLastChangeMs,
+            freshMs = freshMs,
+        )
+        assertEquals(
+            "gpsStale=true must return false regardless of how recent speedLastChangeMs is — " +
+                "a stale GPS cannot be trusted to confirm motion.",
+            false, result,
+        )
+    }
+
+    /**
+     * Boundary: elapsed == freshMs is NOT fresh (strict < check). This pins the
+     * off-by-one so a future change to >= does not silently pass.
+     */
+    @Test
+    fun `isSpeedFreshForVigilance boundary at exactly freshMs returns false`() {
+        val freshMs = 3_500L
+        val nowMs = 200_000L
+        // elapsed = nowMs - speedLastChangeMs = freshMs exactly
+        val speedLastChangeMs = nowMs - freshMs
+        val result = CrashDetectionManager.isSpeedFreshForVigilance(
+            nowMs = nowMs,
+            gpsStale = false,
+            speedLastChangeMs = speedLastChangeMs,
+            freshMs = freshMs,
+        )
+        assertEquals(
+            "Elapsed exactly equal to freshMs must return false — the gate is strict <, " +
+                "so at-boundary is not considered fresh.",
+            false, result,
+        )
     }
 }

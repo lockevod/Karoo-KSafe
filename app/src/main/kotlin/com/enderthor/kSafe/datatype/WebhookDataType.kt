@@ -11,6 +11,7 @@ import com.enderthor.kSafe.R
 import com.enderthor.kSafe.activity.FieldTapReceiver
 import com.enderthor.kSafe.data.FIELD_COLOR_AUTO
 import com.enderthor.kSafe.data.KSafeConfig
+import com.enderthor.kSafe.data.webhookSlot
 import com.enderthor.kSafe.extension.managers.ConfigurationManager
 import com.enderthor.kSafe.extension.util.safeTake
 import io.hammerhead.karooext.KarooSystemService
@@ -36,14 +37,14 @@ private const val COLOR_SUCCESS  = 0xFF1B5E20.toInt() // green  — fired OK
 private const val COLOR_ERROR    = 0xFFB71C1C.toInt() // red    — failed
 
 /**
- * Tappable data field for webhook slot 1 or 2.
+ * Tappable data field for webhook slots 1..4.
  * Shows the configured label and fires the webhook when tapped.
  * Mirrors CustomMessageDataType: uses combine(WebhookState, configFlow) so the
  * initial view is rendered immediately (StateFlow emits synchronously) and the
  * tap PendingIntent is always registered.
  *
- * @param slot 1 or 2
- * requestCode: 106 = slot1, 107 = slot2
+ * @param slot 1..4
+ * requestCode: 106 = slot1, 107 = slot2, 108 = slot3, 109 = slot4
  */
 class WebhookDataType(
     datatype: String,
@@ -52,12 +53,14 @@ class WebhookDataType(
     private val slot: Int = 1,
 ) : DataTypeImpl("ksafe", datatype) {
 
-    private val tapAction = if (slot == 1)
-        FieldTapReceiver.ACTION_WEBHOOK_1
-    else
-        FieldTapReceiver.ACTION_WEBHOOK_2
+    private val tapAction = when (slot) {
+        1 -> FieldTapReceiver.ACTION_WEBHOOK_1
+        2 -> FieldTapReceiver.ACTION_WEBHOOK_2
+        3 -> FieldTapReceiver.ACTION_WEBHOOK_3
+        else -> FieldTapReceiver.ACTION_WEBHOOK_4
+    }
 
-    private val requestCode = 105 + slot  // 106 for slot1, 107 for slot2
+    private val requestCode = 105 + slot  // 106..109 for slots 1..4
 
     // Cached PendingIntent — see CarbLogDataType.
     @Volatile private var cachedPi: PendingIntent? = null
@@ -72,20 +75,12 @@ class WebhookDataType(
 
     private val configManager = ConfigurationManager(context)
 
-    private fun labelFromConfig(config: KSafeConfig) = if (slot == 1)
-        config.webhook1Label.ifBlank { "WH1" }.safeTake(7)
-    else
-        config.webhook2Label.ifBlank { "WH2" }.safeTake(7)
+    private fun labelFromConfig(config: KSafeConfig) =
+        config.webhookSlot(slot).label.ifBlank { "WH$slot" }.safeTake(7)
 
-    private fun isEnabled(config: KSafeConfig) = if (slot == 1)
-        config.webhook1Enabled
-    else
-        config.webhook2Enabled
+    private fun isEnabled(config: KSafeConfig) = config.webhookSlot(slot).enabled
 
-    private fun idleColorFromConfig(config: KSafeConfig) = if (slot == 1)
-        config.webhook1Color
-    else
-        config.webhook2Color
+    private fun idleColorFromConfig(config: KSafeConfig) = config.webhookSlot(slot).color
 
     private fun buildView(
         context: Context,

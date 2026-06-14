@@ -114,8 +114,20 @@ const val KAROO_LIVE_BASE_URL = "https://dashboard.hammerhead.io/live/"
  *  v20 → v21: combined fuel-log fields added (combinedCarbConcentrationPer500ml + the
  *             combined1/2 Label/Ml/Carbs/Color set) for the combined drink+carbs tap field.
  *             Pure version stamp; all fields have defaults, so existing installs are unaffected.
+ *  v21 → v22: updateCheckEnabled added (default ON). Pure version stamp; absent in old blobs
+ *             decodes to the `true` default, so existing installs get the update notice.
+ *  v22 → v23: hrCaloriesEnabled added (default OFF). Pure version stamp; absent in old blobs
+ *             decodes to `false`, so the HR-based calorie estimate stays off until opted in.
+ *  v23 → v24: fitStandardCaloriesSource added (default NONE) — write the ride's calories
+ *             into the FIT session message as the STANDARD total_calories field so
+ *             platforms that ignore developer fields (Suunto, …) import them.
+ *             Pure version stamp; absent in old blobs decodes to NONE (off).
+ *  v24 → v25: webhook slots 3 & 4 added (tap-only, no BonusAction). 26 additive fields
+ *             with sensible defaults (disabled, "Action 3/4") — existing installs
+ *             behave identically until the rider configures the new slots.
+ *             Pure version stamp.
  */
-const val CONFIG_VERSION = 23
+const val CONFIG_VERSION = 25
 
 /**
  * Canonical minSpeedForCrashKmh value per preset.
@@ -292,6 +304,14 @@ enum class CrashSensitivity {
 @Serializable
 enum class IncidentResponseLevel { SILENT, WARNING, EMERGENCY }
 
+/** Source for the STANDARD FIT session `total_calories` field (field num 11). The Karoo
+ *  does not write this field itself, so platforms that ignore developer fields (Suunto, …)
+ *  import no calories at all. NONE = don't write (default); HR = KSafe's own estimate
+ *  ([KSafeConfig.hrCaloriesEnabled] must be on for it to produce a value); KAROO = the
+ *  Karoo's native power-based calories, mirrored from its CALORIES stream. */
+@Serializable
+enum class FitCaloriesSource { NONE, HR, KAROO }
+
 @Serializable
 enum class EmergencyStatus { IDLE, COUNTDOWN, ALERTING }
 
@@ -451,6 +471,8 @@ data class KSafeConfig(
     val customMsg3Color: Int = FIELD_COLOR_AUTO,
     val webhook1Color: Int = FIELD_COLOR_AUTO,
     val webhook2Color: Int = FIELD_COLOR_AUTO,
+    val webhook3Color: Int = FIELD_COLOR_AUTO,
+    val webhook4Color: Int = FIELD_COLOR_AUTO,
     // Webhook actions — generic HTTP buttons assignable to Karoo hardware buttons.
     // Each action fires a single HTTP request (GET or POST) to any endpoint.
     // Compatible with Home Assistant, ntfy, IFTTT, n8n, Make, and any webhook service.
@@ -466,6 +488,18 @@ data class KSafeConfig(
     val webhook2Method: String = "POST",
     val webhook2Headers: String = "",
     val webhook2Body: String = "",
+    val webhook3Enabled: Boolean = false,
+    val webhook3Label: String = "Action 3",
+    val webhook3Url: String = "",
+    val webhook3Method: String = "POST",
+    val webhook3Headers: String = "",
+    val webhook3Body: String = "",
+    val webhook4Enabled: Boolean = false,
+    val webhook4Label: String = "Action 4",
+    val webhook4Url: String = "",
+    val webhook4Method: String = "POST",
+    val webhook4Headers: String = "",
+    val webhook4Body: String = "",
     // Geo-fence for webhook triggers — when enabled the webhook only fires if the device
     // is within [webhookNGeoRadiusM] metres of the configured target coordinates.
     val webhook1GeoEnabled: Boolean = false,
@@ -476,12 +510,24 @@ data class KSafeConfig(
     val webhook2GeoLat: Double = 0.0,
     val webhook2GeoLon: Double = 0.0,
     val webhook2GeoRadiusM: Int = 50,
+    val webhook3GeoEnabled: Boolean = false,
+    val webhook3GeoLat: Double = 0.0,
+    val webhook3GeoLon: Double = 0.0,
+    val webhook3GeoRadiusM: Int = 50,
+    val webhook4GeoEnabled: Boolean = false,
+    val webhook4GeoLat: Double = 0.0,
+    val webhook4GeoLon: Double = 0.0,
+    val webhook4GeoRadiusM: Int = 50,
     // Ride alert — when enabled a SystemNotification with a custom text is shown after the webhook fires.
     // Useful as an accidental-press warning: the user sees exactly what action was triggered.
     val webhook1AlertEnabled: Boolean = false,
     val webhook1AlertText: String = "",
     val webhook2AlertEnabled: Boolean = false,
     val webhook2AlertText: String = "",
+    val webhook3AlertEnabled: Boolean = false,
+    val webhook3AlertText: String = "",
+    val webhook4AlertEnabled: Boolean = false,
+    val webhook4AlertText: String = "",
     // ─── Carbs tracker (real carb burn from physiology) ─────────────────────
     /** Master toggle. Opt-in feature, off by default. */
     val carbsTrackerEnabled: Boolean = false,
@@ -618,6 +664,10 @@ data class KSafeConfig(
      *  Independent of [carbsTrackerEnabled]: when either is on, the fueling monitor runs.
      *  Opt-in, off by default — consistent with the carb / hydration siblings. */
     val hrCaloriesEnabled: Boolean = false,
+    /** Write the ride's calories into the FIT session message as the STANDARD
+     *  `total_calories` field — see [FitCaloriesSource]. Independent of
+     *  [fuelingFitExportEnabled], which only governs the ksafe_* developer fields. */
+    val fitStandardCaloriesSource: FitCaloriesSource = FitCaloriesSource.NONE,
     /**
      * Config schema version — used to detect stale saved configs and apply migrations.
      * Default 0 ensures that any pre-versioning config (JSON without this field) triggers migration.
@@ -1381,7 +1431,61 @@ fun KSafeConfig.migrateToLatest(): KSafeConfig {
         Timber.i("KSafeConfig migrated v%d→v23 (HR-based calorie estimate)", originalVersion)
     }
 
+    if (c.configVersion < 24) {
+        // v23 → v24: fitStandardCaloriesSource added (default NONE). Pure version stamp —
+        // additive field, absent in old blobs decodes to NONE so the standard FIT calories
+        // write stays off until the rider opts in. Nothing to rewrite.
+        c = c.copy(configVersion = 24)
+        Timber.i("KSafeConfig migrated v%d→v24 (standard FIT calories field)", originalVersion)
+    }
+
+    if (c.configVersion < 25) {
+        // v24 → v25: webhook slots 3 & 4 added (tap-only, no BonusAction). Pure version
+        // stamp — all 26 new fields are additive with sensible defaults (disabled, "Action 3/4"),
+        // so existing installs behave identically until the rider configures the new slots.
+        c = c.copy(configVersion = 25)
+        Timber.i("KSafeConfig migrated v%d→v25 (webhook slots 3 & 4)", originalVersion)
+    }
+
     return c
+}
+
+// ─── Webhook slot accessor + write-back helper ────────────────────────────────
+
+/** Read-only view of one webhook slot's 13 flat fields. Lets consumers stop branching on slot. */
+data class WebhookSlot(
+    val color: Int,
+    val enabled: Boolean,
+    val label: String,
+    val url: String,
+    val method: String,
+    val headers: String,
+    val body: String,
+    val geoEnabled: Boolean,
+    val geoLat: Double,
+    val geoLon: Double,
+    val geoRadiusM: Int,
+    val alertEnabled: Boolean,
+    val alertText: String,
+)
+
+/** Webhook slots are 1..4. */
+const val WEBHOOK_SLOT_COUNT = 4
+
+fun KSafeConfig.webhookSlot(n: Int): WebhookSlot = when (n) {
+    1 -> WebhookSlot(webhook1Color, webhook1Enabled, webhook1Label, webhook1Url, webhook1Method, webhook1Headers, webhook1Body, webhook1GeoEnabled, webhook1GeoLat, webhook1GeoLon, webhook1GeoRadiusM, webhook1AlertEnabled, webhook1AlertText)
+    2 -> WebhookSlot(webhook2Color, webhook2Enabled, webhook2Label, webhook2Url, webhook2Method, webhook2Headers, webhook2Body, webhook2GeoEnabled, webhook2GeoLat, webhook2GeoLon, webhook2GeoRadiusM, webhook2AlertEnabled, webhook2AlertText)
+    3 -> WebhookSlot(webhook3Color, webhook3Enabled, webhook3Label, webhook3Url, webhook3Method, webhook3Headers, webhook3Body, webhook3GeoEnabled, webhook3GeoLat, webhook3GeoLon, webhook3GeoRadiusM, webhook3AlertEnabled, webhook3AlertText)
+    4 -> WebhookSlot(webhook4Color, webhook4Enabled, webhook4Label, webhook4Url, webhook4Method, webhook4Headers, webhook4Body, webhook4GeoEnabled, webhook4GeoLat, webhook4GeoLon, webhook4GeoRadiusM, webhook4AlertEnabled, webhook4AlertText)
+    else -> throw IllegalArgumentException("webhook slot $n out of range 1..$WEBHOOK_SLOT_COUNT")
+}
+
+fun KSafeConfig.withWebhookSlot(n: Int, s: WebhookSlot): KSafeConfig = when (n) {
+    1 -> copy(webhook1Color = s.color, webhook1Enabled = s.enabled, webhook1Label = s.label, webhook1Url = s.url, webhook1Method = s.method, webhook1Headers = s.headers, webhook1Body = s.body, webhook1GeoEnabled = s.geoEnabled, webhook1GeoLat = s.geoLat, webhook1GeoLon = s.geoLon, webhook1GeoRadiusM = s.geoRadiusM, webhook1AlertEnabled = s.alertEnabled, webhook1AlertText = s.alertText)
+    2 -> copy(webhook2Color = s.color, webhook2Enabled = s.enabled, webhook2Label = s.label, webhook2Url = s.url, webhook2Method = s.method, webhook2Headers = s.headers, webhook2Body = s.body, webhook2GeoEnabled = s.geoEnabled, webhook2GeoLat = s.geoLat, webhook2GeoLon = s.geoLon, webhook2GeoRadiusM = s.geoRadiusM, webhook2AlertEnabled = s.alertEnabled, webhook2AlertText = s.alertText)
+    3 -> copy(webhook3Color = s.color, webhook3Enabled = s.enabled, webhook3Label = s.label, webhook3Url = s.url, webhook3Method = s.method, webhook3Headers = s.headers, webhook3Body = s.body, webhook3GeoEnabled = s.geoEnabled, webhook3GeoLat = s.geoLat, webhook3GeoLon = s.geoLon, webhook3GeoRadiusM = s.geoRadiusM, webhook3AlertEnabled = s.alertEnabled, webhook3AlertText = s.alertText)
+    4 -> copy(webhook4Color = s.color, webhook4Enabled = s.enabled, webhook4Label = s.label, webhook4Url = s.url, webhook4Method = s.method, webhook4Headers = s.headers, webhook4Body = s.body, webhook4GeoEnabled = s.geoEnabled, webhook4GeoLat = s.geoLat, webhook4GeoLon = s.geoLon, webhook4GeoRadiusM = s.geoRadiusM, webhook4AlertEnabled = s.alertEnabled, webhook4AlertText = s.alertText)
+    else -> throw IllegalArgumentException("webhook slot $n out of range 1..$WEBHOOK_SLOT_COUNT")
 }
 
 /**

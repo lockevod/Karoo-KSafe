@@ -97,6 +97,12 @@ class CalibrationLogger(
          * preceding SIL_IN / IMPACT_IN rows.
          */
         GAP_UPRIGHT_VETO("GAP_VETO"),
+        /** On-side confirm diverted into moving vigilance (angle read mid-motion). */
+        VIGILANCE_ARM("VIGIL_ARM"),
+        /** Moving vigilance silent-cleared a suspect confirm (sustained riding speed). */
+        VIGILANCE_CLEAR("VIGIL_CLEAR"),
+        /** Moving vigilance escalated to the emergency countdown (speed collapse / stale GPS). */
+        VIGILANCE_ESCALATE("VIGIL_ESCALATE"),
         /**
          * SILENCE_CHECK timed out — device entered the silence phase but never achieved
          * uninterrupted stillness within the double-window period → false alarm at stage 3.
