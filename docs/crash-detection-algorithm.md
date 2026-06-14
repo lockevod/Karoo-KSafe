@@ -300,6 +300,61 @@ This prevents:
 
 ---
 
+## Moving-Vigilance Trust Gate
+
+When an on-side SILENCE_CHECK confirm fires, the facade checks one extra condition before routing it to the normal cancellable countdown:
+
+**Was the silence-window orientation sampled at rest?**
+
+The orientation angle is the angle between the pre-impact reference gravity vector and the averaged in-silence gravity vector. That angle is only meaningful if the in-silence vector really points along gravity — i.e. the bike was genuinely resting when the samples were collected. The vector magnitude should be ≈ 9.81 m/s² (1g). Field false positives have shown in-silence magnitudes as low as 8.49 and 1.78 m/s² — both sampled mid-motion, where the centripetal and dynamic force components move the vector away from gravity and the computed angle is untrustworthy.
+
+### Trust gate (`onSideTrustMinAccel = 8.83 m/s²`)
+
+```kotlin
+val mag = sqrt(silOrientX² + silOrientY² + silOrientZ²)
+val readInMotion = (mag < onSideTrustMinAccel)   // 8.83 ≈ 0.90 × GRAVITY
+```
+
+If `readInMotion = true` the confirm is NOT fired immediately. Instead, `movingVigilance.arm(now)` is called and the confirm becomes a **pending verification**.
+
+If `readInMotion = false` (magnitude close to gravity → bike was at rest → angle is trustworthy) the confirm is routed directly to `confirmCrash` as before.
+
+If the silence-window orientation is `NaN` (too few samples — cold start, brief pause) the motion check returns `false` (cannot assess → confirm as today — FN-safe by construction).
+
+### The verification window
+
+Once armed, `MovingVigilance.onTick(now, speedKmh, speedFresh)` is called on every subsequent sensor sample (~50 Hz). It resolves to one of three outcomes:
+
+| Outcome | Condition | Action |
+|---------|-----------|--------|
+| `CLEAR` | `speedFresh && speedKmh ≥ movingVigilanceSpeedKmh` for the full `movingVigilanceWindowMs` (4 000 ms) | Log `VIGIL_CLEAR`. Disarm. No alert. Rider was continuously, freshly riding at ≥ 8 km/h → the earlier accel pattern was a riding FP. |
+| `ESCALATE` | `!speedFresh` OR `speedKmh < movingVigilanceSpeedKmh` at ANY sample before the window closes | Log `VIGIL_ESCALATE`. Disarm. Route to `confirmCrash` — the same cancellable countdown as a normal detection. |
+| `PENDING` | Window has not yet closed and every sample so far was fast+fresh | Continue watching. |
+
+**FN-safe by construction**: the only path that suppresses an alert is `CLEAR`, which requires every single sensor sample in a 4 s window to show the rider is actively moving above 8 km/h with fresh GPS. Any doubt (one slow sample, one stale GPS tick, a GPS drop, or any pause) escalates. The accelerometer is NOT consulted to clear — it is the source of the untrustworthy reading; consulting it again would be circular.
+
+### Escalate-on-abandon (pause while armed)
+
+If a Karoo ride pause arrives while `movingVigilance.isArmed`, the vigilance window is NEVER silently dropped. Manual pause and autopause are not reliably distinguishable, and a downed rider cannot be assumed conscious — so `confirmCrash` is called before `movingVigilance.reset()`. Log event: `VIGIL_ESCALATE` with `reason=manual_pause` (autopause does not reach `onPause`'s manual branch; only the manual branch adds this escalation).
+
+### Calibration events
+
+| Event tag | When |
+|-----------|------|
+| `VIGIL_ARM` | Arm: trust gate tripped. Fields: `sil_mag`, `trust_min`, `speed`, `window_ms`. |
+| `VIGIL_CLEAR` | Clear: rider sustained ≥ 8 km/h fresh for the full window. Fields: `speed`, `window_ms`. |
+| `VIGIL_ESCALATE` | Escalate to countdown. Fields: `speed`, `gps_stale` (on tick path) or `reason=manual_pause` (on pause path). |
+
+### Tuning knobs (`Thresholds.kt`)
+
+| Field | Default | Purpose |
+|-------|---------|---------|
+| `onSideTrustMinAccel` | 8.83 m/s² | Minimum silence-orientation magnitude to trust the angle. Below this the sample was mid-motion. ≈ 0.90 × GRAVITY; calibrated against observed FP magnitudes (8.49, 1.78 m/s²) and left above them with margin. |
+| `movingVigilanceWindowMs` | 4 000 ms | Duration that speed must hold above the floor to clear. Long enough to exclude a brief burst of speed during a crash sequence; short enough not to delay a real-crash escalation noticeably. |
+| `movingVigilanceSpeedKmh` | 8.0 km/h | "Clearly riding" speed floor. A rider stopped at a red light is < 1 km/h; a downed rider's bike rolling gently is < 5 km/h; 8 km/h clears walking-pace ambiguity. |
+
+---
+
 ## Speed-Drop Detection (independent system)
 
 A completely separate mechanism that runs as a background coroutine, checking every 30 seconds:
@@ -450,6 +505,9 @@ Captures the scenario where the rider falls and is unconscious at low speed (e.g
 | Speed-drop check interval | 30,000ms |
 | Speed-drop confirmation duration | configurable (default 5 min) |
 | Speed-drop stable-stillness requirement | 60,000ms |
+| Moving-vigilance trust gate (`onSideTrustMinAccel`) | 8.83 m/s² (≈ 0.90 × gravity) |
+| Moving-vigilance window (`movingVigilanceWindowMs`) | 4,000ms |
+| Moving-vigilance riding-speed floor (`movingVigilanceSpeedKmh`) | 8.0 km/h |
 
 ---
 
@@ -475,6 +533,14 @@ Everything else tolerates slightly stale reads across threads (e.g. an accelerom
 ---
 
 ## Change Log (vs. previous revision)
+
+### Revision 8 — June 2026 (moving-vigilance trust gate + escalate-on-abandon)
+
+| ID | Change | Status |
+|----|--------|--------|
+| **R8-A** | **Moving-vigilance trust gate (`onSideTrustMinAccel = 8.83 m/s²`).** An on-side SILENCE_CHECK confirm is only fired immediately when the averaged in-silence acceleration magnitude is close to gravity (‖sil‖ ≥ 8.83 m/s²), indicating the orientation angle was sampled at rest. Field FPs showed magnitudes of 8.49 and 1.78 m/s² — sampled mid-motion, making the computed angle untrustworthy. Below the floor, the confirm is diverted into the moving-vigilance window (R8-B) rather than directly firing. If the orientation samples are `NaN` (too few) the check returns false and the confirm proceeds as today — cannot assess → FN-safe default. | ✅ Implemented (`CrashDetectionManager.confirmReadInMotion`, `Thresholds.onSideTrustMinAccel`) |
+| **R8-B** | **Moving-vigilance window (`movingVigilanceWindowMs = 4 000 ms`, `movingVigilanceSpeedKmh = 8.0 km/h`).** When the trust gate trips, `MovingVigilance.arm(now)` is called. On every subsequent sensor sample (~50 Hz), `onTick` checks: if speed is fresh AND ≥ 8 km/h for the full 4 s window → `CLEAR` (log `VIGIL_CLEAR`, no alert — rider was continuously riding, reading was a FP); if any sample has stale GPS OR speed < 8 km/h → `ESCALATE` (log `VIGIL_ESCALATE`, route to the normal cancellable countdown). The accelerometer is NOT consulted for the clear decision — it is the source of the untrustworthy reading. Calibration events: `VIGIL_ARM` / `VIGIL_CLEAR` / `VIGIL_ESCALATE`. | ✅ Implemented (`MovingVigilance.kt`) |
+| **R8-C** | **Escalate-on-abandon: armed vigilance window on pause.** When a Karoo ride pause arrives while `movingVigilance.isArmed`, the window is never silently dropped. Manual pause and autopause are not reliably distinguishable and a downed rider cannot be assumed conscious, so `confirmCrash(IMPACT_CONFIRMED, alreadyLogged=true)` is called before `movingVigilance.reset()`. Log event: `VIGIL_ESCALATE` with `reason=manual_pause`. Autopause does not reach the manual branch of `onPause` and is unaffected (the in-flight state machine is preserved and the vigilance window continues ticking). | ✅ Implemented (`CrashDetectionManager.onPause`) |
 
 ### Revision 7 — May 2026 (auto-resume residual + IMPACT-phase on-side relaxation)
 
