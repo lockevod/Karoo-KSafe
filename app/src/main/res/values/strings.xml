@@ -177,7 +177,7 @@
     <!-- Shown by every fueling data field when the extension master switch is OFF.
          Deliberately a single universal word (kept identical in all locales) so the
          field reads as "this is off", not as a sensor/data problem. -->
-    <string name="fueling_field_off">OFF</string>
+    <string name="fueling_field_off" translatable="false">OFF</string>
     <string name="calories_total_datatype_name">KSafe Calories (HR)</string>
     <string name="calories_total_datatype_desc">Cumulative calories this ride, estimated from heart rate (Keytel / %HRmax). Independent of the Karoo\'s power-based calories; useful when no power meter is paired.</string>
     <string name="calories_rate_datatype_name">KSafe Calorie Rate (HR)</string>
