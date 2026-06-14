@@ -679,6 +679,9 @@ class CrashDetectionManager(
                         }
                     }
                 } else {
+                    // A trustworthy at-rest confirm fires now; clear any pending vigilance window so a
+                    // later stale-window tick can't fire a second emergency after the rider cancels.
+                    movingVigilance.reset()
                     // alreadyLogged=true: logCrashConfirmed already emitted the canonical
                     // CRASH_CONFIRMED row with full context. confirmCrash must NOT emit a
                     // duplicate (gate-level) CRASH_CONFIRMED for the IMPACT_CONFIRMED path

@@ -11,7 +11,7 @@ class MovingVigilance(private val thresholds: Thresholds) {
 
     enum class Outcome { PENDING, CLEAR, ESCALATE }
 
-    private var armedAtMs: Long = NOT_ARMED
+    @Volatile private var armedAtMs: Long = NOT_ARMED
 
     val isArmed: Boolean get() = armedAtMs != NOT_ARMED
 
