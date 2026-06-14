@@ -851,6 +851,17 @@ The IMPACT → SILENCE_CHECK transition on the **on-side relaxation path** does 
 
 The on-side branch uses the same 4.5 s threshold as Revision 4 and prior. Real crashes that lay the bike on its side (the majority — ~70–85 % per cycling-incident literature) confirm with the same latency as before. The rare crash where the bike stays upright (pinned against a wall or car, OTB with bike standing) is treated by where it lands relative to the regime-specific veto cone: if the bike ends within **15°** (PROMPT regime) or **25°** (GAP regime) of its pre-impact orientation AND, in the prompt regime, the impact produced no violent rotation (peak gyro < 3.0 rad/s), the 20 s confirm is now **vetoed** — that case no longer confirms at all, and the SpeedDropMonitor (if enabled) is the only remaining backstop. A high-rotation OTB that ends wheels-up still confirms (the gyro gate keeps it firing), and a bike knocked beyond the veto cone (> 15° in PROMPT, > 25° in GAP) still confirms — a ~20 s delay, well within the irrelevant range for emergency response.
 
+**Accepted residual — GAP-regime veto ignores gyro (decided 2026-06-14, "document and leave").** The
+gyro no-tumble gate (`peak gyro < 3.0 rad/s`) is applied ONLY in the PROMPT regime; the GAP regime
+(`firstSilenceGapMs > 8 s` — the rider kept riding 8 s+ after the impact) vetoes a `< 25°` upright stop
+*regardless* of rotation. So a contrived crash — rider rides 8 s+ after a jolt, THEN a violent tumble
+(high gyro) that does not re-cross the impact threshold and leaves the bike `< 25°` at rest — would be
+vetoed with no alert. Judged a negligible, narrow residual: the 8 s+ continued-riding gap is a strong
+conscious-rider signal, the geometry (high-gyro tumble ending nearly wheels-down) is unusual, and the
+SpeedDropMonitor partially backstops it. Adding the gyro gate to the GAP regime was rejected because it
+would re-admit the stop-and-stand FP class (incidental bike-handling gyro at a delayed stop → false
+confirm) the GAP veto exists to suppress. Revisit only with field data showing this FN actually occurs.
+
 The `silenceDurationUprightMs` requirement is reset by ANY accel deviation > `silenceDeviationMax` (4.0 m/s²): a rider in an upright-bike crash who shifts position even slightly is detected; a rider stopped at a traffic light typically shifts within 20 s.
 
 A real crash with a long slide (gap > 8 s, e.g. steep descent) gets the 20 s window — a ~15 s delay vs the fast path. The rider is down and will not move, so it still confirms. Judged acceptable: the case is rare and already ambiguous, and the alternative is leaving the bump+brake+stop FP unprotected.
