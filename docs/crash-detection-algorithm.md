@@ -437,7 +437,7 @@ Captures the scenario where the rider falls and is unconscious at low speed (e.g
 | SILENCE_CHECK required duration — upright or delayed stop (GPS stale) | 20,000ms |
 | Delayed-stop gap threshold (`delayedStopGapMs`) | 8,000ms |
 | Upright angle threshold (`uprightAngleThresholdDegrees`) | 45° |
-| GAP-regime upright veto cone (`gapVetoUprightAngleDeg`, R6-F) | 15° |
+| GAP-regime upright veto cone (`gapVetoUprightAngleDeg`, R6-F) | 25° |
 | Prompt-stop upright veto gyro gate (`nonGapUprightVetoMaxGyroRadS`, R6-G) | 3.0 rad/s |
 | Pre-impact reference window (`WINDOW_MS`) | 2,000ms |
 | Pre-impact reference guard before impact (`GUARD_MS`) | 250ms |
@@ -661,7 +661,7 @@ Two signals decide the silence-window duration, each authoritative in its own re
 gap > 8 s  (rider kept moving after impact — delayed stop):
     → 20 s window  [gap regime; orientation NOT used to pick the window]
        · but at the 20 s confirm gate, the R6-F upright veto applies
-         (orientation < 15° → suppress confirm) — see "Two uses of orientation" below
+         (orientation < 25° → suppress confirm) — see "Two uses of orientation" below
 
 gap ≤ 8 s  (stopped with the impact — prompt stop):
     angle ≥ 45°  (on-side or significantly tilted)  → 4.5 s  [clear crash, fast alert]
@@ -679,14 +679,14 @@ Orientation degrees feed **two distinct decisions**, and conflating them causes 
 
 1. **Window duration — *timing* (R6-C, the decision table above).** In the **prompt-stop** regime (gap ≤ 8 s) the angle picks *how long to wait*: ≥ 45° (on-side) → 4.5 s fast alert, < 45° (upright) → 20 s. **Both outcomes still CONFIRM** — the window choice never suppresses an alert. The **gap regime does not use orientation for the window** (always 20 s).
 
-2. **Confirm veto — *fire / no-fire* (R6-F gap + R6-G prompt).** At the 20 s confirm gate, if the silence-window orientation is within a **tight, dedicated 15° cone** (`gapVetoUprightAngleDeg`, **not** the 45° timing threshold) of the pre-impact reference, the confirm is **vetoed** → return to MONITORING, no alert. In the **gap** regime this engages on orientation alone (R6-F); in the **prompt-stop** regime it additionally requires that the impact produced **no violent rotation** (`peakGyroSinceImpactRadS < nonGapUprightVetoMaxGyroRadS`, R6-G). This is the only place orientation *suppresses* a confirm.
+2. **Confirm veto — *fire / no-fire* (R6-F gap + R6-G prompt).** At the 20 s confirm gate, if the silence-window orientation is within a **tight, dedicated 25° cone** (`gapVetoUprightAngleDeg`, **not** the 45° timing threshold) of the pre-impact reference, the confirm is **vetoed** → return to MONITORING, no alert. In the **gap** regime this engages on orientation alone (R6-F); in the **prompt-stop** regime it additionally requires that the impact produced **no violent rotation** (`peakGyroSinceImpactRadS < nonGapUprightVetoMaxGyroRadS`, R6-G). This is the only place orientation *suppresses* a confirm. (The cone was originally 15°, widened to 25° after field session 2ab57f confirmed an FP at ~18.6° tilt.)
 
 **Why the prompt-stop veto needs the extra gyro gate** (the gap veto does not):
 
 | Regime | What it means physically | Upright + still 20 s → |
 |--------|--------------------------|------------------------|
 | **Gap > 8 s** | Rider kept riding ~10 s after the bump, *then* stopped | **Vetoed (R6-F)** — you do not keep riding for 10 s after crashing, so a delayed upright stop is almost certainly a benign rest. Orientation alone suffices. |
-| **Gap ≤ 8 s, low rotation** | Stopped promptly, no tumble | **Vetoed (R6-G)** — a bike held < 15°-from-upright and motionless for 20 s is being balanced by a conscious rider; an incapacitated rider cannot keep a laterally-unstable bike upright (it topples → on-side, or tumbles → high gyro). Session `effa0e`. |
+| **Gap ≤ 8 s, low rotation** | Stopped promptly, no tumble | **Vetoed (R6-G)** — a bike held < 25°-from-upright and motionless for 20 s is being balanced by a conscious rider; an incapacitated rider cannot keep a laterally-unstable bike upright (it topples → on-side, or tumbles → high gyro). Session `effa0e`. |
 | **Gap ≤ 8 s, high rotation** | Stopped promptly, *with* a tumble (endo / over-the-bars) | **Still confirms** — a violent rotation ending wheels-up is crash-consistent; the gyro gate (3.0 rad/s) keeps this path firing. FN ≫ FP. |
 
 So R6-C, R6-F and R6-G are **not redundant**: R6-C *times* the confirm using orientation in the prompt-stop regime; R6-F/R6-G *suppress* the confirm using a tighter cone — R6-F in the gap regime (orientation alone), R6-G in the prompt-stop regime (orientation **and** no-tumble). The original "lever to revisit" — a hard-brake → track-stand upright 20 s FP at gap ≤ 8 s — was observed in the field (`effa0e`, 2026-06-03) and is now closed by R6-G.
@@ -782,7 +782,7 @@ The IMPACT → SILENCE_CHECK transition on the **on-side relaxation path** does 
 
 ### False-negative analysis
 
-The on-side branch uses the same 4.5 s threshold as Revision 4 and prior. Real crashes that lay the bike on its side (the majority — ~70–85 % per cycling-incident literature) confirm with the same latency as before. The rare crash where the bike stays upright (pinned against a wall or car, OTB with bike standing) is treated by where it lands relative to the R6-G prompt-stop upright veto: if the bike ends within 15° of its pre-impact orientation AND the impact produced no violent rotation (peak gyro < 3.0 rad/s), the 20 s confirm is now **vetoed** — that case no longer confirms at all, and the SpeedDropMonitor (if enabled) is the only remaining backstop. A high-rotation OTB that ends wheels-up still confirms (the gyro gate keeps it firing), and a bike knocked to 15–45° still confirms at ~20 s instead of ~4.5 s — a 15.5 s delay, well within the irrelevant range for emergency response.
+The on-side branch uses the same 4.5 s threshold as Revision 4 and prior. Real crashes that lay the bike on its side (the majority — ~70–85 % per cycling-incident literature) confirm with the same latency as before. The rare crash where the bike stays upright (pinned against a wall or car, OTB with bike standing) is treated by where it lands relative to the R6-G prompt-stop upright veto: if the bike ends within 25° of its pre-impact orientation AND the impact produced no violent rotation (peak gyro < 3.0 rad/s), the 20 s confirm is now **vetoed** — that case no longer confirms at all, and the SpeedDropMonitor (if enabled) is the only remaining backstop. A high-rotation OTB that ends wheels-up still confirms (the gyro gate keeps it firing), and a bike knocked to 25–45° still confirms at ~20 s instead of ~4.5 s — a ~20 s delay, well within the irrelevant range for emergency response.
 
 The `silenceDurationUprightMs` requirement is reset by ANY accel deviation > `silenceDeviationMax` (4.0 m/s²): a rider in an upright-bike crash who shifts position even slightly is detected; a rider stopped at a traffic light typically shifts within 20 s.
 

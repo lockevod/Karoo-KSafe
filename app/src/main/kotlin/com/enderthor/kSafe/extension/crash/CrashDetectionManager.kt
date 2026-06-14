@@ -139,10 +139,13 @@ class CrashDetectionManager(
          *  (long window). Matches [Thresholds.uprightAngleThresholdDegrees]. */
         const val UPRIGHT_ANGLE_THRESHOLD_DEGREES = 45.0
 
-        /** Angle (deg) below which the GAP-regime confirm is vetoed (R6-F). A tight
-         *  cone — a veto suppresses an SOS, and an FN is worse than an FP. Matches
-         *  [Thresholds.gapVetoUprightAngleDeg]. */
-        const val GAP_VETO_UPRIGHT_ANGLE_DEG = 15.0
+        /** Angle (deg) below which the GAP-regime confirm is vetoed (R6-F). Widened
+         *  from 15° to 25° after field evidence (session 2ab57f): a settled bike at
+         *  ~18.6° was FP-confirmed with the old 15° cone. Domain rationale: a real
+         *  crash always tips the bike well past 25°; vetoing up to 25° at rest has
+         *  negligible FN risk. A veto suppresses an SOS, and an FN is worse than an
+         *  FP. Matches [Thresholds.gapVetoUprightAngleDeg]. */
+        const val GAP_VETO_UPRIGHT_ANGLE_DEG = 25.0
 
         /** Peak gyro (rad/s) below which the non-gap (prompt-stop) upright veto (R6-G)
          *  may engage — distinguishes a benign stand from an endo that ends upright.
