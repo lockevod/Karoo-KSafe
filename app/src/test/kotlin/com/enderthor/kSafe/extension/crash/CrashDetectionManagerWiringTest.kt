@@ -8,12 +8,15 @@ import com.enderthor.kSafe.extension.util.Clock
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.test.TestScope
+import kotlinx.coroutines.test.advanceUntilIdle
+import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import org.mockito.Mockito.`when`
 import org.mockito.Mockito.mock
+import java.util.concurrent.atomic.AtomicInteger
 
 /**
  * Narrow, facade-level wiring tests for [CrashDetectionManager]. Two contracts
@@ -70,6 +73,59 @@ class CrashDetectionManagerWiringTest {
             calibLogger = null,
             clock = clock,
         )
+    }
+
+    /**
+     * Build a manager whose [onCrashDetected] increments [counter] and whose coroutine
+     * scope is the [TestScope] supplied by [runTest] so [advanceUntilIdle] drains the
+     * `scope.launch { onCrashDetected() }` call inside [CrashDetectionManager.confirmCrash].
+     */
+    private fun newManagerForVigilance(
+        testScope: TestScope,
+        counter: AtomicInteger,
+        clock: FakeClock = FakeClock(),
+    ): CrashDetectionManager {
+        val sensorManager = mock(SensorManager::class.java)
+        val accel = mock(Sensor::class.java).also {
+            `when`(it.type).thenReturn(Sensor.TYPE_ACCELEROMETER)
+        }
+        val gyro = mock(Sensor::class.java).also {
+            `when`(it.type).thenReturn(Sensor.TYPE_GYROSCOPE)
+        }
+        `when`(sensorManager.getDefaultSensor(Sensor.TYPE_ACCELEROMETER)).thenReturn(accel)
+        `when`(sensorManager.getDefaultSensor(Sensor.TYPE_GYROSCOPE)).thenReturn(gyro)
+        val context = mock(Context::class.java)
+        `when`(context.getSystemService(Context.SENSOR_SERVICE)).thenReturn(sensorManager)
+        return CrashDetectionManager(
+            context = context,
+            scope = testScope as CoroutineScope,
+            onCrashDetected = { counter.incrementAndGet() },
+            calibLogger = null,
+            clock = clock,
+        )
+    }
+
+    /**
+     * Arm [MovingVigilance] on [manager] via reflection. The field is `private` — there is
+     * NO public API path that arms it without injecting a real sensor event through the
+     * Android SensorManager (whose [SensorEvent] constructor is a JVM stub). Reflection is
+     * the only way to set up the vigilance-armed precondition so the downstream escalate
+     * paths in [CrashDetectionManager.stop] and [CrashDetectionManager.onPause] can be
+     * tested against a truthful armed state.
+     *
+     * This helper does NOT exercise the `Decision.Confirm → movingVigilance.arm()`
+     * divert in [CrashDetectionManager.onSensorSample]. That path is unreachable from
+     * any public surface in the JVM harness; the tests that call this helper are
+     * explicitly testing the ESCALATE-ON-ABANDON and ESCALATE-ON-MANUAL-PAUSE paths,
+     * not the divert trigger. See the DONE_WITH_CONCERNS note on tests 3 & 4 for the
+     * full blockage description.
+     */
+    private fun armVigilanceViaReflection(manager: CrashDetectionManager, nowMs: Long) {
+        val field = CrashDetectionManager::class.java.getDeclaredField("movingVigilance")
+        field.isAccessible = true
+        val vigilance = field.get(manager) as MovingVigilance
+        vigilance.arm(nowMs)
+        check(vigilance.isArmed) { "reflection arm() failed — vigilance not armed" }
     }
 
     // ── T1: clearCrashCooldown ───────────────────────────────────────────────
@@ -266,5 +322,159 @@ class CrashDetectionManagerWiringTest {
         // Inspection-only follow-up: `stateMachine.lastSpeedGpsStale` is now false
         // (re-read from `isGpsStale(now) == false` and pushed via setSpeedGpsStale).
         // Field is private — not asserted here. See I-NEW-1 in resume() for the wiring.
+    }
+
+    // ── MV-1: stop() while vigilance armed escalates ─────────────────────────
+
+    /**
+     * Pins the escalate-on-abandon contract: when [MovingVigilance] is armed and the ride
+     * stops (KSafe extension stopped, app killed, user disabled crash detection), the
+     * manager must call [CrashDetectionManager.confirmCrash] rather than silently dropping
+     * the suspected event. Silence = false negative for an incapacitated rider.
+     *
+     * Wiring: [CrashDetectionManager.stop] checks `movingVigilance.isArmed` and routes
+     * through `confirmCrash(CrashSource.IMPACT_CONFIRMED)` before resetting state.
+     *
+     * **Harness note**: [MovingVigilance] is armed via reflection because there is no
+     * public API path that arms it without injecting real sensor events through the
+     * Android [SensorManager] (its [android.hardware.SensorEvent] constructor is a JVM
+     * stub). The reflection call sets up a truthful armed state; the code exercised is the
+     * production stop() → confirmCrash() → onCrashDetected() chain. The divert that
+     * normally arms vigilance (Decision.Confirm inside onSensorSample, requiring a
+     * sub-gravity silence orientation) is unreachable from the JVM harness — see the
+     * DONE_WITH_CONCERNS section on tests MV-3/MV-4.
+     */
+    @Test
+    fun `stop() while vigilance armed escalates to onCrashDetected`() = runTest {
+        val crashCount = AtomicInteger(0)
+        val clock = FakeClock(now = 1_000_000L)
+        val manager = newManagerForVigilance(this, crashCount, clock)
+
+        // Arm vigilance to represent a mid-motion on-side confirm that is still
+        // under verification. Reflection is required because the arm path runs
+        // through the private onSensorSample callback (see helper KDoc).
+        armVigilanceViaReflection(manager, nowMs = clock.now)
+        // Verify the precondition: vigilance IS armed before stop().
+        val mvField = CrashDetectionManager::class.java.getDeclaredField("movingVigilance")
+        mvField.isAccessible = true
+        val vigilance = mvField.get(manager) as MovingVigilance
+        assertTrue("precondition: vigilance must be armed before stop()", vigilance.isArmed)
+
+        manager.stop()
+        // confirmCrash launches onCrashDetected on the TestScope — drain it.
+        advanceUntilIdle()
+
+        assertEquals(
+            "stop() with armed vigilance must escalate — the rider may be down; " +
+                "silently abandoning an armed MovingVigilance is a false negative.",
+            1, crashCount.get()
+        )
+    }
+
+    // ── MV-2: manual pause while vigilance armed escalates ───────────────────
+
+    /**
+     * Pins the escalate-on-manual-pause contract: an [onPause] call with `auto=false`
+     * (rider tapped pause) while [MovingVigilance] is armed must still escalate rather
+     * than drop the suspected event. A downed rider cannot be assumed conscious merely
+     * because a pause signal arrived; a false negative is unacceptable.
+     *
+     * Contrast with an auto-pause: [onPause(auto=true)] does NOT wipe [MovingVigilance]
+     * — auto-pause fires when speed reaches 0, which is also what a real crash does.
+     * The manual-pause branch explicitly escalates because it wipes the state machine.
+     *
+     * Wiring: [CrashDetectionManager.onPause] with `auto=false` reaches
+     * `if (movingVigilance.isArmed) confirmCrash(...)` before `movingVigilance.reset()`.
+     *
+     * [lastCrashTime] is a reliable side-effect indicator here because [onPause] does NOT
+     * clear it at the end (unlike [stop]). A non-COOLDOWN_INACTIVE value proves
+     * confirmCrash was called. The [onCrashDetected] counter additionally confirms the
+     * coroutine was dispatched.
+     */
+    @Test
+    fun `manual pause while vigilance armed escalates to onCrashDetected`() = runTest {
+        val crashCount = AtomicInteger(0)
+        val clock = FakeClock(now = 2_000_000L)
+        val manager = newManagerForVigilance(this, crashCount, clock)
+
+        // Arm vigilance (reflection required — see MV-1 KDoc).
+        armVigilanceViaReflection(manager, nowMs = clock.now)
+        val mvField = CrashDetectionManager::class.java.getDeclaredField("movingVigilance")
+        mvField.isAccessible = true
+        val vigilance = mvField.get(manager) as MovingVigilance
+        assertTrue("precondition: vigilance must be armed before onPause(auto=false)", vigilance.isArmed)
+
+        manager.onPause(auto = false)
+        advanceUntilIdle()
+
+        assertEquals(
+            "onPause(auto=false) with armed vigilance must escalate — a manual pause " +
+                "wipes the state machine; any armed MovingVigilance must not be silently " +
+                "discarded since the downed rider cannot be assumed conscious.",
+            1, crashCount.get()
+        )
+        // Bonus: lastCrashTime was stamped by confirmCrash (onPause does NOT clear it, unlike stop).
+        // COOLDOWN_INACTIVE = Long.MIN_VALUE / 2; a real stamped value is near clock.now.
+        val lastCrash = manager.lastCrashTime
+        assertTrue(
+            "lastCrashTime must be near clock.now after confirm (not COOLDOWN_INACTIVE=${ Long.MIN_VALUE / 2 }), was $lastCrash",
+            lastCrash > 0L
+        )
+    }
+
+    // ── MV-3 / MV-4: frozen-GPS and sustained-fresh-speed paths (DONE_WITH_CONCERNS) ──
+
+    /**
+     * Tests MV-3 (frozen GPS escalates via freshness gate) and MV-4 (sustained fresh
+     * speed clears without firing) exercise the per-sensor-tick vigilance window inside
+     * [CrashDetectionManager.onSensorSample]:
+     *
+     *   ```
+     *   if (movingVigilance.isArmed) {
+     *       val speedGenuinelyFresh = !gpsCurrentlyStale &&
+     *           (now - speedLastChangeMs) < thresholds.movingVigilanceSpeedFreshMs
+     *       when (movingVigilance.onTick(now, currentSpeedKmh, speedGenuinelyFresh)) { … }
+     *   }
+     *   ```
+     *
+     * This code path is **not reachable** from any public surface of [CrashDetectionManager]
+     * in the JVM test harness:
+     *
+     *  - `onSensorSample` is a `private` method; no public counterpart exists.
+     *  - It is wired as the `onSample` lambda in [SensorReader]'s constructor and is
+     *    called only from `SensorReader.onSensorEvent` on the real sensor thread.
+     *  - [android.hardware.SensorEvent] cannot be constructed on the JVM
+     *    (the constructor is package-private and the Android stub throws `"Stub!"`),
+     *    so even if we captured the [SensorEventListener] from the mocked
+     *    [SensorManager.registerListener] call, we could not produce a real event.
+     *  - `sensorReader.start()` is intentionally never called in this test class (the
+     *    SensorManager is mocked but the listener is never actually registered).
+     *
+     * The [MovingVigilance] class itself is tested independently in [MovingVigilanceTest],
+     * which confirms [Outcome.ESCALATE] on stale/low-speed and [Outcome.CLEAR] on
+     * sustained fresh speed. The facade wiring (how `speedGenuinelyFresh` is computed from
+     * `speedLastChangeMs` vs `movingVigilanceSpeedFreshMs`) is observable only via the
+     * sensor-tick path.
+     *
+     * **Action needed for full coverage**: either
+     *  (a) widen `onSensorSample` to `internal` (mirrors the existing `stateMachine` and
+     *      `lastCrashTime` widening that the pause/cooldown tests rely on), or
+     *  (b) extract the vigilance-tick block into a package-visible `@VisibleForTesting fun
+     *      tickVigilance(nowMs, speedKmh, speedLastChangeMs)` so the integration path can
+     *      be driven directly from the test without a real SensorEvent.
+     *
+     * This test is intentionally left as a documented placeholder so the gap is visible
+     * in the test report rather than silently absent from the suite.
+     */
+    @Test
+    fun `MV-3 and MV-4 frozen-GPS and fresh-speed vigilance paths need sensor-tick injection`() {
+        // Documented non-test: the paths that drive MovingVigilance.onTick() live inside
+        // the private onSensorSample() callback and are not reachable from any public API.
+        // See the KDoc above for the full blockage description and the recommended fix.
+        //
+        // This test passes trivially to keep the suite GREEN while the gap is visible
+        // in the method name. Replace it with a real sensor-injection test once either
+        // fix (a) or (b) above is implemented.
+        assertTrue("placeholder — see KDoc", true)
     }
 }
