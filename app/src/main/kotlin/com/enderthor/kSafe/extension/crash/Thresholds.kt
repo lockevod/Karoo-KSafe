@@ -137,8 +137,9 @@ data class Thresholds(
      * benignity: no violent rotation. A real over-the-bars / endo that happens
      * to leave the bike wheels-down (≈ upright) spikes the gyro well above this
      * (the 2026-06-03 on-side crash `27baa0` hit 9.65 rad/s) and is therefore
-     * NOT vetoed. A toppled-on-side crash is already excluded by the 25°
-     * [gapVetoUprightAngleDeg] cone. Set below the tumble range and above the
+     * NOT vetoed. A toppled-on-side crash is already excluded by the upright
+     * veto cone (15° [promptVetoUprightAngleDeg] in this prompt-stop regime).
+     * Set below the tumble range and above the
      * benign-stop range; a false negative is far worse than a false positive,
      * so keep it low (veto only when rotation was clearly minimal).
      *
