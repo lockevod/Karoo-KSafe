@@ -210,4 +210,12 @@ data class Thresholds(
      * AND be fresh on every sample to silent-clear; otherwise escalate (fail-safe, no FN).
      */
     val movingVigilanceSpeedKmh: Double = 8.0,
+
+    /**
+     * Moving-vigilance speed-freshness recency. The CLEAR path requires the speed VALUE to have
+     * changed within this window — shorter than [movingVigilanceWindowMs]. A GPS frozen at a
+     * non-zero value after a crash reads "not stale" for up to GPS_STALE_MS (10 s) but its value
+     * stops changing; this catches that (escalates) before the 4 s vigilance window can clear.
+     */
+    val movingVigilanceSpeedFreshMs: Long = 3_000L,
 )

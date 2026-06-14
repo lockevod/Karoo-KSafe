@@ -703,7 +703,15 @@ class CrashDetectionManager(
 
         // ─── Moving vigilance window (post-confirm, mid-motion) ───────────────
         if (movingVigilance.isArmed) {
-            when (movingVigilance.onTick(now, currentSpeedKmh, !gpsCurrentlyStale)) {
+            // Require GENUINE speed freshness: the speed value must have changed recently,
+            // not merely been emitted recently. The vigilance window is 4 s; GPS_STALE_MS is
+            // 10 s — a GPS frozen at a non-zero value after a crash reads "not stale" for the
+            // full 10 s but its value stops changing. Using speedLastChangeMs (change-gated,
+            // NOT stamped on every emission) with a recency shorter than the vigilance window
+            // catches a frozen-value GPS before the 4 s CLEAR path can fire (FN bug Fix C).
+            val speedGenuinelyFresh = !gpsCurrentlyStale &&
+                (now - speedLastChangeMs) < stateMachine.thresholds.movingVigilanceSpeedFreshMs
+            when (movingVigilance.onTick(now, currentSpeedKmh, speedGenuinelyFresh)) {
                 MovingVigilance.Outcome.CLEAR -> calibLogger?.log(CalibrationLogger.Event.VIGILANCE_CLEAR) {
                     "speed=%.1f,window_ms=${stateMachine.thresholds.movingVigilanceWindowMs}".formatUs(currentSpeedKmh)
                 }
