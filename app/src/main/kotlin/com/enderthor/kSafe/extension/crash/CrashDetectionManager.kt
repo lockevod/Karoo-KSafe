@@ -147,6 +147,13 @@ class CrashDetectionManager(
          *  FP. Matches [Thresholds.gapVetoUprightAngleDeg]. */
         const val GAP_VETO_UPRIGHT_ANGLE_DEG = 25.0
 
+        /** Angle (deg) below which the PROMPT-stop regime confirm is vetoed (R6-G).
+         *  Kept at the original tight 15° — the prompt stop is more crash-like than
+         *  a gap stop, so it gets the stricter cone. The widening to 25° has field
+         *  evidence only in the GAP regime (session 2ab57f).
+         *  Matches [Thresholds.promptVetoUprightAngleDeg]. */
+        const val PROMPT_VETO_UPRIGHT_ANGLE_DEG = 15.0
+
         /** Peak gyro (rad/s) below which the non-gap (prompt-stop) upright veto (R6-G)
          *  may engage — distinguishes a benign stand from an endo that ends upright.
          *  Matches [Thresholds.nonGapUprightVetoMaxGyroRadS]. */
@@ -1003,6 +1010,7 @@ class CrashDetectionManager(
             silenceDurationUprightMs = SILENCE_DURATION_UPRIGHT_MS,
             uprightAngleThresholdDegrees = UPRIGHT_ANGLE_THRESHOLD_DEGREES,
             gapVetoUprightAngleDeg = GAP_VETO_UPRIGHT_ANGLE_DEG,
+            promptVetoUprightAngleDeg = PROMPT_VETO_UPRIGHT_ANGLE_DEG,
             nonGapUprightVetoMaxGyroRadS = NON_GAP_UPRIGHT_VETO_MAX_GYRO_RAD_S,
             onSideRelaxationAngleDeg = ON_SIDE_RELAXATION_ANGLE_DEG,
             onSideRelaxationMaxSpeedKmh = ON_SIDE_RELAXATION_MAX_SPEED_KMH,

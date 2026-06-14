@@ -111,9 +111,16 @@ data class Thresholds(
      * with a real crash and must NOT be vetoed.
      *
      * Only consulted in the gap regime (`firstSilenceGapMs > delayedStopGapMs`);
-     * the prompt-stop orientation regime is unaffected.
+     * the prompt-stop regime uses the stricter [promptVetoUprightAngleDeg].
      */
     val gapVetoUprightAngleDeg: Double = 25.0,
+    /**
+     * PROMPT-regime (prompt-stop) upright veto cone. Kept at the original tight 15° while the
+     * GAP-regime cone is 25°: a prompt stop (rider stopped quickly post-impact) is more
+     * crash-like than a gap stop (rider rode on = conscious), so it gets the stricter cone.
+     * The widening to 25° has field evidence only in the GAP regime (session 2ab57f).
+     */
+    val promptVetoUprightAngleDeg: Double = 15.0,
     /**
      * Peak gyroscope magnitude (rad/s, measured from the impact through the
      * silence window) below which the **non-gap (prompt-stop) upright veto**
