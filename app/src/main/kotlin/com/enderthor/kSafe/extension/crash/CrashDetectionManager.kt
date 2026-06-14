@@ -349,6 +349,14 @@ class CrashDetectionManager(
         sensorReader.stop()
         speedDropMonitor.stop()
         stateMachine.reset()
+        if (movingVigilance.isArmed) {
+            // Escalate-on-abandon: a suspect on-side confirm was mid-verification when the ride
+            // stopped. We can't assume the rider is conscious — never silently drop it (no FN).
+            calibLogger?.log(CalibrationLogger.Event.VIGILANCE_ESCALATE) {
+                "speed=%.1f,reason=ride_stop".formatUs(currentSpeedKmh)
+            }
+            confirmCrash(CrashSource.IMPACT_CONFIRMED, alreadyLogged = true)
+        }
         movingVigilance.reset()
         resetWindowAccumulators()
         // Clear the rolling TMO-cluster deque (cleared in start()/resume() too) so a
@@ -649,14 +657,16 @@ class CrashDetectionManager(
             is CrashStateMachine.Decision.Confirm -> {
                 logCrashConfirmed(sample)
                 if (confirmReadInMotion()) {
-                    // Angle sampled mid-motion → verify before alarming (FN-safe: any doubt escalates).
-                    movingVigilance.arm(now)
-                    val sx = stateMachine.lastSilenceOrientX
-                    val sy = stateMachine.lastSilenceOrientY
-                    val sz = stateMachine.lastSilenceOrientZ
-                    val mag = kotlin.math.sqrt(sx * sx + sy * sy + sz * sz)
-                    calibLogger?.log(CalibrationLogger.Event.VIGILANCE_ARM) {
-                        "sil_mag=%.2f,trust_min=${stateMachine.thresholds.onSideTrustMinAccel},speed=%.1f,window_ms=${stateMachine.thresholds.movingVigilanceWindowMs}".formatUs(mag, currentSpeedKmh)
+                    if (!movingVigilance.isArmed) {
+                        // Angle sampled mid-motion → verify before alarming (FN-safe: any doubt escalates).
+                        movingVigilance.arm(now)
+                        val sx = stateMachine.lastSilenceOrientX
+                        val sy = stateMachine.lastSilenceOrientY
+                        val sz = stateMachine.lastSilenceOrientZ
+                        val mag = kotlin.math.sqrt(sx * sx + sy * sy + sz * sz)
+                        calibLogger?.log(CalibrationLogger.Event.VIGILANCE_ARM) {
+                            "sil_mag=%.2f,trust_min=${stateMachine.thresholds.onSideTrustMinAccel},speed=%.1f,window_ms=${stateMachine.thresholds.movingVigilanceWindowMs}".formatUs(mag, currentSpeedKmh)
+                        }
                     }
                 } else {
                     // alreadyLogged=true: logCrashConfirmed already emitted the canonical
