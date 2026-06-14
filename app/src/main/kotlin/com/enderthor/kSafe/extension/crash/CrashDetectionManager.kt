@@ -252,6 +252,8 @@ class CrashDetectionManager(
         clock = clock,
     )
 
+    private val movingVigilance = MovingVigilance(stateMachine.thresholds)
+
     private val speedDropMonitor = SpeedDropMonitor(
         scope = scope,
         clock = clock,
@@ -340,6 +342,7 @@ class CrashDetectionManager(
         sensorReader.stop()
         speedDropMonitor.stop()
         stateMachine.reset()
+        movingVigilance.reset()
         resetWindowAccumulators()
         // Clear the rolling TMO-cluster deque (cleared in start()/resume() too) so a
         // stop leaves no stale cluster state behind.
@@ -478,6 +481,7 @@ class CrashDetectionManager(
             Timber.d("CrashDetectionManager: autopause — in-flight detection preserved")
         } else {
             stateMachine.onPause()
+            movingVigilance.reset()
             Timber.d("CrashDetectionManager: manual pause — state machine reset")
         }
     }
@@ -628,11 +632,23 @@ class CrashDetectionManager(
             }
             is CrashStateMachine.Decision.Confirm -> {
                 logCrashConfirmed(sample)
-                // alreadyLogged=true: logCrashConfirmed already emitted the canonical
-                // CRASH_CONFIRMED row with full context. confirmCrash must NOT emit a
-                // duplicate (gate-level) CRASH_CONFIRMED for the IMPACT_CONFIRMED path
-                // or downstream consumers that count crashes will double-count.
-                confirmCrash(CrashSource.IMPACT_CONFIRMED, alreadyLogged = true)
+                if (confirmReadInMotion()) {
+                    // Angle sampled mid-motion → verify before alarming (FN-safe: any doubt escalates).
+                    movingVigilance.arm(now)
+                    val sx = stateMachine.lastSilenceOrientX
+                    val sy = stateMachine.lastSilenceOrientY
+                    val sz = stateMachine.lastSilenceOrientZ
+                    val mag = kotlin.math.sqrt(sx * sx + sy * sy + sz * sz)
+                    calibLogger?.log(CalibrationLogger.Event.VIGILANCE_ARM) {
+                        "sil_mag=%.2f,trust_min=${stateMachine.thresholds.onSideTrustMinAccel},speed=%.1f,window_ms=${stateMachine.thresholds.movingVigilanceWindowMs}".formatUs(mag, currentSpeedKmh)
+                    }
+                } else {
+                    // alreadyLogged=true: logCrashConfirmed already emitted the canonical
+                    // CRASH_CONFIRMED row with full context. confirmCrash must NOT emit a
+                    // duplicate (gate-level) CRASH_CONFIRMED for the IMPACT_CONFIRMED path
+                    // or downstream consumers that count crashes will double-count.
+                    confirmCrash(CrashSource.IMPACT_CONFIRMED, alreadyLogged = true)
+                }
             }
             is CrashStateMachine.Decision.ReturnToMonitoring -> {
                 handleReturnToMonitoring(priorState, sample, now)
@@ -656,6 +672,22 @@ class CrashDetectionManager(
                     stateMachine.state == CrashStateMachine.State.SILENCE_CHECK) {
                     handleSilenceBroken(sample, now)
                 }
+            }
+        }
+
+        // ─── Moving vigilance window (post-confirm, mid-motion) ───────────────
+        if (movingVigilance.isArmed) {
+            when (movingVigilance.onTick(now, currentSpeedKmh, !gpsCurrentlyStale)) {
+                MovingVigilance.Outcome.CLEAR -> calibLogger?.log(CalibrationLogger.Event.VIGILANCE_CLEAR) {
+                    "speed=%.1f,window_ms=${stateMachine.thresholds.movingVigilanceWindowMs}".formatUs(currentSpeedKmh)
+                }
+                MovingVigilance.Outcome.ESCALATE -> {
+                    calibLogger?.log(CalibrationLogger.Event.VIGILANCE_ESCALATE) {
+                        "speed=%.1f,gps_stale=$gpsCurrentlyStale".formatUs(currentSpeedKmh)
+                    }
+                    confirmCrash(CrashSource.IMPACT_CONFIRMED, alreadyLogged = true)
+                }
+                MovingVigilance.Outcome.PENDING -> { /* keep watching */ }
             }
         }
 
@@ -1006,6 +1038,20 @@ class CrashDetectionManager(
                     currentSpeedKmh, sensorReader.lastGyroMag)
             }
         }
+    }
+
+    /**
+     * True when an IMPACT confirm's settled silence orientation was sampled IN MOTION
+     * (‖sil‖ well below gravity) → the on-side angle is untrustworthy → divert to vigilance.
+     * NaN (too few orientation samples) → cannot assess → NOT diverted (confirm as today).
+     */
+    private fun confirmReadInMotion(): Boolean {
+        val x = stateMachine.lastSilenceOrientX
+        val y = stateMachine.lastSilenceOrientY
+        val z = stateMachine.lastSilenceOrientZ
+        if (x.isNaN() || y.isNaN() || z.isNaN()) return false
+        val mag = kotlin.math.sqrt(x * x + y * y + z * z)
+        return mag < stateMachine.thresholds.onSideTrustMinAccel
     }
 
     /**
