@@ -212,4 +212,55 @@ class ConfigMigrationTest {
         assertEquals(CONFIG_VERSION, migrated.configVersion)
         assertEquals(FuelingAlertButtonMode.OFF, migrated.fuelingAlertButtonMode)
     }
+
+    @Test
+    fun `v22 stamps to current version and defaults hrCaloriesEnabled off`() {
+        val migrated = KSafeConfig(configVersion = 22).migrateToLatest()
+        assertEquals(CONFIG_VERSION, migrated.configVersion)
+        assertEquals(false, migrated.hrCaloriesEnabled)
+    }
+
+    @Test
+    fun `explicit hrCaloriesEnabled true survives migration`() {
+        val migrated = KSafeConfig(configVersion = 22, hrCaloriesEnabled = true).migrateToLatest()
+        assertEquals(CONFIG_VERSION, migrated.configVersion)
+        assertEquals(true, migrated.hrCaloriesEnabled)
+    }
+
+    @Test
+    fun `v23 stamps to v24 and defaults fitStandardCaloriesSource to NONE`() {
+        val migrated = KSafeConfig(configVersion = 23).migrateToLatest()
+        assertEquals(CONFIG_VERSION, migrated.configVersion)
+        assertEquals(FitCaloriesSource.NONE, migrated.fitStandardCaloriesSource)
+    }
+
+    @Test
+    fun `explicit fitStandardCaloriesSource survives migration`() {
+        val migrated = KSafeConfig(
+            configVersion = 23,
+            fitStandardCaloriesSource = FitCaloriesSource.KAROO,
+        ).migrateToLatest()
+        assertEquals(CONFIG_VERSION, migrated.configVersion)
+        assertEquals(FitCaloriesSource.KAROO, migrated.fitStandardCaloriesSource)
+    }
+
+    @Test
+    fun `v24 migrates to current and webhook 3 and 4 arrive at defaults`() {
+        val old = KSafeConfig(
+            configVersion = 24,
+            webhook1Enabled = true,
+            webhook1Label = "My WH1",
+            webhook1Url = "https://example.com/1",
+        )
+        val migrated = old.migrateToLatest()
+        assertEquals(CONFIG_VERSION, migrated.configVersion)
+        assertEquals(true, migrated.webhook1Enabled)
+        assertEquals("My WH1", migrated.webhook1Label)
+        assertEquals("https://example.com/1", migrated.webhook1Url)
+        assertEquals(false, migrated.webhook3Enabled)
+        assertEquals("Action 3", migrated.webhook3Label)
+        assertEquals("", migrated.webhook3Url)
+        assertEquals(false, migrated.webhook4Enabled)
+        assertEquals("Action 4", migrated.webhook4Label)
+    }
 }

@@ -27,12 +27,14 @@
         <TextView
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
-            android:layout_marginEnd="10dp"
+            android:layout_marginEnd="8dp"
             android:text="⚠"
             android:textColor="#FFFF99"
-            android:textSize="28sp" />
+            android:textSize="24sp" />
 
-        <!-- Info column: title + message -->
+        <!-- Info column: title + message. Given as much horizontal room as possible —
+             the dismiss button and icon are kept compact so neither title nor message
+             gets ellipsised on the Karoo's narrow 480px screen. -->
         <LinearLayout
             android:layout_width="0dp"
             android:layout_height="wrap_content"
@@ -44,9 +46,9 @@
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
                 android:textColor="#FFFFFF"
-                android:textSize="18sp"
+                android:textSize="20sp"
                 android:textStyle="bold"
-                android:letterSpacing="0.05"
+                android:letterSpacing="0.01"
                 android:maxLines="2"
                 android:ellipsize="end" />
 
@@ -55,25 +57,27 @@
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
                 android:textColor="#FFCCCC"
-                android:textSize="13sp"
-                android:layout_marginTop="2dp"
-                android:maxLines="4"
+                android:textSize="16sp"
+                android:layout_marginTop="3dp"
+                android:maxLines="3"
                 android:ellipsize="end" />
 
         </LinearLayout>
 
-        <!-- Dismiss button with rounded corners -->
+        <!-- Dismiss button with rounded corners. Compact (still ≥48dp touch target)
+             so the message column keeps its width — the previous 100×62dp button
+             squeezed the text and clipped it on the Karoo screen. -->
         <TextView
             android:id="@+id/btn_dismiss_info"
-            android:layout_width="100dp"
-            android:layout_height="62dp"
-            android:layout_marginStart="8dp"
+            android:layout_width="74dp"
+            android:layout_height="54dp"
+            android:layout_marginStart="6dp"
             android:background="@drawable/bg_cancel_button"
             android:clipToOutline="true"
             android:gravity="center"
             android:text="@string/overlay_dismiss"
             android:textColor="#CC0000"
-            android:textSize="14sp"
+            android:textSize="15sp"
             android:textStyle="bold"
             android:clickable="true"
             android:focusable="true" />

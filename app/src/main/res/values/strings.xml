@@ -31,6 +31,8 @@
     <string name="custom_message_datatype_desc">Custom message button. Tap to send your configured message instantly to your contacts.</string>
     <string name="webhook_1_datatype_name">KSafe Webhook 1</string>
     <string name="webhook_2_datatype_name">KSafe Webhook 2</string>
+    <string name="webhook_3_datatype_name">KSafe Webhook 3</string>
+    <string name="webhook_4_datatype_name">KSafe Webhook 4</string>
     <string name="webhook_datatype_desc">Webhook action button. Tap to fire the configured HTTP request (garage door, smart home, etc.).</string>
     <string name="custom_message_2_datatype_name">KSafe Message 2</string>
     <string name="custom_message_3_datatype_name">KSafe Message 3</string>
@@ -52,7 +54,7 @@
     <string name="settings_master_hint">When OFF the extension stops monitoring everything — crash, speed-drop, check-in, Health (HR), Fueling. Notifications already configured (ride start/end, custom messages, webhooks) are also suppressed. Leave ON unless you want a hard stop.</string>
     <string name="actions_section_karoo_live">Karoo Live notifications</string>
     <string name="actions_section_karoo_live_tests">Test ride notifications</string>
-    <string name="fueling_fit_export_hint">Off by default — turn it on before the ride. Writes KSafe data into the recorded FIT as developer fields. Intervals.icu and TrainingPeaks can plot these alongside HR and power; Strava does NOT display custom data fields and will ignore them. Includes cumulative carbs logged (g), cumulative carbs burned (g), current carb burn rate (g/h) and hydration (ml); plus, when wellness is enabled, current HR drift (%), max drift this ride, and wellness alert count.</string>
+    <string name="fueling_fit_export_hint">Off by default — turn it on before the ride. Writes KSafe data into the recorded FIT as developer fields. Intervals.icu and TrainingPeaks can plot these alongside HR and power; Strava does NOT display custom data fields and will ignore them. Includes cumulative carbs logged (g), cumulative carbs burned (g), current carb burn rate (g/h) and hydration (ml); plus, when wellness is enabled, current HR drift (%), max drift this ride, and wellness alert count. When HR-based calories is on, also writes cumulative calories (kcal).</string>
     <string name="simulate_crash_label">Simulate Crash (send alert now)</string>
     <string name="simulate_crash_confirm_title">Send a real alert?</string>
     <string name="simulate_crash_confirm_body">This sends the configured emergency message through your active provider — no countdown, no cancel. Use this only to verify the channel works end-to-end.</string>
@@ -63,11 +65,15 @@
     <string name="fueling_title">Fueling</string>
     <string name="fueling_info_banner">Carbs use HR/power zones if available for intensity-aware targeting; without sensors the target is time-proportional. Hydration is always time-proportional — adjust target manually for hot days.</string>
     <string name="fueling_carb_section">Carbs</string>
+    <string name="fueling_calories_section">Calories</string>
+    <string name="fueling_physiology_section">Rider physiology</string>
     <string name="fueling_hyd_section">Hydration</string>
     <!-- v18: target field removed; carb burn now computed from physiology. The
          former strings are kept as comments above so any in-flight translations
          have a reference point if they need to be retired downstream. -->
-    <string name="fueling_physiology_hint">Carb burn is estimated from your power meter (most accurate) or HR + age + sex (Keytel) or HR + max/resting HR (Swain).</string>
+    <string name="fueling_physiology_hint">Power meter is used when paired (most accurate); otherwise HR + age + sex (Keytel) or HR + max/resting HR (Swain). Used for both carb burn and the calorie estimate.</string>
+    <string name="fueling_calories_label">HR-based calories</string>
+    <string name="fueling_calories_hint">Estimates total calories burned. Uses your power meter when paired (most accurate) and only falls back to heart rate (Keytel / %HRmax) when no power is available — it does not replace power. Adds two data fields (total kcal, kcal/h) and, with FIT export on, writes them to the recorded FIT. For accurate HR estimates set your age and sex below.</string>
     <string name="fueling_rider_age_label">Age (years)</string>
     <string name="fueling_rider_sex_label">Sex (for Keytel HR-only fallback)</string>
     <string name="fueling_rider_sex_male">Male</string>
@@ -113,6 +119,12 @@
     <string name="fueling_combined_concentration_label">Carbs per 500 ml (g)</string>
     <string name="fueling_combined_hint">One tap logs a drink + its carbs. Set the carb concentration once; each button\'s carbs auto-fill from its volume (still editable). Active when carbs and/or hydration tracking is on.</string>
     <string name="fueling_fit_export_label">Write KSafe data to FIT (Intervals.icu / TrainingPeaks)</string>
+    <string name="settings_fit_std_cal_label">Calories as standard FIT field</string>
+    <string name="settings_fit_std_cal_off">Off</string>
+    <string name="settings_fit_std_cal_hr">KSafe (HR)</string>
+    <string name="settings_fit_std_cal_karoo">Karoo (pwr)</string>
+    <string name="settings_fit_std_cal_hint">Writes total calories into the FIT session as the standard field every platform imports (Suunto and others ignore developer fields). KSafe (HR) uses the KSafe estimate; Karoo (pwr) mirrors the Karoo\'s own power-based calories. Independent of the developer-field export above.</string>
+    <string name="settings_fit_std_cal_requires">Enable Calories in the Fueling tab to choose a source.</string>
 
     <!-- Readiness at ride start -->
     <string name="readiness_at_ride_start_label">Readiness advice at ride start</string>
@@ -174,6 +186,14 @@
          sensor is paired (CarbBurnEstimator.Confidence == NONE). Short enough to
          fit the Karoo's narrow data field column. -->
     <string name="carb_no_sensor_label">Pair HR/Pwr</string>
+    <!-- Shown by every fueling data field when the extension master switch is OFF.
+         Deliberately a single universal word (kept identical in all locales) so the
+         field reads as "this is off", not as a sensor/data problem. -->
+    <string name="fueling_field_off" translatable="false">OFF</string>
+    <string name="calories_total_datatype_name">KSafe Calories (HR)</string>
+    <string name="calories_total_datatype_desc">Cumulative calories this ride, estimated from heart rate (Keytel / %HRmax). Independent of the Karoo\'s power-based calories; useful when no power meter is paired.</string>
+    <string name="calories_rate_datatype_name">KSafe Calorie Rate (HR)</string>
+    <string name="calories_rate_datatype_desc">Instantaneous energy expenditure in kcal/h, estimated from heart rate. Shows Pair HR/Pwr when no sensor can drive the estimate.</string>
     <string name="hyd_log_1_datatype_name">KSafe Drink 1</string>
     <string name="hyd_log_2_datatype_name">KSafe Drink 2</string>
     <string name="hyd_log_datatype_desc">Tap to log a configured drink item (e.g. sip, bottle). Counts toward your hourly target.</string>
@@ -424,6 +444,8 @@
     <string name="webhook_hint">Trigger any HTTP endpoint from a Karoo hardware button. Works with Home Assistant, ntfy, IFTTT, n8n, Make, or any webhook. The request is sent via the Karoo network bridge — works over Bluetooth tether when not on Wi-Fi.</string>
     <string name="webhook_1_label">Enable Webhook 1</string>
     <string name="webhook_2_label">Enable Webhook 2</string>
+    <string name="webhook_3_label">Enable Webhook 3</string>
+    <string name="webhook_4_label">Enable Webhook 4</string>
     <string name="webhook_label_hint">Action label (shown in alerts)</string>
     <string name="webhook_url_hint">URL</string>
     <string name="webhook_url_example">e.g. https://ha.example.com/api/services/cover/toggle</string>

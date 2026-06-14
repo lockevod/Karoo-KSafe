@@ -1,15 +1,15 @@
 package com.enderthor.kSafe.datatype
 
 import android.content.Context
-import android.graphics.Color
-import android.view.View
 import android.widget.RemoteViews
 import com.enderthor.kSafe.R
 import com.enderthor.kSafe.extension.KSafeExtension
 import com.enderthor.kSafe.extension.util.CarbBurnEstimator
 import io.hammerhead.karooext.extension.DataTypeImpl
+import io.hammerhead.karooext.internal.Emitter
 import io.hammerhead.karooext.internal.ViewEmitter
 import io.hammerhead.karooext.models.ShowCustomStreamState
+import io.hammerhead.karooext.models.StreamState
 import io.hammerhead.karooext.models.UpdateGraphicConfig
 import io.hammerhead.karooext.models.ViewConfig
 import kotlinx.coroutines.CancellationException
@@ -19,6 +19,7 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.awaitCancellation
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.flow.collectLatest
+import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.filterNotNull
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
@@ -48,29 +49,25 @@ class CarbBurnRateDataType(
     private val context: Context,
 ) : DataTypeImpl("ksafe", datatype) {
 
-    private fun buildView(viewConfig: ViewConfig, main: String, hint: String): RemoteViews {
-        // Passive info readout: respects the rider's per-field alignment from the
-        // Karoo profile editor (LEFT / CENTER / RIGHT — default RIGHT, matching
-        // native Karoo numeric fields). Text colour is set explicitly to contrast
-        // with the host's day/night background — see field_view_auto.xml for why
-        // we don't use ?android:attr/textColorPrimary.
-        val gravity = viewConfig.fieldGravity()
-        val dark = context.isKarooNightMode()
-        return RemoteViews(context.packageName, R.layout.field_view_auto).apply {
-            // No setBackgroundColor — let the host theme show through.
-            // take(11): the numeric values are short (≤"90"), but the
-            // "Pair HR/Pwr" label is 11 chars — a take(9) clipped it to
-            // "Pair HR/P". The layout auto-sizes (6–22sp) and wraps to 2 lines,
-            // so 11 fits without overflow.
-            setTextViewText(R.id.field_text_main, main.take(11))
-            setTextViewText(R.id.field_text_hint, hint.take(9))
-            setViewVisibility(R.id.field_text_hint, if (hint.isEmpty()) View.GONE else View.VISIBLE)
-            setInt(R.id.field_text_main, "setGravity", gravity)
-            setInt(R.id.field_text_hint, "setGravity", gravity)
-            setTextColor(R.id.field_text_main, if (dark) Color.WHITE else Color.BLACK)
-            setTextColor(R.id.field_text_hint, if (dark) 0xCCFFFFFF.toInt() else 0xCC000000.toInt())
+    // Standard-Karoo readout: units on top, big value below, sized from the host's
+    // ViewConfig.textSize. Respects the rider's per-field alignment. See
+    // [buildReadoutView] for the shared rendering contract.
+    private fun buildView(viewConfig: ViewConfig, main: String, hint: String): RemoteViews =
+        context.buildReadoutView(viewConfig, main, hint, R.drawable.ic_readout_carbs)
+
+    // Published as a numeric stream (instantaneous g/h) — see [startFuelingStream].
+    // Searching whenever confidence is NONE (never paired OR sensor died mid-ride):
+    // the instantaneous rate must reflect LIVE data only, same rule as the view's
+    // `---`. 0 while the movement gate blocks integration (not accruing).
+    override fun startStream(emitter: Emitter<StreamState>) =
+        startFuelingStream(emitter, KSafeExtension.carbsTrackerFlow, { it.statusFlow }) { s ->
+            when {
+                !s.masterEnabled || !s.carbsEnabled -> StreamState.NotAvailable
+                s.burnConfidence == CarbBurnEstimator.Confidence.NONE -> StreamState.Searching
+                !s.isIntegrating -> streamingSingle(0)
+                else -> streamingSingle(s.burnRateGph)
+            }
         }
-    }
 
     override fun startView(context: Context, config: ViewConfig, emitter: ViewEmitter) {
         val scopeJob = Job()
@@ -86,7 +83,12 @@ class CarbBurnRateDataType(
             try {
                 // Push-based — see CarbStatusDataType for the rationale.
                 val tracker = KSafeExtension.carbsTrackerFlow.filterNotNull().first()
-                tracker.statusFlow.collectLatest { status ->
+                // Merged with nightModeFlow (see its KDoc): this is a Karoo-theme
+                // passthrough field whose text colour is baked in at build time, so a
+                // sunset/sunrise theme flip needs a re-render — statusFlow alone only
+                // re-emits on a CHANGED status (stuck black-on-black while autopaused).
+                combine(tracker.statusFlow, KSafeExtension.nightModeFlow) { s, _ -> s }
+                    .collectLatest { status ->
                     // v18: explicit "Pair HR/Pwr" label when neither power nor HR
                     // can drive the estimator. The estimator returns gph=0 and
                     // confidence=NONE in that case — showing "0" would mislead
@@ -103,7 +105,18 @@ class CarbBurnRateDataType(
                     // will be 0 until the sensor reconnects, or the rate from
                     // whichever tier can still run).
                     val main = when {
+                        // Profile-editor gallery: neutral waiting frame, never live/OFF/stale data.
+                        config.preview -> "---"
                         status == null -> "---"
+                        // Master switch OFF → explicit disabled state. Without this the
+                        // last snapshot's branches below win (often "Pair HR/Pwr"), which
+                        // reads as a sensor problem instead of "extension is off".
+                        !status.masterEnabled -> context.getString(R.string.fueling_field_off)
+                        // Carb feature off (calories-only session): the monitor runs and
+                        // the live rate exists, but the cumulative/deficit siblings are
+                        // frozen at 0 — render neutral so the family agrees (mirror of
+                        // the caloriesEnabled gate on the calorie fields).
+                        !status.carbsEnabled -> "---"
                         // Never had a usable sensor this session → prompt to pair.
                         status.burnConfidence == CarbBurnEstimator.Confidence.NONE &&
                             status.cumBurnedG == 0 ->

@@ -25,6 +25,8 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.snapshots.SnapshotStateList
+import androidx.compose.runtime.toMutableStateList
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.stringResource
@@ -34,10 +36,52 @@ import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.ui.unit.dp
 import com.enderthor.kSafe.R
 import com.enderthor.kSafe.activity.MainViewModel
+import com.enderthor.kSafe.data.WEBHOOK_SLOT_COUNT
+import com.enderthor.kSafe.data.WebhookSlot
+import com.enderthor.kSafe.data.webhookSlot
+import com.enderthor.kSafe.data.withWebhookSlot
 import com.enderthor.kSafe.extension.KSafeExtension
 import com.enderthor.kSafe.extension.util.safeTake
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+
+/**
+ * Locale-tolerant coordinate parse. On comma-decimal locales (the es translation shipped)
+ * a KeyboardType.Decimal field emits "41,38"; plain `toDoubleOrNull()` rejected it, so the
+ * geo-fence target silently persisted as 0.0/0.0 (Null Island) and a geo-fenced webhook
+ * never fired. Comma is normalised to dot; NaN/Inf rejected.
+ */
+internal fun String.toGeoDoubleOrNull(): Double? =
+    trim().replace(',', '.').toDoubleOrNull()?.takeIf { it.isFinite() }
+
+/**
+ * Save-time coordinate resolution. Blank = the rider cleared the field → 0.0 (unset,
+ * the storage convention). Unparseable NON-blank = a typo / edit in progress (isError
+ * is showing) → KEEP the previously stored coordinate: persisting 0.0 here destroyed a
+ * valid geo-fence target mid-edit, and the `remember(config.…)` re-seed then wiped the
+ * rider's typed text in place.
+ */
+internal fun String.geoOrStored(stored: Double): Double =
+    if (isBlank()) 0.0 else toGeoDoubleOrNull() ?: stored
+
+/**
+ * UI-layer state holder for a single webhook slot. Mirrors [WebhookSlot] but keeps the
+ * geo-coordinate Doubles and the radius Int as String fields so they can be edited in text
+ * fields without lossy round-trips (e.g. an empty radius field mid-edit must not snap to 1).
+ */
+private data class WebhookUiSlot(
+    val slot: WebhookSlot,
+    val geoLatText: String,
+    val geoLonText: String,
+    val geoRadiusText: String,
+)
+
+private fun WebhookSlot.toUiSlot() = WebhookUiSlot(
+    slot = this,
+    geoLatText = if (geoLat == 0.0) "" else geoLat.toString(),
+    geoLonText = if (geoLon == 0.0) "" else geoLon.toString(),
+    geoRadiusText = geoRadiusM.toString(),
+)
 
 @Composable
 fun ActionsScreen(vm: MainViewModel) {
@@ -59,35 +103,18 @@ fun ActionsScreen(vm: MainViewModel) {
     var customMsg2Color by remember(config.customMsg2Color) { mutableStateOf(config.customMsg2Color) }
     var customMsg3Color by remember(config.customMsg3Color) { mutableStateOf(config.customMsg3Color) }
 
-    // ── Webhooks ──────────────────────────────────────────────────────────────
-    var webhook1Enabled  by remember(config.webhook1Enabled)  { mutableStateOf(config.webhook1Enabled) }
-    var webhook1Label    by remember(config.webhook1Label)    { mutableStateOf(config.webhook1Label) }
-    var webhook1Url      by remember(config.webhook1Url)      { mutableStateOf(config.webhook1Url) }
-    var webhook1Method   by remember(config.webhook1Method)   { mutableStateOf(config.webhook1Method) }
-    var webhook1Headers  by remember(config.webhook1Headers)  { mutableStateOf(config.webhook1Headers) }
-    var webhook1Body     by remember(config.webhook1Body)     { mutableStateOf(config.webhook1Body) }
-    var webhook1GeoEnabled  by remember(config.webhook1GeoEnabled)  { mutableStateOf(config.webhook1GeoEnabled) }
-    var webhook1GeoLat      by remember(config.webhook1GeoLat)      { mutableStateOf(if (config.webhook1GeoLat == 0.0) "" else config.webhook1GeoLat.toString()) }
-    var webhook1GeoLon      by remember(config.webhook1GeoLon)      { mutableStateOf(if (config.webhook1GeoLon == 0.0) "" else config.webhook1GeoLon.toString()) }
-    var webhook1GeoRadius   by remember(config.webhook1GeoRadiusM)  { mutableStateOf(config.webhook1GeoRadiusM.toString()) }
-    var webhook1AlertEnabled by remember(config.webhook1AlertEnabled) { mutableStateOf(config.webhook1AlertEnabled) }
-    var webhook1AlertText    by remember(config.webhook1AlertText)    { mutableStateOf(config.webhook1AlertText) }
-    var webhook2Enabled  by remember(config.webhook2Enabled)  { mutableStateOf(config.webhook2Enabled) }
-    var webhook2Label    by remember(config.webhook2Label)    { mutableStateOf(config.webhook2Label) }
-    var webhook2Url      by remember(config.webhook2Url)      { mutableStateOf(config.webhook2Url) }
-    var webhook2Method   by remember(config.webhook2Method)   { mutableStateOf(config.webhook2Method) }
-    var webhook2Headers  by remember(config.webhook2Headers)  { mutableStateOf(config.webhook2Headers) }
-    var webhook2Body     by remember(config.webhook2Body)     { mutableStateOf(config.webhook2Body) }
-    var webhook2GeoEnabled  by remember(config.webhook2GeoEnabled)  { mutableStateOf(config.webhook2GeoEnabled) }
-    var webhook2GeoLat      by remember(config.webhook2GeoLat)      { mutableStateOf(if (config.webhook2GeoLat == 0.0) "" else config.webhook2GeoLat.toString()) }
-    var webhook2GeoLon      by remember(config.webhook2GeoLon)      { mutableStateOf(if (config.webhook2GeoLon == 0.0) "" else config.webhook2GeoLon.toString()) }
-    var webhook2GeoRadius   by remember(config.webhook2GeoRadiusM)  { mutableStateOf(config.webhook2GeoRadiusM.toString()) }
-    var webhook2AlertEnabled by remember(config.webhook2AlertEnabled) { mutableStateOf(config.webhook2AlertEnabled) }
-    var webhook2AlertText    by remember(config.webhook2AlertText)    { mutableStateOf(config.webhook2AlertText) }
-
-    // ── Webhook field colours ─────────────────────────────────────────────────
-    var webhook1Color by remember(config.webhook1Color) { mutableStateOf(config.webhook1Color) }
-    var webhook2Color by remember(config.webhook2Color) { mutableStateOf(config.webhook2Color) }
+    // ── Webhook slots 1–4 ─────────────────────────────────────────────────────
+    // Reseed ONLY when a webhook slot's STORED content actually changes (WebhookSlot is a
+    // data class → structural equality), NOT on every unrelated config save. Keying on the
+    // whole `config` object would reseed the list whenever an unrelated field on this screen
+    // (custom message, Karoo Live) debounce-saved, wiping the rider's in-flight webhook edits.
+    // This mirrors the per-field `remember(config.X)` scoping used elsewhere on this screen.
+    val webhookSlots: SnapshotStateList<WebhookUiSlot> = remember(
+        config.webhookSlot(1), config.webhookSlot(2),
+        config.webhookSlot(3), config.webhookSlot(4),
+    ) {
+        (1..WEBHOOK_SLOT_COUNT).map { i -> config.webhookSlot(i).toUiSlot() }.toMutableStateList()
+    }
 
     // ── Karoo Live notifications ──────────────────────────────────────────────
     var karooLiveEnabled      by remember(config.karooLiveEnabled)         { mutableStateOf(config.karooLiveEnabled) }
@@ -96,19 +123,18 @@ fun ActionsScreen(vm: MainViewModel) {
     var karooLiveEndEnabled   by remember(config.karooLiveEndEnabled)      { mutableStateOf(config.karooLiveEndEnabled) }
     var karooLiveEndMessage   by remember(config.karooLiveEndMessage)      { mutableStateOf(config.karooLiveEndMessage) }
 
-    // Auto-save with debounce — all fields managed by this screen
+    // Auto-save with debounce — all fields managed by this screen.
+    // webhookSlots[*] is spread individually so each mutation triggers the effect.
+    val ws0 = webhookSlots.getOrNull(0)
+    val ws1 = webhookSlots.getOrNull(1)
+    val ws2 = webhookSlots.getOrNull(2)
+    val ws3 = webhookSlots.getOrNull(3)
     LaunchedEffect(
         customMessageEnabled, customMessage, customMessageTitle,
         customMessage2Enabled, customMessage2, customMessage2Title,
         customMessage3Enabled, customMessage3, customMessage3Title,
         customMsg1Color, customMsg2Color, customMsg3Color,
-        webhook1Enabled, webhook1Label, webhook1Url, webhook1Method, webhook1Headers, webhook1Body,
-        webhook1GeoEnabled, webhook1GeoLat, webhook1GeoLon, webhook1GeoRadius,
-        webhook1AlertEnabled, webhook1AlertText,
-        webhook2Enabled, webhook2Label, webhook2Url, webhook2Method, webhook2Headers, webhook2Body,
-        webhook2GeoEnabled, webhook2GeoLat, webhook2GeoLon, webhook2GeoRadius,
-        webhook2AlertEnabled, webhook2AlertText,
-        webhook1Color, webhook2Color,
+        ws0, ws1, ws2, ws3,
         karooLiveEnabled, karooLiveKey, karooLiveStartMessage,
         karooLiveEndEnabled, karooLiveEndMessage,
     ) {
@@ -118,7 +144,8 @@ fun ActionsScreen(vm: MainViewModel) {
         // unguarded full-blob write would clobber fields owned by OTHER screens and race the
         // mutex-guarded writes. Applying the copy to the freshly-read `current` preserves them.
         vm.updateConfig { current ->
-            current.copy(
+            // Start with custom messages + karoo live fields
+            var updated = current.copy(
                 customMessageEnabled    = customMessageEnabled,
                 customMessageTitle      = customMessageTitle.safeTake(7).ifBlank { "MSG" },
                 customMessage           = customMessage,
@@ -131,38 +158,24 @@ fun ActionsScreen(vm: MainViewModel) {
                 customMsg1Color         = customMsg1Color,
                 customMsg2Color         = customMsg2Color,
                 customMsg3Color         = customMsg3Color,
-                webhook1Enabled  = webhook1Enabled,
-                webhook1Label    = webhook1Label,
-                webhook1Url      = webhook1Url,
-                webhook1Method   = webhook1Method,
-                webhook1Headers  = webhook1Headers,
-                webhook1Body     = webhook1Body,
-                webhook1GeoEnabled  = webhook1GeoEnabled,
-                webhook1GeoLat      = webhook1GeoLat.toDoubleOrNull() ?: 0.0,
-                webhook1GeoLon      = webhook1GeoLon.toDoubleOrNull() ?: 0.0,
-                webhook1GeoRadiusM  = webhook1GeoRadius.toIntOrNull()?.coerceAtLeast(1) ?: 50,
-                webhook1AlertEnabled = webhook1AlertEnabled,
-                webhook1AlertText    = webhook1AlertText,
-                webhook2Enabled  = webhook2Enabled,
-                webhook2Label    = webhook2Label,
-                webhook2Url      = webhook2Url,
-                webhook2Method   = webhook2Method,
-                webhook2Headers  = webhook2Headers,
-                webhook2Body     = webhook2Body,
-                webhook2GeoEnabled  = webhook2GeoEnabled,
-                webhook2GeoLat      = webhook2GeoLat.toDoubleOrNull() ?: 0.0,
-                webhook2GeoLon      = webhook2GeoLon.toDoubleOrNull() ?: 0.0,
-                webhook2GeoRadiusM  = webhook2GeoRadius.toIntOrNull()?.coerceAtLeast(1) ?: 50,
-                webhook2AlertEnabled = webhook2AlertEnabled,
-                webhook2AlertText    = webhook2AlertText,
-                webhook1Color        = webhook1Color,
-                webhook2Color        = webhook2Color,
                 karooLiveEnabled        = karooLiveEnabled,
                 karooLiveKey            = karooLiveKey.trim(),
                 karooLiveStartMessage   = karooLiveStartMessage,
                 karooLiveEndEnabled     = karooLiveEndEnabled,
                 karooLiveEndMessage     = karooLiveEndMessage,
             )
+            // Fold webhook slots 1–4 into the config via the slot writer
+            for (i in 0 until WEBHOOK_SLOT_COUNT) {
+                val ui = webhookSlots.getOrNull(i) ?: continue
+                val storedSlot = current.webhookSlot(i + 1)
+                val resolved = ui.slot.copy(
+                    geoLat     = ui.geoLatText.geoOrStored(storedSlot.geoLat),
+                    geoLon     = ui.geoLonText.geoOrStored(storedSlot.geoLon),
+                    geoRadiusM = ui.geoRadiusText.toIntOrNull()?.coerceAtLeast(1) ?: 50,
+                )
+                updated = updated.withWebhookSlot(i + 1, resolved)
+            }
+            updated
         }
     }
 
@@ -430,81 +443,63 @@ fun ActionsScreen(vm: MainViewModel) {
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
 
-                // ── Webhook 1 ─────────────────────────────────────────────
-                WebhookSlotFields(
-                    enabled = webhook1Enabled,
-                    onEnabledChange = { webhook1Enabled = it },
-                    enableLabel = stringResource(R.string.webhook_1_label),
-                    label = webhook1Label,
-                    onLabelChange = { webhook1Label = it },
-                    url = webhook1Url,
-                    onUrlChange = { webhook1Url = it },
-                    method = webhook1Method,
-                    onMethodChange = { webhook1Method = it },
-                    headers = webhook1Headers,
-                    onHeadersChange = { webhook1Headers = it },
-                    body = webhook1Body,
-                    onBodyChange = { webhook1Body = it },
-                    geoEnabled = webhook1GeoEnabled,
-                    onGeoEnabledChange = { webhook1GeoEnabled = it },
-                    geoLat = webhook1GeoLat,
-                    onGeoLatChange = { webhook1GeoLat = it },
-                    geoLon = webhook1GeoLon,
-                    onGeoLonChange = { webhook1GeoLon = it },
-                    geoRadius = webhook1GeoRadius,
-                    onGeoRadiusChange = { webhook1GeoRadius = it },
-                    alertEnabled = webhook1AlertEnabled,
-                    onAlertEnabledChange = { webhook1AlertEnabled = it },
-                    alertText = webhook1AlertText,
-                    onAlertTextChange = { webhook1AlertText = it },
-                    fieldColor = webhook1Color,
-                    onFieldColorChange = { webhook1Color = it },
-                    onTest = {
-                        val ext = KSafeExtension.getInstance()
-                            ?: return@WebhookSlotFields "Extension not connected — wait a moment."
-                        ext.testWebhook(1)
-                    },
-                    testButtonLabel = "${stringResource(R.string.webhook_test)} Webhook 1"
+                val webhookEnableLabels = listOf(
+                    stringResource(R.string.webhook_1_label),
+                    stringResource(R.string.webhook_2_label),
+                    stringResource(R.string.webhook_3_label),
+                    stringResource(R.string.webhook_4_label),
                 )
+                val webhookTestLabel = stringResource(R.string.webhook_test)
 
-                HorizontalDivider(modifier = Modifier.padding(vertical = 2.dp))
+                // Always mutate from the CURRENT list element, never a composition-time capture:
+                // reading `webhookSlots[idx]` fresh inside the lambda prevents a stale-`uiSlot`
+                // closure from clobbering a sibling field's just-applied edit on rapid input.
+                fun mutateSlot(idx: Int, transform: (WebhookUiSlot) -> WebhookUiSlot) {
+                    webhookSlots[idx] = transform(webhookSlots[idx])
+                }
 
-                // ── Webhook 2 ─────────────────────────────────────────────
-                WebhookSlotFields(
-                    enabled = webhook2Enabled,
-                    onEnabledChange = { webhook2Enabled = it },
-                    enableLabel = stringResource(R.string.webhook_2_label),
-                    label = webhook2Label,
-                    onLabelChange = { webhook2Label = it },
-                    url = webhook2Url,
-                    onUrlChange = { webhook2Url = it },
-                    method = webhook2Method,
-                    onMethodChange = { webhook2Method = it },
-                    headers = webhook2Headers,
-                    onHeadersChange = { webhook2Headers = it },
-                    body = webhook2Body,
-                    onBodyChange = { webhook2Body = it },
-                    geoEnabled = webhook2GeoEnabled,
-                    onGeoEnabledChange = { webhook2GeoEnabled = it },
-                    geoLat = webhook2GeoLat,
-                    onGeoLatChange = { webhook2GeoLat = it },
-                    geoLon = webhook2GeoLon,
-                    onGeoLonChange = { webhook2GeoLon = it },
-                    geoRadius = webhook2GeoRadius,
-                    onGeoRadiusChange = { webhook2GeoRadius = it },
-                    alertEnabled = webhook2AlertEnabled,
-                    onAlertEnabledChange = { webhook2AlertEnabled = it },
-                    alertText = webhook2AlertText,
-                    onAlertTextChange = { webhook2AlertText = it },
-                    fieldColor = webhook2Color,
-                    onFieldColorChange = { webhook2Color = it },
-                    onTest = {
-                        val ext = KSafeExtension.getInstance()
-                            ?: return@WebhookSlotFields "Extension not connected — wait a moment."
-                        ext.testWebhook(2)
-                    },
-                    testButtonLabel = "${stringResource(R.string.webhook_test)} Webhook 2"
-                )
+                for (slotIndex in 0 until WEBHOOK_SLOT_COUNT) {
+                    if (slotIndex > 0) {
+                        HorizontalDivider(modifier = Modifier.padding(vertical = 2.dp))
+                    }
+                    val slotNumber = slotIndex + 1
+                    val uiSlot = webhookSlots[slotIndex]
+                    WebhookSlotFields(
+                        enabled = uiSlot.slot.enabled,
+                        onEnabledChange = { mutateSlot(slotIndex) { s -> s.copy(slot = s.slot.copy(enabled = it)) } },
+                        enableLabel = webhookEnableLabels[slotIndex],
+                        label = uiSlot.slot.label,
+                        onLabelChange = { mutateSlot(slotIndex) { s -> s.copy(slot = s.slot.copy(label = it)) } },
+                        url = uiSlot.slot.url,
+                        onUrlChange = { mutateSlot(slotIndex) { s -> s.copy(slot = s.slot.copy(url = it)) } },
+                        method = uiSlot.slot.method,
+                        onMethodChange = { mutateSlot(slotIndex) { s -> s.copy(slot = s.slot.copy(method = it)) } },
+                        headers = uiSlot.slot.headers,
+                        onHeadersChange = { mutateSlot(slotIndex) { s -> s.copy(slot = s.slot.copy(headers = it)) } },
+                        body = uiSlot.slot.body,
+                        onBodyChange = { mutateSlot(slotIndex) { s -> s.copy(slot = s.slot.copy(body = it)) } },
+                        geoEnabled = uiSlot.slot.geoEnabled,
+                        onGeoEnabledChange = { mutateSlot(slotIndex) { s -> s.copy(slot = s.slot.copy(geoEnabled = it)) } },
+                        geoLat = uiSlot.geoLatText,
+                        onGeoLatChange = { mutateSlot(slotIndex) { s -> s.copy(geoLatText = it) } },
+                        geoLon = uiSlot.geoLonText,
+                        onGeoLonChange = { mutateSlot(slotIndex) { s -> s.copy(geoLonText = it) } },
+                        geoRadius = uiSlot.geoRadiusText,
+                        onGeoRadiusChange = { mutateSlot(slotIndex) { s -> s.copy(geoRadiusText = it) } },
+                        alertEnabled = uiSlot.slot.alertEnabled,
+                        onAlertEnabledChange = { mutateSlot(slotIndex) { s -> s.copy(slot = s.slot.copy(alertEnabled = it)) } },
+                        alertText = uiSlot.slot.alertText,
+                        onAlertTextChange = { mutateSlot(slotIndex) { s -> s.copy(slot = s.slot.copy(alertText = it)) } },
+                        fieldColor = uiSlot.slot.color,
+                        onFieldColorChange = { mutateSlot(slotIndex) { s -> s.copy(slot = s.slot.copy(color = it)) } },
+                        onTest = {
+                            val ext = KSafeExtension.getInstance()
+                                ?: return@WebhookSlotFields "Extension not connected — wait a moment."
+                            ext.testWebhook(slotNumber)
+                        },
+                        testButtonLabel = "$webhookTestLabel Webhook $slotNumber"
+                    )
+                }
             }
         }
 
@@ -631,7 +626,10 @@ private fun WebhookSlotFields(
                     placeholder = { Text(stringResource(R.string.webhook_geo_lat_placeholder), style = MaterialTheme.typography.bodySmall) },
                     modifier = Modifier.weight(1f),
                     singleLine = true,
-                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal)
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+                    // Non-blank but unparseable (even after comma normalisation) would
+                    // persist as 0.0 — surface it instead of failing silently.
+                    isError = geoLat.isNotBlank() && geoLat.toGeoDoubleOrNull() == null
                 )
                 OutlinedTextField(
                     value = geoLon,
@@ -640,7 +638,8 @@ private fun WebhookSlotFields(
                     placeholder = { Text(stringResource(R.string.webhook_geo_lon_placeholder), style = MaterialTheme.typography.bodySmall) },
                     modifier = Modifier.weight(1f),
                     singleLine = true,
-                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal)
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+                    isError = geoLon.isNotBlank() && geoLon.toGeoDoubleOrNull() == null
                 )
             }
             OutlinedTextField(

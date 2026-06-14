@@ -34,6 +34,7 @@ import com.enderthor.kSafe.data.RecipientAlertScope
 import com.enderthor.kSafe.extension.KSafeExtension
 import com.enderthor.kSafe.extension.util.accepts
 import kotlinx.coroutines.delay
+import timber.log.Timber
 
 @Composable
 fun ProviderScreen(vm: MainViewModel) {
@@ -113,6 +114,18 @@ fun ProviderScreen(vm: MainViewModel) {
     ) {
         scopeErrorSlot = null
         delay(700)
+        // Cold-load guard: senderConfigs' stateIn initial is emptyList() and the fields above
+        // were seeded from a null activeSender → all blank. This effect fires on FIRST
+        // composition, so if DataStore's first sender emission takes longer than the 700 ms
+        // debounce (cold first visit to the tab), the save below would faithfully persist
+        // all-blank fields over the active provider's stored entry — silently wiping the
+        // emergency-contact credentials. The persisted list is never empty (defaults carry
+        // all four providers), so an empty live value means "not loaded yet": skip. Once the
+        // real emission lands, the field sync re-keys this effect and saves normally.
+        if (vm.senderConfigs.value.isEmpty()) {
+            Timber.d("Sender auto-save skipped — DataStore not loaded yet")
+            return@LaunchedEffect
+        }
         vm.updateSenderConfig(
             fieldsProvider, apiKey, userKey, userKey2, userKey3,
             phoneNumber, apiKey2, phoneNumber2, apiKey3, phoneNumber3,
@@ -179,11 +192,16 @@ fun ProviderScreen(vm: MainViewModel) {
         val onProviderClick = { provider: ProviderType ->
             // Save the CURRENT provider's fields immediately before switching,
             // so no data is lost if the debounce timer hasn't fired yet.
-            vm.updateSenderConfig(
-                fieldsProvider, apiKey, userKey, userKey2, userKey3,
-                phoneNumber, apiKey2, phoneNumber2, apiKey3, phoneNumber3,
-                recipient1Alerts, recipient2Alerts, recipient3Alerts,
-            )
+            // Same cold-load guard as the debounced auto-save: before the first DataStore
+            // emission the fields are blank seeds, and persisting them here would wipe the
+            // stored credentials of the provider being switched away from.
+            if (vm.senderConfigs.value.isNotEmpty()) {
+                vm.updateSenderConfig(
+                    fieldsProvider, apiKey, userKey, userKey2, userKey3,
+                    phoneNumber, apiKey2, phoneNumber2, apiKey3, phoneNumber3,
+                    recipient1Alerts, recipient2Alerts, recipient3Alerts,
+                )
+            }
             // Load the new provider's saved values and update fieldsProvider atomically.
             val s = senderConfigs.find { it.provider == provider }
             fieldsProvider = provider

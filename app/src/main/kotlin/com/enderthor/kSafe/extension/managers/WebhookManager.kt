@@ -1,6 +1,8 @@
 package com.enderthor.kSafe.extension.managers
 
 import com.enderthor.kSafe.data.KSafeConfig
+import com.enderthor.kSafe.data.WEBHOOK_SLOT_COUNT
+import com.enderthor.kSafe.data.webhookSlot
 import com.enderthor.kSafe.extension.httpRequest
 import io.hammerhead.karooext.KarooSystemService
 import kotlinx.coroutines.withTimeoutOrNull
@@ -17,32 +19,16 @@ class WebhookManager(private val karooSystem: KarooSystemService) {
     data class WebhookResult(val success: Boolean, val message: String)
 
     suspend fun trigger(slot: Int, config: KSafeConfig, timeoutMs: Long = 15_000L): WebhookResult {
-        val enabled: Boolean
-        val label: String
-        val url: String
-        val method: String
-        val headersRaw: String
-        val body: String
-
-        when (slot) {
-            1 -> {
-                enabled = config.webhook1Enabled
-                label = config.webhook1Label.ifBlank { "Action 1" }
-                url = config.webhook1Url
-                method = config.webhook1Method.ifBlank { "POST" }
-                headersRaw = config.webhook1Headers
-                body = config.webhook1Body
-            }
-            2 -> {
-                enabled = config.webhook2Enabled
-                label = config.webhook2Label.ifBlank { "Action 2" }
-                url = config.webhook2Url
-                method = config.webhook2Method.ifBlank { "POST" }
-                headersRaw = config.webhook2Headers
-                body = config.webhook2Body
-            }
-            else -> return WebhookResult(false, "Unknown webhook slot $slot")
+        if (slot !in 1..WEBHOOK_SLOT_COUNT) {
+            return WebhookResult(false, "Unknown webhook slot $slot")
         }
+        val s = config.webhookSlot(slot)
+        val enabled = s.enabled
+        val label = s.label.ifBlank { "Action $slot" }
+        val url = s.url
+        val method = s.method.ifBlank { "POST" }
+        val headersRaw = s.headers
+        val body = s.body
 
         if (!enabled) return WebhookResult(false, "Webhook $slot not enabled")
         if (url.isBlank()) return WebhookResult(false, "No URL configured for $label")

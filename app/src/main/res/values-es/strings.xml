@@ -34,6 +34,8 @@
     <string name="custom_message_datatype_desc">Botón de mensaje personalizado. Tócalo para enviar al instante tu mensaje configurado a tus contactos.</string>
     <string name="webhook_1_datatype_name">KSafe Webhook 1</string>
     <string name="webhook_2_datatype_name">KSafe Webhook 2</string>
+    <string name="webhook_3_datatype_name">KSafe Webhook 3</string>
+    <string name="webhook_4_datatype_name">KSafe Webhook 4</string>
     <string name="webhook_datatype_desc">Botón de acción webhook. Tócalo para lanzar la petición HTTP configurada (puerta de garaje, domótica, etc.).</string>
     <string name="custom_message_2_datatype_name">KSafe Mensaje 2</string>
     <string name="custom_message_3_datatype_name">KSafe Mensaje 3</string>
@@ -55,7 +57,7 @@
     <string name="settings_master_hint">Cuando está OFF la extensión deja de monitorizar todo — choque, parada prolongada, check-in, Salud (FC), Nutrición. Las notificaciones ya configuradas (inicio/fin de ruta, mensajes, webhooks) también se silencian. Déjalo ON salvo que quieras una parada total.</string>
     <string name="actions_section_karoo_live">Notificaciones Karoo Live</string>
     <string name="actions_section_karoo_live_tests">Probar notificaciones de ruta</string>
-    <string name="fueling_fit_export_hint">Desactivado por defecto — actívalo antes de la ruta. Escribe los datos de KSafe en el FIT grabado como developer fields. Intervals.icu y TrainingPeaks los muestran junto a FC y potencia; Strava NO muestra campos de datos personalizados y los ignora. Incluye carbohidratos acumulados (g), carbohidratos quemados (g), tasa actual de quema (g/h) e hidratación (ml); y, con wellness activo, la deriva de FC actual (%), la deriva máxima de la ruta y el nº de alertas de wellness.</string>
+    <string name="fueling_fit_export_hint">Desactivado por defecto — actívalo antes de la ruta. Escribe los datos de KSafe en el FIT grabado como developer fields. Intervals.icu y TrainingPeaks los muestran junto a FC y potencia; Strava NO muestra campos de datos personalizados y los ignora. Incluye carbohidratos acumulados (g), carbohidratos quemados (g), tasa actual de quema (g/h) e hidratación (ml); y, con wellness activo, la deriva de FC actual (%), la deriva máxima de la ruta y el nº de alertas de wellness. Si las calorías por FC están activas, también escribe las calorías acumuladas (kcal).</string>
     <string name="simulate_crash_label">Simular choque (enviar alerta ya)</string>
     <string name="simulate_crash_confirm_title">¿Enviar una alerta real?</string>
     <string name="simulate_crash_confirm_body">Esto envía el mensaje de emergencia configurado por tu proveedor activo — sin cuenta atrás, sin cancelar. Úsalo solo para verificar que el canal funciona de principio a fin.</string>
@@ -66,8 +68,12 @@
     <string name="fueling_title">Nutrición</string>
     <string name="fueling_info_banner">Los carbohidratos usan zonas de FC/potencia si están disponibles para un objetivo según intensidad; sin sensores el objetivo es proporcional al tiempo. La hidratación siempre es proporcional al tiempo — ajusta el objetivo a mano en días calurosos.</string>
     <string name="fueling_carb_section">Carbohidratos</string>
+    <string name="fueling_calories_section">Calorías</string>
+    <string name="fueling_physiology_section">Fisiología del ciclista</string>
     <string name="fueling_hyd_section">Hidratación</string>
-    <string name="fueling_physiology_hint">La quema de carbohidratos se estima con tu potenciómetro (lo más preciso) o FC + edad + sexo (Keytel) o FC + FC máx/reposo (Swain).</string>
+    <string name="fueling_physiology_hint">Se usa el potenciómetro si está emparejado (lo más preciso); si no, FC + edad + sexo (Keytel) o FC + FC máx/reposo (Swain). Sirve tanto para la quema de carbohidratos como para la estimación de calorías.</string>
+    <string name="fueling_calories_label">Calorías por FC</string>
+    <string name="fueling_calories_hint">Estima el total de calorías quemadas. Usa tu potenciómetro si está emparejado (lo más preciso) y solo recurre a la frecuencia cardíaca (Keytel / %FCmax) cuando no hay potencia — no sustituye a la potencia. Añade dos campos de datos (kcal totales, kcal/h) y, con la exportación FIT activa, los escribe en el FIT. Para estimaciones por FC precisas, indica tu edad y sexo abajo.</string>
     <string name="fueling_rider_age_label">Edad (años)</string>
     <string name="fueling_rider_sex_label">Sexo (para el cálculo Keytel solo con FC)</string>
     <string name="fueling_rider_sex_male">Hombre</string>
@@ -105,6 +111,12 @@
     <string name="fueling_combined_concentration_label">Carbos por 500 ml (g)</string>
     <string name="fueling_combined_hint">Un toque registra una bebida + sus carbohidratos. Fija la concentración una vez; los carbos de cada botón se autocompletan según su volumen (editable). Activo cuando el seguimiento de carbos y/o hidratación está ON.</string>
     <string name="fueling_fit_export_label">Escribir datos KSafe en FIT (Intervals.icu / TrainingPeaks)</string>
+    <string name="settings_fit_std_cal_label">Calorías como campo estándar del FIT</string>
+    <string name="settings_fit_std_cal_off">Off</string>
+    <string name="settings_fit_std_cal_hr">KSafe (FC)</string>
+    <string name="settings_fit_std_cal_karoo">Karoo (pot)</string>
+    <string name="settings_fit_std_cal_hint">Escribe las calorías totales en la sesión del FIT como campo estándar, el que importan todas las plataformas (Suunto y otras ignoran los developer fields). KSafe (FC) usa la estimación de KSafe; Karoo (pot) replica las calorías por potencia del propio Karoo. Independiente de la exportación de developer fields de arriba.</string>
+    <string name="settings_fit_std_cal_requires">Activa Calorías en la pestaña Fueling para elegir la fuente.</string>
 
     <!-- Consejo de forma al inicio -->
     <string name="readiness_at_ride_start_label">Consejo de forma al iniciar la ruta</string>
@@ -159,6 +171,10 @@
     <string name="carbs_burned_datatype_name">KSafe Carbos quemados</string>
     <string name="carbs_burned_datatype_desc">Carbohidratos quemados acumulados esta sesión en gramos, del estimador fisiológico de quema. Complemento del campo Estado carbos (déficit).</string>
     <string name="carb_no_sensor_label">Empareja FC</string>
+    <string name="calories_total_datatype_name">KSafe Calorías (FC)</string>
+    <string name="calories_total_datatype_desc">Calorías acumuladas de la ruta, estimadas por frecuencia cardíaca (Keytel / %FCmax). Independientes de las calorías por potencia del Karoo; útiles cuando no hay medidor de potencia.</string>
+    <string name="calories_rate_datatype_name">KSafe Ritmo Calorías (FC)</string>
+    <string name="calories_rate_datatype_desc">Gasto energético instantáneo en kcal/h, estimado por frecuencia cardíaca. Muestra Empareja FC cuando ningún sensor puede alimentar la estimación.</string>
     <string name="hyd_log_1_datatype_name">KSafe Bebida 1</string>
     <string name="hyd_log_2_datatype_name">KSafe Bebida 2</string>
     <string name="hyd_log_datatype_desc">Toca para registrar una bebida configurada (p. ej. trago, botella). Cuenta para tu objetivo por hora.</string>
@@ -386,6 +402,8 @@
     <string name="webhook_hint">Lanza cualquier endpoint HTTP desde un botón físico del Karoo. Funciona con Home Assistant, ntfy, IFTTT, n8n, Make o cualquier webhook. La petición se envía por el puente de red del Karoo — funciona por tether Bluetooth cuando no hay Wi-Fi.</string>
     <string name="webhook_1_label">Activar Webhook 1</string>
     <string name="webhook_2_label">Activar Webhook 2</string>
+    <string name="webhook_3_label">Activar Webhook 3</string>
+    <string name="webhook_4_label">Activar Webhook 4</string>
     <string name="webhook_label_hint">Etiqueta de acción (en alertas)</string>
     <string name="webhook_url_hint">URL</string>
     <string name="webhook_url_example">p. ej. https://ha.example.com/api/services/cover/toggle</string>

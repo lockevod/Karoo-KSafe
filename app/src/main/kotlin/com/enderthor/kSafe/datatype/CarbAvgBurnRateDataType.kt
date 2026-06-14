@@ -1,15 +1,15 @@
 package com.enderthor.kSafe.datatype
 
 import android.content.Context
-import android.graphics.Color
-import android.view.View
 import android.widget.RemoteViews
 import com.enderthor.kSafe.R
 import com.enderthor.kSafe.extension.KSafeExtension
 import com.enderthor.kSafe.extension.util.CarbBurnEstimator
 import io.hammerhead.karooext.extension.DataTypeImpl
+import io.hammerhead.karooext.internal.Emitter
 import io.hammerhead.karooext.internal.ViewEmitter
 import io.hammerhead.karooext.models.ShowCustomStreamState
+import io.hammerhead.karooext.models.StreamState
 import io.hammerhead.karooext.models.UpdateGraphicConfig
 import io.hammerhead.karooext.models.ViewConfig
 import kotlinx.coroutines.CancellationException
@@ -19,6 +19,7 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.awaitCancellation
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.flow.collectLatest
+import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.filterNotNull
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
@@ -50,21 +51,23 @@ class CarbAvgBurnRateDataType(
     private val context: Context,
 ) : DataTypeImpl("ksafe", datatype) {
 
-    private fun buildView(viewConfig: ViewConfig, main: String, hint: String): RemoteViews {
-        val gravity = viewConfig.fieldGravity()
-        val dark = context.isKarooNightMode()
-        return RemoteViews(context.packageName, R.layout.field_view_auto).apply {
-            // take(11): "Pair HR/Pwr" is 11 chars (a take(9) clipped it to
-            // "Pair HR/P"). Numeric values ("ø 90") are short; layout auto-sizes.
-            setTextViewText(R.id.field_text_main, main.take(11))
-            setTextViewText(R.id.field_text_hint, hint.take(9))
-            setViewVisibility(R.id.field_text_hint, if (hint.isEmpty()) View.GONE else View.VISIBLE)
-            setInt(R.id.field_text_main, "setGravity", gravity)
-            setInt(R.id.field_text_hint, "setGravity", gravity)
-            setTextColor(R.id.field_text_main, if (dark) Color.WHITE else Color.BLACK)
-            setTextColor(R.id.field_text_hint, if (dark) 0xCCFFFFFF.toInt() else 0xCC000000.toInt())
+    // Standard-Karoo readout: units on top, big value below, sized from the host's
+    // ViewConfig.textSize. See [buildReadoutView] for the shared rendering contract.
+    private fun buildView(viewConfig: ViewConfig, main: String, hint: String): RemoteViews =
+        context.buildReadoutView(viewConfig, main, hint, R.drawable.ic_readout_carbs)
+
+    // Published as a numeric stream (session-average g/h) — see [startFuelingStream].
+    // Accrued value: keeps streaming through sensor dropouts once any burn exists,
+    // Searching only while nothing has ever been measured (mirrors the view).
+    override fun startStream(emitter: Emitter<StreamState>) =
+        startFuelingStream(emitter, KSafeExtension.carbsTrackerFlow, { it.statusFlow }) { s ->
+            when {
+                !s.masterEnabled || !s.carbsEnabled -> StreamState.NotAvailable
+                s.burnConfidence == CarbBurnEstimator.Confidence.NONE && s.cumBurnedG == 0 ->
+                    StreamState.Searching
+                else -> streamingSingle(s.avgBurnRateGph)
+            }
         }
-    }
 
     override fun startView(context: Context, config: ViewConfig, emitter: ViewEmitter) {
         val scopeJob = Job()
@@ -79,9 +82,17 @@ class CarbAvgBurnRateDataType(
         val viewJob = scope.launch {
             try {
                 val tracker = KSafeExtension.carbsTrackerFlow.filterNotNull().first()
-                tracker.statusFlow.collectLatest { status ->
+                // Merged with nightModeFlow — see CarbBurnRateDataType (theme passthrough
+                // text colour is baked at build time; a day/night flip needs a re-render).
+                combine(tracker.statusFlow, KSafeExtension.nightModeFlow) { s, _ -> s }
+                    .collectLatest { status ->
                     val main = when {
+                        // Profile-editor gallery: neutral waiting frame, never live/OFF/stale data.
+                        config.preview -> "---"
                         status == null -> "---"
+                        // Master OFF / carb feature off — see CarbBurnRateDataType.
+                        !status.masterEnabled -> context.getString(R.string.fueling_field_off)
+                        !status.carbsEnabled -> "---"
                         // "Pair HR/Pwr" ONLY when the rider has never had a sensor
                         // paired this session (cumBurnedG == 0).
                         status.burnConfidence == CarbBurnEstimator.Confidence.NONE &&
@@ -93,15 +104,16 @@ class CarbAvgBurnRateDataType(
                         // if the sensor later dies (CarbIntegrator stops advancing
                         // active-integration time when the live rate is 0).
                         status.cumBurnedG == 0 -> "---"
-                        // "ø" marks this as the session average vs the instantaneous
-                        // rate field, which shares the same "g/h" unit hint.
-                        else -> "ø ${status.avgBurnRateGph}"
+                        // Plain number — the "average" marker lives in the unit line
+                        // ("ø g/h"), not as a "ø " value prefix. A prefix forced the big
+                        // value off-centre (symbol + space + number) and looked broken in
+                        // a wide field; keeping it in the hint renders the number clean.
+                        else -> "${status.avgBurnRateGph}"
                     }
-                    // Hint also carries "ø": the field header is hidden
+                    // Hint carries the "ø" average marker: the field header is hidden
                     // (showHeader = false), so the instantaneous-rate field and this
-                    // average field would otherwise show an identical "g/h" hint and
-                    // be distinguishable only by the value prefix. "ø g/h" makes the
-                    // unit line itself unambiguous at a glance.
+                    // average field would otherwise show an identical "g/h" hint. "ø g/h"
+                    // makes the unit line itself unambiguous at a glance.
                     emitter.updateView(buildView(config, main, "ø g/h"))
                 }
             } catch (_: CancellationException) {

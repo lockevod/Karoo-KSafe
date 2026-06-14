@@ -11,8 +11,12 @@ import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.SegmentedButton
+import androidx.compose.material3.SegmentedButtonDefaults
+import androidx.compose.material3.SingleChoiceSegmentedButtonRow
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -34,6 +38,7 @@ import androidx.compose.ui.unit.dp
 import com.enderthor.kSafe.R
 import com.enderthor.kSafe.activity.BackupStorage
 import com.enderthor.kSafe.activity.MainViewModel
+import com.enderthor.kSafe.data.FitCaloriesSource
 import com.enderthor.kSafe.extension.KSafeExtension
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
@@ -53,6 +58,7 @@ import kotlinx.coroutines.withContext
  * Per-feature toggles live on their feature tab — disable crash detection in Safety,
  * disable Health in Health, etc. The master switch here disables EVERYTHING at once.
  */
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun SettingsScreen(vm: MainViewModel) {
     val config by vm.config.collectAsState()
@@ -61,6 +67,7 @@ fun SettingsScreen(vm: MainViewModel) {
 
     var isActive          by remember(config.isActive)                  { mutableStateOf(config.isActive) }
     var fitExportEnabled  by remember(config.fuelingFitExportEnabled)   { mutableStateOf(config.fuelingFitExportEnabled) }
+    var fitStdCalSource   by remember(config.fitStandardCaloriesSource) { mutableStateOf(config.fitStandardCaloriesSource) }
     var calibrationLogging by remember(config.calibrationLoggingEnabled) { mutableStateOf(config.calibrationLoggingEnabled) }
     var updateCheck       by remember(config.updateCheckEnabled)        { mutableStateOf(config.updateCheckEnabled) }
     var buzzerOnEmergency by remember(config.buzzerOnEmergencyEnabled)  { mutableStateOf(config.buzzerOnEmergencyEnabled) }
@@ -268,6 +275,48 @@ fun SettingsScreen(vm: MainViewModel) {
         }
         Text(
             text = stringResource(R.string.fueling_fit_export_hint),
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant
+        )
+
+        // Standard FIT calories — writes the session's STANDARD total_calories field
+        // (the one every platform imports; Suunto et al. ignore the ksafe_* developer
+        // fields above, so without this they import no calories at all). Selector only
+        // enabled while Calories is on in Fueling — the FIT writer is gated on the
+        // same flag, so a leftover selection can't keep writing after the feature
+        // is turned off.
+        Text(
+            text = stringResource(R.string.settings_fit_std_cal_label),
+            style = MaterialTheme.typography.bodyMedium,
+        )
+        val stdCalOptions = listOf(FitCaloriesSource.NONE, FitCaloriesSource.HR, FitCaloriesSource.KAROO)
+        val stdCalLabels = mapOf(
+            FitCaloriesSource.NONE  to stringResource(R.string.settings_fit_std_cal_off),
+            FitCaloriesSource.HR    to stringResource(R.string.settings_fit_std_cal_hr),
+            FitCaloriesSource.KAROO to stringResource(R.string.settings_fit_std_cal_karoo),
+        )
+        SingleChoiceSegmentedButtonRow(modifier = Modifier.fillMaxWidth()) {
+            stdCalOptions.forEachIndexed { index, source ->
+                SegmentedButton(
+                    selected = fitStdCalSource == source,
+                    enabled = config.hrCaloriesEnabled,
+                    onClick = {
+                        fitStdCalSource = source
+                        vm.updateConfig { it.copy(fitStandardCaloriesSource = source) }
+                    },
+                    shape = SegmentedButtonDefaults.itemShape(index = index, count = stdCalOptions.size),
+                ) {
+                    Text(
+                        text = stdCalLabels[source] ?: source.name,
+                        style = MaterialTheme.typography.bodySmall,
+                        maxLines = 1,
+                    )
+                }
+            }
+        }
+        Text(
+            text = if (config.hrCaloriesEnabled) stringResource(R.string.settings_fit_std_cal_hint)
+                   else stringResource(R.string.settings_fit_std_cal_requires),
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant
         )

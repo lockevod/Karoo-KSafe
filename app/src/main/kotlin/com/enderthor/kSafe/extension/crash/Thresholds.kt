@@ -80,9 +80,11 @@ data class Thresholds(
      * "they'll move" assumption (session `effa0e`). That case is now vetoed —
      * see [nonGapUprightVetoMaxGyroRadS]. This does NOT weaken real-crash
      * coverage: an incapacitated rider cannot keep a laterally-unstable bike
-     * balanced within the 15° [gapVetoUprightAngleDeg] cone — it topples
-     * on-side (≥ cone → confirms) or tumbles (high gyro → confirms). Only the
-     * balanced-conscious upright stand (low gyro, ≈0° tilt) is suppressed.
+     * balanced within the veto cones — 15° [promptVetoUprightAngleDeg] for the
+     * prompt-stop regime (R6-G) and 25° [gapVetoUprightAngleDeg] for the gap
+     * regime (R6-F) — so it topples on-side (≥ cone → confirms) or tumbles (high
+     * gyro → confirms). Only the balanced-conscious upright stand (low gyro, ≈0°
+     * tilt) is suppressed.
      */
     val silenceDurationUprightMs: Long = 20_000L,
     /**
@@ -101,15 +103,26 @@ data class Thresholds(
      * sides still confirm), whereas this one is a *fire / don't-fire* threshold
      * that SUPPRESSES an SOS. A false negative (missing a real crash) is far
      * worse than a false positive, so the veto only engages when the bike is
-     * almost identical to its pre-impact orientation (a rider who coasted to a
-     * stop and stands motionless and upright — the session 9e5679 FP measured
-     * ≈0°). A bike merely tilted/knocked to 15–45° is left to confirm: that
-     * posture is consistent with a real crash and must NOT be vetoed.
+     * almost identical to its pre-impact orientation.
+     *
+     * Widened from 15° to 25° after field evidence (session 2ab57f): a settled
+     * bike at ~18.6° from upright produced a false positive with the old 15°
+     * cone. Domain rationale: a real crash always tips the bike well past 25°;
+     * vetoing up to 25° at rest has negligible FN risk. A bike merely
+     * tilted/knocked to 25–45° is left to confirm: that posture is consistent
+     * with a real crash and must NOT be vetoed.
      *
      * Only consulted in the gap regime (`firstSilenceGapMs > delayedStopGapMs`);
-     * the prompt-stop orientation regime is unaffected.
+     * the prompt-stop regime uses the stricter [promptVetoUprightAngleDeg].
      */
-    val gapVetoUprightAngleDeg: Double = 15.0,
+    val gapVetoUprightAngleDeg: Double = 25.0,
+    /**
+     * PROMPT-regime (prompt-stop) upright veto cone. Kept at the original tight 15° while the
+     * GAP-regime cone is 25°: a prompt stop (rider stopped quickly post-impact) is more
+     * crash-like than a gap stop (rider rode on = conscious), so it gets the stricter cone.
+     * The widening to 25° has field evidence only in the GAP regime (session 2ab57f).
+     */
+    val promptVetoUprightAngleDeg: Double = 15.0,
     /**
      * Peak gyroscope magnitude (rad/s, measured from the impact through the
      * silence window) below which the **non-gap (prompt-stop) upright veto**
@@ -124,7 +137,7 @@ data class Thresholds(
      * benignity: no violent rotation. A real over-the-bars / endo that happens
      * to leave the bike wheels-down (≈ upright) spikes the gyro well above this
      * (the 2026-06-03 on-side crash `27baa0` hit 9.65 rad/s) and is therefore
-     * NOT vetoed. A toppled-on-side crash is already excluded by the 15°
+     * NOT vetoed. A toppled-on-side crash is already excluded by the 25°
      * [gapVetoUprightAngleDeg] cone. Set below the tumble range and above the
      * benign-stop range; a false negative is far worse than a false positive,
      * so keep it low (veto only when rotation was clearly minimal).
@@ -181,4 +194,30 @@ data class Thresholds(
      *     long-duration speed=0 windows regardless of this gate.
      */
     val onSideRelaxationMaxSpeedKmh: Double = 25.0,
+
+    /**
+     * Moving-vigilance trust gate. An on-side confirm's angle is only trustworthy when the
+     * settled silence orientation was sampled AT REST: a bike at rest reads ‖a‖ ≈ GRAVITY
+     * (9.81). Field FPs read far below it (8.49, 1.78 m/s²) because the angle was sampled
+     * mid-motion. Below this floor, the confirm is diverted into a speed-gated window instead
+     * of firing. Default ≈ 0.90 × GRAVITY.
+     */
+    val onSideTrustMinAccel: Double = 8.83,
+
+    /** Moving-vigilance window: how long sustained riding speed must hold to silent-clear. */
+    val movingVigilanceWindowMs: Long = 4_000L,
+
+    /**
+     * Moving-vigilance "clearly still riding" speed floor (km/h). Speed must stay at/above this
+     * AND be fresh on every sample to silent-clear; otherwise escalate (fail-safe, no FN).
+     */
+    val movingVigilanceSpeedKmh: Double = 8.0,
+
+    /**
+     * Moving-vigilance speed-freshness recency. The CLEAR path requires the speed VALUE to have
+     * changed within this window — shorter than [movingVigilanceWindowMs]. A GPS frozen at a
+     * non-zero value after a crash reads "not stale" for up to GPS_STALE_MS (10 s) but its value
+     * stops changing; this catches that (escalates) before the 4 s vigilance window can clear.
+     */
+    val movingVigilanceSpeedFreshMs: Long = 3_000L,
 )

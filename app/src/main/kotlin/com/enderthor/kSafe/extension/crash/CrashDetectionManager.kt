@@ -82,7 +82,17 @@ class CrashDetectionManager(
         CrashSensitivity.CUSTOM to 20_000L   // reasonable default for custom
     )
 
-    private companion object {
+    companion object {
+        /**
+         * Vigilance speed-freshness gate. True only when speed is BOTH not GPS-stale AND its value
+         * changed within [freshMs] — a GPS frozen at a non-zero value reads "not stale" for up to
+         * GPS_STALE_MS but its value stops changing; this catches that before the vigilance window clears.
+         */
+        @JvmStatic
+        internal fun isSpeedFreshForVigilance(
+            nowMs: Long, gpsStale: Boolean, speedLastChangeMs: Long, freshMs: Long,
+        ): Boolean = !gpsStale && (nowMs - speedLastChangeMs) < freshMs
+
         const val GRAVITY = 9.81
         // "No crash yet / cooldown inactive" sentinel for [lastCrashTime]. The cooldown
         // gate is monotonic — `(clock.monotonicMs() - lastCrashTime) > crashCooldownMs`
@@ -139,10 +149,20 @@ class CrashDetectionManager(
          *  (long window). Matches [Thresholds.uprightAngleThresholdDegrees]. */
         const val UPRIGHT_ANGLE_THRESHOLD_DEGREES = 45.0
 
-        /** Angle (deg) below which the GAP-regime confirm is vetoed (R6-F). A tight
-         *  cone — a veto suppresses an SOS, and an FN is worse than an FP. Matches
-         *  [Thresholds.gapVetoUprightAngleDeg]. */
-        const val GAP_VETO_UPRIGHT_ANGLE_DEG = 15.0
+        /** Angle (deg) below which the GAP-regime confirm is vetoed (R6-F). Widened
+         *  from 15° to 25° after field evidence (session 2ab57f): a settled bike at
+         *  ~18.6° was FP-confirmed with the old 15° cone. Domain rationale: a real
+         *  crash always tips the bike well past 25°; vetoing up to 25° at rest has
+         *  negligible FN risk. A veto suppresses an SOS, and an FN is worse than an
+         *  FP. Matches [Thresholds.gapVetoUprightAngleDeg]. */
+        const val GAP_VETO_UPRIGHT_ANGLE_DEG = 25.0
+
+        /** Angle (deg) below which the PROMPT-stop regime confirm is vetoed (R6-G).
+         *  Kept at the original tight 15° — the prompt stop is more crash-like than
+         *  a gap stop, so it gets the stricter cone. The widening to 25° has field
+         *  evidence only in the GAP regime (session 2ab57f).
+         *  Matches [Thresholds.promptVetoUprightAngleDeg]. */
+        const val PROMPT_VETO_UPRIGHT_ANGLE_DEG = 15.0
 
         /** Peak gyro (rad/s) below which the non-gap (prompt-stop) upright veto (R6-G)
          *  may engage — distinguishes a benign stand from an endo that ends upright.
@@ -249,6 +269,8 @@ class CrashDetectionManager(
         clock = clock,
     )
 
+    private val movingVigilance = MovingVigilance(stateMachine.thresholds)
+
     private val speedDropMonitor = SpeedDropMonitor(
         scope = scope,
         clock = clock,
@@ -303,6 +325,10 @@ class CrashDetectionManager(
         synchronized(recentTmoTimestamps) { recentTmoTimestamps.clear() }
         resetWindowAccumulators()
         rebuildThresholds(boostActive = false)
+        // movingVigilance is intentionally NOT reset here. An armed verification window must
+        // survive a brief autopause: a mid-motion confirm diverted to vigilance means the rider
+        // may be down — losing the window on autopause could cause an FN. The per-sample tick
+        // in onSensorSample continues to drive escalation if the rider actually stopped.
         // If the state machine is mid-IMPACT or mid-SILENCE_CHECK at resume time
         // (auto-resume during an in-flight crash detection — the symmetric case
         // to I3's autopause preservation), do NOT reset it. The accelerometer
@@ -337,6 +363,15 @@ class CrashDetectionManager(
         sensorReader.stop()
         speedDropMonitor.stop()
         stateMachine.reset()
+        if (movingVigilance.isArmed) {
+            // Escalate-on-abandon: a suspect on-side confirm was mid-verification when the ride
+            // stopped. We can't assume the rider is conscious — never silently drop it (no FN).
+            calibLogger?.log(CalibrationLogger.Event.VIGILANCE_ESCALATE) {
+                "speed=%.1f,reason=ride_stop".formatUs(currentSpeedKmh)
+            }
+            confirmCrash(CrashSource.IMPACT_CONFIRMED, alreadyLogged = true)
+        }
+        movingVigilance.reset()
         resetWindowAccumulators()
         // Clear the rolling TMO-cluster deque (cleared in start()/resume() too) so a
         // stop leaves no stale cluster state behind.
@@ -475,6 +510,16 @@ class CrashDetectionManager(
             Timber.d("CrashDetectionManager: autopause — in-flight detection preserved")
         } else {
             stateMachine.onPause()
+            if (movingVigilance.isArmed) {
+                // Escalate-on-abandon: a suspect on-side confirm was mid-verification when a pause
+                // arrived. Manual vs auto pause is not reliably distinguishable and a downed rider
+                // cannot be assumed conscious — never silently drop an armed confirm (no FN).
+                calibLogger?.log(CalibrationLogger.Event.VIGILANCE_ESCALATE) {
+                    "speed=%.1f,reason=manual_pause".formatUs(currentSpeedKmh)
+                }
+                confirmCrash(CrashSource.IMPACT_CONFIRMED, alreadyLogged = true)
+            }
+            movingVigilance.reset()
             Timber.d("CrashDetectionManager: manual pause — state machine reset")
         }
     }
@@ -624,12 +669,38 @@ class CrashDetectionManager(
                 logImpactEnter(sample, decision.reason, boostActive)
             }
             is CrashStateMachine.Decision.Confirm -> {
-                logCrashConfirmed(sample)
-                // alreadyLogged=true: logCrashConfirmed already emitted the canonical
-                // CRASH_CONFIRMED row with full context. confirmCrash must NOT emit a
-                // duplicate (gate-level) CRASH_CONFIRMED for the IMPACT_CONFIRMED path
-                // or downstream consumers that count crashes will double-count.
-                confirmCrash(CrashSource.IMPACT_CONFIRMED, alreadyLogged = true)
+                if (confirmReadInMotion()) {
+                    if (!movingVigilance.isArmed) {
+                        // First mid-motion confirm of this event → log the suspect CRASH_OK and verify.
+                        logCrashConfirmed(sample)
+                        movingVigilance.arm(now)
+                        val sx = stateMachine.lastSilenceOrientX
+                        val sy = stateMachine.lastSilenceOrientY
+                        val sz = stateMachine.lastSilenceOrientZ
+                        val mag = kotlin.math.sqrt(sx * sx + sy * sy + sz * sz)
+                        calibLogger?.log(CalibrationLogger.Event.VIGILANCE_ARM) {
+                            "sil_mag=%.2f,trust_min=${stateMachine.thresholds.onSideTrustMinAccel},speed=%.1f,window_ms=${stateMachine.thresholds.movingVigilanceWindowMs}".formatUs(mag, currentSpeedKmh)
+                        }
+                    }
+                    // else: a 2nd mid-motion confirm during the open window — already being verified.
+                    // Deliberately log NOTHING (a bare CRASH_OK here would orphan in calibration analysis)
+                    // and do not re-arm (keeps the original 4 s clock).
+                } else {
+                    // Trustworthy at-rest confirm fires now. If a vigilance window was open, close it with a
+                    // named row so the VIGIL_ARM isn't left dangling, then fire.
+                    if (movingVigilance.isArmed) {
+                        calibLogger?.log(CalibrationLogger.Event.VIGILANCE_CLEAR) {
+                            "reason=preempted_by_at_rest_confirm,speed=%.1f".formatUs(currentSpeedKmh)
+                        }
+                        movingVigilance.reset()
+                    }
+                    // alreadyLogged=true: logCrashConfirmed already emitted the canonical
+                    // CRASH_CONFIRMED row with full context. confirmCrash must NOT emit a
+                    // duplicate (gate-level) CRASH_CONFIRMED for the IMPACT_CONFIRMED path
+                    // or downstream consumers that count crashes will double-count.
+                    logCrashConfirmed(sample)
+                    confirmCrash(CrashSource.IMPACT_CONFIRMED, alreadyLogged = true)
+                }
             }
             is CrashStateMachine.Decision.ReturnToMonitoring -> {
                 handleReturnToMonitoring(priorState, sample, now)
@@ -653,6 +724,30 @@ class CrashDetectionManager(
                     stateMachine.state == CrashStateMachine.State.SILENCE_CHECK) {
                     handleSilenceBroken(sample, now)
                 }
+            }
+        }
+
+        // ─── Moving vigilance window (post-confirm, mid-motion) ───────────────
+        if (movingVigilance.isArmed) {
+            // Require GENUINE speed freshness: the speed value must have changed recently,
+            // not merely been emitted recently. The vigilance window is 4 s; GPS_STALE_MS is
+            // 10 s — a GPS frozen at a non-zero value after a crash reads "not stale" for the
+            // full 10 s but its value stops changing. Using speedLastChangeMs (change-gated,
+            // NOT stamped on every emission) with a recency shorter than the vigilance window
+            // catches a frozen-value GPS before the 4 s CLEAR path can fire (FN bug Fix C).
+            val speedGenuinelyFresh = isSpeedFreshForVigilance(
+                now, gpsCurrentlyStale, speedLastChangeMs, stateMachine.thresholds.movingVigilanceSpeedFreshMs)
+            when (movingVigilance.onTick(now, currentSpeedKmh, speedGenuinelyFresh)) {
+                MovingVigilance.Outcome.CLEAR -> calibLogger?.log(CalibrationLogger.Event.VIGILANCE_CLEAR) {
+                    "speed=%.1f,window_ms=${stateMachine.thresholds.movingVigilanceWindowMs}".formatUs(currentSpeedKmh)
+                }
+                MovingVigilance.Outcome.ESCALATE -> {
+                    calibLogger?.log(CalibrationLogger.Event.VIGILANCE_ESCALATE) {
+                        "speed=%.1f,gps_stale=$gpsCurrentlyStale".formatUs(currentSpeedKmh)
+                    }
+                    confirmCrash(CrashSource.IMPACT_CONFIRMED, alreadyLogged = true)
+                }
+                MovingVigilance.Outcome.PENDING -> { /* keep watching */ }
             }
         }
 
@@ -959,6 +1054,7 @@ class CrashDetectionManager(
             silenceDurationUprightMs = SILENCE_DURATION_UPRIGHT_MS,
             uprightAngleThresholdDegrees = UPRIGHT_ANGLE_THRESHOLD_DEGREES,
             gapVetoUprightAngleDeg = GAP_VETO_UPRIGHT_ANGLE_DEG,
+            promptVetoUprightAngleDeg = PROMPT_VETO_UPRIGHT_ANGLE_DEG,
             nonGapUprightVetoMaxGyroRadS = NON_GAP_UPRIGHT_VETO_MAX_GYRO_RAD_S,
             onSideRelaxationAngleDeg = ON_SIDE_RELAXATION_ANGLE_DEG,
             onSideRelaxationMaxSpeedKmh = ON_SIDE_RELAXATION_MAX_SPEED_KMH,
@@ -1003,6 +1099,20 @@ class CrashDetectionManager(
                     currentSpeedKmh, sensorReader.lastGyroMag)
             }
         }
+    }
+
+    /**
+     * True when an IMPACT confirm's settled silence orientation was sampled IN MOTION
+     * (‖sil‖ well below gravity) → the on-side angle is untrustworthy → divert to vigilance.
+     * NaN (too few orientation samples) → cannot assess → NOT diverted (confirm as today).
+     */
+    private fun confirmReadInMotion(): Boolean {
+        val x = stateMachine.lastSilenceOrientX
+        val y = stateMachine.lastSilenceOrientY
+        val z = stateMachine.lastSilenceOrientZ
+        if (x.isNaN() || y.isNaN() || z.isNaN()) return false
+        val mag = kotlin.math.sqrt(x * x + y * y + z * z)
+        return mag < stateMachine.thresholds.onSideTrustMinAccel
     }
 
     /**

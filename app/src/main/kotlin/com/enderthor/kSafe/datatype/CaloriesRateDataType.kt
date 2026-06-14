@@ -4,6 +4,7 @@ import android.content.Context
 import android.widget.RemoteViews
 import com.enderthor.kSafe.R
 import com.enderthor.kSafe.extension.KSafeExtension
+import com.enderthor.kSafe.extension.util.CalorieSource
 import io.hammerhead.karooext.extension.DataTypeImpl
 import io.hammerhead.karooext.internal.Emitter
 import io.hammerhead.karooext.internal.ViewEmitter
@@ -24,16 +25,13 @@ import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import timber.log.Timber
 
-
 /**
- * Cumulative carbs burned this session in grams — i.e. the integrated zone-aware target.
- * Companion to [CarbBurnRateDataType] (instantaneous rate) and [CarbStatusDataType]
- * (deficit between burned and logged). Push-based — driven by `statusFlow` emissions
- * from [com.enderthor.kSafe.extension.managers.CarbsTracker].
- *
- * No rider-pickable colour: always inflates `field_view_auto.xml` (Karoo-theme passthrough).
+ * Instantaneous HR-based energy expenditure (kcal/h). Push-based — driven by
+ * `statusFlow` from [com.enderthor.kSafe.extension.managers.CarbsTracker]. Passive
+ * info field (Karoo-theme passthrough). Shows `Pair HR/Pwr` when no model can fire,
+ * `---` when the tracker is not integrating, else the live kcal/h.
  */
-class CarbsBurnedDataType(
+class CaloriesRateDataType(
     datatype: String,
     private val context: Context,
 ) : DataTypeImpl("ksafe", datatype) {
@@ -41,18 +39,18 @@ class CarbsBurnedDataType(
     // Standard-Karoo readout: units on top, big value below, sized from the host's
     // ViewConfig.textSize. See [buildReadoutView] for the shared rendering contract.
     private fun buildView(viewConfig: ViewConfig, main: String, hint: String): RemoteViews =
-        context.buildReadoutView(viewConfig, main, hint, R.drawable.ic_readout_carbs)
+        context.buildReadoutView(viewConfig, main, hint, R.drawable.ic_readout_calories)
 
-    // Published as a numeric stream (cumulative g burned) — see [startFuelingStream].
-    // Accrued value: keeps streaming through sensor dropouts (the total freezes,
-    // which is honest), Searching only while nothing has ever been measured.
+    // Published as a numeric stream so other extensions can consume the kcal/h value —
+    // see [startFuelingStream] for the shared semantics. 0 while the movement gate
+    // blocks integration: the rider is not accruing, and the frozen last rate would lie.
     override fun startStream(emitter: Emitter<StreamState>) =
         startFuelingStream(emitter, KSafeExtension.carbsTrackerFlow, { it.statusFlow }) { s ->
             when {
-                !s.masterEnabled || !s.carbsEnabled -> StreamState.NotAvailable
-                s.burnConfidence == com.enderthor.kSafe.extension.util.CarbBurnEstimator.Confidence.NONE &&
-                    s.cumBurnedG == 0 -> StreamState.Searching
-                else -> streamingSingle(s.cumBurnedG)
+                !s.masterEnabled || !s.caloriesEnabled -> StreamState.NotAvailable
+                s.calorieSource == CalorieSource.NONE -> StreamState.Searching
+                !s.isIntegrating -> streamingSingle(0)
+                else -> streamingSingle(s.kcalPerHour)
             }
         }
 
@@ -68,7 +66,6 @@ class CarbsBurnedDataType(
 
         val viewJob = scope.launch {
             try {
-                // Push-based — see CarbStatusDataType for the rationale.
                 val tracker = KSafeExtension.carbsTrackerFlow.filterNotNull().first()
                 // Merged with nightModeFlow — see CarbBurnRateDataType (theme passthrough
                 // text colour is baked at build time; a day/night flip needs a re-render).
@@ -78,30 +75,24 @@ class CarbsBurnedDataType(
                         // Profile-editor gallery: neutral waiting frame, never live/OFF/stale data.
                         config.preview -> "---"
                         status == null -> "---"
-                        // Master OFF / carb feature off — see CarbBurnRateDataType.
+                        // Master OFF → explicit disabled state — see CarbBurnRateDataType.
                         !status.masterEnabled -> context.getString(R.string.fueling_field_off)
-                        !status.carbsEnabled -> "---"
-                        // Show "Pair HR/Pwr" ONLY when the rider has never had a
-                        // sensor paired (cumBurnedG still 0). A mid-ride disconnect
-                        // after some burn keeps showing the running total — flipping
-                        // a 120 reading to the label would look like data loss. The
-                        // total freezes while the sensor is gone (CarbsTracker drops
-                        // to confidence=NONE → rate 0 → no further integration).
-                        status.burnConfidence == com.enderthor.kSafe.extension.util.CarbBurnEstimator.Confidence.NONE &&
-                            status.cumBurnedG == 0 ->
+                        // Feature disabled → neutral, never a stale/live number.
+                        !status.caloriesEnabled -> "---"
+                        status.calorieSource == CalorieSource.NONE && status.kcalTotal == 0 ->
                             context.getString(R.string.carb_no_sensor_label)
-                        // Nothing accumulated yet → "---" (unified no-data state).
-                        status.cumBurnedG == 0 -> "---"
-                        // Plain number — the gram unit lives in the "g" hint below,
-                        // consistent with the rate fields ("g/h"). No inline suffix.
-                        else -> "${status.cumBurnedG}"
+                        status.calorieSource == CalorieSource.NONE -> "---"
+                        !status.isIntegrating -> "---"
+                        else -> "${status.kcalPerHour}"
                     }
-                    emitter.updateView(buildView(config, main, "g"))
+                    // "CAL/H" — uppercase to match the total field's "CALORIES" label
+                    // (Karoo-native naming), kept short to fit the hint line.
+                    emitter.updateView(buildView(config, main, "CAL/H"))
                 }
             } catch (_: CancellationException) {
                 // normal
             } catch (e: Exception) {
-                Timber.e(e, "CarbsBurnedDataType error: ${e.message}")
+                Timber.e(e, "CaloriesRateDataType error: ${e.message}")
             }
         }
 

@@ -20,6 +20,12 @@ Event catalogue understood by this script:
     GYRO_BLK, GPS_STALE, TERRAIN_CLUST, SIL_IN, SIL_TMO, SIL_BRK, SPD_REJECT,
     POST_TMO_BOOST, CRASH_SUPPRESSED (gate suppressed inside cooldown)
 
+  Moving vigilance (post-veto on-side confirm diverted to speed watch):
+    VIGIL_ARM (on-side confirm diverted into moving vigilance because orientation
+    was read mid-motion), VIGIL_CLEAR (moving vigilance silent-cleared — sustained
+    riding speed confirmed false positive, no alert), VIGIL_ESCALATE (moving
+    vigilance escalated to emergency countdown — speed collapsed or GPS went stale)
+
   Speed-drop watchdog (added 2026-05):
     SPDRP_EVAL (SPEEDDROP_EVAL), SPDRP_WSTART (SPEEDDROP_WIN_START),
     SPDRP_WCLOSE (SPEEDDROP_WIN_CLOSE)
