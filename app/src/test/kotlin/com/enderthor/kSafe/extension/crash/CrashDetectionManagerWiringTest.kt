@@ -422,59 +422,106 @@ class CrashDetectionManagerWiringTest {
         )
     }
 
-    // ── MV-3 / MV-4: frozen-GPS and sustained-fresh-speed paths (DONE_WITH_CONCERNS) ──
+    // ── Freshness gate unit tests (isSpeedFreshForVigilance) ────────────────────
 
     /**
-     * Tests MV-3 (frozen GPS escalates via freshness gate) and MV-4 (sustained fresh
-     * speed clears without firing) exercise the per-sensor-tick vigilance window inside
-     * [CrashDetectionManager.onSensorSample]:
+     * A GPS frozen at a non-zero value stops changing its reported speed value while
+     * still reading "not stale" for up to GPS_STALE_MS (10 s). The freshness gate catches
+     * this: when [speedLastChangeMs] has not advanced for >= [freshMs], the gate returns
+     * false and vigilance escalates rather than clearing.
      *
-     *   ```
-     *   if (movingVigilance.isArmed) {
-     *       val speedGenuinelyFresh = !gpsCurrentlyStale &&
-     *           (now - speedLastChangeMs) < thresholds.movingVigilanceSpeedFreshMs
-     *       when (movingVigilance.onTick(now, currentSpeedKmh, speedGenuinelyFresh)) { … }
-     *   }
-     *   ```
-     *
-     * This code path is **not reachable** from any public surface of [CrashDetectionManager]
-     * in the JVM test harness:
-     *
-     *  - `onSensorSample` is a `private` method; no public counterpart exists.
-     *  - It is wired as the `onSample` lambda in [SensorReader]'s constructor and is
-     *    called only from `SensorReader.onSensorEvent` on the real sensor thread.
-     *  - [android.hardware.SensorEvent] cannot be constructed on the JVM
-     *    (the constructor is package-private and the Android stub throws `"Stub!"`),
-     *    so even if we captured the [SensorEventListener] from the mocked
-     *    [SensorManager.registerListener] call, we could not produce a real event.
-     *  - `sensorReader.start()` is intentionally never called in this test class (the
-     *    SensorManager is mocked but the listener is never actually registered).
-     *
-     * The [MovingVigilance] class itself is tested independently in [MovingVigilanceTest],
-     * which confirms [Outcome.ESCALATE] on stale/low-speed and [Outcome.CLEAR] on
-     * sustained fresh speed. The facade wiring (how `speedGenuinelyFresh` is computed from
-     * `speedLastChangeMs` vs `movingVigilanceSpeedFreshMs`) is observable only via the
-     * sensor-tick path.
-     *
-     * **Action needed for full coverage**: either
-     *  (a) widen `onSensorSample` to `internal` (mirrors the existing `stateMachine` and
-     *      `lastCrashTime` widening that the pause/cooldown tests rely on), or
-     *  (b) extract the vigilance-tick block into a package-visible `@VisibleForTesting fun
-     *      tickVigilance(nowMs, speedKmh, speedLastChangeMs)` so the integration path can
-     *      be driven directly from the test without a real SensorEvent.
-     *
-     * This test is intentionally left as a documented placeholder so the gap is visible
-     * in the test report rather than silently absent from the suite.
+     * These tests drive [CrashDetectionManager.isSpeedFreshForVigilance] directly — now
+     * that the inline expression has been extracted into a companion function, no sensor
+     * event injection is required.
+     */
+
+    /**
+     * Frozen GPS value: speedLastChangeMs did NOT advance, elapsed >= freshMs.
+     * gpsStale=false (within GPS_STALE_MS window) but value stopped changing → false
+     * (escalate, not clear).
      */
     @Test
-    fun `MV-3 and MV-4 frozen-GPS and fresh-speed vigilance paths need sensor-tick injection`() {
-        // Documented non-test: the paths that drive MovingVigilance.onTick() live inside
-        // the private onSensorSample() callback and are not reachable from any public API.
-        // See the KDoc above for the full blockage description and the recommended fix.
-        //
-        // This test passes trivially to keep the suite GREEN while the gap is visible
-        // in the method name. Replace it with a real sensor-injection test once either
-        // fix (a) or (b) above is implemented.
-        assertTrue("placeholder — see KDoc", true)
+    fun `isSpeedFreshForVigilance returns false when speed value frozen beyond freshMs`() {
+        val freshMs = 4_000L
+        val nowMs = 100_000L
+        val speedLastChangeMs = nowMs - freshMs   // exactly at boundary → elapsed == freshMs, strict < → false
+        val result = CrashDetectionManager.isSpeedFreshForVigilance(
+            nowMs = nowMs,
+            gpsStale = false,
+            speedLastChangeMs = speedLastChangeMs,
+            freshMs = freshMs,
+        )
+        assertEquals(
+            "A frozen speed value (elapsed == freshMs) must return false — " +
+                "the gate is strict < so equality does NOT count as fresh.",
+            false, result,
+        )
+    }
+
+    /**
+     * Genuinely fresh speed: speedLastChangeMs advanced recently (elapsed < freshMs),
+     * gpsStale=false → true (clear is allowed).
+     */
+    @Test
+    fun `isSpeedFreshForVigilance returns true when speed recently changed and GPS not stale`() {
+        val freshMs = 4_000L
+        val nowMs = 100_000L
+        val speedLastChangeMs = nowMs - (freshMs - 1)   // elapsed = freshMs-1, strictly inside window
+        val result = CrashDetectionManager.isSpeedFreshForVigilance(
+            nowMs = nowMs,
+            gpsStale = false,
+            speedLastChangeMs = speedLastChangeMs,
+            freshMs = freshMs,
+        )
+        assertEquals(
+            "A recently-changed speed (elapsed < freshMs, GPS not stale) must return true — " +
+                "the vigilance window should be clearable.",
+            true, result,
+        )
+    }
+
+    /**
+     * GPS stale: even when speedLastChangeMs is very recent, gpsStale=true must force
+     * the gate to false so a GPS that went stale mid-ride never clears vigilance.
+     */
+    @Test
+    fun `isSpeedFreshForVigilance returns false when GPS is stale regardless of recency`() {
+        val freshMs = 4_000L
+        val nowMs = 100_000L
+        val speedLastChangeMs = nowMs - 1L   // 1 ms ago — maximally recent
+        val result = CrashDetectionManager.isSpeedFreshForVigilance(
+            nowMs = nowMs,
+            gpsStale = true,
+            speedLastChangeMs = speedLastChangeMs,
+            freshMs = freshMs,
+        )
+        assertEquals(
+            "gpsStale=true must return false regardless of how recent speedLastChangeMs is — " +
+                "a stale GPS cannot be trusted to confirm motion.",
+            false, result,
+        )
+    }
+
+    /**
+     * Boundary: elapsed == freshMs is NOT fresh (strict < check). This pins the
+     * off-by-one so a future change to >= does not silently pass.
+     */
+    @Test
+    fun `isSpeedFreshForVigilance boundary at exactly freshMs returns false`() {
+        val freshMs = 3_500L
+        val nowMs = 200_000L
+        // elapsed = nowMs - speedLastChangeMs = freshMs exactly
+        val speedLastChangeMs = nowMs - freshMs
+        val result = CrashDetectionManager.isSpeedFreshForVigilance(
+            nowMs = nowMs,
+            gpsStale = false,
+            speedLastChangeMs = speedLastChangeMs,
+            freshMs = freshMs,
+        )
+        assertEquals(
+            "Elapsed exactly equal to freshMs must return false — the gate is strict <, " +
+                "so at-boundary is not considered fresh.",
+            false, result,
+        )
     }
 }

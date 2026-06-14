@@ -82,7 +82,17 @@ class CrashDetectionManager(
         CrashSensitivity.CUSTOM to 20_000L   // reasonable default for custom
     )
 
-    private companion object {
+    companion object {
+        /**
+         * Vigilance speed-freshness gate. True only when speed is BOTH not GPS-stale AND its value
+         * changed within [freshMs] — a GPS frozen at a non-zero value reads "not stale" for up to
+         * GPS_STALE_MS but its value stops changing; this catches that before the vigilance window clears.
+         */
+        @JvmStatic
+        internal fun isSpeedFreshForVigilance(
+            nowMs: Long, gpsStale: Boolean, speedLastChangeMs: Long, freshMs: Long,
+        ): Boolean = !gpsStale && (nowMs - speedLastChangeMs) < freshMs
+
         const val GRAVITY = 9.81
         // "No crash yet / cooldown inactive" sentinel for [lastCrashTime]. The cooldown
         // gate is monotonic — `(clock.monotonicMs() - lastCrashTime) > crashCooldownMs`
@@ -709,8 +719,8 @@ class CrashDetectionManager(
             // full 10 s but its value stops changing. Using speedLastChangeMs (change-gated,
             // NOT stamped on every emission) with a recency shorter than the vigilance window
             // catches a frozen-value GPS before the 4 s CLEAR path can fire (FN bug Fix C).
-            val speedGenuinelyFresh = !gpsCurrentlyStale &&
-                (now - speedLastChangeMs) < stateMachine.thresholds.movingVigilanceSpeedFreshMs
+            val speedGenuinelyFresh = isSpeedFreshForVigilance(
+                now, gpsCurrentlyStale, speedLastChangeMs, stateMachine.thresholds.movingVigilanceSpeedFreshMs)
             when (movingVigilance.onTick(now, currentSpeedKmh, speedGenuinelyFresh)) {
                 MovingVigilance.Outcome.CLEAR -> calibLogger?.log(CalibrationLogger.Event.VIGILANCE_CLEAR) {
                     "speed=%.1f,window_ms=${stateMachine.thresholds.movingVigilanceWindowMs}".formatUs(currentSpeedKmh)
