@@ -481,6 +481,15 @@ class CrashDetectionManager(
             Timber.d("CrashDetectionManager: autopause — in-flight detection preserved")
         } else {
             stateMachine.onPause()
+            if (movingVigilance.isArmed) {
+                // Escalate-on-abandon: a suspect on-side confirm was mid-verification when a pause
+                // arrived. Manual vs auto pause is not reliably distinguishable and a downed rider
+                // cannot be assumed conscious — never silently drop an armed confirm (no FN).
+                calibLogger?.log(CalibrationLogger.Event.VIGILANCE_ESCALATE) {
+                    "speed=%.1f,reason=manual_pause".formatUs(currentSpeedKmh)
+                }
+                confirmCrash(CrashSource.IMPACT_CONFIRMED, alreadyLogged = true)
+            }
             movingVigilance.reset()
             Timber.d("CrashDetectionManager: manual pause — state machine reset")
         }
