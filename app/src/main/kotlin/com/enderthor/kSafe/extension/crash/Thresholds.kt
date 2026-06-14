@@ -80,9 +80,11 @@ data class Thresholds(
      * "they'll move" assumption (session `effa0e`). That case is now vetoed —
      * see [nonGapUprightVetoMaxGyroRadS]. This does NOT weaken real-crash
      * coverage: an incapacitated rider cannot keep a laterally-unstable bike
-     * balanced within the 25° [gapVetoUprightAngleDeg] cone — it topples
-     * on-side (≥ cone → confirms) or tumbles (high gyro → confirms). Only the
-     * balanced-conscious upright stand (low gyro, ≈0° tilt) is suppressed.
+     * balanced within the veto cones — 15° [promptVetoUprightAngleDeg] for the
+     * prompt-stop regime (R6-G) and 25° [gapVetoUprightAngleDeg] for the gap
+     * regime (R6-F) — so it topples on-side (≥ cone → confirms) or tumbles (high
+     * gyro → confirms). Only the balanced-conscious upright stand (low gyro, ≈0°
+     * tilt) is suppressed.
      */
     val silenceDurationUprightMs: Long = 20_000L,
     /**

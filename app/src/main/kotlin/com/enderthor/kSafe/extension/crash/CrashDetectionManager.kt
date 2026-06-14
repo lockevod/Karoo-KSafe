@@ -325,6 +325,10 @@ class CrashDetectionManager(
         synchronized(recentTmoTimestamps) { recentTmoTimestamps.clear() }
         resetWindowAccumulators()
         rebuildThresholds(boostActive = false)
+        // movingVigilance is intentionally NOT reset here. An armed verification window must
+        // survive a brief autopause: a mid-motion confirm diverted to vigilance means the rider
+        // may be down — losing the window on autopause could cause an FN. The per-sample tick
+        // in onSensorSample continues to drive escalation if the rider actually stopped.
         // If the state machine is mid-IMPACT or mid-SILENCE_CHECK at resume time
         // (auto-resume during an in-flight crash detection — the symmetric case
         // to I3's autopause preservation), do NOT reset it. The accelerometer
