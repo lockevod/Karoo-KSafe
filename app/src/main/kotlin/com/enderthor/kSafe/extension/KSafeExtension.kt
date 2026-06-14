@@ -12,6 +12,7 @@ import com.enderthor.kSafe.extension.util.formatUs
 import com.enderthor.kSafe.data.KSafeConfig
 import com.enderthor.kSafe.data.ProviderType
 import com.enderthor.kSafe.data.RideWellnessRecord
+import com.enderthor.kSafe.data.WEBHOOK_SLOT_COUNT
 import com.enderthor.kSafe.data.webhookSlot
 import android.content.res.Configuration
 import com.enderthor.kSafe.datatype.CustomMessageDataType
@@ -2413,6 +2414,7 @@ class KSafeExtension : KarooExtension("ksafe", BuildConfig.VERSION_NAME), Corout
      * Returns a human-readable result string.
      */
     suspend fun testWebhook(slot: Int): String {
+        if (slot !in 1..WEBHOOK_SLOT_COUNT) return "Invalid webhook slot $slot"
         val config = activeConfig
         val tSlot = config.webhookSlot(slot)
         if (!tSlot.enabled) return "Webhook $slot is disabled — enable it first."

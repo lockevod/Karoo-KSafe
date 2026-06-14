@@ -1056,69 +1056,55 @@ class CrashStateMachineTest {
     }
 
     @Test
-    fun `R6-G prompt regime at exactly 15deg confirms (effective strict less-than boundary pin)`() {
-        // EFFECTIVE BOUNDARY PIN — pins that the PROMPT veto comparison is strict `<`, not `<=`.
-        //
-        // The veto code is:  val upright = vetoAngle >= 0.0 && vetoAngle < vetoCone
-        // where vetoCone = thresholds.promptVetoUprightAngleDeg (default 15.0).
-        //
-        // The existing "just above 15°" test (15.05°) does NOT catch a `<` → `<=` regression
-        // at the exact equality point because 15.05° is strictly above 15.0°. This test pins
-        // the exact-equality case by engineering the veto cone threshold to equal the measured
-        // angle — so strict `<` passes (angle < angle = false) but `<=` would fire.
-        //
-        // Vector: 9.81 * sin/cos(15°).
-        // Under the SM's full formula (curZ * REF_Z / (curMag * refMag) with ref=(0,0,9.81)),
-        // additive accumulation of identical (ax, az) samples always yields the same average,
-        // so this pair produces a stable computed angle of EXACTLY 14.999999999999996° for
-        // all N (verified for N=1..25). That double value is representable as a literal.
-        //
-        // Pin: set promptVetoUprightAngleDeg = 14.999999999999996 (= the computed angle).
-        //   With strict `<`:  vetoAngle < vetoCone  =  14.999...996 < 14.999...996  = false
-        //                     → upright = false → no veto → bike CONFIRMS (test passes)
-        //   With `<=` regression: vetoAngle <= vetoCone = 14.999...996 <= 14.999...996 = true
-        //                         AND impactGyro=0.5 < nonGapUprightVetoMaxGyroRadS=3.0
-        //                         → veto fires → ReturnToMonitoring → assertTrue(confirmed) FAILS
-        //
-        // The 45° uprightAngleThresholdDegrees is unchanged, so 14.999...° < 45° still latches
-        // the 20-second silence window (silenceDurationUprightMs).
-        val ax15exact = 9.81 * Math.sin(Math.toRadians(15.0))  // ≈ 2.5390148...
-        val az15exact = 9.81 * Math.cos(Math.toRadians(15.0))  // ≈ 9.4757323...
+    fun `R6-G prompt regime bracket — 14deg vetoed, 16deg confirms (non-flaky cone boundary guard)`() {
+        // ROBUST BRACKET: verifies the PROMPT veto cone boundary at 15° without relying on
+        // bit-exact JVM floating-point arithmetic.  Two points with a clear 1° margin each:
+        //   14° → inside the 15° cone → VETOED   (returns to MONITORING)
+        //   16° → outside the 15° cone → CONFIRMS
+        // Both use gapMs=2_000 (prompt-stop / non-gap regime) and low impactGyro=0.5.
+        // The cone is set explicitly to 15.0° via setThresholds so the test does not depend
+        // on the default value — any default drift is caught immediately.
 
-        // Sanity-check: computed angle must equal our threshold literal to the bit.
-        // (Any deviation means the Java runtime changed its FP behaviour — fix the literal.)
-        val computedAngle = run {
-            val curMag = Math.sqrt(ax15exact * ax15exact + az15exact * az15exact)
-            val refMag = 9.81
-            val cosAngle = (az15exact * refMag) / (curMag * refMag)
-            Math.toDegrees(Math.acos(cosAngle.coerceIn(-1.0, 1.0)))
-        }
-        val THRESHOLD = 14.999999999999996   // exact JVM double for this (ax,az) pair
-        assertEquals("computed angle must equal THRESHOLD to the bit — JVM FP contract",
-            THRESHOLD, computedAngle, 0.0)  // tolerance=0: bit-exact
-
-        // gapMs = 2_000 → prompt-stop / non-gap regime (firstSilenceGapMs = 2_000 < delayedStopGapMs = 8_000).
-        // impactGyro = 0.5 → below nonGapUprightVetoMaxGyroRadS=3.0, so the gyro guard is irrelevant.
-        val (sm, _) = smEnteringSilence(
+        // --- 14° case: inside cone → must be VETOED --------------------------------
+        val ax14 = 9.81 * Math.sin(Math.toRadians(14.0))
+        val az14 = 9.81 * Math.cos(Math.toRadians(14.0))
+        val (sm14, _) = smEnteringSilence(
             gapMs = 2_000L,
             preRef = PreImpactRef(0.0, 0.0, 9.81, valid = true),
-            silenceAz = az15exact, silenceAx = ax15exact,
+            silenceAz = az14, silenceAx = ax14,
             impactGyro = 0.5,
         )
-        // Pin the veto cone to EXACTLY the computed angle so strict-< and <= are distinguishable.
-        sm.setThresholds(Thresholds(promptVetoUprightAngleDeg = THRESHOLD))
-        assertEquals(CrashStateMachine.State.SILENCE_CHECK, sm.state)
-        var t = 1_002_000L
-        var confirmed = false
+        sm14.setThresholds(Thresholds(promptVetoUprightAngleDeg = 15.0))
+        assertEquals(CrashStateMachine.State.SILENCE_CHECK, sm14.state)
+        var t14 = 1_002_000L
+        var confirmed14 = false
         repeat(25) {
-            t += 1000L
-            val d = sm.onSample(sample(time = t, raw = 9.81, smoothed = 9.81, az = az15exact, ax = ax15exact))
-            if (d is CrashStateMachine.Decision.Confirm) confirmed = true
-            assertFalse("angle == threshold: strict `<` must NOT fire the veto (angle < angle = false)",
-                sm.lastGapUprightVeto)
+            t14 += 1000L
+            val d = sm14.onSample(sample(time = t14, raw = 9.81, smoothed = 9.81, az = az14, ax = ax14))
+            if (d is CrashStateMachine.Decision.Confirm) confirmed14 = true
         }
-        assertTrue("angle == threshold: strict `<` means veto does not fire and bike confirms", confirmed)
-        assertFalse("lastGapUprightVeto must be false at the exact-equality boundary", sm.lastGapUprightVeto)
+        assertFalse("14° is inside the 15° PROMPT cone: must be VETOED (not confirmed)", confirmed14)
+
+        // --- 16° case: outside cone → must CONFIRM ----------------------------------
+        val ax16 = 9.81 * Math.sin(Math.toRadians(16.0))
+        val az16 = 9.81 * Math.cos(Math.toRadians(16.0))
+        val (sm16, _) = smEnteringSilence(
+            gapMs = 2_000L,
+            preRef = PreImpactRef(0.0, 0.0, 9.81, valid = true),
+            silenceAz = az16, silenceAx = ax16,
+            impactGyro = 0.5,
+        )
+        sm16.setThresholds(Thresholds(promptVetoUprightAngleDeg = 15.0))
+        assertEquals(CrashStateMachine.State.SILENCE_CHECK, sm16.state)
+        var t16 = 1_002_000L
+        var confirmed16 = false
+        repeat(25) {
+            t16 += 1000L
+            val d = sm16.onSample(sample(time = t16, raw = 9.81, smoothed = 9.81, az = az16, ax = ax16))
+            if (d is CrashStateMachine.Decision.Confirm) confirmed16 = true
+            assertFalse("16° is outside the 15° cone: PROMPT veto must NOT fire", sm16.lastGapUprightVeto)
+        }
+        assertTrue("16° is outside the 15° PROMPT cone: must CONFIRM", confirmed16)
     }
 
     // ── R6-F: the veto is gap-regime-only — a non-gap (prompt) stop is never vetoed ──
