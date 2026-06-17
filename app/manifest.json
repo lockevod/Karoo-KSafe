@@ -7,5 +7,5 @@
   "latestVersionCode": 202606142,
   "developer": "github.com/lockevod",
   "description": "Karoo safety extension on two layers: REACTIVE (crash detection, SOS, check-in, HR-based medical episode and wellness detection) and PREVENTIVE (carb and hydration tracking that adapts to your effort using the Karoo's HR and power zones, reminding you to fuel before bonking or dehydration impairs your judgment on the bike). Sends emergency alerts via WhatsApp (CallMeBot), Telegram, Pushover or ntfy.",
-  "releaseNotes": "Log fuel straight from the alert: carb & hydration reminders now have a one-tap Log button (optional Undo). Improved crash detection: fewer false alarms on jumps/bumps while riding, plus an upright stop-and-stand veto. Two more webhook action fields (now 4 total). Added calories burned (HR) exported to FIT. Optional notice when a newer KSafe version is published. Plus reliability fixes across emergency delivery and configuration handling."
+  "releaseNotes": "Log fuel straight from the alert: carb & hydration reminders now have a one-tap Log button (optional Undo). Improved crash detection: fewer false alarms on jumps/bumps while riding, plus an upright stop-and-stand veto. Two more webhook action fields (now 4 total). Added calories burned (HR) exported to FIT."
 }
