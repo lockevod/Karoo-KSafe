@@ -10,7 +10,7 @@ enum class FuelingPresentation { OVERLAY_LOG, OVERLAY_LOG_UNDO, INRIDE_ALERT, SU
 enum class FuelingChannel { CARB, HYDRATION }
 
 /**
- * One fueling alert, built by a tracker. Carries the [channel] + suggested [slot] (rather than
+ * One fueling alert, built by a tracker. Carries the [channel] + suggested [item] (rather than
  * pre-bound log/undo closures) so the presenter (KSafeExtension) — which OWNS the on-ride
  * CarbLog/HydrationLog field-state machine — performs the log/undo itself and keeps that field
  * in sync with the tracker's accounting, exactly as a field tap does.
@@ -22,9 +22,11 @@ data class FuelingAlertRequest(
      *  on the INRIDE_ALERT branch — the overlay and SUPPRESS paths never pay for it. */
     val inRideAlert: () -> InRideAlert,
     val channel: FuelingChannel,
-    /** Slot (1-based) the alert suggests logging, or null when no slot is usable (all sizes 0)
-     *  — then no LOG button is shown and the alert is presented as a plain InRideAlert. */
-    val slot: Int?,
+    /** The item the alert suggests logging (slot index + label + size), or null when no slot is
+     *  usable (all sizes 0) — then no LOG button is shown and the alert is a plain InRideAlert.
+     *  Carrying label+size (not a bare slot index) lets the presenter format the prompt without
+     *  re-deriving them from config, and freezes the shown amount at fire time. */
+    val item: FuelSlot?,
 )
 
 /** Pure decision: suppress entirely (active emergency), overlay (and which mode), or the

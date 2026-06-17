@@ -706,7 +706,7 @@ class HydrationTracker(
         )
         // null when no slot is usable (all drink sizes 0) — the presenter then shows no LOG
         // button (a plain InRideAlert) instead of a button that would log a phantom 0 ml entry.
-        val slot = com.enderthor.kSafe.extension.util.pickFuelItem(if (source == "deficit") deficitMl else null, slots)?.slot
+        val item = com.enderthor.kSafe.extension.util.pickFuelItem(if (source == "deficit") deficitMl else null, slots)
         onFuelingAlert(com.enderthor.kSafe.extension.util.FuelingAlertRequest(
             title = title, detail = detail,
             // Factory — only built if the presenter takes the InRideAlert branch.
@@ -722,7 +722,7 @@ class HydrationTracker(
                     textColor = ALERT_TX_COLOR,
                 )
             },
-            channel = com.enderthor.kSafe.extension.util.FuelingChannel.HYDRATION, slot = slot,
+            channel = com.enderthor.kSafe.extension.util.FuelingChannel.HYDRATION, item = item,
         ))
         calibLogger?.log(CalibrationLogger.Event.FUELING_HYDRATION_FIRED) {
             "source=$source,deficit_ml=$deficitMl,since_log_min=$elapsedMin,cum_target=${cumTargetMl.toInt()},cum_logged=$cumLoggedMl,beep=${config.hydBeepPattern}"

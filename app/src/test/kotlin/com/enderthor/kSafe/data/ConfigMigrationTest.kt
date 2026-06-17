@@ -205,8 +205,13 @@ class ConfigMigrationTest {
         assertEquals(60, migrated.combined2Carbs)
     }
 
+    // The new-field migration ladder (each step is a pure additive version stamp; the version in
+    // each test name matches the step that actually introduces that field — see CONFIG_VERSION doc):
+    //   v21→v22 fuelingAlertButtonMode · v22→v23 updateCheckEnabled · v23→v24 hrCaloriesEnabled ·
+    //   v24→v25 fitStandardCaloriesSource · v25→v26 webhook slots 3 & 4.
+
     @Test
-    fun `v21 migrates to 22 with fueling alert button mode defaulting to OFF`() {
+    fun `v21 migrates to current version with fueling alert button mode defaulting to OFF`() {
         val old = KSafeConfig(configVersion = 21)
         val migrated = old.migrateToLatest()
         assertEquals(CONFIG_VERSION, migrated.configVersion)
@@ -214,22 +219,29 @@ class ConfigMigrationTest {
     }
 
     @Test
-    fun `v22 stamps to current version and defaults hrCaloriesEnabled off`() {
+    fun `v22 migrates to current version with updateCheckEnabled defaulting on`() {
         val migrated = KSafeConfig(configVersion = 22).migrateToLatest()
+        assertEquals(CONFIG_VERSION, migrated.configVersion)
+        assertEquals(true, migrated.updateCheckEnabled)
+    }
+
+    @Test
+    fun `v23 migrates to current version with hrCaloriesEnabled defaulting off`() {
+        val migrated = KSafeConfig(configVersion = 23).migrateToLatest()
         assertEquals(CONFIG_VERSION, migrated.configVersion)
         assertEquals(false, migrated.hrCaloriesEnabled)
     }
 
     @Test
     fun `explicit hrCaloriesEnabled true survives migration`() {
-        val migrated = KSafeConfig(configVersion = 22, hrCaloriesEnabled = true).migrateToLatest()
+        val migrated = KSafeConfig(configVersion = 23, hrCaloriesEnabled = true).migrateToLatest()
         assertEquals(CONFIG_VERSION, migrated.configVersion)
         assertEquals(true, migrated.hrCaloriesEnabled)
     }
 
     @Test
-    fun `v23 stamps to v24 and defaults fitStandardCaloriesSource to NONE`() {
-        val migrated = KSafeConfig(configVersion = 23).migrateToLatest()
+    fun `v24 migrates to current version with fitStandardCaloriesSource defaulting to NONE`() {
+        val migrated = KSafeConfig(configVersion = 24).migrateToLatest()
         assertEquals(CONFIG_VERSION, migrated.configVersion)
         assertEquals(FitCaloriesSource.NONE, migrated.fitStandardCaloriesSource)
     }
@@ -237,7 +249,7 @@ class ConfigMigrationTest {
     @Test
     fun `explicit fitStandardCaloriesSource survives migration`() {
         val migrated = KSafeConfig(
-            configVersion = 23,
+            configVersion = 24,
             fitStandardCaloriesSource = FitCaloriesSource.KAROO,
         ).migrateToLatest()
         assertEquals(CONFIG_VERSION, migrated.configVersion)
@@ -245,9 +257,9 @@ class ConfigMigrationTest {
     }
 
     @Test
-    fun `v24 migrates to current and webhook 3 and 4 arrive at defaults`() {
+    fun `v25 migrates to current version and webhook 3 and 4 arrive at defaults`() {
         val old = KSafeConfig(
-            configVersion = 24,
+            configVersion = 25,
             webhook1Enabled = true,
             webhook1Label = "My WH1",
             webhook1Url = "https://example.com/1",

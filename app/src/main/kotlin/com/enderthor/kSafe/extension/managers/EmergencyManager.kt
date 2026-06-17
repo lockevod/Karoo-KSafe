@@ -116,6 +116,15 @@ class EmergencyManager(
         val uiState: StateFlow<EmergencyState> get() = _uiState
         private val _uiState = MutableStateFlow(EmergencyState())
 
+        /** Canonical "an emergency owns the screen" predicate: a crash/SOS/check-in is in
+         *  progress (status != IDLE). Single source of truth for the trackers, the fueling
+         *  presenter and any other consumer that must stand down while the SOS flow runs — so a
+         *  future non-IDLE-but-non-blocking status only needs changing here, not at every
+         *  scattered `!= IDLE` literal. Reads the published [uiState] (the canonical in-memory
+         *  state for callbacks), not DataStore. */
+        val isActive: Boolean
+            get() = _uiState.value.status != com.enderthor.kSafe.data.EmergencyStatus.IDLE
+
         /** Duration of the mini-confirm shown when resuming after a missed deadline. */
         private const val MINI_CONFIRM_SECONDS = 10
 
