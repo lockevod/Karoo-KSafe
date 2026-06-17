@@ -7,7 +7,7 @@ in [messaging-providers.md](messaging-providers.md); this document is about **on
 feedback.
 
 > Source of truth: `EmergencyManager`, `KSafeExtension`, `SosOverlayManager`,
-> `CarbsTracker` / `HydrationTracker`, and the `datatype/` fields. If you change a dispatch
+> `FuelingOverlayManager`, `CarbsTracker` / `HydrationTracker`, and the `datatype/` fields. If you change a dispatch
 > site, update the matching row here.
 
 ## Channels (legend)
@@ -82,9 +82,13 @@ the right channel — there is no off-ride fallback by design.
 
 | Moment | Channels |
 |---|---|
-| Carb alert (deficit or time) | **InRideAlert** ("Eat something") + configurable beep (`carbBeepPattern`, SDK). |
-| Hydration alert (deficit or time) | **InRideAlert** ("Drink something") + configurable beep (`hydBeepPattern`, SDK). |
-| Logging a carb/drink/combo | The corresponding **data field** flashes its logged state, then reverts. |
+| Carb alert (deficit or time) | **InRideAlert** ("Eat something") + configurable beep (`carbBeepPattern`, SDK) — **or**, when the in-alert log button is enabled (`fuelingAlertButtonMode` = `LOG` / `LOG_UNDO`) and the "Draw over other apps" permission is granted, a tappable **system overlay** with a one-tap **✓ Log** button (`FuelingOverlayManager`). |
+| Hydration alert (deficit or time) | **InRideAlert** ("Drink something") + configurable beep (`hydBeepPattern`, SDK) — or the same in-alert **✓ Log** overlay when enabled. |
+| Logging a carb/drink/combo (field tap **or** overlay Log) | The corresponding **data field** flashes its logged state, then reverts. In `LOG_UNDO` mode the overlay then shows a brief **↶ Undo** (~4 s). |
+
+> The fueling overlay never competes with the SOS screen: it is **suppressed** while an emergency is
+> active, and **torn down** the instant an emergency starts **or** the ride ends (`RideState.Idle`).
+> Detail: [fueling-algorithm.md → In-alert logging button](fueling-algorithm.md#in-alert-logging-button-overlay).
 
 ## 5. Ride start
 
