@@ -2566,22 +2566,24 @@ class KSafeExtension : KarooExtension("ksafe", BuildConfig.VERSION_NAME), Corout
      * and hydration, via the thin wrappers below) so the field state never diverges from the
      * tracker's accounting regardless of which surface logged.
      *
-     * Gated on [rideActive] (Recording/Paused) as well as range + tracker-initialised: the overlay
-     * is torn down on ride end, but that teardown ([FuelingOverlayManager.remove]) is posted async,
-     * so a tap in the sub-frame window before it runs would otherwise still log into the just-closed
-     * session — rideActive() (set synchronously on the Idle event) makes that tap a no-op. NOT gated
-     * on activeConfig.isActive (the persisted master switch, still true after a normal ride end) nor
-     * on the per-tracker `enabled` flag (gating UNDO on it would strand the logged grams in the
-     * cumulative total if the rider toggled the tracker off mid-window — the trap
-     * handleCombinedLogTap documents). The field-tap handlers only run on the live ride screen, so
-     * this gate is a no-op for them and a safety net for the overlay button.
+     * Gated on [rideActive] (Recording/Paused) AND — for the LOG direction only — on [logAllowed]
+     * (the live master switch `activeConfig.isActive` AND this tracker's enabled flag). The
+     * `logAllowed` gate makes the overlay LOG button match handleCarb/HydrationLogTap: if the rider
+     * disables the tracker (or the master switch) while the overlay is still up, ✓ Log no-ops
+     * instead of recording into a now-off tracker. UNDO is deliberately NOT gated on those toggles
+     * ([undoFuelSlot] takes no logAllowed) — gating it would strand a just-logged entry's grams in
+     * the cumulative total (the trap handleCombinedLogTap documents). rideActive() additionally
+     * covers the post-ride window: the overlay is torn down on RideState.Idle, but that teardown is
+     * posted async, so a tap in the sub-frame gap before it runs is a no-op (rideActive() is set
+     * synchronously on the Idle event). The field-tap handlers pre-check the same toggles, so this
+     * gate is a no-op for them and a safety net for the overlay button.
      */
     private fun logFuelSlot(
-        slot: Int, range: IntRange, ready: Boolean,
+        slot: Int, range: IntRange, ready: Boolean, logAllowed: Boolean,
         jobs: Array<kotlinx.coroutines.Job?>, logEntry: (Int) -> Int,
         setLogged: (Int, Int) -> Unit, setIdle: (Int) -> Unit,
     ) {
-        if (slot !in range || !ready || !rideActive()) return
+        if (slot !in range || !ready || !logAllowed || !rideActive()) return
         // Cancel any pending revert from a previous action on this slot. Without this a
         // log → undo → log sequence within ~6 s could leave a stale LOGGED→IDLE timer that
         // fires later and clobbers the latest LOGGED flash before the rider sees it.
@@ -2619,7 +2621,8 @@ class KSafeExtension : KarooExtension("ksafe", BuildConfig.VERSION_NAME), Corout
     // Carb wrappers — bind the shared log/undo machinery to the carb tracker, its 3 slots, the
     // CarbLog field-state machine and the carb revert-job array.
     private fun logCarbSlot(slot: Int) = logFuelSlot(
-        slot, 1..3, this::carbsTracker.isInitialized, carbTapRevertJobs,
+        slot, 1..3, this::carbsTracker.isInitialized,
+        activeConfig.isActive && activeConfig.carbsTrackerEnabled, carbTapRevertJobs,
         { carbsTracker.logEntry(it) },
         { s, g -> com.enderthor.kSafe.datatype.CarbLogState.update(s, com.enderthor.kSafe.datatype.CarbLogState.LOGGED(g)) },
         { s -> com.enderthor.kSafe.datatype.CarbLogState.update(s, com.enderthor.kSafe.datatype.CarbLogState.IDLE) },
@@ -2646,7 +2649,8 @@ class KSafeExtension : KarooExtension("ksafe", BuildConfig.VERSION_NAME), Corout
     // Hydration wrappers — 2 slots, the HydrationLog field-state machine and the hydration
     // revert-job array. Counterparts of [logCarbSlot] / [undoCarbSlot].
     private fun logHydrationSlot(slot: Int) = logFuelSlot(
-        slot, 1..2, this::hydrationTracker.isInitialized, hydTapRevertJobs,
+        slot, 1..2, this::hydrationTracker.isInitialized,
+        activeConfig.isActive && activeConfig.hydrationTrackerEnabled, hydTapRevertJobs,
         { hydrationTracker.logEntry(it) },
         { s, g -> com.enderthor.kSafe.datatype.HydrationLogState.update(s, com.enderthor.kSafe.datatype.HydrationLogState.LOGGED(g)) },
         { s -> com.enderthor.kSafe.datatype.HydrationLogState.update(s, com.enderthor.kSafe.datatype.HydrationLogState.IDLE) },

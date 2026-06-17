@@ -53,14 +53,10 @@ class FuelingOverlayManager(private val context: Context) {
                     Timber.w("FuelingOverlay: SYSTEM_ALERT_WINDOW not granted — skipped")
                     return@post
                 }
-                // Remove any prior view before adding a fresh one so overlays never stack.
-                // Guard on isAttachedToWindow: calling removeView on a view already detached
-                // (e.g. a previous removeView that threw, or a host teardown) itself throws —
-                // skipping it avoids the exception. Always clear the ref regardless.
-                view?.let { old ->
-                    if (old.isAttachedToWindow) runCatching { windowManager.removeView(old) }
-                    view = null
-                }
+                // Remove any prior view before adding a fresh one so overlays never stack —
+                // route through removeInternal() so every teardown shares one code path
+                // (same isAttachedToWindow guard + ref-clear).
+                removeInternal()
                 val v = LayoutInflater.from(context).inflate(R.layout.overlay_fueling_prompt, null, false)
                 val params = WindowManager.LayoutParams(
                     WindowManager.LayoutParams.MATCH_PARENT,
