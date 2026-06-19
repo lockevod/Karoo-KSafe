@@ -141,7 +141,7 @@
     <string name="fueling_alert_button_mode_label">Registrar nutrición desde la alerta</string>
     <string name="fueling_alert_button_off">Off</string>
     <string name="fueling_alert_button_log">Un toque</string>
-    <string name="fueling_alert_button_log_undo">Registrar + deshacer</string>
+    <string name="fueling_alert_button_log_undo">+ Deshacer</string>
     <string name="fueling_overlay_log">✓ Registrar</string>
     <string name="fueling_overlay_undo">↶ Deshacer</string>
     <!-- Detalle del overlay con botón LOG: nombra el ítem exacto que registrará el toque
