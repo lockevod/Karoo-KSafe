@@ -12,7 +12,7 @@ import timber.log.Timber
 
 const val DEFAULT_COUNTDOWN_SECONDS = 30
 const val DEFAULT_CHECKIN_INTERVAL_MINUTES = 120
-const val DEFAULT_SPEED_DROP_MINUTES = 5
+const val DEFAULT_SPEED_DROP_MINUTES = 10
 const val CHECKIN_WARNING_THRESHOLD_MINUTES = 10
 const val KAROO_LIVE_BASE_URL = "https://dashboard.hammerhead.io/live/"
 
@@ -125,7 +125,7 @@ const val KAROO_LIVE_BASE_URL = "https://dashboard.hammerhead.io/live/"
  *  v25 → v26: webhook slots 3 & 4 added (tap-only, no BonusAction). 26 additive fields with
  *             sensible defaults (disabled, "Action 3/4"). Pure version stamp.
  */
-const val CONFIG_VERSION = 26
+const val CONFIG_VERSION = 27
 
 /**
  * Canonical minSpeedForCrashKmh value per preset.
@@ -1454,6 +1454,20 @@ fun KSafeConfig.migrateToLatest(): KSafeConfig {
         // so existing installs behave identically until the rider configures the new slots.
         c = c.copy(configVersion = 26)
         Timber.i("KSafeConfig migrated v%d→v26 (webhook slots 3 & 4)", originalVersion)
+    }
+
+    if (c.configVersion < 27) {
+        // v26 → v27: speed-drop watchdog floor raised 1 → 5 min (default 5 → 10).
+        // The opt-in "rider may be down" backstop confirms a crash after the bike
+        // has been below 3.5 km/h for N minutes; field logs showed sub-5-min
+        // settings firing on ordinary long stops (café/photo/mechanical with the
+        // bike laid down). Bump any previously-saved value below the new floor so
+        // existing opt-in installs stop false-firing without a manual re-save.
+        if (c.speedDropMinutes < 5) {
+            c = c.copy(speedDropMinutes = 5)
+        }
+        c = c.copy(configVersion = 27)
+        Timber.i("KSafeConfig migrated v%d→v27 (speed-drop floor 5 min)", originalVersion)
     }
 
     return c

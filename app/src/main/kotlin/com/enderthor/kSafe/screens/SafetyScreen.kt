@@ -112,12 +112,15 @@ fun SafetyScreen(vm: MainViewModel) {
                 crashMonitorOutsideRideAnySpeed = crashOutsideRideAny,
                 speedDropDetectionEnabled = speedDropEnabled,
                 // J4 — clamp speedDropMinutes on commit. The watchdog gates a
-                // 5-min zero-speed window plus a 60-s accel-stillness gate, so
-                // 1 minute is the practical minimum that produces a useful alert;
-                // 60 minutes is well above any realistic rider preference. A
-                // literal "0" would have the timer fire immediately on every
-                // sub-3.5 km/h speed sample.
-                speedDropMinutes        = (speedDropMinutes.toIntOrNull() ?: 5).coerceIn(1, 60),
+                // zero-speed window plus a 60-s accel-stillness gate. Floor is 5
+                // minutes: this is an opt-in "rider may be down" backstop, and a
+                // normal long stop (café, photo, mechanical) routinely reaches
+                // 2-4 min with the bike laid down motionless, so anything below
+                // 5 min just produces false positives on ordinary stops. 60
+                // minutes is well above any realistic rider preference. A literal
+                // "0" would have the timer fire immediately on every sub-3.5 km/h
+                // speed sample.
+                speedDropMinutes        = (speedDropMinutes.toIntOrNull() ?: 10).coerceIn(5, 60),
                 checkinEnabled          = checkinEnabled,
                 // J4 — clamp checkinIntervalMinutes on commit. A literal "0"
                 // would persist 0 and cause delay(0) in startCheckinJobs →

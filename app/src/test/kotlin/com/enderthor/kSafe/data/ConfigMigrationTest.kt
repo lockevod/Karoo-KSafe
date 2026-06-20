@@ -275,4 +275,27 @@ class ConfigMigrationTest {
         assertEquals(false, migrated.webhook4Enabled)
         assertEquals("Action 4", migrated.webhook4Label)
     }
+
+    @Test
+    fun `v26 speedDropMinutes below new floor is bumped to 5`() {
+        val migrated = KSafeConfig(
+            configVersion = 26,
+            speedDropDetectionEnabled = true,
+            speedDropMinutes = 1,
+        ).migrateToLatest()
+        assertEquals(CONFIG_VERSION, migrated.configVersion)
+        assertEquals(5, migrated.speedDropMinutes)
+        assertEquals(true, migrated.speedDropDetectionEnabled)
+    }
+
+    @Test
+    fun `v26 speedDropMinutes at or above floor is preserved`() {
+        val migrated = KSafeConfig(
+            configVersion = 26,
+            speedDropDetectionEnabled = true,
+            speedDropMinutes = 12,
+        ).migrateToLatest()
+        assertEquals(CONFIG_VERSION, migrated.configVersion)
+        assertEquals(12, migrated.speedDropMinutes)
+    }
 }
