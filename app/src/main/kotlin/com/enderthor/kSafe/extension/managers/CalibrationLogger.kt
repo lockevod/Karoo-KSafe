@@ -85,12 +85,15 @@ class CalibrationLogger(
          */
         CRASH_CANCELLED("CRASH_NO"),
         /**
-         * GAP-regime confirm vetoed by the upright orientation cross-check (R6-F).
-         * Fires INSTEAD of CRASH_OK when a delayed stop (`gap_ms > delayedStopGapMs`)
-         * reached the 20 s confirm gate but the silence-window orientation showed the
-         * bike within the tight upright cone (`0 ≤ angle < gapVetoUprightAngleDeg`, 15°
-         * by default — NOT the 45° uprightAngleThresholdDegrees) → benign stop, not a
-         * crash. The `veto_thr` payload field records the cone in force. Counting these
+         * Upright-orientation veto of a confirm (R6-F gap regime / R6-G prompt regime).
+         * Fires INSTEAD of CRASH_OK when a stop reached the confirm gate but the
+         * silence-window orientation showed the bike within the upright cone
+         * (`0 ≤ angle < veto cone` — NOT the 45° uprightAngleThresholdDegrees) → benign
+         * stop, not a crash. The cone depends on the regime: `gapVetoUprightAngleDeg`
+         * (25°) for GAP (delayed stop, `gap_ms > delayedStopGapMs` — rider rode on, so
+         * lenient) vs the stricter `promptVetoUprightAngleDeg` (15°) for PROMPT (prompt
+         * stop, more crash-like). The `veto_thr` payload field records the cone actually
+         * in force for that row's regime. Counting these
          * vs CRASH_OK measures how often the veto
          * avoids an FP; a `MANUAL_SOS` shortly after a GAP_VETO would flag the rare FN
          * (real crash that left the bike upright). The gap value is recoverable from the
