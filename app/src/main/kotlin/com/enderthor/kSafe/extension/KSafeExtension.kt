@@ -149,9 +149,25 @@ private const val UPDATE_MANIFEST_URL: String =
  *  Karoo accumulated 10 windows of data while offline would block the periodic
  *  coroutine through 10 sequential HTTP round-trips (~5 minutes total). The cap
  *  drains the backlog gradually across several cycles instead of starving the
- *  coroutine on one cycle. The end-of-ride / manual-send / disable-logging paths
- *  pass `Int.MAX_VALUE` because they want to drain fully before returning. */
+ *  coroutine on one cycle. The manual-send / disable-logging paths pass
+ *  `Int.MAX_VALUE` because they are user-initiated and want to drain fully
+ *  before returning; the automatic end-of-ride path is bounded separately by
+ *  [CALIBRATION_RIDE_END_MAX_CHUNKS]. */
 private const val CALIBRATION_PERIODIC_MAX_CHUNKS_PER_CYCLE: Int = 6
+
+/** Ceiling on the chunks the AUTOMATIC end-of-ride drain sends back-to-back.
+ *  In the healthy case the 20-min periodic loop already carried the bulk, so
+ *  the tail left at ride end is ≤ one window and drains well within this cap.
+ *  The cap matters only in the pathological case the skill warns about: if
+ *  coverage was lost for the whole ride (every periodic window failed) the
+ *  on-disk backlog can be many MB, and firing a full multi-chunk upload the
+ *  instant `RideState` goes Idle contends with the Karoo saving + uploading
+ *  the activity over the same Companion link — the rider perceives "finishing
+ *  the ride got slower". Bounding it to the same per-window budget the periodic
+ *  loop uses keeps the end-of-ride send a small tail; whatever doesn't fit stays
+ *  on disk and is recovered on the next ride (rotated to the previous-session
+ *  file) via the manual Settings "Send" path. */
+private const val CALIBRATION_RIDE_END_MAX_CHUNKS: Int = CALIBRATION_PERIODIC_MAX_CHUNKS_PER_CYCLE
 
 /** Deadband on `cumBurnedG` for FIT session-message writes. The session message
  *  is "last write wins" — only the value at FIT close becomes the activity
@@ -1417,11 +1433,18 @@ class KSafeExtension : KarooExtension("ksafe", BuildConfig.VERSION_NAME), Corout
                 // (only if the user hasn't already turned off logging — that path sends its own copy)
                 if (wasActive && wasLogging && calibLogger.isEnabled) {
                     // Drain in size-capped chunks on IO so each body fits the SDK
-                    // Binder transaction. Ride just ended — drain everything (no
-                    // per-cycle cap). A partial drain leaves the tail on disk for
-                    // the next manual send.
+                    // Binder transaction. Bounded to CALIBRATION_RIDE_END_MAX_CHUNKS
+                    // so a backlog from a no-coverage ride doesn't fire a full
+                    // multi-chunk upload the instant we hit Idle and contend with
+                    // the Karoo saving the activity (see the constant's KDoc). In
+                    // the healthy case the periodic loop already drained the bulk,
+                    // so this cap is never reached. A partial drain leaves the tail
+                    // on disk for the next ride's previous-session recovery.
                     launch(Dispatchers.IO) {
-                        sendCalibrationLogInChunks(captionPrefix = "Ride end")
+                        sendCalibrationLogInChunks(
+                            captionPrefix = "Ride end",
+                            maxChunks = CALIBRATION_RIDE_END_MAX_CHUNKS,
+                        )
                     }
                 }
             }
