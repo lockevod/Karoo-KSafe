@@ -40,6 +40,23 @@ class SpeedDropMonitor(
     @Volatile private var triggerSpeedKmh: Double = 0.0
     /** Whether the current window started under gpsStale=true (forced-zero path). */
     @Volatile private var triggerGpsStale: Boolean = false
+    /**
+     * Blocks a zero-speed window from opening until the bike genuinely moves
+     * (a reading >= [SPEED_DROP_WINDOW_KMH], never a `gpsStale` forced-zero). Set true in
+     * two situations:
+     *  - in [start]: the watchdog must not fire before the rider has moved at all,
+     *    otherwise standing at the trailhead for [stoppedMinutesRequired] minutes after
+     *    pressing record (faffing, waiting for a GPS lock) confirms a "crash" at the
+     *    start line — observed in field log f16a4e_878bca_c000.
+     *  - after a confirm: a single long motionless stop (café / mechanical) re-armed the
+     *    instant after confirming and re-fired every [stoppedMinutesRequired] minutes,
+     *    which the rider experiences as the same false alert repeating
+     *    (field log e702da_5d5d85_c001).
+     * The settings field promises "minutes stopped before alert" — one alert per stop,
+     * and only after the rider has actually ridden — so each window needs a fresh
+     * movement to arm. Cleared on the first moving reading in [onSpeedUpdate].
+     */
+    @Volatile private var disarmedUntilMovement: Boolean = true
     private var job: Job? = null
 
     /** True iff the monitor is currently inside a zero-speed window. Used only by tests. */
@@ -55,6 +72,9 @@ class SpeedDropMonitor(
         maxSpeedInWindowKmh = 0.0
         triggerSpeedKmh = 0.0
         triggerGpsStale = false
+        // Arm only after the bike actually moves: standing at the start line for N
+        // minutes after pressing record must not confirm a crash (see field doc).
+        disarmedUntilMovement = true
         job?.cancel()
         job = scope.launch {
             while (true) {
@@ -112,18 +132,26 @@ class SpeedDropMonitor(
             // negative (silently delaying confirm) or jump forward (firing a
             // premature confirm). Read with the same domain in [evaluate].
             if (startedAtMs == 0L) {
-                startedAtMs = clock.monotonicMs()
-                triggerSpeedKmh = speedKmh
-                triggerGpsStale = gpsStale
-                maxSpeedInWindowKmh = speedKmh
-                calibLogger?.log(CalibrationLogger.Event.SPEEDDROP_WIN_START) {
-                    "trigger_speed_kmh=%.2f,gps_stale=$gpsStale,threshold_kmh=%.1f"
-                        .formatUs(speedKmh, SPEED_DROP_WINDOW_KMH)
+                // Stay disarmed until the bike actually moves again — a confirm that
+                // was already raised for this stop must not re-fire while the rider
+                // sits there motionless (see [disarmedUntilMovement]).
+                if (!disarmedUntilMovement) {
+                    startedAtMs = clock.monotonicMs()
+                    triggerSpeedKmh = speedKmh
+                    triggerGpsStale = gpsStale
+                    maxSpeedInWindowKmh = speedKmh
+                    calibLogger?.log(CalibrationLogger.Event.SPEEDDROP_WIN_START) {
+                        "trigger_speed_kmh=%.2f,gps_stale=$gpsStale,threshold_kmh=%.1f"
+                            .formatUs(speedKmh, SPEED_DROP_WINDOW_KMH)
+                    }
                 }
             } else if (speedKmh > maxSpeedInWindowKmh) {
                 maxSpeedInWindowKmh = speedKmh
             }
         } else {
+            // Genuine movement (>= threshold, never a gpsStale forced-zero) re-arms the
+            // watchdog after a previous confirm.
+            disarmedUntilMovement = false
             if (startedAtMs > 0L) {
                 val elapsedMs = clock.monotonicMs() - startedAtMs
                 closeWindow("speed_recovered", elapsedMs, recoveredAtKmh = speedKmh)
@@ -183,6 +211,11 @@ class SpeedDropMonitor(
             "elapsed_ms=$elapsedMs,still_stable_ms=$stillStableFor,confirm=true"
         }
         closeWindow("confirmed", elapsedMs)
+        // Disarm before clearing startedAtMs so this stop cannot re-fire (the rider may
+        // cancel and stay put for many more minutes — that is one stop, one alert). Set
+        // first so that even if onSpeedUpdate were ever moved off this thread, a
+        // zero-speed sample racing in here can't open a fresh window the flag misses.
+        disarmedUntilMovement = true
         startedAtMs = 0L
         onConfirm()
     }
