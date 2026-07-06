@@ -42,6 +42,7 @@ import androidx.compose.material3.Button
 import androidx.compose.material3.OutlinedButton
 import com.enderthor.kSafe.R
 import com.enderthor.kSafe.activity.MainViewModel
+import com.enderthor.kSafe.extension.KSafeExtension
 import com.enderthor.kSafe.data.FUELING_ALERT_COLORS
 import com.enderthor.kSafe.data.FuelingAlertButtonMode
 import com.enderthor.kSafe.data.RiderSex
@@ -298,6 +299,15 @@ fun FuelingScreen(vm: MainViewModel) {
                     FieldEmojiPicker(label = "Icon", selected = carb3Icon, emojis = com.enderthor.kSafe.data.FUEL_EMOJI_CARB, modifier = Modifier.weight(1f),
                         onSelected = { v -> carb3Icon = v; vm.updateConfig { cfg -> cfg.copy(carb3Icon = v) } })
                 }
+                TestActionButton(
+                    label = stringResource(R.string.fueling_preview_label),
+                    runningLabel = stringResource(R.string.fueling_preview_label),
+                    onAction = {
+                        KSafeExtension.getInstance()?.simulateFuelingAlert(
+                            com.enderthor.kSafe.extension.util.FuelingChannel.CARB
+                        ) ?: "Extension not connected — wait a moment and try again."
+                    },
+                )
                 }  // end if (carbsEnabled)
             }
         }
@@ -534,6 +544,15 @@ fun FuelingScreen(vm: MainViewModel) {
                     FieldEmojiPicker(label = "Icon", selected = drink2Icon, emojis = com.enderthor.kSafe.data.FUEL_EMOJI_DRINK, modifier = Modifier.weight(1f),
                         onSelected = { v -> drink2Icon = v; vm.updateConfig { cfg -> cfg.copy(drink2Icon = v) } })
                 }
+                TestActionButton(
+                    label = stringResource(R.string.fueling_preview_label),
+                    runningLabel = stringResource(R.string.fueling_preview_label),
+                    onAction = {
+                        KSafeExtension.getInstance()?.simulateFuelingAlert(
+                            com.enderthor.kSafe.extension.util.FuelingChannel.HYDRATION
+                        ) ?: "Extension not connected — wait a moment and try again."
+                    },
+                )
                 }  // end if (hydEnabled)
             }
         }
