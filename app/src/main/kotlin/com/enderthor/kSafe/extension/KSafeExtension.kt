@@ -2534,9 +2534,11 @@ class KSafeExtension : KarooExtension("ksafe", BuildConfig.VERSION_NAME), Corout
         // The exact item the button will log/undo, e.g. "Gel 25 g" (#3). Empty on non-overlay
         // paths (item null) — cheap string ops, only the InRideAlert is built lazily (#7).
         val item = fuelingItemLabel(req)
-        // LOG-prompt detail: leads with the item so it survives the 2-line ellipsize, then the
-        // alert rationale. UNDO-prompt detail: confirms what was just logged (#6).
-        val logDetail = getString(R.string.fueling_overlay_log_detail, item, req.detail)
+        // LOG-prompt detail leads with the item NAME only (no amount) — the size already shows on
+        // the button, so repeating it here just eats the 2-line width and truncates the rationale.
+        // The UNDO confirmation ("Logged …") keeps the full amount, since its button shows no size.
+        val itemName = req.item?.label ?: ""
+        val logDetail = getString(R.string.fueling_overlay_log_detail, itemName, req.detail)
         val loggedDetail = getString(R.string.fueling_overlay_logged, item)
         // Two-line LOG button: big channel verb (EAT / DRINK) on top, the amount (e.g. "25 g")
         // below. Amount is blank when no usable slot — the button then shows just the verb.
@@ -2560,6 +2562,16 @@ class KSafeExtension : KarooExtension("ksafe", BuildConfig.VERSION_NAME), Corout
         // In preview (from Settings, no ride) drop the !rideActive() half of the guard so the
         // overlay shows — but KEEP emergencyActive() so a real SOS still wins.
         val abortGuard: () -> Boolean = if (preview) ({ emergencyActive() }) else ::fuelingOverlayShouldAbort
+        // Overlay background = the channel's configured alert colour (same sentinel the InRideAlert
+        // uses), resolved to a colour int, so the overlay matches the InRideAlert and each channel
+        // shows its own colour instead of the static teal drawable.
+        val fuelBgColor = androidx.core.content.ContextCompat.getColor(
+            applicationContext,
+            com.enderthor.kSafe.data.fuelingAlertColorRes(when (req.channel) {
+                com.enderthor.kSafe.extension.util.FuelingChannel.CARB -> activeConfig.carbAlertBgColor
+                com.enderthor.kSafe.extension.util.FuelingChannel.HYDRATION -> activeConfig.hydrationAlertBgColor
+            })
+        )
         when (com.enderthor.kSafe.extension.util.decideFuelingPresentation(
                 mode, canOverlay, !emergencyActive(), hasUsableSlot = req.item != null)) {
             com.enderthor.kSafe.extension.util.FuelingPresentation.SUPPRESS ->
@@ -2568,19 +2580,19 @@ class KSafeExtension : KarooExtension("ksafe", BuildConfig.VERSION_NAME), Corout
                 karooSystem.dispatch(req.inRideAlert())
             com.enderthor.kSafe.extension.util.FuelingPresentation.OVERLAY_LOG ->
                 fuelingOverlay.showPrompt(req.title, logDetail, buttonIcon, buttonVerb, buttonAmount, 15_000L,
-                    abortIf = abortGuard) {
+                    abortIf = abortGuard, bgColor = fuelBgColor) {
                     if (!preview) logFuelingSlot(req.channel, req.item?.slot)
                     fuelingOverlay.remove()
                 }
             com.enderthor.kSafe.extension.util.FuelingPresentation.OVERLAY_LOG_UNDO ->
                 fuelingOverlay.showPrompt(req.title, logDetail, buttonIcon, buttonVerb, buttonAmount, 15_000L,
-                    abortIf = abortGuard) {
+                    abortIf = abortGuard, bgColor = fuelBgColor) {
                     if (!preview) logFuelingSlot(req.channel, req.item?.slot)
                     fuelingOverlay.remove()
                     // Confirm what was logged (not the original "you should fuel" message) so the
                     // UNDO button reads as "undo THIS", not as a fresh fueling nag. No amount line.
                     fuelingOverlay.showPrompt(req.title, loggedDetail, buttonIcon, getString(R.string.fueling_overlay_undo_action), "", 4_000L,
-                        abortIf = abortGuard) {
+                        abortIf = abortGuard, bgColor = fuelBgColor) {
                         if (!preview) undoFuelingSlot(req.channel, req.item?.slot)
                         fuelingOverlay.remove()
                     }
@@ -2599,7 +2611,10 @@ class KSafeExtension : KarooExtension("ksafe", BuildConfig.VERSION_NAME), Corout
             com.enderthor.kSafe.extension.util.FuelingChannel.CARB -> "g"
             com.enderthor.kSafe.extension.util.FuelingChannel.HYDRATION -> "ml"
         }
-        return "${item.label} ${item.size} $unit"
+        // Non-breaking space between the number and the unit so "30 g" / "500 ml" never wraps
+        // with the unit orphaned on its own line — seen on the narrow UNDO prompt ("Logged Gel 30"
+        // then a lone "g"). Now the amount stays whole: "Logged Gel" / "30 g".
+        return "${item.label} ${item.size} $unit"
     }
 
     /** Route an in-alert overlay LOG to the right tracker AND its on-ride field-state machine

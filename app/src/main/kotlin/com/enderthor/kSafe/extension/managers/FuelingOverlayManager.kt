@@ -43,6 +43,7 @@ class FuelingOverlayManager(private val context: Context) {
         buttonSub: String,
         autoDismissMs: Long,
         abortIf: () -> Boolean = { false },
+        bgColor: Int? = null,
         onButton: () -> Unit,
     ) {
         mainHandler.post {
@@ -61,6 +62,20 @@ class FuelingOverlayManager(private val context: Context) {
                 // (same isAttachedToWindow guard + ref-clear).
                 removeInternal()
                 val v = LayoutInflater.from(context).inflate(R.layout.overlay_fueling_prompt, null, false)
+                // Tint the overlay background with the channel's configured alert colour so the
+                // overlay matches the InRideAlert (and each channel gets its own colour) instead
+                // of the static teal. Mutate() so we don't recolour the shared drawable constant.
+                // Keep the original ~90% (0xE6) alpha: the overlay must stay a TRANSLUCENT "info"
+                // banner and never become the opaque red/amber of the emergency SOS overlay
+                // (bg_sos_overlay uses the same RGB as alert_red). The stroke is retinted to the
+                // opaque channel colour so the static cyan border can't clash with the new fill.
+                if (bgColor != null) {
+                    (v.findViewById<View>(R.id.fuel_overlay_bg)?.background?.mutate()
+                        as? android.graphics.drawable.GradientDrawable)?.apply {
+                        setColor((bgColor and 0x00FFFFFF) or (0xE6 shl 24))
+                        setStroke((2f * context.resources.displayMetrics.density).toInt(), bgColor)
+                    }
+                }
                 val params = WindowManager.LayoutParams(
                     WindowManager.LayoutParams.MATCH_PARENT,
                     WindowManager.LayoutParams.WRAP_CONTENT,

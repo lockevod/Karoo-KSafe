@@ -153,8 +153,8 @@
     <string name="fueling_alert_button_log_undo">+ Undo</string>
     <!-- Big two-line action-button verbs. Universal short terms — kept English on purpose
          (the rider asked for literal EAT / DRINK), so translatable="false". -->
-    <string name="fueling_overlay_eat" translatable="false">EAT</string>
-    <string name="fueling_overlay_drink" translatable="false">DRINK</string>
+    <string name="fueling_overlay_eat" translatable="false">EAT!</string>
+    <string name="fueling_overlay_drink" translatable="false">DRINK!</string>
     <string name="fueling_overlay_undo_action" translatable="false">UNDO</string>
     <!-- Overlay detail when a LOG button is shown: names the exact item the tap will log
          (item first so it is never ellipsized), then the alert rationale. e.g. "Gel 25 g — …" -->
