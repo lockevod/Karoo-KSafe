@@ -888,6 +888,37 @@ class CarbsTracker(
     }
 
     private fun fireAlert(source: String, deficit: Int, elapsedMin: Long) {
+        // Beep stays here so the preview path (buildPreviewRequest → presenter) is silent.
+        config.carbBeepPattern.toPlayBeepPattern()?.let { karooSystem.dispatch(it) }
+        onFuelingAlert(buildAlertRequest(source, deficit, elapsedMin))
+        val burn = currentBurnEstimate()
+        val burnRateGph = burn.gph.coerceAtMost(ABSORPTION_CAP_GPH.toDouble()).toInt()
+        calibLogger?.log(CalibrationLogger.Event.FUELING_CARB_FIRED) {
+            // Locale.US: the calibration CSV uses comma as field separator, so we must NOT
+            // let the default Locale turn "1.15" into "1,15" on es/fr/de devices.
+            // v18: replaced legacy `multiplier=` (vestigial after the integrator switched
+            // to the physiological estimator) with the new load-bearing signals:
+            // `confidence` (which tier ran), `cho_fraction` (Romijn/Jeukendrup table
+            // value at this zone), and `kcal_h` (raw energy expenditure before the
+            // CHO split). Tuning workflows now see exactly what produced the burn rate.
+            String.format(
+                java.util.Locale.US,
+                "source=%s,deficit_g=%d,since_log_min=%d,cum_burned=%d,cum_logged=%d,burn_rate_gph=%d," +
+                    "confidence=%s,kcal_h=%.0f,cho_fraction=%.2f,zone=%s/%d/%d,beep=%s",
+                source, deficit, elapsedMin,
+                cumBurnedG.toInt(), cumLoggedG, burnRateGph,
+                burn.confidence, burn.kcalPerHour, burn.choFraction,
+                lastZoneSnapshot.source, lastZoneSnapshot.index, lastZoneSnapshot.total,
+                config.carbBeepPattern,
+            )
+        }
+        Timber.d(">>> Carb alert fired ($source): deficit=${deficit}g elapsed=${elapsedMin}min")
+    }
+
+    /** Assembles the alert request (title/detail token rendering, slot pick, InRideAlert
+     *  factory). Deliberately does NOT dispatch the beep — that stays in [fireAlert] so the
+     *  preview path stays silent. */
+    private fun buildAlertRequest(source: String, deficit: Int, elapsedMin: Long): com.enderthor.kSafe.extension.util.FuelingAlertRequest {
         // v18 L1: dispatch timestamp inlined here (was a tracker-level `lastAlertMs`
         // field that survived persistence for no reason — only the InRideAlert.id
         // below ever read it, and that read is local to this function).
@@ -915,7 +946,6 @@ class CarbsTracker(
             tokens,
             maxLength = ALERT_TITLE_MAX_CHARS,
         )
-        config.carbBeepPattern.toPlayBeepPattern()?.let { karooSystem.dispatch(it) }
         val slots = listOf(
             com.enderthor.kSafe.extension.util.FuelSlot(1, config.carb1Label, config.carb1Grams),
             com.enderthor.kSafe.extension.util.FuelSlot(2, config.carb2Label, config.carb2Grams),
@@ -924,7 +954,7 @@ class CarbsTracker(
         // null when no slot is usable (all carb sizes 0) — the presenter then shows no LOG
         // button (a plain InRideAlert) instead of a button that would log a phantom 0 g entry.
         val item = com.enderthor.kSafe.extension.util.pickFuelItem(if (source == "deficit") deficit else null, slots)
-        onFuelingAlert(com.enderthor.kSafe.extension.util.FuelingAlertRequest(
+        return com.enderthor.kSafe.extension.util.FuelingAlertRequest(
             title = title, detail = detail,
             // Factory — only built if the presenter takes the InRideAlert branch.
             inRideAlert = {
@@ -943,30 +973,14 @@ class CarbsTracker(
                 )
             },
             channel = com.enderthor.kSafe.extension.util.FuelingChannel.CARB, item = item,
-        ))
-        val burn = currentBurnEstimate()
-        val burnRateGph = burn.gph.coerceAtMost(ABSORPTION_CAP_GPH.toDouble()).toInt()
-        calibLogger?.log(CalibrationLogger.Event.FUELING_CARB_FIRED) {
-            // Locale.US: the calibration CSV uses comma as field separator, so we must NOT
-            // let the default Locale turn "1.15" into "1,15" on es/fr/de devices.
-            // v18: replaced legacy `multiplier=` (vestigial after the integrator switched
-            // to the physiological estimator) with the new load-bearing signals:
-            // `confidence` (which tier ran), `cho_fraction` (Romijn/Jeukendrup table
-            // value at this zone), and `kcal_h` (raw energy expenditure before the
-            // CHO split). Tuning workflows now see exactly what produced the burn rate.
-            String.format(
-                java.util.Locale.US,
-                "source=%s,deficit_g=%d,since_log_min=%d,cum_burned=%d,cum_logged=%d,burn_rate_gph=%d," +
-                    "confidence=%s,kcal_h=%.0f,cho_fraction=%.2f,zone=%s/%d/%d,beep=%s",
-                source, deficit, elapsedMin,
-                cumBurnedG.toInt(), cumLoggedG, burnRateGph,
-                burn.confidence, burn.kcalPerHour, burn.choFraction,
-                lastZoneSnapshot.source, lastZoneSnapshot.index, lastZoneSnapshot.total,
-                config.carbBeepPattern,
-            )
-        }
-        Timber.d(">>> Carb alert fired ($source): deficit=${deficit}g elapsed=${elapsedMin}min")
+        )
     }
+
+    /** Preview request for the settings "Preview alert" button: time-variant, no deficit, using
+     *  the configured time interval as the sample {elapsed} token. No beep, no intake logged
+     *  (the presenter's `preview` flag suppresses the log/undo). */
+    fun buildPreviewRequest(): com.enderthor.kSafe.extension.util.FuelingAlertRequest =
+        buildAlertRequest(source = "time", deficit = 0, elapsedMin = config.carbTimeIntervalMin.toLong())
 
     private fun maybePeriodicLog(now: Long) {
         if (calibLogger == null || !calibLogger.isEnabled) return
