@@ -53,7 +53,18 @@ class WellnessMonitor(
     private val MONITOR_TICK_MS              = 30_000L
     private val DECOUPLING_BASELINE_WAIT_MS  = 10L * 60_000L   // wait 10 min before establishing baseline
     private val DECOUPLING_ROLLING_WINDOW_MS = 5L  * 60_000L   // 5 min rolling avg
-    private val DECOUPLING_MIN_POWER_W       = 50              // skip coasting / descending samples
+    // Floor below which a HR/W sample is dropped from the decoupling ratio: the rider is
+    // soft-pedaling / coasting-pedaling (technical gravel, descents, braking) where HR stays
+    // high for terrain reasons while power is low — those samples inflate HR/W with no
+    // cardiac fatigue and were a false-WARNING source on gravel/MTB (field log
+    // `0e6f39_416c4a`: drift 24 % fired at 134 W / 148 bpm, a power-driven artifact, not heat).
+    // A flat 50 W is rider-independent in the wrong way — it's nothing for a strong rider and
+    // tempo for a light one. Prefer a floor scaled to body mass (~1.5 W/kg ≈ the lower bound
+    // of easy-endurance work, below which decoupling is not physiologically meaningful), and
+    // fall back to the flat 50 W only when the rider's weight is unknown. See
+    // [effectiveDecouplingMinPowerW].
+    private val DECOUPLING_MIN_POWER_W       = 50              // fallback when rider weight is unknown
+    private val DECOUPLING_MIN_POWER_WKG     = 1.5f            // preferred floor: W per kg body mass
     private val DECOUPLING_MIN_SAMPLES       = 8               // need at least 8 samples in the buffer to evaluate
     private val DECOUPLING_COOLDOWN_MS       = 30L * 60_000L   // once decoupling fires, wait 30 min before re-fire
 
@@ -393,11 +404,23 @@ class WellnessMonitor(
 
     // ── Tier 3 — Cardiac decoupling (HR / power drift) ──────────────────────
 
+    /**
+     * Effective minimum power (W) for a HR/W sample to count toward the decoupling ratio.
+     * `1.5 W/kg × rider mass` when the Karoo user profile carries a usable weight, else the
+     * flat [DECOUPLING_MIN_POWER_W] fallback. Coerced to never drop below the flat floor so
+     * a misconfigured tiny weight can't make the gate more permissive than the legacy 50 W.
+     * Reads `lastUserProfile.weight` (Float kg; 0/absent on a profile without weight set).
+     */
+    private fun effectiveDecouplingMinPowerW(): Int =
+        lastUserProfile?.weight?.takeIf { it.isFinite() && it > 0f }
+            ?.let { (it * DECOUPLING_MIN_POWER_WKG).toInt().coerceAtLeast(DECOUPLING_MIN_POWER_W) }
+            ?: DECOUPLING_MIN_POWER_W
+
     private fun evaluateDecouplingTier(now: Long) {
         if (!config.wellnessDecouplingEnabled) return
         val hr = lastHrBpm ?: return
         val w = lastPowerW ?: return                 // no power → silently skip (decoupling impossible)
-        if (w < DECOUPLING_MIN_POWER_W) return       // skip coasting / descents (would dilute the avg)
+        if (w < effectiveDecouplingMinPowerW()) return  // skip soft-pedaling / descents (would dilute the avg)
 
         val ratio = hr.toFloat() / w.toFloat()
 

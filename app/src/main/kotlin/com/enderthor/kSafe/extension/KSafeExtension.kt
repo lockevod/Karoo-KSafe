@@ -464,16 +464,16 @@ class KSafeExtension : KarooExtension("ksafe", BuildConfig.VERSION_NAME), Corout
             com.enderthor.kSafe.datatype.CarbLogDataType("carb-log-2", applicationContext, karooSystem, slot = 2),
             com.enderthor.kSafe.datatype.CarbLogDataType("carb-log-3", applicationContext, karooSystem, slot = 3),
             com.enderthor.kSafe.datatype.CarbStatusDataType("carb-status", applicationContext, karooSystem),
-            com.enderthor.kSafe.datatype.CarbBurnRateDataType("carb-burn-rate", applicationContext),
-            com.enderthor.kSafe.datatype.CarbAvgBurnRateDataType("carb-avg-burn-rate", applicationContext),
-            com.enderthor.kSafe.datatype.CarbsBurnedDataType("carbs-burned", applicationContext),
+            com.enderthor.kSafe.datatype.CarbBurnRateDataType("carb-burn-rate"),
+            com.enderthor.kSafe.datatype.CarbAvgBurnRateDataType("carb-avg-burn-rate"),
+            com.enderthor.kSafe.datatype.CarbsBurnedDataType("carbs-burned"),
             com.enderthor.kSafe.datatype.HydrationLogDataType("hyd-log-1", applicationContext, karooSystem, slot = 1),
             com.enderthor.kSafe.datatype.HydrationLogDataType("hyd-log-2", applicationContext, karooSystem, slot = 2),
             com.enderthor.kSafe.datatype.CombinedFuelLogDataType("combined-log-1", applicationContext, karooSystem, slot = 1),
             com.enderthor.kSafe.datatype.CombinedFuelLogDataType("combined-log-2", applicationContext, karooSystem, slot = 2),
             com.enderthor.kSafe.datatype.HydrationStatusDataType("hyd-status", applicationContext, karooSystem),
-            com.enderthor.kSafe.datatype.CaloriesTotalDataType("calories-total", applicationContext),
-            com.enderthor.kSafe.datatype.CaloriesRateDataType("calories-rate", applicationContext),
+            com.enderthor.kSafe.datatype.CaloriesTotalDataType("calories-total"),
+            com.enderthor.kSafe.datatype.CaloriesRateDataType("calories-rate"),
         )
     }
 
@@ -2508,6 +2508,25 @@ class KSafeExtension : KarooExtension("ksafe", BuildConfig.VERSION_NAME), Corout
         // alert rationale. UNDO-prompt detail: confirms what was just logged (#6).
         val logDetail = getString(R.string.fueling_overlay_log_detail, item, req.detail)
         val loggedDetail = getString(R.string.fueling_overlay_logged, item)
+        // Two-line LOG button: big channel verb (EAT / DRINK) on top, the amount (e.g. "25 g")
+        // below. Amount is blank when no usable slot — the button then shows just the verb.
+        val buttonVerb = when (req.channel) {
+            com.enderthor.kSafe.extension.util.FuelingChannel.CARB -> getString(R.string.fueling_overlay_eat)
+            com.enderthor.kSafe.extension.util.FuelingChannel.HYDRATION -> getString(R.string.fueling_overlay_drink)
+        }
+        val buttonAmount = req.item?.let { slot ->
+            val unit = when (req.channel) {
+                com.enderthor.kSafe.extension.util.FuelingChannel.CARB -> "g"
+                com.enderthor.kSafe.extension.util.FuelingChannel.HYDRATION -> "ml"
+            }
+            "${slot.size} $unit"
+        } ?: ""
+        // Overlay glyph by channel: 🍫 for eat, 💧 for drink. The UNDO follow-up reuses the
+        // same channel icon (it undoes the same item).
+        val buttonIcon = when (req.channel) {
+            com.enderthor.kSafe.extension.util.FuelingChannel.CARB -> getString(R.string.fueling_overlay_icon)
+            com.enderthor.kSafe.extension.util.FuelingChannel.HYDRATION -> getString(R.string.fueling_overlay_icon_drink)
+        }
         when (com.enderthor.kSafe.extension.util.decideFuelingPresentation(
                 mode, canOverlay, !emergencyActive(), hasUsableSlot = req.item != null)) {
             com.enderthor.kSafe.extension.util.FuelingPresentation.SUPPRESS ->
@@ -2515,18 +2534,18 @@ class KSafeExtension : KarooExtension("ksafe", BuildConfig.VERSION_NAME), Corout
             com.enderthor.kSafe.extension.util.FuelingPresentation.INRIDE_ALERT ->
                 karooSystem.dispatch(req.inRideAlert())
             com.enderthor.kSafe.extension.util.FuelingPresentation.OVERLAY_LOG ->
-                fuelingOverlay.showPrompt(req.title, logDetail, getString(R.string.fueling_overlay_log), 15_000L,
+                fuelingOverlay.showPrompt(req.title, logDetail, buttonIcon, buttonVerb, buttonAmount, 15_000L,
                     abortIf = ::fuelingOverlayShouldAbort) {
                     logFuelingSlot(req.channel, req.item?.slot); fuelingOverlay.remove()
                 }
             com.enderthor.kSafe.extension.util.FuelingPresentation.OVERLAY_LOG_UNDO ->
-                fuelingOverlay.showPrompt(req.title, logDetail, getString(R.string.fueling_overlay_log), 15_000L,
+                fuelingOverlay.showPrompt(req.title, logDetail, buttonIcon, buttonVerb, buttonAmount, 15_000L,
                     abortIf = ::fuelingOverlayShouldAbort) {
                     logFuelingSlot(req.channel, req.item?.slot)
                     fuelingOverlay.remove()
                     // Confirm what was logged (not the original "you should fuel" message) so the
-                    // UNDO button reads as "undo THIS", not as a fresh fueling nag.
-                    fuelingOverlay.showPrompt(req.title, loggedDetail, getString(R.string.fueling_overlay_undo), 4_000L,
+                    // UNDO button reads as "undo THIS", not as a fresh fueling nag. No amount line.
+                    fuelingOverlay.showPrompt(req.title, loggedDetail, buttonIcon, getString(R.string.fueling_overlay_undo_action), "", 4_000L,
                         abortIf = ::fuelingOverlayShouldAbort) {
                         undoFuelingSlot(req.channel, req.item?.slot); fuelingOverlay.remove()
                     }

@@ -151,14 +151,18 @@
     <string name="fueling_alert_button_off">Off</string>
     <string name="fueling_alert_button_log">One tap</string>
     <string name="fueling_alert_button_log_undo">+ Undo</string>
-    <string name="fueling_overlay_log">✓ Log</string>
-    <string name="fueling_overlay_undo">↶ Undo</string>
+    <!-- Big two-line action-button verbs. Universal short terms — kept English on purpose
+         (the rider asked for literal EAT / DRINK), so translatable="false". -->
+    <string name="fueling_overlay_eat" translatable="false">EAT</string>
+    <string name="fueling_overlay_drink" translatable="false">DRINK</string>
+    <string name="fueling_overlay_undo_action" translatable="false">UNDO</string>
     <!-- Overlay detail when a LOG button is shown: names the exact item the tap will log
          (item first so it is never ellipsized), then the alert rationale. e.g. "Gel 25 g — …" -->
     <string name="fueling_overlay_log_detail">%1$s — %2$s</string>
     <!-- Detail of the brief UNDO follow-up prompt after a log: confirms what was recorded. -->
     <string name="fueling_overlay_logged">Logged %1$s</string>
     <string name="fueling_overlay_icon" translatable="false">🍫</string>
+    <string name="fueling_overlay_icon_drink" translatable="false">💧</string>
 
     <!-- Fueling BonusActions -->
     <string name="action_log_carb_1">KSafe: Log Carb 1</string>

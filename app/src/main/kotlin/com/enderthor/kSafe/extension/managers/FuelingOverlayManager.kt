@@ -9,6 +9,7 @@ import android.view.Gravity
 import android.view.LayoutInflater
 import android.view.View
 import android.view.WindowManager
+import android.widget.LinearLayout
 import android.widget.TextView
 import com.enderthor.kSafe.R
 import timber.log.Timber
@@ -37,7 +38,9 @@ class FuelingOverlayManager(private val context: Context) {
     fun showPrompt(
         title: String,
         detail: String,
+        iconEmoji: String,
         buttonLabel: String,
+        buttonSub: String,
         autoDismissMs: Long,
         abortIf: () -> Boolean = { false },
         onButton: () -> Unit,
@@ -67,12 +70,17 @@ class FuelingOverlayManager(private val context: Context) {
                             or WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN,
                     PixelFormat.TRANSLUCENT,
                 ).apply { gravity = Gravity.TOP; y = 0 }
+                v.findViewById<TextView>(R.id.tv_fuel_icon)?.text = iconEmoji
                 v.findViewById<TextView>(R.id.tv_fuel_title)?.text = title
                 v.findViewById<TextView>(R.id.tv_fuel_detail)?.text = detail
-                v.findViewById<TextView>(R.id.btn_fuel_action)?.apply {
-                    text = buttonLabel
-                    setOnClickListener { onButton() }
+                // Big verb (EAT / DRINK / UNDO) on top, amount (e.g. "25 g") below — the
+                // amount line is hidden when blank (the UNDO prompt passes no amount).
+                v.findViewById<TextView>(R.id.btn_fuel_action_label)?.text = buttonLabel
+                v.findViewById<TextView>(R.id.btn_fuel_action_amount)?.apply {
+                    text = buttonSub
+                    visibility = if (buttonSub.isBlank()) View.GONE else View.VISIBLE
                 }
+                v.findViewById<LinearLayout>(R.id.btn_fuel_action)?.setOnClickListener { onButton() }
                 windowManager.addView(v, params)
                 view = v
                 mainHandler.postDelayed({ if (view === v) removeInternal() }, autoDismissMs)
