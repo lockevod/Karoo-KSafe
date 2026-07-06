@@ -667,7 +667,7 @@ class HydrationTracker(
         return true
     }
 
-    private fun fireAlert(source: String, deficitMl: Int, elapsedMin: Long) {
+    private fun buildAlertRequest(source: String, deficitMl: Int, elapsedMin: Long): com.enderthor.kSafe.extension.util.FuelingAlertRequest {
         // v18 L1 — see CarbsTracker.fireAlert for rationale.
         val dispatchedAtMs = System.currentTimeMillis()
         // In dynamic-estimate mode the {target} placeholder must report the live
@@ -699,7 +699,6 @@ class HydrationTracker(
             tokens,
             maxLength = ALERT_TITLE_MAX_CHARS,
         )
-        config.hydBeepPattern.toPlayBeepPattern()?.let { karooSystem.dispatch(it) }
         val slots = listOf(
             com.enderthor.kSafe.extension.util.FuelSlot(1, config.drink1Label, config.drink1Ml),
             com.enderthor.kSafe.extension.util.FuelSlot(2, config.drink2Label, config.drink2Ml),
@@ -707,7 +706,7 @@ class HydrationTracker(
         // null when no slot is usable (all drink sizes 0) — the presenter then shows no LOG
         // button (a plain InRideAlert) instead of a button that would log a phantom 0 ml entry.
         val item = com.enderthor.kSafe.extension.util.pickFuelItem(if (source == "deficit") deficitMl else null, slots)
-        onFuelingAlert(com.enderthor.kSafe.extension.util.FuelingAlertRequest(
+        return com.enderthor.kSafe.extension.util.FuelingAlertRequest(
             title = title, detail = detail,
             // Factory — only built if the presenter takes the InRideAlert branch.
             inRideAlert = {
@@ -723,7 +722,15 @@ class HydrationTracker(
                 )
             },
             channel = com.enderthor.kSafe.extension.util.FuelingChannel.HYDRATION, item = item,
-        ))
+        )
+    }
+
+    fun buildPreviewRequest(): com.enderthor.kSafe.extension.util.FuelingAlertRequest =
+        buildAlertRequest(source = "time", deficitMl = 0, elapsedMin = config.hydrationTimeIntervalMin.toLong())
+
+    private fun fireAlert(source: String, deficitMl: Int, elapsedMin: Long) {
+        config.hydBeepPattern.toPlayBeepPattern()?.let { karooSystem.dispatch(it) }
+        onFuelingAlert(buildAlertRequest(source, deficitMl, elapsedMin))
         calibLogger?.log(CalibrationLogger.Event.FUELING_HYDRATION_FIRED) {
             "source=$source,deficit_ml=$deficitMl,since_log_min=$elapsedMin,cum_target=${cumTargetMl.toInt()},cum_logged=$cumLoggedMl,beep=${config.hydBeepPattern}"
         }
