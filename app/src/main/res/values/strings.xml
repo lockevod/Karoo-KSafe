@@ -163,6 +163,12 @@
     <string name="fueling_overlay_logged">Logged %1$s</string>
     <string name="fueling_overlay_icon" translatable="false">🍫</string>
     <string name="fueling_overlay_icon_drink" translatable="false">💧</string>
+    <string name="fueling_preview_label">Preview alert</string>
+    <string name="fueling_preview_shown">✓ Preview shown</string>
+    <string name="fueling_preview_inride">✓ InRideAlert sent (may only show during a ride)</string>
+    <string name="fueling_preview_emergency">Not available during an emergency.</string>
+    <string name="fueling_preview_no_overlay">No overlay permission — grant \"Display over other apps\".</string>
+    <string name="fueling_preview_no_slot">No amount set — configure a slot with grams/ml.</string>
 
     <!-- Fueling BonusActions -->
     <string name="action_log_carb_1">KSafe: Log Carb 1</string>

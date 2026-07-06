@@ -558,7 +558,7 @@ class KSafeExtension : KarooExtension("ksafe", BuildConfig.VERSION_NAME), Corout
             scope = this,
             karooSystem = karooSystem,
             context = applicationContext,
-            onFuelingAlert = ::presentFuelingAlert,
+            onFuelingAlert = { presentFuelingAlert(it) },
             isEmergencyActive = ::emergencyActive,
             calibLogger = calibLogger,
         )
@@ -566,7 +566,7 @@ class KSafeExtension : KarooExtension("ksafe", BuildConfig.VERSION_NAME), Corout
             scope = this,
             karooSystem = karooSystem,
             context = applicationContext,
-            onFuelingAlert = ::presentFuelingAlert,
+            onFuelingAlert = { presentFuelingAlert(it) },
             isEmergencyActive = ::emergencyActive,
             calibLogger = calibLogger,
         )
@@ -2157,6 +2157,34 @@ class KSafeExtension : KarooExtension("ksafe", BuildConfig.VERSION_NAME), Corout
         }
     }
 
+    /** Called from FuelingScreen to preview a carb/hydration alert without logging any intake.
+     * Mode-faithful (honours fuelingAlertButtonMode), silent (no beep — the tracker's beep stays
+     * in fireAlert), and safe (yields to a real emergency). Returns a UI status string. */
+    fun simulateFuelingAlert(channel: com.enderthor.kSafe.extension.util.FuelingChannel): String {
+        if (!::carbsTracker.isInitialized || !::hydrationTracker.isInitialized)
+            return "Extension not ready — wait a moment and try again."
+        if (emergencyActive()) return getString(R.string.fueling_preview_emergency)
+        val req = when (channel) {
+            com.enderthor.kSafe.extension.util.FuelingChannel.CARB -> carbsTracker.buildPreviewRequest()
+            com.enderthor.kSafe.extension.util.FuelingChannel.HYDRATION -> hydrationTracker.buildPreviewRequest()
+        }
+        val canOverlay = android.provider.Settings.canDrawOverlays(applicationContext)
+        presentFuelingAlert(req, preview = true)
+        return when (com.enderthor.kSafe.extension.util.decideFuelingPresentation(
+                activeConfig.fuelingAlertButtonMode, canOverlay, emergencyIdle = true, hasUsableSlot = req.item != null)) {
+            com.enderthor.kSafe.extension.util.FuelingPresentation.SUPPRESS ->
+                getString(R.string.fueling_preview_emergency)
+            com.enderthor.kSafe.extension.util.FuelingPresentation.INRIDE_ALERT -> when {
+                !canOverlay      -> getString(R.string.fueling_preview_no_overlay)
+                req.item == null -> getString(R.string.fueling_preview_no_slot)
+                else             -> getString(R.string.fueling_preview_inride)
+            }
+            com.enderthor.kSafe.extension.util.FuelingPresentation.OVERLAY_LOG,
+            com.enderthor.kSafe.extension.util.FuelingPresentation.OVERLAY_LOG_UNDO ->
+                getString(R.string.fueling_preview_shown)
+        }
+    }
+
     /**
      * Called from ProviderScreen to verify messaging provider is correctly configured.
      * Returns a human-readable result string (success or specific error).
@@ -2498,7 +2526,7 @@ class KSafeExtension : KarooExtension("ksafe", BuildConfig.VERSION_NAME), Corout
      * gap (a final-second tick's showPrompt could otherwise re-add the overlay after the ride-end
      * teardown).
      */
-    private fun presentFuelingAlert(req: com.enderthor.kSafe.extension.util.FuelingAlertRequest) {
+    private fun presentFuelingAlert(req: com.enderthor.kSafe.extension.util.FuelingAlertRequest, preview: Boolean = false) {
         val mode = activeConfig.fuelingAlertButtonMode
         val canOverlay = android.provider.Settings.canDrawOverlays(applicationContext)
         // The exact item the button will log/undo, e.g. "Gel 25 g" (#3). Empty on non-overlay
@@ -2527,6 +2555,9 @@ class KSafeExtension : KarooExtension("ksafe", BuildConfig.VERSION_NAME), Corout
             com.enderthor.kSafe.extension.util.FuelingChannel.CARB -> getString(R.string.fueling_overlay_icon)
             com.enderthor.kSafe.extension.util.FuelingChannel.HYDRATION -> getString(R.string.fueling_overlay_icon_drink)
         }
+        // In preview (from Settings, no ride) drop the !rideActive() half of the guard so the
+        // overlay shows — but KEEP emergencyActive() so a real SOS still wins.
+        val abortGuard: () -> Boolean = if (preview) ({ emergencyActive() }) else ::fuelingOverlayShouldAbort
         when (com.enderthor.kSafe.extension.util.decideFuelingPresentation(
                 mode, canOverlay, !emergencyActive(), hasUsableSlot = req.item != null)) {
             com.enderthor.kSafe.extension.util.FuelingPresentation.SUPPRESS ->
@@ -2535,19 +2566,21 @@ class KSafeExtension : KarooExtension("ksafe", BuildConfig.VERSION_NAME), Corout
                 karooSystem.dispatch(req.inRideAlert())
             com.enderthor.kSafe.extension.util.FuelingPresentation.OVERLAY_LOG ->
                 fuelingOverlay.showPrompt(req.title, logDetail, buttonIcon, buttonVerb, buttonAmount, 15_000L,
-                    abortIf = ::fuelingOverlayShouldAbort) {
-                    logFuelingSlot(req.channel, req.item?.slot); fuelingOverlay.remove()
+                    abortIf = abortGuard) {
+                    if (!preview) logFuelingSlot(req.channel, req.item?.slot)
+                    fuelingOverlay.remove()
                 }
             com.enderthor.kSafe.extension.util.FuelingPresentation.OVERLAY_LOG_UNDO ->
                 fuelingOverlay.showPrompt(req.title, logDetail, buttonIcon, buttonVerb, buttonAmount, 15_000L,
-                    abortIf = ::fuelingOverlayShouldAbort) {
-                    logFuelingSlot(req.channel, req.item?.slot)
+                    abortIf = abortGuard) {
+                    if (!preview) logFuelingSlot(req.channel, req.item?.slot)
                     fuelingOverlay.remove()
                     // Confirm what was logged (not the original "you should fuel" message) so the
                     // UNDO button reads as "undo THIS", not as a fresh fueling nag. No amount line.
                     fuelingOverlay.showPrompt(req.title, loggedDetail, buttonIcon, getString(R.string.fueling_overlay_undo_action), "", 4_000L,
-                        abortIf = ::fuelingOverlayShouldAbort) {
-                        undoFuelingSlot(req.channel, req.item?.slot); fuelingOverlay.remove()
+                        abortIf = abortGuard) {
+                        if (!preview) undoFuelingSlot(req.channel, req.item?.slot)
+                        fuelingOverlay.remove()
                     }
                 }
         }

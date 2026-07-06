@@ -147,6 +147,12 @@
     <string name="fueling_overlay_log_detail">%1$s — %2$s</string>
     <!-- Detalle del breve prompt de DESHACER tras registrar: confirma qué se registró. -->
     <string name="fueling_overlay_logged">Registrado %1$s</string>
+    <string name="fueling_preview_label">Vista previa alerta</string>
+    <string name="fueling_preview_shown">✓ Vista previa mostrada</string>
+    <string name="fueling_preview_inride">✓ InRideAlert enviado (puede que solo se vea durante una ruta)</string>
+    <string name="fueling_preview_emergency">No disponible durante una emergencia.</string>
+    <string name="fueling_preview_no_overlay">Sin permiso de overlay — concede «Mostrar sobre otras apps».</string>
+    <string name="fueling_preview_no_slot">Sin cantidad configurada — define un slot con gramos/ml.</string>
 
     <!-- BonusActions de Nutrición -->
     <string name="action_log_carb_1">KSafe: Registrar carbo 1</string>
