@@ -40,6 +40,11 @@ class HydrationTracker(
     private val scope: CoroutineScope,
     private val karooSystem: KarooSystemService,
     private val context: Context,
+    private val onFuelingAlert: (com.enderthor.kSafe.extension.util.FuelingAlertRequest) -> Unit,
+    /** True while a crash / SOS / check-in is active. A fueling alert that comes due then is
+     *  DEFERRED (not fired, cooldown not consumed) so it doesn't beep over the SOS and re-fires
+     *  once the emergency clears. Injected so the tracker stays decoupled from EmergencyManager. */
+    private val isEmergencyActive: () -> Boolean,
     private val calibLogger: CalibrationLogger? = null,
 ) {
 
@@ -593,6 +598,12 @@ class HydrationTracker(
             now                    = now,
         )
         if (!fire) return false
+        // Defer during an emergency: don't beep over the SOS, and DON'T stamp the cooldown,
+        // so the alert re-fires on the next tick once the emergency clears (not lost).
+        if (isEmergencyActive()) {
+            Timber.d("Hydration deficit alert due but emergency active — deferring (not fired, cooldown intact)")
+            return false
+        }
         fireAlert("deficit", deficit, elapsedMinutesSinceRealLog(now))
         lastDeficitAlertFireMs = now
         return true
@@ -642,6 +653,11 @@ class HydrationTracker(
     /** See [evaluateDeficitAlert] return-value note — same contract on the time side. */
     private fun evaluateTimeAlert(now: Long): Boolean {
         if (currentDueTimeTick(now) == 0L) return false
+        // Defer during an emergency (see evaluateDeficitAlert) — not fired, tick not consumed.
+        if (isEmergencyActive()) {
+            Timber.d("Hydration time alert due but emergency active — deferring")
+            return false
+        }
         // See CarbsTracker.evaluateTimeAlert — time alert is interval-driven,
         // so `{elapsed}` measures since the last reminder, not since last log.
         fireAlert("time", (cumTargetMl - cumLoggedMl).toInt(), elapsedMinutesSinceLastTimeAlert(now))
@@ -651,7 +667,7 @@ class HydrationTracker(
         return true
     }
 
-    private fun fireAlert(source: String, deficitMl: Int, elapsedMin: Long) {
+    private fun buildAlertRequest(source: String, deficitMl: Int, elapsedMin: Long): com.enderthor.kSafe.extension.util.FuelingAlertRequest {
         // v18 L1 — see CarbsTracker.fireAlert for rationale.
         val dispatchedAtMs = System.currentTimeMillis()
         // In dynamic-estimate mode the {target} placeholder must report the live
@@ -683,17 +699,38 @@ class HydrationTracker(
             tokens,
             maxLength = ALERT_TITLE_MAX_CHARS,
         )
+        val slots = listOf(
+            com.enderthor.kSafe.extension.util.FuelSlot(1, config.drink1Label, config.drink1Ml),
+            com.enderthor.kSafe.extension.util.FuelSlot(2, config.drink2Label, config.drink2Ml),
+        )
+        // null when no slot is usable (all drink sizes 0) — the presenter then shows no LOG
+        // button (a plain InRideAlert) instead of a button that would log a phantom 0 ml entry.
+        val item = com.enderthor.kSafe.extension.util.pickFuelItem(if (source == "deficit") deficitMl else null, slots)
+        return com.enderthor.kSafe.extension.util.FuelingAlertRequest(
+            title = title, detail = detail,
+            // Factory — only built if the presenter takes the InRideAlert branch.
+            inRideAlert = {
+                InRideAlert(
+                    // Unique-per-fire ID — see CarbsTracker.fireAlert for the rationale.
+                    id = "ksafe-hyd-alert-$source-$dispatchedAtMs",
+                    icon = R.drawable.ic_ksafe,
+                    title = title,
+                    detail = detail,
+                    autoDismissMs = AUTO_DISMISS_MS,
+                    backgroundColor = fuelingAlertColorRes(config.hydrationAlertBgColor),
+                    textColor = ALERT_TX_COLOR,
+                )
+            },
+            channel = com.enderthor.kSafe.extension.util.FuelingChannel.HYDRATION, item = item,
+        )
+    }
+
+    fun buildPreviewRequest(): com.enderthor.kSafe.extension.util.FuelingAlertRequest =
+        buildAlertRequest(source = "time", deficitMl = 0, elapsedMin = config.hydrationTimeIntervalMin.toLong())
+
+    private fun fireAlert(source: String, deficitMl: Int, elapsedMin: Long) {
         config.hydBeepPattern.toPlayBeepPattern()?.let { karooSystem.dispatch(it) }
-        karooSystem.dispatch(InRideAlert(
-            // Unique-per-fire ID — see CarbsTracker.fireAlert for the rationale.
-            id = "ksafe-hyd-alert-$source-$dispatchedAtMs",
-            icon = R.drawable.ic_ksafe,
-            title = title,
-            detail = detail,
-            autoDismissMs = AUTO_DISMISS_MS,
-            backgroundColor = fuelingAlertColorRes(config.hydrationAlertBgColor),
-            textColor = ALERT_TX_COLOR,
-        ))
+        onFuelingAlert(buildAlertRequest(source, deficitMl, elapsedMin))
         calibLogger?.log(CalibrationLogger.Event.FUELING_HYDRATION_FIRED) {
             "source=$source,deficit_ml=$deficitMl,since_log_min=$elapsedMin,cum_target=${cumTargetMl.toInt()},cum_logged=$cumLoggedMl,beep=${config.hydBeepPattern}"
         }

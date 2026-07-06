@@ -390,6 +390,11 @@ The speed-drop monitor reads `now - accelStillSinceMs` to know how long the devi
 - The window closes when speed rises back above the threshold.
 - Time accounting uses `Clock.monotonicMs()` (Android `SystemClock.elapsedRealtime`) so an NTP step or user-driven date change can't shift the 5-minute deadline.
 - `onPause()` clears the window when the Karoo ride is paused — prevents alarms at cafés, red lights, mechanical stops.
+- **Arms only after the bike has moved (`disarmedUntilMovement`).** A zero-speed window can open only after a genuine moving reading (`effective speed ≥ 3.5 km/h`, never a `gpsStale` forced-zero). The flag is set true in two situations:
+  - **At `start()`** — so standing at the trailhead for `speedDropMinutes` after pressing record (faffing, waiting for a GPS lock) does **not** confirm a "crash" at the start line (field log `f16a4e_878bca_c000`).
+  - **After a confirm** — so a single long motionless stop (café / mechanical) cannot re-fire: the watchdog used to re-arm the instant after confirming and re-fired every `speedDropMinutes` throughout one stop, which the rider experiences as the *same* false alert repeating (field log `e702da_5d5d85_c001`).
+
+  The settings field promises "minutes stopped before alert" — one alert per stop, and only after the rider has actually ridden — so each window needs a fresh movement to arm.
 
 #### Calibration telemetry
 

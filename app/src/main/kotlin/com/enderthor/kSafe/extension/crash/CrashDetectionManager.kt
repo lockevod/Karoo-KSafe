@@ -639,10 +639,18 @@ class CrashDetectionManager(
                 // the impact→silence rotation that passed the PROMPT gyro gate (gyro_thr);
                 // on a GAP veto it is informational only (the gap regime ignores rotation).
                 val regime = if (stateMachine.lastUprightVetoGapRegime) "GAP" else "PROMPT"
+                // veto_thr must reflect the cone actually applied for THIS regime: GAP uses the
+                // lenient gapVetoUprightAngleDeg (25°), PROMPT (prompt-stop, R6-G) the stricter
+                // promptVetoUprightAngleDeg (15°). Logging the gap cone unconditionally made every
+                // PROMPT-regime row read 25° when 15° was in force.
+                val vetoThr = if (stateMachine.lastUprightVetoGapRegime)
+                    stateMachine.thresholds.gapVetoUprightAngleDeg
+                else
+                    stateMachine.thresholds.promptVetoUprightAngleDeg
                 val ref = stateMachine.preImpactReference
                 // pre_x/y/z (pre-impact ref) + sil_x/y/z (averaged silence orientation) make
                 // the veto `angle` independently verifiable from the raw geometry.
-                "angle=%.1f,veto_thr=${stateMachine.thresholds.gapVetoUprightAngleDeg},regime=$regime,gyro_peak=%.2f,gyro_thr=${stateMachine.thresholds.nonGapUprightVetoMaxGyroRadS},speed=%.1f,deviation=%.2f,cadence=%.0f,grade=%.1f,preset=${config.crashSensitivity},pre_x=%.2f,pre_y=%.2f,pre_z=%.2f,sil_x=%.2f,sil_y=%.2f,sil_z=%.2f".formatUs(
+                "angle=%.1f,veto_thr=$vetoThr,regime=$regime,gyro_peak=%.2f,gyro_thr=${stateMachine.thresholds.nonGapUprightVetoMaxGyroRadS},speed=%.1f,deviation=%.2f,cadence=%.0f,grade=%.1f,preset=${config.crashSensitivity},pre_x=%.2f,pre_y=%.2f,pre_z=%.2f,sil_x=%.2f,sil_y=%.2f,sil_z=%.2f".formatUs(
                     stateMachine.lastGapUprightVetoAngleDeg, stateMachine.peakGyroSinceImpactRadS, currentSpeedKmh, dev, currentCadence, currentGrade,
                     ref.x, ref.y, ref.z,
                     stateMachine.lastSilenceOrientX, stateMachine.lastSilenceOrientY, stateMachine.lastSilenceOrientZ)

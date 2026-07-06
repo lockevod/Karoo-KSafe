@@ -1,0 +1,41 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Tappable fueling prompt overlay. SEPARATE from overlay_sos_cancel.xml / overlay_info.xml. -->
+<FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content"
+    android:paddingStart="5dp" android:paddingEnd="5dp" android:paddingTop="6dp" android:paddingBottom="3dp">
+    <!-- VERTICAL container: the title gets its own full-width line so it never has to share
+         the narrow ~9-char column with the icon + action button (which truncated even short
+         two-word titles like "Drink something"). Below it, a horizontal row: icon | detail | button. -->
+    <LinearLayout
+        android:id="@+id/fuel_overlay_bg"
+        android:layout_width="match_parent" android:layout_height="wrap_content"
+        android:background="@drawable/bg_fueling_overlay" android:clipToOutline="true" android:elevation="12dp"
+        android:orientation="vertical"
+        android:paddingStart="12dp" android:paddingEnd="8dp" android:paddingTop="11dp" android:paddingBottom="11dp">
+        <TextView android:id="@+id/tv_fuel_title" android:layout_width="match_parent" android:layout_height="wrap_content"
+            android:textColor="#FFFFFF" android:textSize="20sp" android:textStyle="bold"
+            android:maxLines="2" android:ellipsize="end" />
+        <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content"
+            android:orientation="horizontal" android:gravity="center_vertical" android:layout_marginTop="5dp">
+            <TextView android:id="@+id/tv_fuel_icon" android:layout_width="wrap_content" android:layout_height="wrap_content"
+                android:layout_marginEnd="8dp" android:text="@string/fueling_overlay_icon" android:textSize="24sp" />
+            <TextView android:id="@+id/tv_fuel_detail" android:layout_width="0dp" android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:textColor="#FFB2EBF2" android:textSize="15sp" android:maxLines="2" android:ellipsize="end" />
+            <!-- Two-line action button: big EAT! / DRINK! verb on top, the amount (e.g. "25 g")
+                 below. The whole LinearLayout is the click target (id btn_fuel_action). -->
+            <LinearLayout android:id="@+id/btn_fuel_action" android:layout_width="82dp" android:layout_height="64dp"
+                android:layout_marginStart="6dp" android:background="@drawable/bg_fueling_button" android:clipToOutline="true"
+                android:orientation="vertical" android:gravity="center"
+                android:clickable="true" android:focusable="true">
+                <TextView android:id="@+id/btn_fuel_action_label" android:layout_width="wrap_content" android:layout_height="wrap_content"
+                    android:textColor="#FF00838F" android:textSize="18sp" android:textStyle="bold"
+                    android:maxLines="1" android:ellipsize="end" android:includeFontPadding="false" />
+                <TextView android:id="@+id/btn_fuel_action_amount" android:layout_width="wrap_content" android:layout_height="wrap_content"
+                    android:textColor="#FF00838F" android:textSize="13sp"
+                    android:maxLines="1" android:includeFontPadding="false" />
+            </LinearLayout>
+        </LinearLayout>
+    </LinearLayout>
+</FrameLayout>

@@ -12,7 +12,7 @@ import timber.log.Timber
 
 const val DEFAULT_COUNTDOWN_SECONDS = 30
 const val DEFAULT_CHECKIN_INTERVAL_MINUTES = 120
-const val DEFAULT_SPEED_DROP_MINUTES = 5
+const val DEFAULT_SPEED_DROP_MINUTES = 10
 const val CHECKIN_WARNING_THRESHOLD_MINUTES = 10
 const val KAROO_LIVE_BASE_URL = "https://dashboard.hammerhead.io/live/"
 
@@ -114,20 +114,18 @@ const val KAROO_LIVE_BASE_URL = "https://dashboard.hammerhead.io/live/"
  *  v20 → v21: combined fuel-log fields added (combinedCarbConcentrationPer500ml + the
  *             combined1/2 Label/Ml/Carbs/Color set) for the combined drink+carbs tap field.
  *             Pure version stamp; all fields have defaults, so existing installs are unaffected.
- *  v21 → v22: updateCheckEnabled added (default ON). Pure version stamp; absent in old blobs
+ *  v21 → v22: fuelingAlertButtonMode added (in-alert fueling logging button).
+ *             Pure version stamp; default OFF preserves existing no-button behaviour.
+ *  v22 → v23: updateCheckEnabled added (default ON). Pure version stamp; absent in old blobs
  *             decodes to the `true` default, so existing installs get the update notice.
- *  v22 → v23: hrCaloriesEnabled added (default OFF). Pure version stamp; absent in old blobs
+ *  v23 → v24: hrCaloriesEnabled added (default OFF). Pure version stamp; absent in old blobs
  *             decodes to `false`, so the HR-based calorie estimate stays off until opted in.
- *  v23 → v24: fitStandardCaloriesSource added (default NONE) — write the ride's calories
- *             into the FIT session message as the STANDARD total_calories field so
- *             platforms that ignore developer fields (Suunto, …) import them.
+ *  v24 → v25: fitStandardCaloriesSource added (default NONE) — STANDARD FIT total_calories.
  *             Pure version stamp; absent in old blobs decodes to NONE (off).
- *  v24 → v25: webhook slots 3 & 4 added (tap-only, no BonusAction). 26 additive fields
- *             with sensible defaults (disabled, "Action 3/4") — existing installs
- *             behave identically until the rider configures the new slots.
- *             Pure version stamp.
+ *  v25 → v26: webhook slots 3 & 4 added (tap-only, no BonusAction). 26 additive fields with
+ *             sensible defaults (disabled, "Action 3/4"). Pure version stamp.
  */
-const val CONFIG_VERSION = 25
+const val CONFIG_VERSION = 27
 
 /**
  * Canonical minSpeedForCrashKmh value per preset.
@@ -270,6 +268,9 @@ val FIELD_COLOR_PALETTE: List<Int> = listOf(
 
 @Serializable
 enum class ProviderType { CALLMEBOT, PUSHOVER, NTFY, TELEGRAM }
+
+@Serializable
+enum class FuelingAlertButtonMode { OFF, LOG, LOG_UNDO }
 
 /**
  * Which alert categories a single configured contact receives.
@@ -642,6 +643,9 @@ data class KSafeConfig(
     val hydBeepPattern: BeepPattern = BeepPattern.SINGLE_LONG,
     /** Background colour for the hydration InRideAlert overlay. Default = blue (water). */
     val hydrationAlertBgColor: Int = FUELING_ALERT_COLOR_BLUE,
+    /** Controls the action button shown on fueling in-ride alerts.
+     *  OFF = no button; LOG = one-tap log the alerted item; LOG_UNDO = log + undo. */
+    val fuelingAlertButtonMode: FuelingAlertButtonMode = FuelingAlertButtonMode.OFF,
     val drink1Label: String = "Sip",     val drink1Ml: Int = 100,    val drink1Color: Int = FIELD_COLOR_AUTO,    val drink1Icon: String = "💧",
     val drink2Label: String = "Bottle",  val drink2Ml: Int = 500,    val drink2Color: Int = FIELD_COLOR_AUTO,    val drink2Icon: String = FUEL_BOTTLE_DRAWABLE,
     /** Carbs per 500 ml of the rider's drink mix — used by the Fueling screen to auto-fill
@@ -1416,35 +1420,54 @@ fun KSafeConfig.migrateToLatest(): KSafeConfig {
     }
 
     if (c.configVersion < 22) {
-        // v21 → v22: updateCheckEnabled added (default ON). Pure version stamp — the field is
-        // additive and absent in old blobs decodes to its `true` default, so existing installs
-        // get the update notice enabled, matching new installs. Nothing to rewrite.
         c = c.copy(configVersion = 22)
-        Timber.i("KSafeConfig migrated v%d→v22 (update-availability check)", originalVersion)
+        Timber.i("KSafeConfig migrated v%d→v22 (in-alert fueling logging mode)", originalVersion)
     }
 
     if (c.configVersion < 23) {
-        // v22 → v23: hrCaloriesEnabled added (default OFF). Pure version stamp — the field
-        // is additive and absent in old blobs decodes to its `false` default, so existing
-        // installs keep the calorie feature off until the rider opts in. Nothing to rewrite.
+        // v22 → v23: updateCheckEnabled added (default ON). Pure version stamp — the field is
+        // additive and absent in old blobs decodes to its `true` default, so existing installs
+        // get the update notice enabled, matching new installs. Nothing to rewrite.
         c = c.copy(configVersion = 23)
-        Timber.i("KSafeConfig migrated v%d→v23 (HR-based calorie estimate)", originalVersion)
+        Timber.i("KSafeConfig migrated v%d→v23 (update-availability check)", originalVersion)
     }
 
     if (c.configVersion < 24) {
-        // v23 → v24: fitStandardCaloriesSource added (default NONE). Pure version stamp —
-        // additive field, absent in old blobs decodes to NONE so the standard FIT calories
-        // write stays off until the rider opts in. Nothing to rewrite.
+        // v23 → v24: hrCaloriesEnabled added (default OFF). Pure version stamp — the field
+        // is additive and absent in old blobs decodes to its `false` default, so existing
+        // installs keep the calorie feature off until the rider opts in. Nothing to rewrite.
         c = c.copy(configVersion = 24)
-        Timber.i("KSafeConfig migrated v%d→v24 (standard FIT calories field)", originalVersion)
+        Timber.i("KSafeConfig migrated v%d→v24 (HR-based calorie estimate)", originalVersion)
     }
 
     if (c.configVersion < 25) {
-        // v24 → v25: webhook slots 3 & 4 added (tap-only, no BonusAction). Pure version
+        // v24 → v25: fitStandardCaloriesSource added (default NONE). Pure version stamp —
+        // additive field, absent in old blobs decodes to NONE so the standard FIT calories
+        // write stays off until the rider opts in. Nothing to rewrite.
+        c = c.copy(configVersion = 25)
+        Timber.i("KSafeConfig migrated v%d→v25 (standard FIT calories field)", originalVersion)
+    }
+
+    if (c.configVersion < 26) {
+        // v25 → v26: webhook slots 3 & 4 added (tap-only, no BonusAction). Pure version
         // stamp — all 26 new fields are additive with sensible defaults (disabled, "Action 3/4"),
         // so existing installs behave identically until the rider configures the new slots.
-        c = c.copy(configVersion = 25)
-        Timber.i("KSafeConfig migrated v%d→v25 (webhook slots 3 & 4)", originalVersion)
+        c = c.copy(configVersion = 26)
+        Timber.i("KSafeConfig migrated v%d→v26 (webhook slots 3 & 4)", originalVersion)
+    }
+
+    if (c.configVersion < 27) {
+        // v26 → v27: speed-drop watchdog floor raised 1 → 5 min (default 5 → 10).
+        // The opt-in "rider may be down" backstop confirms a crash after the bike
+        // has been below 3.5 km/h for N minutes; field logs showed sub-5-min
+        // settings firing on ordinary long stops (café/photo/mechanical with the
+        // bike laid down). Bump any previously-saved value below the new floor so
+        // existing opt-in installs stop false-firing without a manual re-save.
+        if (c.speedDropMinutes < 5) {
+            c = c.copy(speedDropMinutes = 5)
+        }
+        c = c.copy(configVersion = 27)
+        Timber.i("KSafeConfig migrated v%d→v27 (speed-drop floor 5 min)", originalVersion)
     }
 
     return c

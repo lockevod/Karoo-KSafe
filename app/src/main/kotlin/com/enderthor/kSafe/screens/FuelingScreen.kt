@@ -42,7 +42,9 @@ import androidx.compose.material3.Button
 import androidx.compose.material3.OutlinedButton
 import com.enderthor.kSafe.R
 import com.enderthor.kSafe.activity.MainViewModel
+import com.enderthor.kSafe.extension.KSafeExtension
 import com.enderthor.kSafe.data.FUELING_ALERT_COLORS
+import com.enderthor.kSafe.data.FuelingAlertButtonMode
 import com.enderthor.kSafe.data.RiderSex
 import com.enderthor.kSafe.data.fuelingAlertColorRes
 import com.enderthor.kSafe.extension.util.ALERT_DETAIL_MAX_CHARS
@@ -297,6 +299,15 @@ fun FuelingScreen(vm: MainViewModel) {
                     FieldEmojiPicker(label = "Icon", selected = carb3Icon, emojis = com.enderthor.kSafe.data.FUEL_EMOJI_CARB, modifier = Modifier.weight(1f),
                         onSelected = { v -> carb3Icon = v; vm.updateConfig { cfg -> cfg.copy(carb3Icon = v) } })
                 }
+                TestActionButton(
+                    label = stringResource(R.string.fueling_preview_label),
+                    runningLabel = stringResource(R.string.fueling_preview_label),
+                    onAction = {
+                        KSafeExtension.getInstance()?.simulateFuelingAlert(
+                            com.enderthor.kSafe.extension.util.FuelingChannel.CARB
+                        ) ?: "Extension not connected — wait a moment and try again."
+                    },
+                )
                 }  // end if (carbsEnabled)
             }
         }
@@ -533,7 +544,41 @@ fun FuelingScreen(vm: MainViewModel) {
                     FieldEmojiPicker(label = "Icon", selected = drink2Icon, emojis = com.enderthor.kSafe.data.FUEL_EMOJI_DRINK, modifier = Modifier.weight(1f),
                         onSelected = { v -> drink2Icon = v; vm.updateConfig { cfg -> cfg.copy(drink2Icon = v) } })
                 }
+                TestActionButton(
+                    label = stringResource(R.string.fueling_preview_label),
+                    runningLabel = stringResource(R.string.fueling_preview_label),
+                    onAction = {
+                        KSafeExtension.getInstance()?.simulateFuelingAlert(
+                            com.enderthor.kSafe.extension.util.FuelingChannel.HYDRATION
+                        ) ?: "Extension not connected — wait a moment and try again."
+                    },
+                )
                 }  // end if (hydEnabled)
+            }
+        }
+
+        // Alert-mode card. Controls whether fueling alerts (carbs + hydration) show a
+        // one-tap log button, a log+undo pair, or no button at all. Placed here so it
+        // reads as "global fueling-alert behaviour" and is not buried inside the Combined
+        // logging section where it would appear to only affect combined entries.
+        Card(elevation = CardDefaults.cardElevation(defaultElevation = 2.dp)) {
+            Column(
+                modifier = Modifier.padding(10.dp),
+                verticalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                EnumSegmentedRow(
+                    label = stringResource(R.string.fueling_alert_button_mode_label),
+                    entries = FuelingAlertButtonMode.entries,
+                    selected = config.fuelingAlertButtonMode,
+                    labelOf = { mode ->
+                        when (mode) {
+                            FuelingAlertButtonMode.OFF      -> stringResource(R.string.fueling_alert_button_off)
+                            FuelingAlertButtonMode.LOG      -> stringResource(R.string.fueling_alert_button_log)
+                            FuelingAlertButtonMode.LOG_UNDO -> stringResource(R.string.fueling_alert_button_log_undo)
+                        }
+                    },
+                    onSelected = { mode -> vm.updateConfig { it.copy(fuelingAlertButtonMode = mode) } },
+                )
             }
         }
 
@@ -763,10 +808,44 @@ private fun SlotRow(
 }
 
 /**
- * v18 — Rider biological sex selector. Three short OutlinedButtons (Male /
- * Female / Not set) so the rider can toggle between them without opening a
- * dialog. Sex is consumed by [CarbBurnEstimator]'s Keytel tier (separate
- * male/female regressions); "Not set" disables Keytel and falls the tracker
+ * Generic single-row segmented selector for a small enum: a bold [label] above a row of
+ * equal-weight buttons, the [selected] one filled and the rest outlined. Fits the 480 px Karoo
+ * screen for 2–3 short options. Shared by the fueling-alert-mode picker and [RiderSexRow] so the
+ * Karoo segmented-control styling (weights, padding, selected look) lives in exactly one place.
+ */
+@Composable
+private fun <T> EnumSegmentedRow(
+    label: String,
+    entries: List<T>,
+    selected: T,
+    labelOf: @Composable (T) -> String,
+    onSelected: (T) -> Unit,
+) {
+    Column(verticalArrangement = Arrangement.spacedBy(4.dp), modifier = Modifier.fillMaxWidth()) {
+        Text(text = label, style = MaterialTheme.typography.bodySmall, fontWeight = FontWeight.Bold)
+        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+            // Short labels chosen so 2–3 buttons don't wrap on the smaller K3 screen.
+            for (option in entries) {
+                val text = labelOf(option)
+                val pad = androidx.compose.foundation.layout.PaddingValues(horizontal = 4.dp, vertical = 6.dp)
+                if (option == selected) {
+                    Button(onClick = { onSelected(option) }, modifier = Modifier.weight(1f), contentPadding = pad) {
+                        Text(text = text, style = MaterialTheme.typography.labelSmall)
+                    }
+                } else {
+                    OutlinedButton(onClick = { onSelected(option) }, modifier = Modifier.weight(1f), contentPadding = pad) {
+                        Text(text = text, style = MaterialTheme.typography.labelSmall)
+                    }
+                }
+            }
+        }
+    }
+}
+
+/**
+ * v18 — Rider biological sex selector. Three short OutlinedButtons (Male / Female / Not set) so the
+ * rider can toggle between them without opening a dialog. Sex is consumed by [CarbBurnEstimator]'s
+ * Keytel tier (separate male/female regressions); "Not set" disables Keytel and falls the tracker
  * back to the Swain HRR METs tier. Stored in [KSafeConfig.riderSex].
  */
 @Composable
@@ -774,44 +853,19 @@ private fun RiderSexRow(
     selected: RiderSex,
     onSelected: (RiderSex) -> Unit,
 ) {
-    Column(verticalArrangement = Arrangement.spacedBy(4.dp), modifier = Modifier.fillMaxWidth()) {
-        Text(
-            text = stringResource(R.string.fueling_rider_sex_label),
-            style = MaterialTheme.typography.bodySmall,
-            fontWeight = FontWeight.Bold,
-        )
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.spacedBy(6.dp),
-        ) {
-            // Three buttons fit in the 480 px Karoo screen comfortably. Short labels
-            // chosen so they don't wrap on the smaller K3 screen.
-            for (option in RiderSex.entries) {
-                val label = when (option) {
-                    RiderSex.MALE    -> stringResource(R.string.fueling_rider_sex_male)
-                    RiderSex.FEMALE  -> stringResource(R.string.fueling_rider_sex_female)
-                    RiderSex.NOT_SET -> stringResource(R.string.fueling_rider_sex_unset)
-                }
-                if (option == selected) {
-                    Button(
-                        onClick = { onSelected(option) },
-                        modifier = Modifier.weight(1f),
-                        contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 4.dp, vertical = 6.dp),
-                    ) {
-                        Text(text = label, style = MaterialTheme.typography.labelSmall)
-                    }
-                } else {
-                    OutlinedButton(
-                        onClick = { onSelected(option) },
-                        modifier = Modifier.weight(1f),
-                        contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 4.dp, vertical = 6.dp),
-                    ) {
-                        Text(text = label, style = MaterialTheme.typography.labelSmall)
-                    }
-                }
+    EnumSegmentedRow(
+        label = stringResource(R.string.fueling_rider_sex_label),
+        entries = RiderSex.entries,
+        selected = selected,
+        labelOf = { option ->
+            when (option) {
+                RiderSex.MALE    -> stringResource(R.string.fueling_rider_sex_male)
+                RiderSex.FEMALE  -> stringResource(R.string.fueling_rider_sex_female)
+                RiderSex.NOT_SET -> stringResource(R.string.fueling_rider_sex_unset)
             }
-        }
-    }
+        },
+        onSelected = onSelected,
+    )
 }
 
 /**

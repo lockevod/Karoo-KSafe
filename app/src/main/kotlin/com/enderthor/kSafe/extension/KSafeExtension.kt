@@ -149,9 +149,25 @@ private const val UPDATE_MANIFEST_URL: String =
  *  Karoo accumulated 10 windows of data while offline would block the periodic
  *  coroutine through 10 sequential HTTP round-trips (~5 minutes total). The cap
  *  drains the backlog gradually across several cycles instead of starving the
- *  coroutine on one cycle. The end-of-ride / manual-send / disable-logging paths
- *  pass `Int.MAX_VALUE` because they want to drain fully before returning. */
+ *  coroutine on one cycle. The manual-send / disable-logging paths pass
+ *  `Int.MAX_VALUE` because they are user-initiated and want to drain fully
+ *  before returning; the automatic end-of-ride path is bounded separately by
+ *  [CALIBRATION_RIDE_END_MAX_CHUNKS]. */
 private const val CALIBRATION_PERIODIC_MAX_CHUNKS_PER_CYCLE: Int = 6
+
+/** Ceiling on the chunks the AUTOMATIC end-of-ride drain sends back-to-back.
+ *  In the healthy case the 20-min periodic loop already carried the bulk, so
+ *  the tail left at ride end is ≤ one window and drains well within this cap.
+ *  The cap matters only in the pathological case the skill warns about: if
+ *  coverage was lost for the whole ride (every periodic window failed) the
+ *  on-disk backlog can be many MB, and firing a full multi-chunk upload the
+ *  instant `RideState` goes Idle contends with the Karoo saving + uploading
+ *  the activity over the same Companion link — the rider perceives "finishing
+ *  the ride got slower". Bounding it to the same per-window budget the periodic
+ *  loop uses keeps the end-of-ride send a small tail; whatever doesn't fit stays
+ *  on disk and is recovered on the next ride (rotated to the previous-session
+ *  file) via the manual Settings "Send" path. */
+private const val CALIBRATION_RIDE_END_MAX_CHUNKS: Int = CALIBRATION_PERIODIC_MAX_CHUNKS_PER_CYCLE
 
 /** Deadband on `cumBurnedG` for FIT session-message writes. The session message
  *  is "last write wins" — only the value at FIT close becomes the activity
@@ -208,6 +224,13 @@ class KSafeExtension : KarooExtension("ksafe", BuildConfig.VERSION_NAME), Corout
     private lateinit var wellnessMonitor: WellnessMonitor
     private lateinit var carbsTracker: com.enderthor.kSafe.extension.managers.CarbsTracker
     private lateinit var hydrationTracker: com.enderthor.kSafe.extension.managers.HydrationTracker
+    /** On-screen fueling-alert overlay (SYSTEM_ALERT_WINDOW). Lazy because it needs the
+     *  Application context and is only touched when a fueling alert is presented as an
+     *  overlay (mode != OFF + overlay permission + no active emergency). The [Lazy] handle
+     *  is kept so teardown/emergency paths can check [Lazy.isInitialized] and avoid
+     *  instantiating a WindowManager-holding manager that was never used this session. */
+    private val fuelingOverlayLazy = lazy { com.enderthor.kSafe.extension.managers.FuelingOverlayManager(applicationContext) }
+    private val fuelingOverlay by fuelingOverlayLazy
     /** Dedicated overlay for the update-availability notice. A separate instance keeps it
      *  fully isolated from the emergency SOS overlay owned by [emergencyManager]; the two
      *  never display at the same moment — update fires at idle boot, SOS during an incident. */
@@ -307,9 +330,11 @@ class KSafeExtension : KarooExtension("ksafe", BuildConfig.VERSION_NAME), Corout
     /** Per-slot tap-feedback timer jobs (LOGGED→IDLE / UNDONE→IDLE delayed reverts).
      *  Cancelled before a new launch so a stale timer from an earlier tap cannot
      *  clobber a fresher state set by a subsequent tap on the same slot. Indices 1..3
-     *  for carbs, 1..2 for hydration; index 0 unused. Touched only from handleCarbLogTap /
-     *  handleHydrationLogTap, which run on the extension's Main dispatcher, so plain
-     *  arrays (no @Volatile) are safe. */
+     *  for carbs, 1..2 for hydration; index 0 unused. Mutated via logFuelSlot/undoFuelSlot —
+     *  reached from the field-tap handlers (handleCarbLogTap / handleHydrationLogTap) AND from
+     *  the in-alert overlay LOG/UNDO button callbacks. All of those run on the extension's Main
+     *  dispatcher (the overlay button click fires from a view added on the main Handler), so plain
+     *  arrays (no @Volatile) are safe. Keep new call sites on Main or this assumption breaks. */
     private val carbTapRevertJobs: Array<kotlinx.coroutines.Job?> = arrayOfNulls(4)
     private val hydTapRevertJobs: Array<kotlinx.coroutines.Job?> = arrayOfNulls(3)
     private val combinedTapRevertJobs: Array<kotlinx.coroutines.Job?> = arrayOfNulls(3)
@@ -439,16 +464,16 @@ class KSafeExtension : KarooExtension("ksafe", BuildConfig.VERSION_NAME), Corout
             com.enderthor.kSafe.datatype.CarbLogDataType("carb-log-2", applicationContext, karooSystem, slot = 2),
             com.enderthor.kSafe.datatype.CarbLogDataType("carb-log-3", applicationContext, karooSystem, slot = 3),
             com.enderthor.kSafe.datatype.CarbStatusDataType("carb-status", applicationContext, karooSystem),
-            com.enderthor.kSafe.datatype.CarbBurnRateDataType("carb-burn-rate", applicationContext),
-            com.enderthor.kSafe.datatype.CarbAvgBurnRateDataType("carb-avg-burn-rate", applicationContext),
-            com.enderthor.kSafe.datatype.CarbsBurnedDataType("carbs-burned", applicationContext),
+            com.enderthor.kSafe.datatype.CarbBurnRateDataType("carb-burn-rate"),
+            com.enderthor.kSafe.datatype.CarbAvgBurnRateDataType("carb-avg-burn-rate"),
+            com.enderthor.kSafe.datatype.CarbsBurnedDataType("carbs-burned"),
             com.enderthor.kSafe.datatype.HydrationLogDataType("hyd-log-1", applicationContext, karooSystem, slot = 1),
             com.enderthor.kSafe.datatype.HydrationLogDataType("hyd-log-2", applicationContext, karooSystem, slot = 2),
             com.enderthor.kSafe.datatype.CombinedFuelLogDataType("combined-log-1", applicationContext, karooSystem, slot = 1),
             com.enderthor.kSafe.datatype.CombinedFuelLogDataType("combined-log-2", applicationContext, karooSystem, slot = 2),
             com.enderthor.kSafe.datatype.HydrationStatusDataType("hyd-status", applicationContext, karooSystem),
-            com.enderthor.kSafe.datatype.CaloriesTotalDataType("calories-total", applicationContext),
-            com.enderthor.kSafe.datatype.CaloriesRateDataType("calories-rate", applicationContext),
+            com.enderthor.kSafe.datatype.CaloriesTotalDataType("calories-total"),
+            com.enderthor.kSafe.datatype.CaloriesRateDataType("calories-rate"),
         )
     }
 
@@ -533,12 +558,16 @@ class KSafeExtension : KarooExtension("ksafe", BuildConfig.VERSION_NAME), Corout
             scope = this,
             karooSystem = karooSystem,
             context = applicationContext,
+            onFuelingAlert = { presentFuelingAlert(it) },
+            isEmergencyActive = ::emergencyActive,
             calibLogger = calibLogger,
         )
         hydrationTracker = com.enderthor.kSafe.extension.managers.HydrationTracker(
             scope = this,
             karooSystem = karooSystem,
             context = applicationContext,
+            onFuelingAlert = { presentFuelingAlert(it) },
+            isEmergencyActive = ::emergencyActive,
             calibLogger = calibLogger,
         )
         // Publish tracker references so the status DataTypes can suspend on the flow
@@ -546,6 +575,21 @@ class KSafeExtension : KarooExtension("ksafe", BuildConfig.VERSION_NAME), Corout
         // docs for the rationale.
         carbsTrackerFlow.value = carbsTracker
         hydrationTrackerFlow.value = hydrationTracker
+
+        // Emergency priority: a fueling overlay must never obscure a crash / SOS
+        // countdown or alert. The moment the emergency state leaves IDLE, tear down
+        // any fueling overlay on screen so the SOS Cancel overlay is unobstructed.
+        // Only touch the overlay if it was ever instantiated — otherwise the first
+        // emergency would needlessly build a WindowManager-holding manager that has
+        // no overlay to remove. (presentFuelingAlert already suppresses new fueling
+        // overlays while non-IDLE; this collector is the belt-and-suspenders teardown
+        // for one shown in the instant before the transition.)
+        launch {
+            com.enderthor.kSafe.extension.managers.EmergencyManager.uiState.collect { st ->
+                if (st.status != com.enderthor.kSafe.data.EmergencyStatus.IDLE &&
+                    fuelingOverlayLazy.isInitialized()) fuelingOverlay.remove()
+            }
+        }
 
         // Publish the singleton ONLY after every lateinit manager is constructed.
         // getInstance() is reached from FieldTapReceiver taps and DataType callbacks;
@@ -1352,6 +1396,11 @@ class KSafeExtension : KarooExtension("ksafe", BuildConfig.VERSION_NAME), Corout
                 // false — their retained state is still this ride's live session.
                 carbsTracker.stop(endOfSession = true)
                 hydrationTracker.stop(endOfSession = true)
+                // A fueling overlay shown in the final seconds otherwise lingers for its full
+                // ~15 s auto-dismiss; tear it down now the ride has ended so it can't sit as a
+                // dead, tappable prompt over the post-ride screen — and so a late tap can't log
+                // into the just-closed session. Mirrors the emergency teardown in initializeSystem().
+                if (fuelingOverlayLazy.isInitialized()) fuelingOverlay.remove()
                 // Ride ended cleanly — drop the persisted fueling snapshot so the next ride
                 // starts from zero. Fire-and-forget on IO; if the write loses to a process
                 // kill the next boot's stale-age check (FUELING_RESTORE_MAX_AGE_MS) catches it.
@@ -1384,11 +1433,18 @@ class KSafeExtension : KarooExtension("ksafe", BuildConfig.VERSION_NAME), Corout
                 // (only if the user hasn't already turned off logging — that path sends its own copy)
                 if (wasActive && wasLogging && calibLogger.isEnabled) {
                     // Drain in size-capped chunks on IO so each body fits the SDK
-                    // Binder transaction. Ride just ended — drain everything (no
-                    // per-cycle cap). A partial drain leaves the tail on disk for
-                    // the next manual send.
+                    // Binder transaction. Bounded to CALIBRATION_RIDE_END_MAX_CHUNKS
+                    // so a backlog from a no-coverage ride doesn't fire a full
+                    // multi-chunk upload the instant we hit Idle and contend with
+                    // the Karoo saving the activity (see the constant's KDoc). In
+                    // the healthy case the periodic loop already drained the bulk,
+                    // so this cap is never reached. A partial drain leaves the tail
+                    // on disk for the next ride's previous-session recovery.
                     launch(Dispatchers.IO) {
-                        sendCalibrationLogInChunks(captionPrefix = "Ride end")
+                        sendCalibrationLogInChunks(
+                            captionPrefix = "Ride end",
+                            maxChunks = CALIBRATION_RIDE_END_MAX_CHUNKS,
+                        )
                     }
                 }
             }
@@ -2101,6 +2157,34 @@ class KSafeExtension : KarooExtension("ksafe", BuildConfig.VERSION_NAME), Corout
         }
     }
 
+    /** Called from FuelingScreen to preview a carb/hydration alert without logging any intake.
+     * Mode-faithful (honours fuelingAlertButtonMode), silent (no beep — the tracker's beep stays
+     * in fireAlert), and safe (yields to a real emergency). Returns a UI status string. */
+    fun simulateFuelingAlert(channel: com.enderthor.kSafe.extension.util.FuelingChannel): String {
+        if (!::carbsTracker.isInitialized || !::hydrationTracker.isInitialized)
+            return "Extension not ready — wait a moment and try again."
+        if (emergencyActive()) return getString(R.string.fueling_preview_emergency)
+        val req = when (channel) {
+            com.enderthor.kSafe.extension.util.FuelingChannel.CARB -> carbsTracker.buildPreviewRequest()
+            com.enderthor.kSafe.extension.util.FuelingChannel.HYDRATION -> hydrationTracker.buildPreviewRequest()
+        }
+        val canOverlay = android.provider.Settings.canDrawOverlays(applicationContext)
+        presentFuelingAlert(req, preview = true)
+        return when (com.enderthor.kSafe.extension.util.decideFuelingPresentation(
+                activeConfig.fuelingAlertButtonMode, canOverlay, emergencyIdle = true, hasUsableSlot = req.item != null)) {
+            com.enderthor.kSafe.extension.util.FuelingPresentation.SUPPRESS ->
+                getString(R.string.fueling_preview_emergency)
+            com.enderthor.kSafe.extension.util.FuelingPresentation.INRIDE_ALERT -> when {
+                !canOverlay      -> getString(R.string.fueling_preview_no_overlay)
+                req.item == null -> getString(R.string.fueling_preview_no_slot)
+                else             -> getString(R.string.fueling_preview_inride)
+            }
+            com.enderthor.kSafe.extension.util.FuelingPresentation.OVERLAY_LOG,
+            com.enderthor.kSafe.extension.util.FuelingPresentation.OVERLAY_LOG_UNDO ->
+                getString(R.string.fueling_preview_shown)
+        }
+    }
+
     /**
      * Called from ProviderScreen to verify messaging provider is correctly configured.
      * Returns a human-readable result string (success or specific error).
@@ -2409,52 +2493,238 @@ class KSafeExtension : KarooExtension("ksafe", BuildConfig.VERSION_NAME), Corout
     fun wellnessMonitorOrNull(): com.enderthor.kSafe.extension.managers.WellnessMonitor? =
         if (this::wellnessMonitor.isInitialized) wellnessMonitor else null
 
+    /** True while a crash / SOS / check-in is in progress. Delegates to the canonical
+     *  [EmergencyManager.isActive] predicate (reads the in-memory uiState, NOT DataStore). */
+    private fun emergencyActive(): Boolean =
+        com.enderthor.kSafe.extension.managers.EmergencyManager.isActive
+
+    /** True while a ride is in progress (Recording or Paused). [currentRideState] is set
+     *  synchronously at the top of [handleRideState], so the instant a ride ends this reads false
+     *  — used to keep a fueling log/undo valid only within the ride, independent of the persisted
+     *  master switch (activeConfig.isActive). */
+    private fun rideActive(): Boolean =
+        currentRideState is RideState.Recording || currentRideState is RideState.Paused
+
+    /** abortIf for fueling overlays: never surface over an active emergency, and never (re-)surface
+     *  once the ride has ended. Closes the race where a final-second tracker tick's showPrompt is
+     *  already queued behind the async ride-end overlay teardown. */
+    private fun fuelingOverlayShouldAbort(): Boolean = emergencyActive() || !rideActive()
+
+    /**
+     * Present a fueling alert through the channel chosen by [decideFuelingPresentation]:
+     *  - Active emergency → SUPPRESS: present nothing (no overlay, no InRideAlert) so the
+     *    fueling alert can never compete with the SOS countdown/alert on any surface.
+     *  - OFF mode → plain [InRideAlert] (behaviour preserved from before this feature).
+     *  - LOG / LOG_UNDO mode (with overlay permission + no active emergency) → on-screen
+     *    overlay with a one-tap LOG button (and, in LOG_UNDO mode, a brief UNDO follow-up).
+     * Called by the carb / hydration trackers via their `onFuelingAlert` callback (in-ride path),
+     * or via [buildPreviewRequest] (preview=true path). In-ride calls have already dispatched
+     * the beep inside the tracker's fireAlert; preview calls deliberately skip the beep to keep
+     * the preview silent.
+     *
+     * The overlay paths pass `abortIf = ::fuelingOverlayShouldAbort`: the SUPPRESS check above is a
+     * synchronous snapshot, but showPrompt defers the addView to a later main-loop turn, so the
+     * guard is re-checked there to catch an emergency that starts — OR a ride that ends — in that
+     * gap (a final-second tick's showPrompt could otherwise re-add the overlay after the ride-end
+     * teardown).
+     */
+    private fun presentFuelingAlert(req: com.enderthor.kSafe.extension.util.FuelingAlertRequest, preview: Boolean = false) {
+        val mode = activeConfig.fuelingAlertButtonMode
+        val canOverlay = android.provider.Settings.canDrawOverlays(applicationContext)
+        // The exact item the button will log/undo, e.g. "Gel 25 g" (#3). Empty on non-overlay
+        // paths (item null) — cheap string ops, only the InRideAlert is built lazily (#7).
+        val item = fuelingItemLabel(req)
+        // LOG-prompt detail leads with the item NAME only (no amount) — the size already shows on
+        // the button, so repeating it here just eats the 2-line width and truncates the rationale.
+        // The UNDO confirmation ("Logged …") keeps the full amount, since its button shows no size.
+        val itemName = req.item?.label ?: ""
+        val logDetail = getString(R.string.fueling_overlay_log_detail, itemName, req.detail)
+        val loggedDetail = getString(R.string.fueling_overlay_logged, item)
+        // Two-line LOG button: big channel verb (EAT / DRINK) on top, the amount (e.g. "25 g")
+        // below. Amount is blank when no usable slot — the button then shows just the verb.
+        val buttonVerb = when (req.channel) {
+            com.enderthor.kSafe.extension.util.FuelingChannel.CARB -> getString(R.string.fueling_overlay_eat)
+            com.enderthor.kSafe.extension.util.FuelingChannel.HYDRATION -> getString(R.string.fueling_overlay_drink)
+        }
+        val buttonAmount = req.item?.let { slot ->
+            val unit = when (req.channel) {
+                com.enderthor.kSafe.extension.util.FuelingChannel.CARB -> "g"
+                com.enderthor.kSafe.extension.util.FuelingChannel.HYDRATION -> "ml"
+            }
+            "${slot.size} $unit"
+        } ?: ""
+        // Overlay glyph by channel: 🍫 for eat, 💧 for drink. The UNDO follow-up reuses the
+        // same channel icon (it undoes the same item).
+        val buttonIcon = when (req.channel) {
+            com.enderthor.kSafe.extension.util.FuelingChannel.CARB -> getString(R.string.fueling_overlay_icon)
+            com.enderthor.kSafe.extension.util.FuelingChannel.HYDRATION -> getString(R.string.fueling_overlay_icon_drink)
+        }
+        // In preview (from Settings, no ride) drop the !rideActive() half of the guard so the
+        // overlay shows — but KEEP emergencyActive() so a real SOS still wins.
+        val abortGuard: () -> Boolean = if (preview) ({ emergencyActive() }) else ::fuelingOverlayShouldAbort
+        // Overlay background = the channel's configured alert colour (same sentinel the InRideAlert
+        // uses), resolved to a colour int, so the overlay matches the InRideAlert and each channel
+        // shows its own colour instead of the static teal drawable.
+        val fuelBgColor = androidx.core.content.ContextCompat.getColor(
+            applicationContext,
+            com.enderthor.kSafe.data.fuelingAlertColorRes(when (req.channel) {
+                com.enderthor.kSafe.extension.util.FuelingChannel.CARB -> activeConfig.carbAlertBgColor
+                com.enderthor.kSafe.extension.util.FuelingChannel.HYDRATION -> activeConfig.hydrationAlertBgColor
+            })
+        )
+        when (com.enderthor.kSafe.extension.util.decideFuelingPresentation(
+                mode, canOverlay, !emergencyActive(), hasUsableSlot = req.item != null)) {
+            com.enderthor.kSafe.extension.util.FuelingPresentation.SUPPRESS ->
+                Timber.d("Fueling alert suppressed — emergency active")
+            com.enderthor.kSafe.extension.util.FuelingPresentation.INRIDE_ALERT ->
+                karooSystem.dispatch(req.inRideAlert())
+            com.enderthor.kSafe.extension.util.FuelingPresentation.OVERLAY_LOG ->
+                fuelingOverlay.showPrompt(req.title, logDetail, buttonIcon, buttonVerb, buttonAmount, 15_000L,
+                    abortIf = abortGuard, bgColor = fuelBgColor) {
+                    if (!preview) logFuelingSlot(req.channel, req.item?.slot)
+                    fuelingOverlay.remove()
+                }
+            com.enderthor.kSafe.extension.util.FuelingPresentation.OVERLAY_LOG_UNDO ->
+                fuelingOverlay.showPrompt(req.title, logDetail, buttonIcon, buttonVerb, buttonAmount, 15_000L,
+                    abortIf = abortGuard, bgColor = fuelBgColor) {
+                    if (!preview) logFuelingSlot(req.channel, req.item?.slot)
+                    fuelingOverlay.remove()
+                    // Confirm what was logged (not the original "you should fuel" message) so the
+                    // UNDO button reads as "undo THIS", not as a fresh fueling nag. No amount line.
+                    fuelingOverlay.showPrompt(req.title, loggedDetail, buttonIcon, getString(R.string.fueling_overlay_undo_action), "", 4_000L,
+                        abortIf = abortGuard, bgColor = fuelBgColor) {
+                        if (!preview) undoFuelingSlot(req.channel, req.item?.slot)
+                        fuelingOverlay.remove()
+                    }
+                }
+        }
+    }
+
+    /** Human-readable name of the item an overlay LOG/UNDO will record — e.g. "Gel 25 g" /
+     *  "Bottle 500 ml" — formatted from the [FuelSlot][com.enderthor.kSafe.extension.util.FuelSlot]
+     *  the tracker already chose (label + size frozen at fire time), so the rider sees exactly what
+     *  the button suggests without re-deriving the slot→config mapping here. Empty when no item
+     *  (the non-overlay branches never use it). */
+    private fun fuelingItemLabel(req: com.enderthor.kSafe.extension.util.FuelingAlertRequest): String {
+        val item = req.item ?: return ""
+        val unit = when (req.channel) {
+            com.enderthor.kSafe.extension.util.FuelingChannel.CARB -> "g"
+            com.enderthor.kSafe.extension.util.FuelingChannel.HYDRATION -> "ml"
+        }
+        // Non-breaking space between the number and the unit so "30 g" / "500 ml" never wraps
+        // with the unit orphaned on its own line — seen on the narrow UNDO prompt ("Logged Gel 30"
+        // then a lone "g"). Now the amount stays whole: "Logged Gel" / "30 g".
+        return "${item.label} ${item.size} $unit"
+    }
+
+    /** Route an in-alert overlay LOG to the right tracker AND its on-ride field-state machine
+     *  (logCarbSlot / logHydrationSlot) so the overlay log flashes the field and opens the undo
+     *  window exactly like a field tap. No-op if [slot] is null (decideFuelingPresentation never
+     *  reaches an overlay path without a usable slot — defensive). */
+    private fun logFuelingSlot(channel: com.enderthor.kSafe.extension.util.FuelingChannel, slot: Int?) {
+        if (slot == null) return
+        when (channel) {
+            com.enderthor.kSafe.extension.util.FuelingChannel.CARB -> logCarbSlot(slot)
+            com.enderthor.kSafe.extension.util.FuelingChannel.HYDRATION -> logHydrationSlot(slot)
+        }
+    }
+
+    /** UNDO counterpart of [logFuelingSlot]. */
+    private fun undoFuelingSlot(channel: com.enderthor.kSafe.extension.util.FuelingChannel, slot: Int?) {
+        if (slot == null) return
+        when (channel) {
+            com.enderthor.kSafe.extension.util.FuelingChannel.CARB -> undoCarbSlot(slot)
+            com.enderthor.kSafe.extension.util.FuelingChannel.HYDRATION -> undoHydrationSlot(slot)
+        }
+    }
+
     fun handleCarbLogTap(slot: Int) {
         Timber.d("handleCarbLogTap slot=$slot")
         if (!activeConfig.isActive) return
         if (!activeConfig.carbsTrackerEnabled) return
         if (!this::carbsTracker.isInitialized) return
         if (slot !in 1..3) return
-        // Cancel any pending revert from a previous tap on this slot. Without this a
-        // 3-tap sequence (log → undo → log within ~5 s) could leave a stale LOGGED→IDLE
-        // timer from the first tap, which would fire later and clobber the third tap's
-        // LOGGED state — flash disappears before the rider sees the confirmation.
-        carbTapRevertJobs[slot]?.cancel()
-        carbTapRevertJobs[slot] = null
+        // Toggle: a tap inside the undo window reverses the last entry; otherwise it logs.
+        // Both halves are shared with the in-alert overlay LOG/UNDO buttons (logCarbSlot /
+        // undoCarbSlot) so the field stays in sync whichever surface acted.
+        if (com.enderthor.kSafe.datatype.CarbLogState.flowForSlot(slot).value
+                is com.enderthor.kSafe.datatype.CarbLogState.LOGGED) undoCarbSlot(slot)
+        else logCarbSlot(slot)
+    }
 
-        val state = com.enderthor.kSafe.datatype.CarbLogState.flowForSlot(slot).value
-        if (state is com.enderthor.kSafe.datatype.CarbLogState.LOGGED) {
-            // Second tap within the undo window — reverse the previous entry.
-            val undone = carbsTracker.undoLastForSlot(slot)
-            if (undone > 0) {
-                com.enderthor.kSafe.datatype.CarbLogState.update(slot, com.enderthor.kSafe.datatype.CarbLogState.UNDONE(undone))
-                carbTapRevertJobs[slot] = launch {
-                    kotlinx.coroutines.delay(1_500L)
-                    com.enderthor.kSafe.datatype.CarbLogState.update(slot, com.enderthor.kSafe.datatype.CarbLogState.IDLE)
-                    carbTapRevertJobs[slot] = null
-                }
-            } else {
-                com.enderthor.kSafe.datatype.CarbLogState.update(slot, com.enderthor.kSafe.datatype.CarbLogState.IDLE)
-            }
-            return
-        }
-        // UNDONE is the brief red confirmation flash after a successful undo. The rider
-        // should be able to re-log immediately (mis-tap recovery) without waiting for
-        // the 1.5 s auto-reset to IDLE. Falls through to the regular log path below.
-        val logged = carbsTracker.logEntry(slot)
-        // 6 s window: long enough that the rider can react after the confirmation flash
-        // even with gloves on rough terrain, short enough that a legitimate second log
-        // isn't an annoying wait. History: 5 s → 8 s after field reports of rapid taps
-        // being missed; 8 s → 6 s after riders found the field "locked" too long when
-        // they wanted to log a second item back-to-back (e.g. a gel + a bar). 6 s lands
-        // between the two: still ample for glove-friendly undo, no longer feels stuck.
-        com.enderthor.kSafe.datatype.CarbLogState.update(slot, com.enderthor.kSafe.datatype.CarbLogState.LOGGED(logged))
-        carbTapRevertJobs[slot] = launch {
+    /**
+     * Log one fueling entry for [slot] and flash its on-ride field LOGGED with a 6 s undo window,
+     * then revert to IDLE. Shared by BOTH the field tap and the in-alert overlay LOG button (carbs
+     * and hydration, via the thin wrappers below) so the field state never diverges from the
+     * tracker's accounting regardless of which surface logged.
+     *
+     * Gated on [rideActive] (Recording/Paused) AND — for the LOG direction only — on [logAllowed]
+     * (the live master switch `activeConfig.isActive` AND this tracker's enabled flag). The
+     * `logAllowed` gate makes the overlay LOG button match handleCarb/HydrationLogTap: if the rider
+     * disables the tracker (or the master switch) while the overlay is still up, ✓ Log no-ops
+     * instead of recording into a now-off tracker. UNDO is deliberately NOT gated on those toggles
+     * ([undoFuelSlot] takes no logAllowed) — gating it would strand a just-logged entry's grams in
+     * the cumulative total (the trap handleCombinedLogTap documents). rideActive() additionally
+     * covers the post-ride window: the overlay is torn down on RideState.Idle, but that teardown is
+     * posted async, so a tap in the sub-frame gap before it runs is a no-op (rideActive() is set
+     * synchronously on the Idle event). The field-tap handlers pre-check the same toggles, so this
+     * gate is a no-op for them and a safety net for the overlay button.
+     */
+    private fun logFuelSlot(
+        slot: Int, range: IntRange, ready: Boolean, logAllowed: Boolean,
+        jobs: Array<kotlinx.coroutines.Job?>, logEntry: (Int) -> Int,
+        setLogged: (Int, Int) -> Unit, setIdle: (Int) -> Unit,
+    ) {
+        if (slot !in range || !ready || !logAllowed || !rideActive()) return
+        // Cancel any pending revert from a previous action on this slot. Without this a
+        // log → undo → log sequence within ~6 s could leave a stale LOGGED→IDLE timer that
+        // fires later and clobbers the latest LOGGED flash before the rider sees it.
+        jobs[slot]?.cancel(); jobs[slot] = null
+        val logged = logEntry(slot)
+        // 6 s window: ample for a glove-friendly undo on rough terrain, short enough not to
+        // feel "locked" before a legitimate back-to-back log. History: 5 s → 8 s → 6 s.
+        setLogged(slot, logged)
+        jobs[slot] = launch {
             kotlinx.coroutines.delay(6_000L)
-            com.enderthor.kSafe.datatype.CarbLogState.update(slot, com.enderthor.kSafe.datatype.CarbLogState.IDLE)
-            carbTapRevertJobs[slot] = null
+            setIdle(slot); jobs[slot] = null
         }
     }
+
+    /** Reverse the last fueling entry for [slot] and flash the field UNDONE (1.5 s) then IDLE.
+     *  Same gate and shared-surface rationale as [logFuelSlot]; used by the field tap (second tap
+     *  in the window) and the overlay UNDO button. */
+    private fun undoFuelSlot(
+        slot: Int, range: IntRange, ready: Boolean,
+        jobs: Array<kotlinx.coroutines.Job?>, undoEntry: (Int) -> Int,
+        setUndone: (Int, Int) -> Unit, setIdle: (Int) -> Unit,
+    ) {
+        if (slot !in range || !ready || !rideActive()) return
+        jobs[slot]?.cancel(); jobs[slot] = null
+        val undone = undoEntry(slot)
+        if (undone > 0) {
+            setUndone(slot, undone)
+            jobs[slot] = launch {
+                kotlinx.coroutines.delay(1_500L)
+                setIdle(slot); jobs[slot] = null
+            }
+        } else setIdle(slot)
+    }
+
+    // Carb wrappers — bind the shared log/undo machinery to the carb tracker, its 3 slots, the
+    // CarbLog field-state machine and the carb revert-job array.
+    private fun logCarbSlot(slot: Int) = logFuelSlot(
+        slot, 1..3, this::carbsTracker.isInitialized,
+        activeConfig.isActive && activeConfig.carbsTrackerEnabled, carbTapRevertJobs,
+        { carbsTracker.logEntry(it) },
+        { s, g -> com.enderthor.kSafe.datatype.CarbLogState.update(s, com.enderthor.kSafe.datatype.CarbLogState.LOGGED(g)) },
+        { s -> com.enderthor.kSafe.datatype.CarbLogState.update(s, com.enderthor.kSafe.datatype.CarbLogState.IDLE) },
+    )
+    private fun undoCarbSlot(slot: Int) = undoFuelSlot(
+        slot, 1..3, this::carbsTracker.isInitialized, carbTapRevertJobs,
+        { carbsTracker.undoLastForSlot(it) },
+        { s, g -> com.enderthor.kSafe.datatype.CarbLogState.update(s, com.enderthor.kSafe.datatype.CarbLogState.UNDONE(g)) },
+        { s -> com.enderthor.kSafe.datatype.CarbLogState.update(s, com.enderthor.kSafe.datatype.CarbLogState.IDLE) },
+    )
 
     fun handleHydrationLogTap(slot: Int) {
         Timber.d("handleHydrationLogTap slot=$slot")
@@ -2462,38 +2732,36 @@ class KSafeExtension : KarooExtension("ksafe", BuildConfig.VERSION_NAME), Corout
         if (!activeConfig.hydrationTrackerEnabled) return
         if (!this::hydrationTracker.isInitialized) return
         if (slot !in 1..2) return
-        hydTapRevertJobs[slot]?.cancel()
-        hydTapRevertJobs[slot] = null
-
-        val state = com.enderthor.kSafe.datatype.HydrationLogState.flowForSlot(slot).value
-        if (state is com.enderthor.kSafe.datatype.HydrationLogState.LOGGED) {
-            val undone = hydrationTracker.undoLastForSlot(slot)
-            if (undone > 0) {
-                com.enderthor.kSafe.datatype.HydrationLogState.update(slot, com.enderthor.kSafe.datatype.HydrationLogState.UNDONE(undone))
-                hydTapRevertJobs[slot] = launch {
-                    kotlinx.coroutines.delay(1_500L)
-                    com.enderthor.kSafe.datatype.HydrationLogState.update(slot, com.enderthor.kSafe.datatype.HydrationLogState.IDLE)
-                    hydTapRevertJobs[slot] = null
-                }
-            } else {
-                com.enderthor.kSafe.datatype.HydrationLogState.update(slot, com.enderthor.kSafe.datatype.HydrationLogState.IDLE)
-            }
-            return
-        }
-        // UNDONE falls through to re-log — see handleCarbLogTap for the rationale.
-        val logged = hydrationTracker.logEntry(slot)
-        // 6 s window — see handleCarbLogTap for the history (5 → 8 → 6 s) and rationale.
-        com.enderthor.kSafe.datatype.HydrationLogState.update(slot, com.enderthor.kSafe.datatype.HydrationLogState.LOGGED(logged))
-        hydTapRevertJobs[slot] = launch {
-            kotlinx.coroutines.delay(6_000L)
-            com.enderthor.kSafe.datatype.HydrationLogState.update(slot, com.enderthor.kSafe.datatype.HydrationLogState.IDLE)
-            hydTapRevertJobs[slot] = null
-        }
+        // Toggle — same model as handleCarbLogTap; halves shared with the overlay buttons.
+        if (com.enderthor.kSafe.datatype.HydrationLogState.flowForSlot(slot).value
+                is com.enderthor.kSafe.datatype.HydrationLogState.LOGGED) undoHydrationSlot(slot)
+        else logHydrationSlot(slot)
     }
+
+    // Hydration wrappers — 2 slots, the HydrationLog field-state machine and the hydration
+    // revert-job array. Counterparts of [logCarbSlot] / [undoCarbSlot].
+    private fun logHydrationSlot(slot: Int) = logFuelSlot(
+        slot, 1..2, this::hydrationTracker.isInitialized,
+        activeConfig.isActive && activeConfig.hydrationTrackerEnabled, hydTapRevertJobs,
+        { hydrationTracker.logEntry(it) },
+        { s, g -> com.enderthor.kSafe.datatype.HydrationLogState.update(s, com.enderthor.kSafe.datatype.HydrationLogState.LOGGED(g)) },
+        { s -> com.enderthor.kSafe.datatype.HydrationLogState.update(s, com.enderthor.kSafe.datatype.HydrationLogState.IDLE) },
+    )
+    private fun undoHydrationSlot(slot: Int) = undoFuelSlot(
+        slot, 1..2, this::hydrationTracker.isInitialized, hydTapRevertJobs,
+        { hydrationTracker.undoLastForSlot(it) },
+        { s, g -> com.enderthor.kSafe.datatype.HydrationLogState.update(s, com.enderthor.kSafe.datatype.HydrationLogState.UNDONE(g)) },
+        { s -> com.enderthor.kSafe.datatype.HydrationLogState.update(s, com.enderthor.kSafe.datatype.HydrationLogState.IDLE) },
+    )
 
     fun handleCombinedLogTap(slot: Int) {
         Timber.d("handleCombinedLogTap slot=$slot")
         if (!activeConfig.isActive) return
+        // Same post-ride guard as logFuelSlot. The combined field is the sibling of the per-slot
+        // CarbLog/HydrationLog fields and shares their narrow post-ride tap window; isActive above
+        // is the persisted master switch (still true after a normal ride end), so gate on the real
+        // ride state too — otherwise a residual tap logs into the just-closed session.
+        if (!rideActive()) return
         val carbsOn = activeConfig.carbsTrackerEnabled && this::carbsTracker.isInitialized
         val hydOn = activeConfig.hydrationTrackerEnabled && this::hydrationTracker.isInitialized
         if (!carbsOn && !hydOn) return
@@ -3194,6 +3462,8 @@ class KSafeExtension : KarooExtension("ksafe", BuildConfig.VERSION_NAME), Corout
         hydrationTracker.stop()
         locationManager.stop()
         emergencyManager.stopAll()
+        // Only if it was ever shown — avoids instantiating the lazy manager at teardown.
+        if (fuelingOverlayLazy.isInitialized()) runCatching { fuelingOverlay.remove() }
         calibLogger.disable()
         updateOverlay.removeInfoOverlay()
         // Unbind the HAL service before the karooSystem disconnect so we don't leak a

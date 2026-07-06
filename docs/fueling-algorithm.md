@@ -389,6 +389,32 @@ Tap behaviour: a `PendingIntent` fires a unique broadcast action (`com.enderthor
 
 Two BonusActions registered: *"KSafe: Log Carb"* and *"KSafe: Log Drink"*, both wired to **slot 1** of each category. The rider maps them to AXS shifter buttons. Logging without looking at the screen.
 
+### In-alert logging button (overlay)
+
+A fueling alert can optionally surface as a **tappable overlay** with a one-tap **LOG** button (and an optional **UNDO** follow-up), so the rider logs the suggested item straight from the alert without finding its field. Controlled by `KSafeConfig.fuelingAlertButtonMode` (`OFF` / `LOG` / `LOG_UNDO`; default `OFF`, which preserves the legacy InRideAlert-only behaviour — added in config **v22**).
+
+Wiring: each tracker's `fireAlert` builds a `FuelingAlertRequest` (title, detail, a **lazy** `inRideAlert` factory, the `FuelingChannel`, and the chosen `item`) and hands it to `KSafeExtension.presentFuelingAlert` via the `onFuelingAlert` callback. The `item` is the whole `FuelSlot` (slot index + label + size) returned by `util/FuelItemSelector.pickFuelItem` — the enabled slot whose size is closest to the current deficit (lowest index on ties), or the first usable slot for a time-based alert; `null` when no slot has size > 0. Carrying the `FuelSlot` (not a bare slot index) lets the presenter format the prompt from `item.label`/`item.size` without re-deriving the slot→config mapping, and freezes the shown amount at fire time.
+
+`util/FuelingPresentation.decideFuelingPresentation(mode, canDrawOverlays, emergencyIdle, hasUsableSlot)` (pure, unit-tested) picks the channel:
+
+| Condition | Result |
+|---|---|
+| `!emergencyIdle` (a crash / SOS countdown / alert is active) | **`SUPPRESS`** — present nothing |
+| `!canDrawOverlays` **or** `!hasUsableSlot` (no overlay permission / no loggable slot) | `INRIDE_ALERT` |
+| `mode == OFF` | `INRIDE_ALERT` |
+| `mode == LOG` | `OVERLAY_LOG` |
+| `mode == LOG_UNDO` | `OVERLAY_LOG_UNDO` |
+
+Key behaviours:
+
+- **Emergency priority.** A fueling alert that comes due while `EmergencyManager.uiState.status != IDLE` is **deferred at the tracker**: `evaluateDeficitAlert` / `evaluateTimeAlert` check the injected `isEmergencyActive` *after* deciding the alert is due and return without firing — so **no beep**, and the cooldown timestamp is **not** stamped, so the alert re-fires on the next tick once the emergency clears (held back, not lost). Per-tick integration keeps running, so the deficit stays accurate. As defense-in-depth, `decideFuelingPresentation` still returns `SUPPRESS` (no overlay, no InRideAlert) if an alert ever reaches the presenter during an emergency, `FuelingOverlayManager.showPrompt` re-checks `emergencyActive() || !rideActive()` inside its deferred main-thread post (`abortIf`), and a `uiState` collector tears down any overlay shown in the instant before the transition.
+- **Field state stays in sync.** The overlay LOG/UNDO routes through the **same** helpers as a field tap (`logCarbSlot` / `undoCarbSlot` and the hydration equivalents — thin wrappers over a shared `logFuelSlot` / `undoFuelSlot`), so the on-ride `CarbLog`/`HydrationLog` field flashes `LOGGED`/`UNDONE` and the 6 s / 1.5 s revert jobs are managed (pending one cancelled first) identically whether the rider logged from the field or the overlay.
+- **Named item.** The overlay detail leads with the exact item the button will record (e.g. *"Gel 25 g — <reason>"*, `fueling_overlay_log_detail`), and the `LOG_UNDO` follow-up confirms it (*"Logged Gel 25 g"*, `fueling_overlay_logged`), so the rider is never tapping a blind "Log".
+- **No phantom log (empty slot).** When `pickFuelItem` returns `null` (all slots size 0) the alert falls back to a plain `InRideAlert` with no button, instead of logging a 0 g/ml entry into slot 1.
+- **No post-ride log.** The overlay is torn down when the ride ends (`RideState.Idle`, mirroring the emergency teardown), and every fuel-write — `logFuelSlot` / `undoFuelSlot` and the combined-field `handleCombinedLogTap` — is gated on `rideActive()` (`currentRideState` is `Recording`/`Paused`, set synchronously at the top of `handleRideState`). So a tap landing in the sub-frame window before the async overlay removal runs is a no-op instead of logging into the just-closed session. The gate is the **real ride state**, deliberately not the persisted master switch (`activeConfig.isActive`, still `true` after a normal ride end) nor the per-tracker `enabled` flag (gating UNDO on it would strand the logged grams in the cumulative total).
+
+`FuelingOverlayManager` is a standalone `SYSTEM_ALERT_WINDOW` overlay, deliberately separate from `SosOverlayManager` so the safety-critical SOS overlay cannot be affected by changes here.
+
 ---
 
 ## Post-Ride Summary
@@ -589,6 +615,7 @@ Riders who don't fill these in still get a useful carb estimate via Swain. Both 
 | Field | Default | UI exposed |
 |---|---|---|
 | `carbsTrackerEnabled` | `false` (opt-in master — gates all sub-fields and collapses them when off) | ✅ |
+| `fuelingAlertButtonMode` | `OFF` (**global** — applies to carb **and** hydration alerts; `OFF` / `LOG` / `LOG_UNDO`; added v22) | ✅ — Fueling tab, own card. See [In-alert logging button](#in-alert-logging-button-overlay). |
 | `carbDeficitAlertEnabled` | `true` | ✅ |
 | `carbDeficitThresholdG` | 25 g | ✅ |
 | `carbDeficitInitialDelayMin` | 30 | ✅ (0 = off — fire as soon as threshold crossed) |

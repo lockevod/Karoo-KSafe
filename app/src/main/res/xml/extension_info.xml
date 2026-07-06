@@ -98,19 +98,19 @@
     <DataType
         description="@string/carb_burn_rate_datatype_desc"
         displayName="@string/carb_burn_rate_datatype_name"
-        graphical="true"
+        graphical="false"
         icon="@drawable/ic_ksafe"
         typeId="carb-burn-rate" />
     <DataType
         description="@string/carb_avg_burn_rate_datatype_desc"
         displayName="@string/carb_avg_burn_rate_datatype_name"
-        graphical="true"
+        graphical="false"
         icon="@drawable/ic_ksafe"
         typeId="carb-avg-burn-rate" />
     <DataType
         description="@string/carbs_burned_datatype_desc"
         displayName="@string/carbs_burned_datatype_name"
-        graphical="true"
+        graphical="false"
         icon="@drawable/ic_ksafe"
         typeId="carbs-burned" />
     <DataType
@@ -134,13 +134,13 @@
     <DataType
         description="@string/calories_total_datatype_desc"
         displayName="@string/calories_total_datatype_name"
-        graphical="true"
+        graphical="false"
         icon="@drawable/ic_ksafe"
         typeId="calories-total" />
     <DataType
         description="@string/calories_rate_datatype_desc"
         displayName="@string/calories_rate_datatype_name"
-        graphical="true"
+        graphical="false"
         icon="@drawable/ic_ksafe"
         typeId="calories-rate" />
     <DataType

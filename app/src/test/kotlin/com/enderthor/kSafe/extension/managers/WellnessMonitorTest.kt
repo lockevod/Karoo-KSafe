@@ -3,6 +3,7 @@ package com.enderthor.kSafe.extension.managers
 import com.enderthor.kSafe.data.EmergencyReason
 import com.enderthor.kSafe.data.KSafeConfig
 import com.enderthor.kSafe.extension.util.Clock
+import io.hammerhead.karooext.models.UserProfile
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.test.TestScope
@@ -486,6 +487,78 @@ class WellnessMonitorTest {
             "max drift snapshot must reflect the observed climb: ${mon.getSummary().maxDriftPct}",
             mon.getSummary().maxDriftPct >= 7f,
         )
+    }
+
+    /** Minimal real UserProfile carrying only the weight the decoupling power floor reads
+     *  (UserProfile is final — can't be mocked with plain mockito-core; build a real one,
+     *  same approach as HrCalorieFallbackTest / CarbBurnEstimatorTest). */
+    private fun profileWithWeight(weightKg: Float) = UserProfile(
+        weight = weightKg,
+        preferredUnit = UserProfile.PreferredUnit(
+            distance = UserProfile.PreferredUnit.UnitType.METRIC,
+            temperature = UserProfile.PreferredUnit.UnitType.METRIC,
+            elevation = UserProfile.PreferredUnit.UnitType.METRIC,
+            weight = UserProfile.PreferredUnit.UnitType.METRIC,
+        ),
+        maxHr = 0,
+        restingHr = 0,
+        heartRateZones = emptyList(),
+        ftp = 0,
+        powerZones = emptyList(),
+    )
+
+    @Test
+    fun `decoupling ignores soft-pedal power below the W per kg floor when rider weight is set`() = runTest {
+        // Field-FP guard (log 0e6f39_416c4a): a 70 kg rider on technical gravel pedalled at
+        // ~90 W with HR held high (148 bpm) by terrain — a power-driven HR/W spike, not heat.
+        // With rider weight known, the floor is 1.5 W/kg = 105 W, so those 90 W samples must
+        // be DROPPED from the ratio and NOT fire DECOUPLING. (Under the legacy flat 50 W floor
+        // the identical 90 W / high-HR data WOULD be admitted and fire — that is exactly the
+        // false WARNING this change removes; see the establishes-and-fires test above, which
+        // fires at 200 W.)
+        val clock = TestClock(nowMs = 1_000_000L)
+        val incidents = mutableListOf<Pair<EmergencyReason, Map<String, String>>>()
+        val mon = WellnessMonitor(
+            scope = this.backgroundScope as CoroutineScope,
+            onIncident = { reason, payload -> incidents += reason to payload },
+            clock = clock,
+        )
+        mon.start(
+            KSafeConfig(
+                wellnessEnabled = true,
+                wellnessCriticalEnabled = false,
+                wellnessSustainedEnabled = false,
+                wellnessDecouplingEnabled = true,
+                wellnessDecouplingThresholdPct = 7,
+                wellnessDecouplingDurationMinutes = 1,
+            )
+        )
+        mon.updateUserProfile(profileWithWeight(70f))   // floor = 1.5 × 70 = 105 W
+
+        // Establish a stable baseline at HR=140 / power=200 W (well above the 105 W floor).
+        repeat(22) {
+            repeat(30) {
+                clock.nowMs += 1_000L
+                mon.updatePower(200)
+            }
+            mon.updateHr(140)
+            mon.tick()
+        }
+        assertEquals("baseline establishment must not fire", 0, incidents.size)
+
+        // Now the artifact: HR climbs to 165 (≈ +18 % drift if it were counted) but power is
+        // only 90 W — below the 105 W floor, so every one of these samples must be excluded.
+        repeat(20) {
+            clock.nowMs += 30_000L
+            mon.updateHr(165)
+            mon.updatePower(90)
+            mon.tick()
+        }
+        assertEquals(
+            "sub-floor (90 W < 105 W) soft-pedal samples must NOT fire DECOUPLING",
+            0, incidents.count { it.first == EmergencyReason.WELLNESS_DECOUPLING },
+        )
+        assertEquals(0, mon.getSummary().decouplingFires)
     }
 
     @Test

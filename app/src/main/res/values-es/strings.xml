@@ -138,6 +138,21 @@
     <string name="fueling_hyd_alert_title">Bebe algo</string>
     <string name="fueling_hyd_alert_detail_deficit">Bebe ya — {deficit} ml de retraso</string>
     <string name="fueling_hyd_alert_detail_time">Bebe ya — {elapsed} min desde la última</string>
+    <string name="fueling_alert_button_mode_label">Registrar nutrición desde la alerta</string>
+    <string name="fueling_alert_button_off">Off</string>
+    <string name="fueling_alert_button_log">Un toque</string>
+    <string name="fueling_alert_button_log_undo">+ Deshacer</string>
+    <!-- Detalle del overlay con botón LOG: nombra el ítem exacto que registrará el toque
+         (ítem primero para que no se recorte), luego el motivo. p.ej. "Gel 25 g — …" -->
+    <string name="fueling_overlay_log_detail">%1$s — %2$s</string>
+    <!-- Detalle del breve prompt de DESHACER tras registrar: confirma qué se registró. -->
+    <string name="fueling_overlay_logged">Registrado %1$s</string>
+    <string name="fueling_preview_label">Vista previa alerta</string>
+    <string name="fueling_preview_shown">✓ Vista previa mostrada</string>
+    <string name="fueling_preview_inride">✓ InRideAlert enviado (puede que solo se vea durante una ruta)</string>
+    <string name="fueling_preview_emergency">No disponible durante una emergencia.</string>
+    <string name="fueling_preview_no_overlay">Sin permiso de overlay — concede «Mostrar sobre otras apps».</string>
+    <string name="fueling_preview_no_slot">Sin cantidad configurada — define un slot con gramos/ml.</string>
 
     <!-- BonusActions de Nutrición -->
     <string name="action_log_carb_1">KSafe: Registrar carbo 1</string>
