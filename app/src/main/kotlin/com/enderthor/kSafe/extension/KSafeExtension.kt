@@ -2517,8 +2517,10 @@ class KSafeExtension : KarooExtension("ksafe", BuildConfig.VERSION_NAME), Corout
      *  - OFF mode → plain [InRideAlert] (behaviour preserved from before this feature).
      *  - LOG / LOG_UNDO mode (with overlay permission + no active emergency) → on-screen
      *    overlay with a one-tap LOG button (and, in LOG_UNDO mode, a brief UNDO follow-up).
-     * Called by the carb / hydration trackers via their `onFuelingAlert` callback; the beep
-     * has already fired inside the tracker by the time we get here, so all paths stay audible.
+     * Called by the carb / hydration trackers via their `onFuelingAlert` callback (in-ride path),
+     * or via [buildPreviewRequest] (preview=true path). In-ride calls have already dispatched
+     * the beep inside the tracker's fireAlert; preview calls deliberately skip the beep to keep
+     * the preview silent.
      *
      * The overlay paths pass `abortIf = ::fuelingOverlayShouldAbort`: the SUPPRESS check above is a
      * synchronous snapshot, but showPrompt defers the addView to a later main-loop turn, so the
