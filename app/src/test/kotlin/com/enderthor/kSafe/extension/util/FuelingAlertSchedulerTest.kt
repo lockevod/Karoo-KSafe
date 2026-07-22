@@ -307,4 +307,51 @@ class FuelingAlertSchedulerTest {
         )
         assertFalse(fire)
     }
+
+    // ── unacknowledged back-off (2026-07-22 field sweep) ─────────────────────
+
+    /** Helper: 10-min base interval, threshold crossed, no initial delay. */
+    private fun deficitDueAfter(minutesSinceLastFire: Long, unacked: Int): Boolean =
+        FuelingAlertScheduler.shouldFireDeficit(
+            enabled = true,
+            deficit = 500, deficitThreshold = 300,
+            lastDeficitAlertFireMs = 30L * 60_000L,
+            reminderIntervalMs = 10L * 60_000L,
+            initialDelayMs = 0L, cumLogged = 0,
+            sessionStartMs = 0L,
+            now = (30L + minutesSinceLastFire) * 60_000L,
+            unackedFires = unacked,
+        )
+
+    @Test
+    fun `first two unacknowledged reminders keep the configured interval`() {
+        assertFalse("9 min < base interval", deficitDueAfter(9, unacked = 0))
+        assertTrue("base interval, nothing ignored yet", deficitDueAfter(10, unacked = 0))
+        assertTrue("one ignored — still base cadence", deficitDueAfter(10, unacked = 1))
+    }
+
+    @Test
+    fun `back-off doubles then caps at four times the interval`() {
+        assertFalse("2 ignored → 20 min, not due at 19", deficitDueAfter(19, unacked = 2))
+        assertTrue("2 ignored → due at 20", deficitDueAfter(20, unacked = 2))
+        assertFalse("3 ignored → 40 min, not due at 39", deficitDueAfter(39, unacked = 3))
+        assertTrue("3 ignored → due at 40", deficitDueAfter(40, unacked = 3))
+    }
+
+    @Test
+    fun `back-off never goes silent — cap holds at four intervals however many are ignored`() {
+        // The 2026-07-22 worst case: 13 unacknowledged hydration prompts in an hour.
+        // However deep the counter goes, the reminder must still arrive at ×4.
+        assertFalse("still gated below the cap", deficitDueAfter(39, unacked = 13))
+        assertTrue("capped at ×4 — reminder still fires", deficitDueAfter(40, unacked = 13))
+        assertTrue("cap holds at absurd counts", deficitDueAfter(40, unacked = 999))
+    }
+
+    @Test
+    fun `a log resets the ladder — caller passes zero and base cadence returns`() {
+        // The trackers zero their counter when `lastRealLogMs` moves; from the
+        // scheduler's side that is simply unackedFires = 0 again.
+        assertFalse("backed off at ×4", deficitDueAfter(20, unacked = 5))
+        assertTrue("after a log, 20 min is well past the base interval", deficitDueAfter(20, unacked = 0))
+    }
 }

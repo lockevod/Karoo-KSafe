@@ -165,6 +165,11 @@ class CarbsTracker(
      * 60_000`). Independent of [lastTimeAlertFireMs].
      */
     @Volatile private var lastDeficitAlertFireMs = 0L
+    /** See [HydrationTracker]'s field of the same name — deficit alerts fired since
+     *  the rider last logged, feeding the back-off ladder. In-memory only. */
+    @Volatile private var deficitFiresSinceLog = 0
+    /** Value of [lastRealLogMs] the back-off counter was last synced against. */
+    @Volatile private var backoffAnchorLogMs = 0L
     /**
      * Cumulative milliseconds the tracker spent actively integrating (movement
      * gate passing + burn > 0). Drives [computeAvgBurnRateGph]: avg over only
@@ -780,6 +785,12 @@ class CarbsTracker(
         // tracker and unit-tested in `FuelingAlertSchedulerTest`. The deficit is
         // still computed here because the helper needs an Int and the conversion
         // is type-bound to the tracker's `cumBurnedG: Float` accumulator.
+        // See HydrationTracker.evaluateDeficitAlert — same back-off bookkeeping,
+        // anchored on `lastRealLogMs` so every log/undo path resets it for free.
+        if (lastRealLogMs != backoffAnchorLogMs) {
+            backoffAnchorLogMs = lastRealLogMs
+            deficitFiresSinceLog = 0
+        }
         val deficit = (cumBurnedG - cumLoggedG).toInt()
         val fire = FuelingAlertScheduler.shouldFireDeficit(
             enabled                = config.carbDeficitAlertEnabled,
@@ -791,6 +802,7 @@ class CarbsTracker(
             cumLogged              = cumLoggedG,
             sessionStartMs         = sessionStartMs,
             now                    = now,
+            unackedFires           = deficitFiresSinceLog,
         )
         if (!fire) return false
         // Defer during an emergency: don't beep over the SOS, and DON'T stamp the cooldown,
@@ -801,6 +813,7 @@ class CarbsTracker(
         }
         fireAlert(source = "deficit", deficit = deficit, elapsedMin = elapsedMinutesSinceRealLog(now))
         lastDeficitAlertFireMs = now
+        deficitFiresSinceLog++
         return true
     }
 
