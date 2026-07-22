@@ -112,9 +112,14 @@ class HydrationTracker(
      * Deficit alerts fired since the rider last logged anything. Feeds
      * [FuelingAlertScheduler.shouldFireDeficit]'s back-off ladder (×1 / ×2 / ×4).
      *
-     * ponytail: in-memory only — a pause/resume restarts the back-off at the base
-     * interval. Persist it in [HydrationSnapshot] (with a CONFIG_VERSION bump) only
-     * if field logs show riders re-arming the base cadence by pausing.
+     * ponytail: in-memory only, and that is deliberate rather than a gap. [resume]
+     * (RideState pause→resume, master-switch OFF→ON) touches neither this counter nor
+     * [lastRealLogMs], so the ladder is **preserved** across a pause — correct, since
+     * it is the same rider on the same ride still not logging. It resets only where it
+     * should: a new session ([start] reseeds [lastRealLogMs], so [backoffAnchorLogMs]
+     * mismatches), or a process restart. Persisting it in [HydFuelingState] would only
+     * cover the process-restart case and costs a CONFIG_VERSION bump — not worth it
+     * unless field logs show that case mattering.
      */
     @Volatile private var deficitFiresSinceLog = 0
     /** Value of [lastRealLogMs] the back-off counter was last synced against; a

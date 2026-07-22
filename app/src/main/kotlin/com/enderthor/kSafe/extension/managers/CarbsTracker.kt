@@ -165,8 +165,9 @@ class CarbsTracker(
      * 60_000`). Independent of [lastTimeAlertFireMs].
      */
     @Volatile private var lastDeficitAlertFireMs = 0L
-    /** See [HydrationTracker]'s field of the same name — deficit alerts fired since
-     *  the rider last logged, feeding the back-off ladder. In-memory only. */
+    /** See [HydrationTracker]'s field of the same name — deficit alerts fired since the
+     *  rider last logged, feeding the back-off ladder. In-memory only: survives a
+     *  pause/resume (by design), resets on a new session or a process restart. */
     @Volatile private var deficitFiresSinceLog = 0
     /** Value of [lastRealLogMs] the back-off counter was last synced against. */
     @Volatile private var backoffAnchorLogMs = 0L
