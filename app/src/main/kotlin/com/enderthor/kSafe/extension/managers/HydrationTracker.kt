@@ -108,6 +108,24 @@ class HydrationTracker(
      * cooldown clock so the two alert kinds don't throttle each other.
      */
     @Volatile private var lastDeficitAlertFireMs = 0L
+    /**
+     * Deficit alerts fired since the rider last logged anything. Feeds
+     * [FuelingAlertScheduler.shouldFireDeficit]'s back-off ladder (×1 / ×2 / ×4).
+     *
+     * ponytail: in-memory only, and that is deliberate rather than a gap. [resume]
+     * (RideState pause→resume, master-switch OFF→ON) touches neither this counter nor
+     * [lastRealLogMs], so the ladder is **preserved** across a pause — correct, since
+     * it is the same rider on the same ride still not logging. It resets only where it
+     * should: a new session ([start] reseeds [lastRealLogMs], so [backoffAnchorLogMs]
+     * mismatches), or a process restart. Persisting it in [HydFuelingState] would only
+     * cover the process-restart case and costs a CONFIG_VERSION bump — not worth it
+     * unless field logs show that case mattering.
+     */
+    @Volatile private var deficitFiresSinceLog = 0
+    /** Value of [lastRealLogMs] the back-off counter was last synced against; a
+     *  mismatch means the rider logged (or undid) since the previous evaluation,
+     *  which resets [deficitFiresSinceLog]. */
+    @Volatile private var backoffAnchorLogMs = 0L
     @Volatile private var lastPeriodicLogMs = 0L
 
     // ─── Dynamic-estimate inputs (push from KSafeExtension, all optional) ────
@@ -585,6 +603,14 @@ class HydrationTracker(
         // v18.2 B9 — gate delegated to [FuelingAlertScheduler.shouldFireDeficit]
         // so the carb and hydration deficit logic is single-sourced and unit-
         // tested in `FuelingAlertSchedulerTest`. Mirrors `CarbsTracker.evaluateDeficitAlert`.
+        // Back-off bookkeeping (2026-07-22 field sweep: 13 unacknowledged prompts in
+        // one hour on install `1136e7`). Anchoring on `lastRealLogMs` rather than
+        // resetting inside every log path means logEntry / logAmount / undo are all
+        // covered automatically — and so is any future log path.
+        if (lastRealLogMs != backoffAnchorLogMs) {
+            backoffAnchorLogMs = lastRealLogMs
+            deficitFiresSinceLog = 0
+        }
         val deficit = (cumTargetMl - cumLoggedMl).toInt()
         val fire = FuelingAlertScheduler.shouldFireDeficit(
             enabled                = config.hydrationDeficitAlertEnabled,
@@ -596,6 +622,7 @@ class HydrationTracker(
             cumLogged              = cumLoggedMl,
             sessionStartMs         = sessionStartMs,
             now                    = now,
+            unackedFires           = deficitFiresSinceLog,
         )
         if (!fire) return false
         // Defer during an emergency: don't beep over the SOS, and DON'T stamp the cooldown,
@@ -606,6 +633,7 @@ class HydrationTracker(
         }
         fireAlert("deficit", deficit, elapsedMinutesSinceRealLog(now))
         lastDeficitAlertFireMs = now
+        deficitFiresSinceLog++
         return true
     }
 

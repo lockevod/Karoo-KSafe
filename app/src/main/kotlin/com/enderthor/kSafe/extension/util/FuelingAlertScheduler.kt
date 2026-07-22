@@ -23,6 +23,16 @@ package com.enderthor.kSafe.extension.util
  *     alert in a session may additionally be gated by `initialDelayMs` if the
  *     rider hasn't logged anything yet.
  *
+ *  4. **Unacknowledged back-off** (`unackedFires`). The flat cooldown alone has
+ *     no ceiling: field logs (2026-07-22 sweep) show one rider getting 13
+ *     hydration prompts in an hour and another 14 across a 4h45 ride, none
+ *     acknowledged — the deficit only grows, so it re-fires until the ride ends.
+ *     The cooldown is therefore multiplied by 1 / 2 / 4 as unacknowledged fires
+ *     accumulate, capped at ×4 so the reminder never goes fully silent
+ *     (dehydration matters most on the long rides where this triggers). Any log
+ *     resets the caller's counter, so the next reminder is back at the base
+ *     interval.
+ *
  * **Coincidence resolution** (deficit + time tick on the same call) is NOT
  * handled here — it's the tracker's responsibility because resolving it
  * involves stamping `lastTimeAlertFireMs` to consume the time tick, which is
@@ -65,17 +75,30 @@ internal object FuelingAlertScheduler {
     }
 
     /**
+     * Multiplier ladder for [shouldFireDeficit]'s cooldown, indexed by
+     * unacknowledged fires: the first two reminders keep the rider's configured
+     * interval, then it doubles, then caps at ×4. Capped (not unbounded, not a
+     * hard stop) so a rider who never logs still gets a prompt every 4 intervals.
+     */
+    private const val MAX_BACKOFF_SHIFT = 2
+
+    /**
      * Returns `true` when the deficit alert should fire on the current tick.
      *
      * Conditions:
      *  - Alert enabled.
      *  - Cumulative deficit ≥ threshold.
      *  - Either (a) no previous deficit fire AND outside the initial-delay
-     *    grace, or (b) `reminderIntervalMs` has elapsed since the last fire.
+     *    grace, or (b) the backed-off cooldown has elapsed since the last fire.
      *
      * The initial-delay grace only applies to the FIRST deficit fire AND only
      * when the rider hasn't logged anything yet (a logged item is implicit
      * acknowledgement that the rider is engaged with fueling).
+     *
+     * [unackedFires] is how many deficit alerts have fired since the rider last
+     * logged anything. 0 or 1 → the configured [reminderIntervalMs]; 2 → ×2;
+     * 3 or more → ×4 (the cap). The caller owns the counter and resets it on any
+     * log — see `HydrationTracker.evaluateDeficitAlert`.
      */
     fun shouldFireDeficit(
         enabled: Boolean,
@@ -87,6 +110,7 @@ internal object FuelingAlertScheduler {
         cumLogged: Int,
         sessionStartMs: Long,
         now: Long,
+        unackedFires: Int = 0,
     ): Boolean {
         if (!enabled) return false
         // Initial-delay grace: only blocks the first fire AND only while no log
@@ -95,7 +119,8 @@ internal object FuelingAlertScheduler {
             if (now - sessionStartMs < initialDelayMs) return false
         }
         if (deficit < deficitThreshold) return false
-        if (now - lastDeficitAlertFireMs < reminderIntervalMs) return false
+        val backoffShift = (unackedFires - 1).coerceIn(0, MAX_BACKOFF_SHIFT)
+        if (now - lastDeficitAlertFireMs < (reminderIntervalMs shl backoffShift)) return false
         return true
     }
 }

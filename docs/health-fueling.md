@@ -126,6 +126,8 @@ KSafe **does not measure your blood glucose or hydration in real time** — ther
 
 The difference is the **deficit**. When it exceeds the threshold you configure (defaults: 25 g for carbs, 300 ml for hydration) KSafe fires a beep + on-screen alert. The **first** deficit and time alerts of a session are both suppressed for an initial-delay grace period (default 30 min, configurable per-tracker) so a fresh ride doesn't nag you at minute 25 with "behind 25 g". Deficit reminders after the first one fire at a configurable cadence (default 10 min, options 5/10/15/20/30 min).
 
+**If you keep ignoring them, they slow down** *(v2.2.1)*. Field logs showed riders getting a deficit reminder every 10 minutes for a whole ride — in the worst case one every ~2.4 minutes with both trackers on a 5-minute cadence — because the deficit only grows until you log something. The reminder interval now stretches as reminders go unacknowledged: your configured cadence for the first two, then double, then ×4, where it stops. It never goes fully silent (with the 10-min default you still get a nudge every 40 min — being behind on fluids matters most on exactly the long rides where this kicks in), and **logging anything puts it straight back to your normal cadence** — including a tap on the alert's own EAT!/DRINK! button. Time-based reminders are unaffected: "every N minutes" means every N minutes.
+
 Three consequences worth understanding *before* you trust the alerts:
 
 1. **Carbs reference your real physiology**, not a target you set. Pair a power meter (Tier 1, ~5-10 % error) or HR sensor + fill in your age and sex in Settings (Tier 2 Keytel, ~10-15 % error). Without age/sex, HR + weight + maxHr + restingHr falls back to Swain (~20-30 % error). Without HR and without power, the carb tracker can't compute anything and the data fields show `Pair HR/Pwr`. **Hydration** still uses a rider-configured target (default 750 ml/h) because no biosensor for sweat rate exists.
@@ -171,7 +173,7 @@ The dynamic mode biases **high** in hot conditions by design: the estimator's jo
 3. **Pick a deficit threshold** (default 25 g, configurable). The threshold is "how many grams behind real burn before I want to be reminded". For a guideline:
    - Casual / endurance riding: 25-35 g (about 25-35 min of typical intake).
    - Race / long events with trained gut: 15-25 g (tighter — you can absorb a lot, want to stay on top).
-4. **Pick a reminder cadence** (default 10 min, options 5/10/15/20/30). After the first deficit alert, how often to remind you.
+4. **Pick a reminder cadence** (default 10 min, options 5/10/15/20/30). After the first deficit alert, how often to remind you. Reminders you never act on stretch this out automatically (×2, then ×4 and no further); logging anything restores your chosen cadence.
 
 The integrator clamps the recorded rate at 90 g/h (Jeukendrup 2014, ISSN 2017, IOC 2019 consensus) — the established single-transportable gut-absorption ceiling for un-trained guts. At Z4+ intensity on a power meter your real burn can exceed this; the deficit will keep growing because you can't physically refuel as fast as you burn. That's data telling you to pace yourself, not noise.
 

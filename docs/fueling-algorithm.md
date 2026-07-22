@@ -212,7 +212,8 @@ The `lastTickMs == 0L` guard makes `CarbIntegrator` return all-zero deltas on th
 Deficit alert (CarbsTracker.evaluateDeficitAlert):
    if carbDeficitAlertEnabled
       AND (cumBurnedG − cumLoggedG) >= carbDeficitThresholdG
-      AND (now − lastDeficitAlertFireMs) >= carbDeficitReminderIntervalMin × 60_000  (default 10 min)
+      AND (now − lastDeficitAlertFireMs) >= carbDeficitReminderIntervalMin × 60_000 × backoff
+                                            (default 10 min; backoff = 1 / 2 / 4, see below)
       AND (deficit-initial-delay grace passed; see below)
    → fire
 
@@ -225,6 +226,34 @@ Time alert (CarbsTracker.evaluateTimeAlert via FuelingAlertScheduler):
    if carbTimeAlertEnabled AND a grid tick is due AND no fire stamped at this tick
    → fire
 ```
+
+### Unacknowledged back-off (deficit alerts only)
+
+The reminder cooldown alone has no ceiling. The deficit only ever grows for a rider who doesn't log, so every interval past the threshold re-fires for the rest of the ride. The 2026-07-22 field sweep measured it across the whole corpus, counting only `source=deficit` fires with no intervening log:
+
+| unacknowledged deficit alerts in one run | span | install / session |
+|---|---|---|
+| 37 (carb) + 36 (hydration) | ~3 h | `f16a4e_878bca` (v2.1.7) |
+| 31 (carb) + 30 (hydration) | ~2.5 h | `327846_cc0b6f` (v2.1.4) |
+| 23 (hydration) | 3 h 41 | `bd5fc1_50c9b5` (v2.0.0) |
+| 13 (hydration) | 60.5 min | `1136e7_b6777a` (v2.2.0) |
+
+**101 of the 122 sessions with fueling events have a run of ≥4.** The `f16a4e` case is the ceiling: both channels on a 5-min cadence, ~73 prompts in three hours — roughly one every 2.4 minutes. This is not a corner case, it's the default experience of a rider who doesn't log. See `docs/calibration-annotations.md`.
+
+`FuelingAlertScheduler.shouldFireDeficit` therefore multiplies the cooldown by an unacknowledged-fire ladder:
+
+| deficit alerts since the rider's last log | effective cooldown | with the 10-min default |
+|---|---|---|
+| 0 or 1 | ×1 | 10 min |
+| 2 | ×2 | 20 min |
+| 3 or more | ×4 (cap) | 40 min |
+
+- **Capped, never silenced.** A rider who never logs still gets a prompt every 4 intervals — dehydration matters most on exactly the long rides where the back-off engages. There is no "stop after N" mode.
+- **Any log resets it.** The trackers hold `deficitFiresSinceLog` and re-zero it whenever `lastRealLogMs` moves — anchoring on that timestamp (rather than resetting inside each log path) covers `logEntry`, `logAmount`, the in-alert LOG button and `undoLastForSlot` for free, including any log path added later. Verified: `lastRealLogMs` is written **only** by `start` (session seed / restore), `logEntry`, `logAmount` and `undoLastForSlot` — no alert path touches it (I8), so a fire can never silently reset its own back-off.
+- **Scope: deficit alerts only.** The time-alert grid is deliberately untouched. "Remind me every N minutes" is an explicit rider contract and the grid is documented as log-independent; backing it off would break both. A rider who wants fewer time reminders lengthens the interval. (Corpus split: 1261 deficit fires vs 283 time fires, so the deficit channel is where the noise lives.)
+- **The two channels back off independently.** A rider running carb + hydration deficit alerts on the same cadence still gets two ladders, so the combined rate is halved rather than quartered. Cross-channel coordination would mean merging the two trackers' cooldown state — not worth it unless the field logs say otherwise.
+- **Lifetime.** The trackers are instantiated once by `KSafeExtension` and `start()`ed per ride, and the counter is in-memory. A **new ride** reseeds `lastRealLogMs`, so the anchor mismatches and the ladder resets — correct. A **pause/resume** (RideState pause→resume, master-switch OFF→ON) goes through `resume()`, which touches neither the counter nor `lastRealLogMs`, so the anchor still matches and the ladder is *preserved* — also correct (same rider, same ride, still not logging). The one exception is `resume()`'s no-live-session fallback, which delegates to `start()` and therefore resets. Only a process restart drops it otherwise. Persisting it would need a `CarbFuelingState`/`HydFuelingState` field plus a `CONFIG_VERSION` bump; not worth it for that one case.
+- **Upgrade path (ponytail ceiling).** `MAX_BACKOFF_SHIFT = 2` caps at ×4. On a 5-min base that is a prompt every 20 min, which still leaves the `f16a4e` profile at ~11 prompts per channel over 3 h. If the next sweep still shows runs ≥10 on v2.2.0+, raise it to 3 (×8) — one constant, no other change.
 
 **Coincidence resolution.** When both a deficit AND a time tick are due in the same physical tick, the deficit alert wins — its numeric "behind N g" is more actionable than a "X min since last" reminder, and both ask for the same rider action (eat). The time tick is consumed silently (the grid is still advanced) so the rider doesn't hear two beeps in quick succession.
 
@@ -353,7 +382,7 @@ fun getSummary(): CarbSummary    // for the post-ride summary InRideAlert
 - **Optional dynamic estimator.** `dynamicHydrationEnabled` switches on `SweatEstimator` (HR + power + weight + ambient temperature + humidity from Headwind, when available); otherwise the flat per-hour rate applies. Anchors target the literature median (Sawka 2007 / Baker 2017) with a small (~5–10 %) conservative bias — comparable to Garmin's Firstbeat HeatStress targeting. See `SweatEstimator.kt` `heatFactor` for the WBGT-anchored curve.
 - **No HR / power consumed in the default path** (the dynamic estimator does consume them).
 - **2 logging slots** instead of 3.
-- Same dual-mode alerts (deficit + time) with the same configurable reminder cooldown (`hydrationDeficitReminderIntervalMin`, default 10 min) and the same grid-aligned time alert.
+- Same dual-mode alerts (deficit + time) with the same configurable reminder cooldown (`hydrationDeficitReminderIntervalMin`, default 10 min), the same unacknowledged back-off ladder, and the same grid-aligned time alert.
 - Same initial-delay grace period and same custom-title option as carbs, with their own per-tracker config fields.
 
 ### Per-tick integration
