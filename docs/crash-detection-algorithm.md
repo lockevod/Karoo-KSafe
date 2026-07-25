@@ -333,9 +333,11 @@ Once armed, `MovingVigilance.onTick(now, speedKmh, speedFresh)` is called on eve
 
 **FN-safe by construction**: the only path that suppresses an alert is `CLEAR`, which requires every single sensor sample in a 4 s window to show the rider is actively moving above 8 km/h with fresh GPS. Any doubt (one slow sample, one stale GPS tick, a GPS drop, or any pause) escalates. The accelerometer is NOT consulted to clear — it is the source of the untrustworthy reading; consulting it again would be circular.
 
-### Escalate-on-abandon (pause while armed)
+### Escalate-on-abandon (pause or ride stop while armed)
 
 If a Karoo ride pause arrives while `movingVigilance.isArmed`, the vigilance window is NEVER silently dropped. Manual pause and autopause are not reliably distinguishable, and a downed rider cannot be assumed conscious — so `confirmCrash` is called before `movingVigilance.reset()`. Log event: `VIGIL_ESCALATE` with `reason=manual_pause` (autopause does not reach `onPause`'s manual branch; only the manual branch adds this escalation).
+
+`stop()` takes the same route for the same reason — a ride ending mid-verification is abandonment, not evidence of safety — and logs `VIGIL_ESCALATE` with `reason=ride_stop`. When reading logs, treat both `reason=` variants as *abandonment* escalations: unlike the tick path they carry no speed verdict, so they must not be counted alongside the staleness/floor escalates when judging the escalate rule.
 
 ### Calibration events
 
@@ -343,7 +345,7 @@ If a Karoo ride pause arrives while `movingVigilance.isArmed`, the vigilance win
 |-----------|------|
 | `VIGIL_ARM` | Arm: trust gate tripped. Fields: `sil_mag`, `trust_min`, `speed`, `window_ms`, `spd_age_ms`, `floor_kmh`, `fresh_thr_ms`. |
 | `VIGIL_CLEAR` | Clear: rider sustained ≥ 8 km/h fresh for the full window. Fields: `speed`, `window_ms`, `spd_age_ms`. |
-| `VIGIL_ESCALATE` | Escalate to countdown. Fields: `speed`, `gps_stale`, `spd_age_ms` (on tick path) or `reason=manual_pause` (on pause path). |
+| `VIGIL_ESCALATE` | Escalate to countdown. Fields: `speed`, `gps_stale`, `spd_age_ms` (tick path); `reason=manual_pause` (manual-pause path); `reason=ride_stop` (ride-end path). The two `reason=` variants carry no `spd_age_ms` — they are abandonment escalations, not speed verdicts. |
 | `VIGIL_SHADOW` | **Diagnostic only — no behaviour.** Emitted once per `VIGIL_ARM` at `arm + window_ms`, whatever the real outcome was (it still fires after an early `ESCALATE` disarmed the vigilance). Fields: `would_be` (`CLEAR`/`ESCALATE`), `floor_breach`, `speed`, `spd_age_ms`, `gps_stale`. See "Open question: early escalate on a frozen speed value" below. |
 
 `spd_age_ms` = age of the last speed **value change** (`now - speedLastChangeMs`). It separates the two
