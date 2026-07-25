@@ -107,6 +107,17 @@ class CalibrationLogger(
         /** Moving vigilance escalated to the emergency countdown (speed collapse / stale GPS). */
         VIGILANCE_ESCALATE("VIGIL_ESCALATE"),
         /**
+         * Diagnostic-only shadow evaluation of the vigilance window, emitted once per
+         * VIGIL_ARM at `arm + movingVigilanceWindowMs` **whatever the real outcome was**.
+         * It changes no behaviour; it exists to answer the one question the ARM/CLEAR/
+         * ESCALATE rows cannot: when vigilance escalated EARLY on a stale speed value
+         * (2026-07-25 sweep: escalates at 0.0 / 0.2 s), would a fresh speed sample have
+         * arrived before the 4 s window elapsed? `would_be=CLEAR` means yes — deferring
+         * the staleness verdict to window end would have suppressed that FP; `ESCALATE`
+         * means the speed value really was frozen and the early exit cost nothing.
+         */
+        VIGILANCE_SHADOW("VIGIL_SHADOW"),
+        /**
          * SILENCE_CHECK timed out — device entered the silence phase but never achieved
          * uninterrupted stillness within the double-window period → false alarm at stage 3.
          * Distinct from IMPACT_TMO (which fires before entering SILENCE_CHECK at all).

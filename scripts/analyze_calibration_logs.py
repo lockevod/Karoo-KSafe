@@ -24,7 +24,12 @@ Event catalogue understood by this script:
     VIGIL_ARM (on-side confirm diverted into moving vigilance because orientation
     was read mid-motion), VIGIL_CLEAR (moving vigilance silent-cleared — sustained
     riding speed confirmed false positive, no alert), VIGIL_ESCALATE (moving
-    vigilance escalated to emergency countdown — speed collapsed or GPS went stale)
+    vigilance escalated to emergency countdown — speed collapsed or GPS went stale),
+    VIGIL_SHADOW (diagnostic only, no behaviour: emitted once per ARM at
+    arm+window_ms with would_be=CLEAR|ESCALATE — the verdict a window-end-only
+    staleness rule would have reached. Compare against the real VIGIL_ESCALATE:
+    an early escalate (spd_age_ms already past fresh_thr_ms at arm) paired with
+    would_be=CLEAR is an FP that deferring the verdict would have suppressed)
 
   Speed-drop watchdog (added 2026-05):
     SPDRP_EVAL (SPEEDDROP_EVAL), SPDRP_WSTART (SPEEDDROP_WIN_START),

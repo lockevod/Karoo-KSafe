@@ -371,6 +371,58 @@ class CrashDetectionManagerWiringTest {
         )
     }
 
+    // ── MV-1b: the diagnostic shadow probe never outlives its ride ───────────
+
+    /**
+     * The VIGIL_SHADOW probe is armed by a deadline field that is deliberately independent
+     * of [MovingVigilance] (it must still fire after an early ESCALATE has reset the
+     * vigilance). That independence is exactly what makes it leakable: a probe stamped
+     * moments before a stop/pause would otherwise fire on the FIRST sensor sample of the
+     * NEXT ride, emitting a VIGIL_SHADOW row with no VIGIL_ARM before it — a phantom that
+     * would corrupt the very sweep the probe exists to inform.
+     *
+     * Vigilance is deliberately NOT armed here: this pins the probe's own lifecycle, not
+     * the escalate-on-abandon contract covered by MV-1 / MV-2.
+     */
+    @Test
+    fun `stop and manual pause clear a pending vigilance shadow probe`() = runTest {
+        val crashCount = AtomicInteger(0)
+        val clock = FakeClock(now = 3_000_000L)
+        val manager = newManagerForVigilance(this, crashCount, clock)
+        val field = CrashDetectionManager::class.java
+            .getDeclaredField("vigilanceShadowDeadlineMs")
+            .also { it.isAccessible = true }
+        val breach = CrashDetectionManager::class.java
+            .getDeclaredField("vigilanceShadowFloorBreach")
+            .also { it.isAccessible = true }
+
+        field.setLong(manager, clock.now + 4_000L)
+        breach.setBoolean(manager, true)
+        manager.stop()
+        assertEquals(
+            "stop() must also clear the floor-breach flag — a stale `true` would force " +
+                "would_be=ESCALATE on the next ride's probe.",
+            false, breach.getBoolean(manager)
+        )
+        assertEquals(
+            "stop() must clear the pending shadow probe — a leftover deadline fires a " +
+                "phantom VIGIL_SHADOW on the next ride's first sample.",
+            0L, field.getLong(manager)
+        )
+
+        field.setLong(manager, clock.now + 4_000L)
+        manager.onPause(auto = false)
+        assertEquals(
+            "manual pause must clear the pending shadow probe for the same reason.",
+            0L, field.getLong(manager)
+        )
+        advanceUntilIdle()
+        assertEquals(
+            "the shadow probe is diagnostic-only — clearing it must never confirm a crash.",
+            0, crashCount.get()
+        )
+    }
+
     // ── MV-2: manual pause while vigilance armed escalates ───────────────────
 
     /**

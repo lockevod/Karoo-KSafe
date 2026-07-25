@@ -341,9 +341,37 @@ If a Karoo ride pause arrives while `movingVigilance.isArmed`, the vigilance win
 
 | Event tag | When |
 |-----------|------|
-| `VIGIL_ARM` | Arm: trust gate tripped. Fields: `sil_mag`, `trust_min`, `speed`, `window_ms`. |
-| `VIGIL_CLEAR` | Clear: rider sustained ≥ 8 km/h fresh for the full window. Fields: `speed`, `window_ms`. |
-| `VIGIL_ESCALATE` | Escalate to countdown. Fields: `speed`, `gps_stale` (on tick path) or `reason=manual_pause` (on pause path). |
+| `VIGIL_ARM` | Arm: trust gate tripped. Fields: `sil_mag`, `trust_min`, `speed`, `window_ms`, `spd_age_ms`, `floor_kmh`, `fresh_thr_ms`. |
+| `VIGIL_CLEAR` | Clear: rider sustained ≥ 8 km/h fresh for the full window. Fields: `speed`, `window_ms`, `spd_age_ms`. |
+| `VIGIL_ESCALATE` | Escalate to countdown. Fields: `speed`, `gps_stale`, `spd_age_ms` (on tick path) or `reason=manual_pause` (on pause path). |
+| `VIGIL_SHADOW` | **Diagnostic only — no behaviour.** Emitted once per `VIGIL_ARM` at `arm + window_ms`, whatever the real outcome was (it still fires after an early `ESCALATE` disarmed the vigilance). Fields: `would_be` (`CLEAR`/`ESCALATE`), `floor_breach`, `speed`, `spd_age_ms`, `gps_stale`. See "Open question: early escalate on a frozen speed value" below. |
+
+`spd_age_ms` = age of the last speed **value change** (`now - speedLastChangeMs`). It separates the two
+escalate causes that `speed` alone cannot: a genuine collapse below `floor_kmh`, versus a speed value
+frozen past `fresh_thr_ms` while the rider is still riding fast.
+
+### Open question: early escalate on a frozen speed value
+
+`ESCALATE` fires on the FIRST sample that is stale-or-slow, so a rider holding a dead-steady speed can
+escalate at ~0 s — the vigilance window never actually observes anything. Field evidence (2026-07-25
+sweep, 12 `VIGIL_ARM` across the whole corpus): 7 `CLEAR`, 5 `ESCALATE`, of which **1 was a true floor
+breach (3.6 km/h) and 4 were staleness at 20–23.5 km/h, all rider-cancelled**. Two of those escalated at
+0.0 s / 0.2 s.
+
+The candidate rule is *"escalate immediately only on a floor breach; defer the STALENESS verdict to
+window end"*. It is **not implemented** — whether it would have suppressed those FPs depends on whether
+a fresh speed sample arrived before the 4 s mark, which the logs did not record. `VIGIL_SHADOW` records
+exactly that verdict without acting on it, so the next sweep can decide with data:
+
+- `VIGIL_ESCALATE` (`spd_age_ms > fresh_thr_ms`) + `VIGIL_SHADOW would_be=CLEAR` → the deferred rule
+  would have suppressed that FP.
+- `would_be=ESCALATE` → the speed value really was frozen; the early exit cost nothing and the problem
+  lies in the change-gated freshness test itself, not in when it is evaluated.
+
+The probe models the candidate rule faithfully, including its immediate-escalate branch: `floor_breach`
+is latched if speed drops below `floor_kmh` at ANY sample of the window, and forces `would_be=ESCALATE`
+regardless of how fresh speed looks at the end. Without that latch the probe would over-report `CLEAR`
+— biasing the very decision it exists to inform.
 
 ### Tuning knobs (`Thresholds.kt`)
 
