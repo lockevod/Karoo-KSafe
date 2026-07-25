@@ -97,7 +97,7 @@ Every CSV row is tagged with a short event identifier. The current catalogue:
 | `GAP_VETO` | An upright confirm was suppressed by the orientation veto. Payload: `angle`, `veto_thr`, `regime`, `gyro_peak`, `speed`, `deviation`, `cadence`, pre-impact and in-silence gravity vectors |
 | `VIGIL_ARM` | An on-side confirm was read mid-motion (‖silence orientation‖ below the trust floor) and diverted into a 4 s speed-verification window instead of alerting. Payload: `sil_mag`, `trust_min`, `speed`, `window_ms`, `spd_age_ms`, `floor_kmh`, `fresh_thr_ms` |
 | `VIGIL_CLEAR` | That window ended with the rider verifiably still riding — no alert was raised |
-| `VIGIL_ESCALATE` | That window ended in doubt (speed collapsed, GPS stale, or the ride was paused) — routed to the normal cancellable countdown |
+| `VIGIL_ESCALATE` | That window ended in doubt — speed collapsed or GPS went stale (`reason` absent), the ride was paused (`reason=manual_pause`), or the ride was stopped mid-verification (`reason=ride_stop`) — routed to the normal cancellable countdown |
 | `VIGIL_SHADOW` | Diagnostic only, changes nothing: records what a candidate alternative rule *would* have decided at the end of the window, so a rule change can be judged on real data before being shipped. Payload: `would_be`, `floor_breach`, `speed`, `spd_age_ms`, `gps_stale` |
 
 ### Speed-drop watchdog (L1)

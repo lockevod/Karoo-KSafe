@@ -800,11 +800,18 @@ class CrashDetectionManager(
         // `would_be` is the verdict of the candidate rule "escalate immediately only on a
         // speed-floor breach; defer the STALENESS verdict to window end" — so a mid-window
         // floor breach forces ESCALATE regardless of how fresh the speed looks at the end.
-        if (vigilanceShadowDeadlineMs != 0L) {
+        //
+        // Read the deadline ONCE into a local: `stop()` / manual pause clear it from the main
+        // thread, and a clear landing between a `!= 0L` check and a `now >= field` comparison
+        // would make the second read `0L` — and `now >= 0L` is always true, firing a premature
+        // probe row for a window that never elapsed. That is the same phantom row the
+        // stop()/pause clearing exists to prevent, just via a race instead of a leak.
+        val shadowDeadlineMs = vigilanceShadowDeadlineMs
+        if (shadowDeadlineMs != 0L) {
             if (currentSpeedKmh < stateMachine.thresholds.movingVigilanceSpeedKmh) {
                 vigilanceShadowFloorBreach = true
             }
-            if (now >= vigilanceShadowDeadlineMs) {
+            if (now >= shadowDeadlineMs) {
                 val floorBreached = vigilanceShadowFloorBreach
                 vigilanceShadowDeadlineMs = 0L
                 vigilanceShadowFloorBreach = false
