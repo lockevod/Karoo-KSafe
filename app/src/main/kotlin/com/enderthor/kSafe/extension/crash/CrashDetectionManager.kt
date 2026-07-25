@@ -271,6 +271,32 @@ class CrashDetectionManager(
 
     private val movingVigilance = MovingVigilance(stateMachine.thresholds)
 
+    /**
+     * Deadline for the diagnostic VIGIL_SHADOW row (`0L` = none pending). Stamped at
+     * VIGIL_ARM and evaluated in [onSensorSample] independently of [movingVigilance],
+     * so it still fires after an early ESCALATE has already reset the vigilance —
+     * that is the whole point: it records what the window WOULD have decided.
+     * Diagnostic only; nothing reads it back.
+     *
+     * `@Volatile` for the same reason as [speedLastChangeMs]: written from the sensor
+     * thread (arm) and from the main thread ([stop] / [onPause]).
+     *
+     * A second on-side confirm arming inside an open probe overwrites the deadline and
+     * the earlier probe is lost. Deliberate: re-arming means a fresh window, and a
+     * diagnostic row is not worth a queue.
+     */
+    @Volatile private var vigilanceShadowDeadlineMs: Long = 0L
+
+    /**
+     * Whether speed fell below `movingVigilanceSpeedKmh` at ANY sample of the open shadow
+     * window. Without it the probe would report `would_be=CLEAR` for a ride that dipped
+     * below the floor mid-window and recovered — but the rule the probe models escalates
+     * IMMEDIATELY on a floor breach (that dip is the crash signature), so it would have
+     * escalated too. Omitting this would bias the probe toward "the deferred rule would
+     * have suppressed this FP", which is precisely the conclusion it exists to test.
+     */
+    @Volatile private var vigilanceShadowFloorBreach: Boolean = false
+
     private val speedDropMonitor = SpeedDropMonitor(
         scope = scope,
         clock = clock,
@@ -372,6 +398,8 @@ class CrashDetectionManager(
             confirmCrash(CrashSource.IMPACT_CONFIRMED, alreadyLogged = true)
         }
         movingVigilance.reset()
+        vigilanceShadowDeadlineMs = 0L   // never let a pending probe leak into the next ride
+        vigilanceShadowFloorBreach = false
         resetWindowAccumulators()
         // Clear the rolling TMO-cluster deque (cleared in start()/resume() too) so a
         // stop leaves no stale cluster state behind.
@@ -520,6 +548,8 @@ class CrashDetectionManager(
                 confirmCrash(CrashSource.IMPACT_CONFIRMED, alreadyLogged = true)
             }
             movingVigilance.reset()
+            vigilanceShadowDeadlineMs = 0L
+            vigilanceShadowFloorBreach = false
             Timber.d("CrashDetectionManager: manual pause — state machine reset")
         }
     }
@@ -682,12 +712,15 @@ class CrashDetectionManager(
                         // First mid-motion confirm of this event → log the suspect CRASH_OK and verify.
                         logCrashConfirmed(sample)
                         movingVigilance.arm(now)
+                        vigilanceShadowDeadlineMs = now + stateMachine.thresholds.movingVigilanceWindowMs
+                        // Re-arming over an open probe must not inherit its breach flag.
+                        vigilanceShadowFloorBreach = false
                         val sx = stateMachine.lastSilenceOrientX
                         val sy = stateMachine.lastSilenceOrientY
                         val sz = stateMachine.lastSilenceOrientZ
                         val mag = kotlin.math.sqrt(sx * sx + sy * sy + sz * sz)
                         calibLogger?.log(CalibrationLogger.Event.VIGILANCE_ARM) {
-                            "sil_mag=%.2f,trust_min=${stateMachine.thresholds.onSideTrustMinAccel},speed=%.1f,window_ms=${stateMachine.thresholds.movingVigilanceWindowMs}".formatUs(mag, currentSpeedKmh)
+                            "sil_mag=%.2f,trust_min=${stateMachine.thresholds.onSideTrustMinAccel},speed=%.1f,window_ms=${stateMachine.thresholds.movingVigilanceWindowMs},spd_age_ms=${now - speedLastChangeMs},floor_kmh=${stateMachine.thresholds.movingVigilanceSpeedKmh},fresh_thr_ms=${stateMachine.thresholds.movingVigilanceSpeedFreshMs}".formatUs(mag, currentSpeedKmh)
                         }
                     }
                     // else: a 2nd mid-motion confirm during the open window — already being verified.
@@ -747,15 +780,41 @@ class CrashDetectionManager(
                 now, gpsCurrentlyStale, speedLastChangeMs, stateMachine.thresholds.movingVigilanceSpeedFreshMs)
             when (movingVigilance.onTick(now, currentSpeedKmh, speedGenuinelyFresh)) {
                 MovingVigilance.Outcome.CLEAR -> calibLogger?.log(CalibrationLogger.Event.VIGILANCE_CLEAR) {
-                    "speed=%.1f,window_ms=${stateMachine.thresholds.movingVigilanceWindowMs}".formatUs(currentSpeedKmh)
+                    "speed=%.1f,window_ms=${stateMachine.thresholds.movingVigilanceWindowMs},spd_age_ms=${now - speedLastChangeMs}".formatUs(currentSpeedKmh)
                 }
                 MovingVigilance.Outcome.ESCALATE -> {
                     calibLogger?.log(CalibrationLogger.Event.VIGILANCE_ESCALATE) {
-                        "speed=%.1f,gps_stale=$gpsCurrentlyStale".formatUs(currentSpeedKmh)
+                        // spd_age_ms separates the two escalate causes that `speed` alone
+                        // cannot: below the floor (real collapse) vs a speed VALUE frozen
+                        // past fresh_thr_ms while still riding (the 2026-07-25 FP class).
+                        "speed=%.1f,gps_stale=$gpsCurrentlyStale,spd_age_ms=${now - speedLastChangeMs}".formatUs(currentSpeedKmh)
                     }
                     confirmCrash(CrashSource.IMPACT_CONFIRMED, alreadyLogged = true)
                 }
                 MovingVigilance.Outcome.PENDING -> { /* keep watching */ }
+            }
+        }
+
+        // ─── Vigilance shadow probe (diagnostic only — changes NO behaviour) ──
+        // Fires once per ARM at arm+window, whether or not vigilance already resolved.
+        // `would_be` is the verdict of the candidate rule "escalate immediately only on a
+        // speed-floor breach; defer the STALENESS verdict to window end" — so a mid-window
+        // floor breach forces ESCALATE regardless of how fresh the speed looks at the end.
+        if (vigilanceShadowDeadlineMs != 0L) {
+            if (currentSpeedKmh < stateMachine.thresholds.movingVigilanceSpeedKmh) {
+                vigilanceShadowFloorBreach = true
+            }
+            if (now >= vigilanceShadowDeadlineMs) {
+                val floorBreached = vigilanceShadowFloorBreach
+                vigilanceShadowDeadlineMs = 0L
+                vigilanceShadowFloorBreach = false
+                calibLogger?.log(CalibrationLogger.Event.VIGILANCE_SHADOW) {
+                    val freshNow = isSpeedFreshForVigilance(
+                        now, gpsCurrentlyStale, speedLastChangeMs,
+                        stateMachine.thresholds.movingVigilanceSpeedFreshMs)
+                    val wouldBe = if (freshNow && !floorBreached) "CLEAR" else "ESCALATE"
+                    "would_be=$wouldBe,floor_breach=$floorBreached,speed=%.1f,spd_age_ms=${now - speedLastChangeMs},gps_stale=$gpsCurrentlyStale".formatUs(currentSpeedKmh)
+                }
             }
         }
 
