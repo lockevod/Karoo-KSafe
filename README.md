@@ -36,8 +36,9 @@ It also sends ride-start / ride-end notifications with an optional Karoo Live tr
 | **ntfy** | Free, unlimited | Quickest setup — no account |
 | **CallMeBot (WhatsApp)** | Free | If your contacts use WhatsApp |
 | **Pushover** | ~$5 one-time | Most reliable push delivery |
+| **Apprise** | Free, self-hosted | Send to 100+ services via a single API |
 
-You can save credentials for all four; only the **selected** one is used. Each configured recipient has an **alert scope** — **All** (default, both emergency + info), **Emergency only**, or **Info only**; the UI keeps at least one emergency contact per provider. Setup steps: [docs/messaging-providers.md](docs/messaging-providers.md).
+You can save credentials for all five; only the **selected** one is used. Each configured recipient has an **alert scope** — **All** (default, both emergency + info), **Emergency only**, or **Info only**; the UI keeps at least one emergency contact per provider. Setup steps: [docs/messaging-providers.md](docs/messaging-providers.md).
 
 ## Installation
 
@@ -165,11 +166,11 @@ The KSafe app has **six tabs**, in this order:
    > [!IMPORTANT]
    > **Hydration target shift (v18.2)** — riders running KSafe with **dynamic hydration enabled** (Settings → Fueling → "Dynamic sweat rate") will see hourly targets in hot conditions drop by ~25 % vs prior versions. The internal `SweatEstimator` was re-calibrated to track the literature median (Sawka 2007 / Baker 2017) instead of the upper-bound anchors used before. The old curve over-targeted by ~30-60 % on warm rides, which manifested as alert fatigue and a non-trivial hyponatremia exposure for lighter riders on long hot efforts. The new curve is comparable in shape to Garmin's Firstbeat HeatStress targeting. If you tuned your `hydrationTargetMlPerHour` (static mode) around the previous behaviour you are unaffected; if you relied on the dynamic estimator's numbers, expect fewer / less frequent deficit alerts in heat.
 4. **Actions** — three sub-blocks: **Karoo Live** (ride-start / ride-end toggles + messages, Karoo Live key, test buttons), **Custom Messages 1–3** (enable, 7-char button label, message text, idle colour), and **Webhook 1–2** (URL, GET/POST, headers, body, optional geo-fence, optional on-screen alert, idle colour).
-5. **Provider** — pick the active messaging provider and enter credentials. All four configurations are saved independently. Each recipient has a per-recipient scope selector (All / Emergency only / Info only) controlling which alert types it receives. 📘 Step-by-step for each provider (Telegram bot token, ntfy topic, CallMeBot WhatsApp activation, Pushover App Token + User Key): [docs/messaging-providers.md](docs/messaging-providers.md).
+5. **Provider** — pick the active messaging provider and enter credentials. All five configurations are saved independently. Each recipient has a per-recipient scope selector (All / Emergency only / Info only) controlling which alert types it receives. 📘 Step-by-step for each provider (Telegram bot token, ntfy topic, CallMeBot WhatsApp activation, Pushover App Token + User Key, Apprise server URL + notification URLs): [docs/messaging-providers.md](docs/messaging-providers.md).
 6. **Settings** — master kill switch, **test buttons** (Simulate Crash, Test ride start/end), **FIT export** *(v2.0, opt-in — off by default)* of logged + burned carbs / burn rate / hydration / wellness drift — and, when **Calories (HR)** is enabled, HR-based calories as `ksafe_calories_kcal` *(v2.1)* — as developer fields for Strava / Intervals.icu / TrainingPeaks (session-average burn rate is shown live on the Karoo via the new data field but **not** duplicated in the FIT — downstream tools can average the per-record `ksafe_carb_burn_rate_gph` themselves), **anonymous calibration logging** *(opt-in)*, **Backup / Restore**.
 
 Detailed field references:
-- 📘 [Messaging providers — full setup](docs/messaging-providers.md) (Telegram, ntfy, CallMeBot/WhatsApp, Pushover — where to click, how to get each token/key)
+- 📘 [Messaging providers — full setup](docs/messaging-providers.md) (Telegram, ntfy, CallMeBot/WhatsApp, Pushover, Apprise — where to click, how to get each token/key)
 - 📘 [Safety / Settings — field reference](docs/configuration-reference.md)
 - 📘 [Health & Fueling — full reference](docs/health-fueling.md) (tier thresholds, FIT schema, alert tokens)
 - 📘 [Setting your initial fueling targets](docs/health-fueling.md#how-to-pick-your-per-hour-targets) — g/h by ride duration, ml/h by temperature, pre/post-ride weigh-in formula, ACSM / Jeukendrup / Sawka references
@@ -270,7 +271,7 @@ Algorithm internals (for contributors):
 
 - Developed by EnderThor.
 - Uses the [Karoo Extensions Framework](https://github.com/hammerheadnav/karoo-ext) by Hammerhead.
-- Optionally talks to Telegram, ntfy, CallMeBot (WhatsApp) or Pushover. Each has its own terms; KSafe has no affiliation.
+- Optionally talks to Telegram, ntfy, CallMeBot (WhatsApp), Pushover, or a self-hosted Apprise instance. Each has its own terms; KSafe has no affiliation.
 - Thanks to Hammerhead for the Karoo and the extensions API.
 - Thanks to **[Tim Kluge (timklge)](https://github.com/timklge)** for [**karoo-headwind**](https://github.com/timklge/karoo-headwind). When installed alongside KSafe, headwind publishes real meteo data (ambient temperature, humidity) as Karoo streams that the **Fueling tab's dynamic sweat-rate estimator** consumes instead of the device's heat-biased onboard temperature sensor — a noticeably better hydration target on hot rides. KSafe degrades cleanly to the onboard sensor when headwind isn't installed.
 

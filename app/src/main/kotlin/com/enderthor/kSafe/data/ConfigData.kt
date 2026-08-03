@@ -267,7 +267,7 @@ val FIELD_COLOR_PALETTE: List<Int> = listOf(
 // ─── Enums ────────────────────────────────────────────────────────────────────
 
 @Serializable
-enum class ProviderType { CALLMEBOT, PUSHOVER, NTFY, TELEGRAM }
+enum class ProviderType { CALLMEBOT, PUSHOVER, NTFY, TELEGRAM, APPRISE }
 
 @Serializable
 enum class FuelingAlertButtonMode { OFF, LOG, LOG_UNDO }
@@ -713,6 +713,11 @@ data class SenderConfig(
     val phoneNumber2: String = "",  // CallMeBot: second recipient WhatsApp number (optional)
     val apiKey3: String = "",       // CallMeBot: third recipient API key (optional)
     val phoneNumber3: String = "",  // CallMeBot: third recipient WhatsApp number (optional)
+    // Apprise: self-hosted API server URL + notification URLs (up to 3)
+    val appriseServerUrl: String = "",       // e.g. "https://apprise.example.com"
+    val appriseNotifyUrl1: String = "",      // e.g. "mailtos://user:pass@mail.gmail.com"
+    val appriseNotifyUrl2: String = "",      // second notification URL (optional)
+    val appriseNotifyUrl3: String = "",      // third notification URL (optional)
     /** Per-recipient alert scope (slots 1/2/3). Default ALL = receives everything
      *  (back-compat). For NTFY only slot 1 applies (single destination). */
     val recipient1Alerts: RecipientAlertScope = RecipientAlertScope.ALL,
@@ -1005,6 +1010,18 @@ data class TelegramConfig(
     val recipient3Alerts: RecipientAlertScope = RecipientAlertScope.ALL,
 )
 
+/** Apprise: self-hosted API base URL plus up to 3 notification URLs. */
+@Serializable
+data class AppriseConfig(
+    val serverUrl: String = "",      // Base URL of the apprise-api instance (no trailing /notify)
+    val notifyUrl1: String = "",     // Primary notification URL (e.g. mailtos://user:pass@smtp.gmail.com)
+    val notifyUrl2: String = "",     // Optional: second notification URL
+    val notifyUrl3: String = "",     // Optional: third notification URL
+    val recipient1Alerts: RecipientAlertScope = RecipientAlertScope.ALL,
+    val recipient2Alerts: RecipientAlertScope = RecipientAlertScope.ALL,
+    val recipient3Alerts: RecipientAlertScope = RecipientAlertScope.ALL,
+)
+
 /**
  * Full configuration snapshot used for export/import.
  *
@@ -1024,6 +1041,7 @@ data class KSafeBackupExport(
     val pushover: PushoverConfig = PushoverConfig(),
     val ntfy: NtfyConfig = NtfyConfig(),
     val telegram: TelegramConfig = TelegramConfig(),
+    val apprise: AppriseConfig = AppriseConfig(),
 )
 
 /** Converts this export snapshot back to the flat [SenderConfig] list used internally. */
@@ -1057,6 +1075,14 @@ fun KSafeBackupExport.toSenderConfigs(): List<SenderConfig> = listOf(
         recipient1Alerts = telegram.recipient1Alerts,
         recipient2Alerts = telegram.recipient2Alerts,
         recipient3Alerts = telegram.recipient3Alerts),
+    SenderConfig(ProviderType.APPRISE,
+        appriseServerUrl = apprise.serverUrl,
+        appriseNotifyUrl1 = apprise.notifyUrl1,
+        appriseNotifyUrl2 = apprise.notifyUrl2,
+        appriseNotifyUrl3 = apprise.notifyUrl3,
+        recipient1Alerts = apprise.recipient1Alerts,
+        recipient2Alerts = apprise.recipient2Alerts,
+        recipient3Alerts = apprise.recipient3Alerts),
 )
 
 /** Builds a [KSafeBackupExport] from the current [config] and flat sender config list. */
@@ -1066,6 +1092,7 @@ fun List<SenderConfig>.toBackupExport(config: KSafeConfig): KSafeBackupExport {
     val po  = find(ProviderType.PUSHOVER)
     val sp  = find(ProviderType.NTFY)
     val tg  = find(ProviderType.TELEGRAM)
+    val ap  = find(ProviderType.APPRISE)
     return KSafeBackupExport(
         config     = config,
         callmebot  = CallMeBotConfig(
@@ -1098,6 +1125,15 @@ fun List<SenderConfig>.toBackupExport(config: KSafeConfig): KSafeBackupExport {
             recipient2Alerts = tg.recipient2Alerts,
             recipient3Alerts = tg.recipient3Alerts,
         ),
+        apprise    = AppriseConfig(
+            serverUrl = ap.appriseServerUrl,
+            notifyUrl1 = ap.appriseNotifyUrl1,
+            notifyUrl2 = ap.appriseNotifyUrl2,
+            notifyUrl3 = ap.appriseNotifyUrl3,
+            recipient1Alerts = ap.recipient1Alerts,
+            recipient2Alerts = ap.recipient2Alerts,
+            recipient3Alerts = ap.recipient3Alerts,
+        ),
     )
 }
 
@@ -1108,6 +1144,7 @@ val defaultSenderConfigs = listOf(
     SenderConfig(ProviderType.PUSHOVER),
     SenderConfig(ProviderType.NTFY),
     SenderConfig(ProviderType.TELEGRAM),
+    SenderConfig(ProviderType.APPRISE),
 )
 
 // AUDIT 2026-06: these default-seed strings use the stdlib Json (not jsonForStorage) on purpose.

@@ -30,6 +30,8 @@ sealed interface ProviderReadiness {
         NTFY_TOPIC,
         TELEGRAM_BOT_TOKEN,
         TELEGRAM_CHAT_ID,
+        APPRISE_SERVER_URL,
+        APPRISE_NOTIFY_URL,
     }
 }
 
@@ -64,11 +66,17 @@ fun providerReadiness(provider: ProviderType, config: SenderConfig): ProviderRea
             userKeys.none { ok(it) }  -> ProviderReadiness.Incomplete(ProviderReadiness.Missing.TELEGRAM_CHAT_ID)
             else                      -> ProviderReadiness.Ready
         }
+        ProviderType.APPRISE -> when {
+            !ok(config.appriseServerUrl) -> ProviderReadiness.Incomplete(ProviderReadiness.Missing.APPRISE_SERVER_URL)
+            listOf(config.appriseNotifyUrl1, config.appriseNotifyUrl2, config.appriseNotifyUrl3).none { ok(it) }
+                -> ProviderReadiness.Incomplete(ProviderReadiness.Missing.APPRISE_NOTIFY_URL)
+            else -> ProviderReadiness.Ready
+        }
     }
 }
 
 /**
- * True when [a] and [b] carry the same delivery CREDENTIALS (the 9 token/phone/key fields) —
+ * True when [a] and [b] carry the same delivery CREDENTIALS (the 9 token/phone/key fields + Apprise fields) —
  * scope and [SenderConfig.lastSuccessfulSendMs] are ignored. Used to decide whether a config save
  * should clear the last-successful-send timestamp: editing a credential invalidates a prior
  * successful send, but changing only an alert scope does not. Pure → unit-testable.
@@ -77,7 +85,9 @@ fun sameCredentials(a: SenderConfig, b: SenderConfig): Boolean =
     a.apiKey == b.apiKey &&
     a.userKey == b.userKey && a.userKey2 == b.userKey2 && a.userKey3 == b.userKey3 &&
     a.phoneNumber == b.phoneNumber && a.phoneNumber2 == b.phoneNumber2 && a.phoneNumber3 == b.phoneNumber3 &&
-    a.apiKey2 == b.apiKey2 && a.apiKey3 == b.apiKey3
+    a.apiKey2 == b.apiKey2 && a.apiKey3 == b.apiKey3 &&
+    a.appriseServerUrl == b.appriseServerUrl &&
+    a.appriseNotifyUrl1 == b.appriseNotifyUrl1 && a.appriseNotifyUrl2 == b.appriseNotifyUrl2 && a.appriseNotifyUrl3 == b.appriseNotifyUrl3
 
 /** Staleness window for the ride-start "please re-test your provider" reminder: 30 days. */
 const val SEND_STALENESS_WINDOW_MS = 30L * 24 * 60 * 60 * 1000

@@ -57,6 +57,10 @@ fun ProviderScreen(vm: MainViewModel) {
     var phoneNumber2 by remember { mutableStateOf(activeSender?.phoneNumber2 ?: "") }
     var apiKey3      by remember { mutableStateOf(activeSender?.apiKey3      ?: "") }
     var phoneNumber3 by remember { mutableStateOf(activeSender?.phoneNumber3 ?: "") }
+    var appriseServerUrl  by remember { mutableStateOf(activeSender?.appriseServerUrl  ?: "") }
+    var appriseNotifyUrl1 by remember { mutableStateOf(activeSender?.appriseNotifyUrl1 ?: "") }
+    var appriseNotifyUrl2 by remember { mutableStateOf(activeSender?.appriseNotifyUrl2 ?: "") }
+    var appriseNotifyUrl3 by remember { mutableStateOf(activeSender?.appriseNotifyUrl3 ?: "") }
     var recipient1Alerts by remember { mutableStateOf(activeSender?.recipient1Alerts ?: RecipientAlertScope.ALL) }
     var recipient2Alerts by remember { mutableStateOf(activeSender?.recipient2Alerts ?: RecipientAlertScope.ALL) }
     var recipient3Alerts by remember { mutableStateOf(activeSender?.recipient3Alerts ?: RecipientAlertScope.ALL) }
@@ -79,6 +83,10 @@ fun ProviderScreen(vm: MainViewModel) {
             phoneNumber2 = s?.phoneNumber2 ?: ""
             apiKey3      = s?.apiKey3      ?: ""
             phoneNumber3 = s?.phoneNumber3 ?: ""
+            appriseServerUrl  = s?.appriseServerUrl  ?: ""
+            appriseNotifyUrl1 = s?.appriseNotifyUrl1 ?: ""
+            appriseNotifyUrl2 = s?.appriseNotifyUrl2 ?: ""
+            appriseNotifyUrl3 = s?.appriseNotifyUrl3 ?: ""
             recipient1Alerts = s?.recipient1Alerts ?: RecipientAlertScope.ALL
             recipient2Alerts = s?.recipient2Alerts ?: RecipientAlertScope.ALL
             recipient3Alerts = s?.recipient3Alerts ?: RecipientAlertScope.ALL
@@ -100,6 +108,10 @@ fun ProviderScreen(vm: MainViewModel) {
                 if (sender.phoneNumber2 != phoneNumber2) phoneNumber2 = sender.phoneNumber2
                 if (sender.apiKey3      != apiKey3)      apiKey3      = sender.apiKey3
                 if (sender.phoneNumber3 != phoneNumber3) phoneNumber3 = sender.phoneNumber3
+                if (sender.appriseServerUrl  != appriseServerUrl)  appriseServerUrl  = sender.appriseServerUrl
+                if (sender.appriseNotifyUrl1 != appriseNotifyUrl1) appriseNotifyUrl1 = sender.appriseNotifyUrl1
+                if (sender.appriseNotifyUrl2 != appriseNotifyUrl2) appriseNotifyUrl2 = sender.appriseNotifyUrl2
+                if (sender.appriseNotifyUrl3 != appriseNotifyUrl3) appriseNotifyUrl3 = sender.appriseNotifyUrl3
                 if (sender.recipient1Alerts != recipient1Alerts) recipient1Alerts = sender.recipient1Alerts
                 if (sender.recipient2Alerts != recipient2Alerts) recipient2Alerts = sender.recipient2Alerts
                 if (sender.recipient3Alerts != recipient3Alerts) recipient3Alerts = sender.recipient3Alerts
@@ -110,6 +122,7 @@ fun ProviderScreen(vm: MainViewModel) {
     // Auto-save with debounce — uses fieldsProvider (always in sync with the fields)
     LaunchedEffect(
         apiKey, userKey, userKey2, userKey3, phoneNumber, apiKey2, phoneNumber2, apiKey3, phoneNumber3,
+        appriseServerUrl, appriseNotifyUrl1, appriseNotifyUrl2, appriseNotifyUrl3,
         recipient1Alerts, recipient2Alerts, recipient3Alerts,
     ) {
         scopeErrorSlot = null
@@ -120,7 +133,7 @@ fun ProviderScreen(vm: MainViewModel) {
         // debounce (cold first visit to the tab), the save below would faithfully persist
         // all-blank fields over the active provider's stored entry — silently wiping the
         // emergency-contact credentials. The persisted list is never empty (defaults carry
-        // all four providers), so an empty live value means "not loaded yet": skip. Once the
+        // all five providers), so an empty live value means "not loaded yet": skip. Once the
         // real emission lands, the field sync re-keys this effect and saves normally.
         if (vm.senderConfigs.value.isEmpty()) {
             Timber.d("Sender auto-save skipped — DataStore not loaded yet")
@@ -129,6 +142,7 @@ fun ProviderScreen(vm: MainViewModel) {
         vm.updateSenderConfig(
             fieldsProvider, apiKey, userKey, userKey2, userKey3,
             phoneNumber, apiKey2, phoneNumber2, apiKey3, phoneNumber3,
+            appriseServerUrl, appriseNotifyUrl1, appriseNotifyUrl2, appriseNotifyUrl3,
             recipient1Alerts, recipient2Alerts, recipient3Alerts,
         )
     }
@@ -152,10 +166,12 @@ fun ProviderScreen(vm: MainViewModel) {
         val keys = listOf(userKey, userKey2, userKey3)
         val phones = listOf(phoneNumber, phoneNumber2, phoneNumber3)
         val apiKeys = listOf(apiKey, apiKey2, apiKey3)
+        val notifyUrls = listOf(appriseNotifyUrl1, appriseNotifyUrl2, appriseNotifyUrl3)
         val configured = (0..2).filter {
             when (fieldsProvider) {
                 ProviderType.CALLMEBOT -> phones[it].isNotBlank() && apiKeys[it].isNotBlank()
                 ProviderType.NTFY      -> it == 0 && apiKey.isNotBlank()
+                ProviderType.APPRISE   -> notifyUrls[it].isNotBlank()
                 else                   -> keys[it].isNotBlank()
             }
         }
@@ -199,6 +215,7 @@ fun ProviderScreen(vm: MainViewModel) {
                 vm.updateSenderConfig(
                     fieldsProvider, apiKey, userKey, userKey2, userKey3,
                     phoneNumber, apiKey2, phoneNumber2, apiKey3, phoneNumber3,
+                    appriseServerUrl, appriseNotifyUrl1, appriseNotifyUrl2, appriseNotifyUrl3,
                     recipient1Alerts, recipient2Alerts, recipient3Alerts,
                 )
             }
@@ -214,6 +231,10 @@ fun ProviderScreen(vm: MainViewModel) {
             phoneNumber2 = s?.phoneNumber2 ?: ""
             apiKey3      = s?.apiKey3      ?: ""
             phoneNumber3 = s?.phoneNumber3 ?: ""
+            appriseServerUrl  = s?.appriseServerUrl  ?: ""
+            appriseNotifyUrl1 = s?.appriseNotifyUrl1 ?: ""
+            appriseNotifyUrl2 = s?.appriseNotifyUrl2 ?: ""
+            appriseNotifyUrl3 = s?.appriseNotifyUrl3 ?: ""
             recipient1Alerts = s?.recipient1Alerts ?: RecipientAlertScope.ALL
             recipient2Alerts = s?.recipient2Alerts ?: RecipientAlertScope.ALL
             recipient3Alerts = s?.recipient3Alerts ?: RecipientAlertScope.ALL
@@ -257,6 +278,26 @@ fun ProviderScreen(vm: MainViewModel) {
                 )
             }
         }
+        // Apprise is the fifth provider. Give it a row identical to the paired rows above:
+        // one chip on the left half and a spacer where the second chip would be, so all
+        // five buttons share the same size and alignment.
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            FilterChip(
+                selected = fieldsProvider == ProviderType.APPRISE,
+                onClick = { onProviderClick(ProviderType.APPRISE) },
+                modifier = Modifier.weight(1f),
+                label = {
+                    Text(
+                        text = "Apprise",
+                        style = MaterialTheme.typography.labelSmall
+                    )
+                }
+            )
+            Spacer(modifier = Modifier.weight(1f))
+        }
 
         Spacer(Modifier.height(4.dp))
 
@@ -273,6 +314,7 @@ fun ProviderScreen(vm: MainViewModel) {
                 ProviderType.PUSHOVER   -> stringResource(R.string.pushover_description)
                 ProviderType.NTFY       -> stringResource(R.string.ntfy_description)
                 ProviderType.TELEGRAM   -> stringResource(R.string.telegram_description)
+                ProviderType.APPRISE    -> stringResource(R.string.apprise_description)
             },
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant
@@ -288,6 +330,8 @@ fun ProviderScreen(vm: MainViewModel) {
                 apiKey = apiKey, userKey = userKey, userKey2 = userKey2, userKey3 = userKey3,
                 phoneNumber = phoneNumber, apiKey2 = apiKey2, phoneNumber2 = phoneNumber2,
                 apiKey3 = apiKey3, phoneNumber3 = phoneNumber3,
+                appriseServerUrl = appriseServerUrl, appriseNotifyUrl1 = appriseNotifyUrl1,
+                appriseNotifyUrl2 = appriseNotifyUrl2, appriseNotifyUrl3 = appriseNotifyUrl3,
             ),
         )
         if (readiness is ProviderReadiness.Incomplete) {
@@ -298,6 +342,8 @@ fun ProviderScreen(vm: MainViewModel) {
                 ProviderReadiness.Missing.NTFY_TOPIC             -> stringResource(R.string.provider_missing_ntfy_topic)
                 ProviderReadiness.Missing.TELEGRAM_BOT_TOKEN     -> stringResource(R.string.provider_missing_telegram_token)
                 ProviderReadiness.Missing.TELEGRAM_CHAT_ID       -> stringResource(R.string.provider_missing_telegram_chat)
+                ProviderReadiness.Missing.APPRISE_SERVER_URL     -> stringResource(R.string.provider_missing_apprise_server)
+                ProviderReadiness.Missing.APPRISE_NOTIFY_URL     -> stringResource(R.string.provider_missing_apprise_notify)
             }
             Text(
                 text = "⚠ $reason ${stringResource(R.string.provider_warn_banner_suffix)}",
@@ -331,23 +377,29 @@ fun ProviderScreen(vm: MainViewModel) {
             )
         }
 
-        // API key / app token / channel key / bot token
-        OutlinedTextField(
-            value = apiKey,
-            onValueChange = { apiKey = it },
-            label = {
-                Text(
-                    when (fieldsProvider) {
-                        ProviderType.CALLMEBOT  -> stringResource(R.string.callmebot_apikey_hint)
-                        ProviderType.PUSHOVER   -> stringResource(R.string.pushover_app_token_hint)
-                        ProviderType.NTFY       -> stringResource(R.string.ntfy_topic_hint)
-                        ProviderType.TELEGRAM   -> stringResource(R.string.telegram_bot_token_hint)
-                    }
-                )
-            },
-            modifier = Modifier.fillMaxWidth(),
-            singleLine = true
-        )
+        // API key / app token / channel key / bot token. Apprise has no single shared
+        // token; the server URL is its closest equivalent and lives in its own block
+        // below along with the notification URLs. The generic field is hidden for
+        // Apprise, otherwise it would render a duplicate, no-op server-URL field.
+        if (fieldsProvider != ProviderType.APPRISE) {
+            OutlinedTextField(
+                value = apiKey,
+                onValueChange = { apiKey = it },
+                label = {
+                    Text(
+                        when (fieldsProvider) {
+                            ProviderType.CALLMEBOT  -> stringResource(R.string.callmebot_apikey_hint)
+                            ProviderType.PUSHOVER   -> stringResource(R.string.pushover_app_token_hint)
+                            ProviderType.NTFY       -> stringResource(R.string.ntfy_topic_hint)
+                            ProviderType.TELEGRAM   -> stringResource(R.string.telegram_bot_token_hint)
+                            ProviderType.APPRISE    -> stringResource(R.string.apprise_server_url_hint)
+                        }
+                    )
+                },
+                modifier = Modifier.fillMaxWidth(),
+                singleLine = true
+            )
+        }
 
         // NTFY has a single recipient (the topic in `apiKey`); CallMeBot recipient 1 is
         // phoneNumber + this apiKey, so its slot-0 selector also belongs here once the phone is set.
@@ -505,6 +557,59 @@ fun ProviderScreen(vm: MainViewModel) {
             }
         }
 
+        // Apprise: server URL + notification URLs (up to 3 recipients)
+        if (fieldsProvider == ProviderType.APPRISE) {
+            OutlinedTextField(
+                value = appriseServerUrl,
+                onValueChange = { appriseServerUrl = it },
+                label = { Text(stringResource(R.string.apprise_server_url_hint)) },
+                modifier = Modifier.fillMaxWidth(),
+                singleLine = true
+            )
+            OutlinedTextField(
+                value = appriseNotifyUrl1,
+                onValueChange = { appriseNotifyUrl1 = it },
+                label = { Text(stringResource(R.string.apprise_notify_url1_hint)) },
+                modifier = Modifier.fillMaxWidth(),
+                singleLine = true
+            )
+            if (appriseNotifyUrl1.isNotBlank()) {
+                RecipientAlertScopeSelector(
+                    scope = recipient1Alerts,
+                    onScopeChange = { setScope(0, it) },
+                    showError = scopeErrorSlot == 0
+                )
+            }
+            OutlinedTextField(
+                value = appriseNotifyUrl2,
+                onValueChange = { appriseNotifyUrl2 = it },
+                label = { Text(stringResource(R.string.apprise_notify_url2_hint)) },
+                modifier = Modifier.fillMaxWidth(),
+                singleLine = true
+            )
+            if (appriseNotifyUrl2.isNotBlank()) {
+                RecipientAlertScopeSelector(
+                    scope = recipient2Alerts,
+                    onScopeChange = { setScope(1, it) },
+                    showError = scopeErrorSlot == 1
+                )
+            }
+            OutlinedTextField(
+                value = appriseNotifyUrl3,
+                onValueChange = { appriseNotifyUrl3 = it },
+                label = { Text(stringResource(R.string.apprise_notify_url3_hint)) },
+                modifier = Modifier.fillMaxWidth(),
+                singleLine = true
+            )
+            if (appriseNotifyUrl3.isNotBlank()) {
+                RecipientAlertScopeSelector(
+                    scope = recipient3Alerts,
+                    onScopeChange = { setScope(2, it) },
+                    showError = scopeErrorSlot == 2
+                )
+            }
+        }
+
         // Test send
         TestActionButton(
             label = stringResource(R.string.test_send),
@@ -515,6 +620,7 @@ fun ProviderScreen(vm: MainViewModel) {
                 vm.updateSenderConfig(
                     fieldsProvider, apiKey, userKey, userKey2, userKey3,
                     phoneNumber, apiKey2, phoneNumber2, apiKey3, phoneNumber3,
+                    appriseServerUrl, appriseNotifyUrl1, appriseNotifyUrl2, appriseNotifyUrl3,
                     recipient1Alerts, recipient2Alerts, recipient3Alerts,
                 )
                 ext.sendTestMessage(fieldsProvider)

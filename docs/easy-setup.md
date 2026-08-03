@@ -28,6 +28,7 @@ Open the **Provider** tab and pick the one that fits you:
 - **Just want it free and fast?** → use **ntfy** or **Telegram**.
 - **Your contact lives in WhatsApp?** → use **CallMeBot**.
 - **Want the most reliable phone notification and don't mind a one-time ~$5?** → **Pushover**.
+- **Already have an Apprise instance running (or want alerts fanned out to many services at once)?** → **Apprise** (self-hosted, advanced).
 
 The two easiest are spelled out step by step further down: [Senders made simple](#-senders-made-simple).
 
@@ -125,9 +126,9 @@ One thing worth knowing: each contact has a "what this contact receives" setting
 
 ## 📨 Senders made simple
 
-You only need **one**. Here are the two easiest, fully spelled out. (For CallMeBot/WhatsApp
-and Pushover, see the full [Messaging providers guide](messaging-providers.md) — same idea,
-a couple more steps.)
+You only need **one**. Here are the two easiest, fully spelled out. (For CallMeBot/WhatsApp,
+Pushover, and Apprise, see the full [Messaging providers guide](messaging-providers.md) — same
+idea, a couple more steps.)
 
 ### Easiest: ntfy (free, no account)
 
@@ -151,7 +152,7 @@ That's it. To alert several people, they each subscribe to the same topic name.
 4. On the Karoo: **Provider** tab → **Telegram** → paste the **Bot Token** → put the **Chat ID**
    in Recipient 1 → **Test Send**.
 
-> You can save settings for all four providers at once — only the one you select is used,
+> You can save settings for all five providers at once — only the one you select is used,
 > and switching never erases the others.
 
 ---

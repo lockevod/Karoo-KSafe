@@ -357,7 +357,7 @@ The medical default strings now use a dedicated `R.string.warning_medical_title`
 
 Tokens that appear in a template but are not in the supplied map are kept literal (e.g. `{nonsense}` stays as `{nonsense}`) — this surfaces typos to the rider rather than producing oddly-blanked strings.
 
-After substitution, the rendered string is capped at the call site so it fits on the popup: titles at `ALERT_TITLE_MAX_CHARS = 40` and details at `ALERT_DETAIL_MAX_CHARS = 34` (in `extension/util/AlertTextRenderer.kt`; the detail cap was reduced from 90 after on-hardware measurement of where the popup truncates). When the cap kicks in the last visible char is replaced with `…`. This cap only affects the on-screen `InRideAlert` — long messages dispatched through the emergency provider (Pushover / Telegram / etc., when `responseLevel = EMERGENCY`) use a separate template and remain unconstrained.
+After substitution, the rendered string is capped at the call site so it fits on the popup: titles at `ALERT_TITLE_MAX_CHARS = 40` and details at `ALERT_DETAIL_MAX_CHARS = 34` (in `extension/util/AlertTextRenderer.kt`; the detail cap was reduced from 90 after on-hardware measurement of where the popup truncates). When the cap kicks in the last visible char is replaced with `…`. This cap only affects the on-screen `InRideAlert` — long messages dispatched through the emergency provider (Pushover / Telegram / Apprise / etc., when `responseLevel = EMERGENCY`) use a separate template and remain unconstrained.
 
 ### Cooldown semantics
 

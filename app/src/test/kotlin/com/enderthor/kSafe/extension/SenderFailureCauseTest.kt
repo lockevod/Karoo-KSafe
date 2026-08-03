@@ -63,4 +63,26 @@ class SenderFailureCauseTest {
         assertEquals(FailureCause.NO_CONFIG, outcome.cause)
         verifyNoInteractions(karoo)
     }
+
+    @Test
+    fun `blank Apprise config fails fast as NO_CREDENTIALS without touching the network`() = runTest {
+        val (sender, karoo) = senderWith(SenderConfig(provider = ProviderType.APPRISE))
+        val outcome = sender.sendAlert("SOS", ProviderType.APPRISE)
+
+        assertFalse(outcome.anyOk)
+        assertEquals(FailureCause.NO_CREDENTIALS, outcome.cause)
+        verifyNoInteractions(karoo)
+    }
+
+    @Test
+    fun `Apprise server set but all notify URLs blank still fails fast as NO_CREDENTIALS`() = runTest {
+        val (sender, karoo) = senderWith(
+            SenderConfig(provider = ProviderType.APPRISE, appriseServerUrl = "http://192.168.1.100:8000")
+        )
+        val outcome = sender.sendAlert("SOS", ProviderType.APPRISE)
+
+        assertFalse(outcome.anyOk)
+        assertEquals(FailureCause.NO_CREDENTIALS, outcome.cause)
+        verifyNoInteractions(karoo)
+    }
 }

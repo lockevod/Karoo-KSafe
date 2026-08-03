@@ -98,6 +98,43 @@ class ProviderReadinessTest {
             incomplete(providerReadiness(ProviderType.TELEGRAM, cfg)))
     }
 
+    // ── Apprise ──
+    @Test
+    fun apprise_ready_when_server_and_notify_url() {
+        val cfg = SenderConfig(provider = ProviderType.APPRISE,
+            appriseServerUrl = "http://192.168.1.100:8000", appriseNotifyUrl1 = "ntfy://ntfy.sh/ksafe")
+        assertEquals(ProviderReadiness.Ready, providerReadiness(ProviderType.APPRISE, cfg))
+    }
+
+    @Test
+    fun apprise_ready_with_only_slot3_notify_url() {
+        val cfg = SenderConfig(provider = ProviderType.APPRISE,
+            appriseServerUrl = "http://192.168.1.100:8000", appriseNotifyUrl3 = "discord://webhook")
+        assertEquals(ProviderReadiness.Ready, providerReadiness(ProviderType.APPRISE, cfg))
+    }
+
+    @Test
+    fun apprise_incomplete_missing_server_url_first() {
+        // Server URL blank but a notify URL present; the server is the primary gap.
+        val cfg = SenderConfig(provider = ProviderType.APPRISE, appriseNotifyUrl1 = "ntfy://ntfy.sh/ksafe")
+        assertEquals(ProviderReadiness.Missing.APPRISE_SERVER_URL,
+            incomplete(providerReadiness(ProviderType.APPRISE, cfg)))
+    }
+
+    @Test
+    fun apprise_incomplete_missing_notify_url_when_server_present() {
+        val cfg = SenderConfig(provider = ProviderType.APPRISE, appriseServerUrl = "http://192.168.1.100:8000")
+        assertEquals(ProviderReadiness.Missing.APPRISE_NOTIFY_URL,
+            incomplete(providerReadiness(ProviderType.APPRISE, cfg)))
+    }
+
+    @Test
+    fun apprise_incomplete_when_server_blank_and_all_notify_blank() {
+        val cfg = SenderConfig(provider = ProviderType.APPRISE)
+        assertEquals(ProviderReadiness.Missing.APPRISE_SERVER_URL,
+            incomplete(providerReadiness(ProviderType.APPRISE, cfg)))
+    }
+
     // ── default/blank config is Incomplete for every provider ──
     @Test fun blank_config_incomplete_for_all_providers() {
         for (p in ProviderType.values()) {
@@ -118,6 +155,24 @@ class ProviderReadinessTest {
         val a = SenderConfig(provider = ProviderType.TELEGRAM, apiKey = "bot", userKey = "chat")
         assertFalse(sameCredentials(a, a.copy(userKey = "chat2")))
         assertFalse(sameCredentials(a, a.copy(apiKey = "bot2")))
+    }
+
+    @Test
+    fun sameCredentials_true_ignoring_apprise_scope_and_timestamp() {
+        val a = SenderConfig(provider = ProviderType.APPRISE,
+            appriseServerUrl = "http://host:8000", appriseNotifyUrl1 = "ntfy://t",
+            recipient2Alerts = RecipientAlertScope.ALL, lastSuccessfulSendMs = 456L)
+        val b = a.copy(recipient2Alerts = RecipientAlertScope.INFO_ONLY, lastSuccessfulSendMs = 0L)
+        assertTrue(sameCredentials(a, b))
+    }
+
+    @Test
+    fun sameCredentials_false_when_apprise_field_changes() {
+        val a = SenderConfig(provider = ProviderType.APPRISE,
+            appriseServerUrl = "http://host:8000", appriseNotifyUrl1 = "ntfy://t", appriseNotifyUrl2 = "discord://w")
+        assertFalse(sameCredentials(a, a.copy(appriseServerUrl = "http://other:8000")))
+        assertFalse(sameCredentials(a, a.copy(appriseNotifyUrl2 = "discord://other")))
+        assertFalse(sameCredentials(a, a.copy(appriseNotifyUrl3 = "tgram://bot/chat")))
     }
 
     // ── isSendStale (ride-start re-test reminder) ──

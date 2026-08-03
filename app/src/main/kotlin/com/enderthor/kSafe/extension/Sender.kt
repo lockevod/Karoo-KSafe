@@ -10,6 +10,8 @@ import io.hammerhead.karooext.KarooSystemService
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.withTimeoutOrNull
+import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.buildJsonArray
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
 import timber.log.Timber
@@ -335,6 +337,48 @@ class Sender(
                     }
                     results.joinToString("\n")
                 }
+
+                ProviderType.APPRISE -> {
+                    if (config.appriseServerUrl.isBlank()) return "Missing Apprise Server URL."
+                    val notifyUrls = listOf(config.appriseNotifyUrl1, config.appriseNotifyUrl2, config.appriseNotifyUrl3)
+                    if (notifyUrls.all { it.isBlank() }) return "Missing Notification URL."
+                    val serverUrl = config.appriseServerUrl.trim().trimEnd('/')
+                    val results = mutableListOf<String>()
+                    for ((i, notifyUrl) in notifyUrls.withIndex()) {
+                        if (notifyUrl.isBlank()) continue
+                        val label = "Recipient ${i + 1}"
+                        val result = postApprise(
+                            serverUrl, notifyUrl,
+                            title = "KSafe Test",
+                            body = "KSafe test - alerts are configured correctly.",
+                            type = "info",
+                        )
+                        if (result == null) {
+                            results.add("$label: no response — check connection.")
+                            continue
+                        }
+                        when {
+                            // Same robust success predicate as attemptSend: 204 (no valid
+                            // URL) and legacy `{"ok": false}` must not count as sent.
+                            isAppriseSuccess(result.statusCode, result.body) -> {
+                                results.add("$label: sent ✓"); anySucceeded = true
+                            }
+                            result.statusCode == 204 ->
+                                results.add("$label: invalid notification URL format.")
+                            result.statusCode == 400 ->
+                                results.add("$label: request rejected by the server. Check the server and notification URLs.")
+                            result.statusCode == 404 ->
+                                results.add("$label: server endpoint not found. Check the server URL.")
+                            result.statusCode == 424 ->
+                                results.add("$label: notification could not be delivered. Check the notification URL credentials.")
+                            else -> {
+                                val desc = result.body.take(120).ifBlank { "HTTP ${result.statusCode}" }
+                                results.add("$label: $desc")
+                            }
+                        }
+                    }
+                    results.joinToString("\n")
+                }
             }
         } catch (e: kotlinx.coroutines.CancellationException) {
             // Never swallow cancellation — it must propagate so the calling coroutine
@@ -538,6 +582,30 @@ class Sender(
         return knownSuccess.any { lower.contains(it) }
     }
 
+    /**
+     * Apprise-API success predicate for the stateless `/notify` endpoint.
+     *
+     * A bare `statusCode in 200..299` check has two false positives:
+     *  1. HTTP 204 No Content ("There was no valid URLs provided to notify")
+     *     means the notification URL could not be parsed, yet 204 is a 2xx,
+     *     so an invalid URL would look like it was sent.
+     *  2. Older apprise-api deployments always answer HTTP 200 and carry the
+     *     real result in the body: `{"ok": true}` on success, `{"ok": false,
+     *     "errors": [...]}` on failure.
+     *
+     * So success means statusCode == 200 (modern servers use 400/424 for
+     * failures) and the body does not contain `"ok": false`. The ok value is
+     * matched tolerantly on whitespace and case because the JSON comes from
+     * third-party servers. Internal so the truth table is unit-testable
+     * without constructing a [Sender] / KarooSystemService.
+     */
+    internal fun isAppriseSuccess(statusCode: Int, body: String): Boolean {
+        if (statusCode != 200) return false
+        val okValue = Regex("\"ok\"\\s*:\\s*(true|false)", RegexOption.IGNORE_CASE)
+            .find(body)?.groupValues?.get(1)
+        return okValue == null || okValue.equals("true", ignoreCase = true)
+    }
+
     // ─── Provider implementations ─────────────────────────────────────────────
 
     private suspend fun attemptSend(message: String, provider: ProviderType, isEmergency: Boolean): SendOutcome {
@@ -716,6 +784,40 @@ class Sender(
                 }
                 SendOutcome(delivered, send.size, cause = timeoutOrNone(delivered, anyResponse, anyTimeout))
             }
+
+            ProviderType.APPRISE -> {
+                if (config.appriseServerUrl.isBlank()) return SendOutcome.HARD_FAIL
+                val allNotifyUrls = listOf(config.appriseNotifyUrl1, config.appriseNotifyUrl2, config.appriseNotifyUrl3)
+                val configuredSlots = allNotifyUrls.indices.filter { allNotifyUrls[it].isNotBlank() }
+                val send = recipientsToSend(configuredSlots, config::scopeForSlot, isEmergency)
+                if (send.isEmpty()) return if (isEmergency) SendOutcome.HARD_FAIL else SendOutcome.NO_OP
+                var delivered = 0
+                var anyResponse = false
+                var anyTimeout = false
+                val serverUrl = config.appriseServerUrl.trim().trimEnd('/')
+                // Apprise notify types are info/success/warning/failure. "emergency"
+                // is not one of them; the server would reject it with HTTP 400 and
+                // every emergency alert would silently fail. Use "failure", the
+                // highest severity. No `tag` is sent either: tags filter which of
+                // the configured URLs get notified, and a URL without the tag would
+                // match nothing, so the server replies 424.
+                val type  = if (isEmergency) "failure" else "info"
+                val title = if (isEmergency) "KSafe Emergency" else "KSafe"
+                for (slot in send) {
+                    val notifyUrl = allNotifyUrls[slot]
+                    // Per-recipient timeout; see the CallMeBot branch for the rationale.
+                    val result = postApprise(serverUrl, notifyUrl, title, message, type)
+                    if (result == null) {
+                        Timber.e("Apprise timeout (notifyUrl=$notifyUrl)")
+                        anyTimeout = true
+                        continue
+                    }
+                    anyResponse = true
+                    if (isAppriseSuccess(result.statusCode, result.body)) delivered++
+                    else Timber.e("Apprise error (notifyUrl=$notifyUrl) ${result.statusCode}: ${result.body}")
+                }
+                SendOutcome(delivered, send.size, cause = timeoutOrNone(delivered, anyResponse, anyTimeout))
+            }
         }
     }
 
@@ -737,5 +839,45 @@ class Sender(
             entry(1, config.phoneNumber2, config.apiKey2),
             entry(2, config.phoneNumber3, config.apiKey3),
         )
+    }
+
+    /**
+     * Result of one Apprise stateless `/notify` call. [statusCode]/[body] mirror the raw
+     * HTTP response; [AppriseResult] exists so the two call sites (test send + attempt
+     * send) share one request builder without duplicating the timeout handling.
+     */
+    private data class AppriseResult(val statusCode: Int, val body: String)
+
+    /**
+     * POSTs an Apprise stateless notification for [notifyUrl] to `[serverUrl]/notify`.
+     * Returns null on a per-recipient timeout (no response at all).
+     *
+     * The `urls` value is sent as a single-element JSON array (not a string): the
+     * Apprise API splits a string URL list on commas/spaces, which would corrupt a
+     * valid notification URL that itself contains a comma in a query parameter
+     * (e.g. `mailtos://user:pass@smtp.gmail.com?to=a@b.com,c@d.com`).
+     */
+    private suspend fun postApprise(
+        serverUrl: String,
+        notifyUrl: String,
+        title: String,
+        body: String,
+        type: String,
+    ): AppriseResult? {
+        val jsonBody = buildJsonObject {
+            put("urls", buildJsonArray { add(JsonPrimitive(notifyUrl.trim())) })
+            put("title", title)
+            put("body", body)
+            put("type", type)
+        }.toString()
+        val response = withTimeoutOrNull(ATTEMPT_TIMEOUT_MS) {
+            karooSystem.httpRequest(
+                "POST",
+                "$serverUrl/notify",
+                mapOf("Content-Type" to "application/json"),
+                jsonBody.toByteArray()
+            )
+        } ?: return null
+        return AppriseResult(response.statusCode, response.body?.toString(Charsets.UTF_8) ?: "")
     }
 }

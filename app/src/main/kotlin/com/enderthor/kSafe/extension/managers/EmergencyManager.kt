@@ -373,6 +373,8 @@ class EmergencyManager(
         ProviderReadiness.Missing.NTFY_TOPIC             -> R.string.provider_missing_ntfy_topic
         ProviderReadiness.Missing.TELEGRAM_BOT_TOKEN     -> R.string.provider_missing_telegram_token
         ProviderReadiness.Missing.TELEGRAM_CHAT_ID       -> R.string.provider_missing_telegram_chat
+        ProviderReadiness.Missing.APPRISE_SERVER_URL     -> R.string.provider_missing_apprise_server
+        ProviderReadiness.Missing.APPRISE_NOTIFY_URL     -> R.string.provider_missing_apprise_notify
     }
 
     fun startCheckinTimer(config: KSafeConfig) {
