@@ -301,7 +301,7 @@ Both the **title** and the **detail line** of the `InRideAlert` are per-rider cu
 
 The renderer substitutes `{token}` placeholders with current data when the alert fires. Tokens not supplied are left literal so a typo is visible to the rider rather than silently blanked.
 
-After substitution, the rendered string is capped at the call site so the popup cannot run off the Karoo screen: titles at `ALERT_TITLE_MAX_CHARS = 40` and details at `ALERT_DETAIL_MAX_CHARS = 34` (defined in `extension/util/AlertTextRenderer.kt`; the detail cap was reduced from 90 after on-hardware measurement of where the popup truncates). When the cap kicks in the last visible char is replaced with `…`. The cap applies only to the on-screen `InRideAlert` — the outgoing emergency message sent through the configured provider (Pushover / Telegram / ntfy / CallMeBot) uses its own separate template (`config.message` etc.) and has no such limit.
+After substitution, the rendered string is capped at the call site so the popup cannot run off the Karoo screen: titles at `ALERT_TITLE_MAX_CHARS = 40` and details at `ALERT_DETAIL_MAX_CHARS = 34` (defined in `extension/util/AlertTextRenderer.kt`; the detail cap was reduced from 90 after on-hardware measurement of where the popup truncates). When the cap kicks in the last visible char is replaced with `…`. The cap applies only to the on-screen `InRideAlert` — the outgoing emergency message sent through the configured provider (Pushover / Telegram / ntfy / CallMeBot / Apprise) uses its own separate template (`config.message` etc.) and has no such limit.
 
 | Token | Substituted with |
 |---|---|

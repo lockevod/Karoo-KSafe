@@ -233,6 +233,13 @@
     <string name="telegram_chat_id2_hint">Chat ID — destinatario 2 (opcional)</string>
     <string name="telegram_chat_id3_hint">Chat ID — destinatario 3 (opcional)</string>
     <string name="telegram_description">Mensajes gratis de Telegram vía un bot. Crea un bot con @BotFather, copia el token e introduce tu Chat ID.</string>
+    <string name="apprise_server_url_hint">URL del servidor Apprise (ej. https://apprise.example.com)</string>
+    <string name="apprise_notify_url1_hint">URL de notificación 1 (ej. mailtos://user:pass@mail.gmail.com)</string>
+    <string name="apprise_notify_url2_hint">URL de notificación 2 (opcional)</string>
+    <string name="apprise_notify_url3_hint">URL de notificación 3 (opcional)</string>
+    <string name="apprise_description">Notificaciones autohospedadas vía Apprise. Envía a más de 100 servicios (email, Discord, Slack, Telegram, etc.) a través de una única API. Requiere una instancia de Apprise en ejecución.</string>
+    <string name="provider_missing_apprise_server">Apprise: falta la URL del servidor</string>
+    <string name="provider_missing_apprise_notify">Apprise: falta la URL de notificación</string>
     <string name="recipient_alerts_all">Todas</string>
     <string name="recipient_alerts_emergency">SOS</string>
     <string name="recipient_alerts_info">Info</string>

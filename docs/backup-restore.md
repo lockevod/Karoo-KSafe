@@ -13,7 +13,7 @@
 > The grant persists across app updates.
 
 > [!WARNING]
-> **The backup is stored in clear text in shared storage.** `/sdcard/KSafe/ksafe_export.json` holds your messaging credentials (CallMeBot API keys, Pushover app token + user keys, ntfy topic, Telegram bot token) **and your emergency-contact phone numbers / chat IDs**, all unencrypted. Any app on the Karoo with storage access can read it, and the folder deliberately persists after uninstall. This is an intentional trade-off: the backup must survive a clean reinstall **and** stay editable on your computer (the whole point of the export-edit-import workflow below), both of which encryption would break. The Karoo is a closed cycling computer where you typically install very few apps, so real-world exposure is low — but treat `ksafe_export.json` like a password file: don't share it, and delete it from any shared computer after you finish migrating.
+> **The backup is stored in clear text in shared storage.** `/sdcard/KSafe/ksafe_export.json` holds your messaging credentials (CallMeBot API keys, Pushover app token + user keys, ntfy topic, Telegram bot token, Apprise server URL + notification URLs) **and your emergency-contact phone numbers / chat IDs**, all unencrypted. Any app on the Karoo with storage access can read it, and the folder deliberately persists after uninstall. This is an intentional trade-off: the backup must survive a clean reinstall **and** stay editable on your computer (the whole point of the export-edit-import workflow below), both of which encryption would break. The Karoo is a closed cycling computer where you typically install very few apps, so real-world exposure is low — but treat `ksafe_export.json` like a password file: don't share it, and delete it from any shared computer after you finish migrating.
 
 ## Exporting your configuration
 
@@ -71,6 +71,8 @@ Typing long tokens (Pushover App Token, Telegram Bot Token, etc.) on the Karoo t
    | `ntfy` | `topic` | Topic name chosen by you (e.g. `ksafe-alerts-myname`) |
    | `telegram` | `botToken` | Bot token from @BotFather |
    | `telegram` | `chatId` / `chatId2` / `chatId3` | Up to 3 chat / channel / group IDs |
+   | `apprise` | `serverUrl` | Base URL of your Apprise API instance, reachable from the internet (e.g. `https://apprise.example.com`, no trailing `/notify`) |
+   | `apprise` | `notifyUrl1` / `notifyUrl2` / `notifyUrl3` | Up to 3 Apprise notification URLs (e.g. `ntfy://ntfy.sh/ksafe-alerts-myname`) |
 
    Example after editing (showing Telegram and Pushover):
 
@@ -99,6 +101,12 @@ Typing long tokens (Pushover App Token, Telegram Bot Token, etc.) on the Karoo t
        "chatId": "123456789",
        "chatId2": "",
        "chatId3": ""
+     },
+     "apprise": {
+       "serverUrl": "https://apprise.example.com",
+       "notifyUrl1": "ntfy://ntfy.sh/ksafe-alerts-myname",
+       "notifyUrl2": "",
+       "notifyUrl3": ""
      }
    }
    ```

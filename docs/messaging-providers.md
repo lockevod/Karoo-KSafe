@@ -2,11 +2,11 @@
 
 > **Just want the basics?** Read the [Easy Setup guide](easy-setup.md) first — it walks you
 > through the two easiest providers (ntfy and Telegram) in plain English. This page is the
-> full reference for all four.
+> full reference for all five.
 
-> Step-by-step setup for each of the four messaging providers KSafe supports. The README has a one-paragraph overview and the comparison table; this page is the deep dive with screenshots / commands / where-to-click instructions.
+> Step-by-step setup for each of the five messaging providers KSafe supports. The README has a one-paragraph overview and the comparison table; this page is the deep dive with screenshots / commands / where-to-click instructions.
 
-KSafe supports **four providers**. Pick one based on cost and reliability:
+KSafe supports **five providers**. Pick one based on cost and reliability:
 
 | Provider | Cost | Best for |
 |----------|------|----------|
@@ -14,8 +14,9 @@ KSafe supports **four providers**. Pick one based on cost and reliability:
 | **ntfy** | Free, unlimited | Quickest setup — no account, just pick a topic name |
 | **CallMeBot (WhatsApp)** | Free | Recipients already use WhatsApp |
 | **Pushover** | Free trial, ~$5 one-time | Most reliable push notifications |
+| **Apprise** | Free, self-hosted | Send to 100+ services via a single API; most flexible |
 
-You can configure credentials for all four — they are saved independently and switching between them does not erase anything. Only the **selected (active) provider** will be used when an alert is triggered.
+You can configure credentials for all five. They are saved independently, and switching between them does not erase anything. Only the **selected (active) provider** will be used when an alert is triggered.
 
 ---
 
@@ -186,3 +187,44 @@ Each person who uses KSafe needs to create their own Pushover application (it is
 Each recipient slot has its own independent [alert scope](#per-contact-alert-scopes) selector.
 
 > Notifications are delivered even in silent/do-not-disturb mode when sent at high priority (which KSafe uses for emergencies).
+
+---
+
+## Apprise (self-hosted, most flexible)
+
+Apprise is a notification bridge that lets you send alerts to over 100 services (email, Discord, Slack, Telegram, Pushover, ntfy, and dozens more) through a single API. KSafe talks to your Apprise instance, and Apprise fans out the alert to whichever services you configure.
+
+This is the most flexible option: you can notify multiple people across different platforms simultaneously, all from a single configuration. KSafe assumes you already have an Apprise API instance running and reachable from the internet — the Karoo rides with its tethered phone's mobile data, not your home Wi-Fi, so an instance that is only reachable on your local network will not work. See the [apprise-api project](https://github.com/caronc/apprise-api) if you need to set one up.
+
+### Step 1: Prepare your notification URLs
+
+Apprise uses URL-encoded notification strings to identify services and credentials. Each URL follows the format `service://credentials`. Examples:
+
+| Service | URL format |
+|---------|-----------|
+| **Email** | `mailtos://user@gmail.com:app-password@smtp.gmail.com/?to=recipient@example.com` |
+| **Discord** | `discord://webhook_id/webhook_token` |
+| **Slack** | `slack://tokenA/TokenB/TokenC/Channel` |
+| **Telegram** | `tgram://bottoken/ChatID` |
+| **Pushover** | `pover://user@token` |
+| **ntfy** | `ntfy://ntfy.sh/topic` |
+
+See the [Apprise wiki](https://github.com/caronc/apprise/wiki) for the full list of 100+ services and their URL formats.
+
+You can configure up to 3 notification URLs in KSafe, each fanning out to a different service or recipient. For example:
+- URL 1: `mailtos://...` (email your partner)
+- URL 2: `discord://...` (post to a family Discord channel)
+- URL 3: `tgram://...` (also send to a Telegram group)
+
+### Step 2: Configure KSafe
+
+1. In the **Provider** tab, select **Apprise**.
+2. Enter your **Apprise Server URL** (e.g. `https://apprise.example.com`).
+3. Enter your first **Notification URL** in the second field.
+4. Optionally enter a second and third Notification URL to fan out to additional services.
+5. Tap **Test Send**. Each configured URL should receive a notification immediately.
+
+Each recipient slot has its own independent [alert scope](#per-contact-alert-scopes) selector.
+
+> [!NOTE]
+> The Apprise server URL is the base URL of your Apprise instance. Do not include `/notify` at the end (KSafe adds it automatically). The instance must be reachable from the public internet, not just your home network. If the server is not reachable, alerts will fail silently, so always test with **Test Send** before relying on it.

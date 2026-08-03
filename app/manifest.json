@@ -6,6 +6,6 @@
   "latestVersion": "2.2.2",
   "latestVersionCode": 202607251,
   "developer": "github.com/lockevod",
-  "description": "Karoo safety extension on two layers: REACTIVE (crash detection, SOS, check-in, HR-based medical episode and wellness detection) and PREVENTIVE (carb and hydration tracking that adapts to your effort using the Karoo's HR and power zones, reminding you to fuel before bonking or dehydration impairs your judgment on the bike). Sends emergency alerts via WhatsApp (CallMeBot), Telegram, Pushover or ntfy.",
+  "description": "Karoo safety extension on two layers: REACTIVE (crash detection, SOS, check-in, HR-based medical episode and wellness detection) and PREVENTIVE (carb and hydration tracking that adapts to your effort using the Karoo's HR and power zones, reminding you to fuel before bonking or dehydration impairs your judgment on the bike). Sends emergency alerts via WhatsApp (CallMeBot), Telegram, Pushover, ntfy or Apprise.",
   "releaseNotes": "Improve logging. Fuel reminders you never act on now space themselves out automatically (your cadence, then x2, then x4 and no further) and go back to normal the moment you log anything. Time-based reminders are unchanged."
 }
