@@ -1024,6 +1024,21 @@ class CrashDetectionManager(
         val speedOk = minSpeed == 0 || currentSpeedKmh >= minSpeed
         when {
             // Crossed threshold but speed gate rejected.
+            // NOT rate-limited, deliberately — see the note below.
+            //
+            // A 1/s throttle was tried and reverted. This branch is mutually exclusive with
+            // HIGH_MAG_NORISING below (`impactDetected` vs `!impactDetected`), so a
+            // supra-threshold magnitude recorded under the speed gate appears ONLY here, and
+            // that peak is the row's entire evidentiary value — it is what justifies keeping
+            // the speed gate at all (see the "picked up my parked bike" true-negative in
+            // docs/calibration-annotations.md, peak 126.9 m/s²). A time-based throttle cannot
+            // preserve it: an episode shorter than the interval emits its FIRST sample and
+            // nothing else, and the peak is almost always in the tail. Every lossless variant
+            // needs a deferred flush of the pending aggregate, which can only fire when the
+            // NEXT episode starts — possibly in another ride, or never. Not worth the
+            // machinery in the 50 Hz path for a burst that is bounded (~70 rows for the
+            // longest episode on record) and only costs anything when the rider has opted
+            // into calibration logging.
             impactDetected && !speedOk -> {
                 calibLogger?.log(CalibrationLogger.Event.IMPACT_SPEED_REJECTED) {
                     "raw=%.1f,smooth=%.1f,thr=%.1f,speed=%.1f,min_speed=$minSpeed,preset=${config.crashSensitivity}".formatUs(
