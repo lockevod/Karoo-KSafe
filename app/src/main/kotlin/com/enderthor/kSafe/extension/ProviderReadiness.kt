@@ -68,10 +68,51 @@ fun providerReadiness(provider: ProviderType, config: SenderConfig): ProviderRea
 }
 
 /**
+ * The fields the Provider-tab form actually mirrors, as a value usable as a Compose effect key.
+ *
+ * The form re-seeds its text fields from storage whenever this changes. It must therefore contain
+ * ONLY what the form displays: the nine credentials plus the three recipient scopes. Keying that
+ * effect on the whole [SenderConfig] means any unrelated write — a [SenderConfig.lastSuccessfulSendMs]
+ * stamp from a delivered send, or a [SenderConfig.providerWarningAcknowledged] toggle — re-runs it
+ * mid-typing and copies stored values back over what the rider is still entering, which the 700 ms
+ * debounce then persists. The acknowledgement Switch sits directly under those fields, so it would
+ * hit that on a single tap.
+ */
+fun SenderConfig.fieldSyncKey(): List<Any?> = listOf(
+    provider,
+    apiKey, userKey, userKey2, userKey3,
+    phoneNumber, apiKey2, phoneNumber2, apiKey3, phoneNumber3,
+    recipient1Alerts, recipient2Alerts, recipient3Alerts,
+)
+
+/**
+ * Applies a Provider-tab save of [newConfig] over the [stored] config, deciding which
+ * trust-carrying fields survive it.
+ *
+ * Both [SenderConfig.lastSuccessfulSendMs] and [SenderConfig.providerWarningAcknowledged] are
+ * statements about credentials that are no longer true once a credential changes: "this provider
+ * delivered" and "I know this provider is not set up". A scope-only edit invalidates neither, so
+ * both carry forward; ANY credential edit invalidates both. Keeping the two in one function is the
+ * point — they must never drift apart, and a save that reset the stamp while keeping a stale
+ * acknowledgement would silence the warning for a credential nobody has verified.
+ *
+ * Note this preserves the STORED acknowledgement rather than whatever [newConfig] carries: the
+ * Provider-tab credential form does not own that flag (see `MainViewModel.acknowledgeProviderWarning`).
+ * Pure → unit-testable.
+ */
+fun carryForwardOnSave(newConfig: SenderConfig, stored: SenderConfig): SenderConfig =
+    if (sameCredentials(newConfig, stored))
+        newConfig.copy(
+            lastSuccessfulSendMs = stored.lastSuccessfulSendMs,
+            providerWarningAcknowledged = stored.providerWarningAcknowledged,
+        )
+    else newConfig.copy(lastSuccessfulSendMs = 0L, providerWarningAcknowledged = false)
+
+/**
  * True when [a] and [b] carry the same delivery CREDENTIALS (the 9 token/phone/key fields) —
- * scope and [SenderConfig.lastSuccessfulSendMs] are ignored. Used to decide whether a config save
- * should clear the last-successful-send timestamp: editing a credential invalidates a prior
- * successful send, but changing only an alert scope does not. Pure → unit-testable.
+ * scope, [SenderConfig.lastSuccessfulSendMs] and [SenderConfig.providerWarningAcknowledged] are
+ * ignored. Used by [carryForwardOnSave] to decide whether a save invalidates those two fields:
+ * editing a credential invalidates them, changing only an alert scope does not. Pure → unit-testable.
  */
 fun sameCredentials(a: SenderConfig, b: SenderConfig): Boolean =
     a.apiKey == b.apiKey &&

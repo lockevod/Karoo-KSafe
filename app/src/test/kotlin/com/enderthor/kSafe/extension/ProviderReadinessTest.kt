@@ -5,6 +5,7 @@ import com.enderthor.kSafe.data.RecipientAlertScope
 import com.enderthor.kSafe.data.SenderConfig
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNotEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -118,6 +119,56 @@ class ProviderReadinessTest {
         val a = SenderConfig(provider = ProviderType.TELEGRAM, apiKey = "bot", userKey = "chat")
         assertFalse(sameCredentials(a, a.copy(userKey = "chat2")))
         assertFalse(sameCredentials(a, a.copy(apiKey = "bot2")))
+    }
+
+    // ── carryForwardOnSave (what a Provider-tab save keeps vs invalidates) ──
+    private val acked = SenderConfig(
+        provider = ProviderType.CALLMEBOT, phoneNumber = "34600111222", apiKey = "k",
+        lastSuccessfulSendMs = 123L, providerWarningAcknowledged = true,
+    )
+
+    @Test fun `a scope-only save keeps both the send stamp and the acknowledgement`() {
+        val edited = acked.copy(recipient1Alerts = RecipientAlertScope.EMERGENCY_ONLY,
+            lastSuccessfulSendMs = 0L, providerWarningAcknowledged = false)
+        val saved = carryForwardOnSave(edited, acked)
+        assertEquals(123L, saved.lastSuccessfulSendMs)
+        assertTrue(saved.providerWarningAcknowledged)
+    }
+
+    // The safety case: a rider who acknowledged "no provider, stop warning me" and LATER enters
+    // credentials must be warned again if those credentials are wrong — otherwise the mistake is
+    // silent until the crash that needed the alert.
+    @Test fun `editing a credential clears the acknowledgement and the send stamp`() {
+        val saved = carryForwardOnSave(acked.copy(apiKey = "k2"), acked)
+        assertEquals(0L, saved.lastSuccessfulSendMs)
+        assertFalse(saved.providerWarningAcknowledged)
+    }
+
+    @Test fun `filling in a previously blank credential clears the acknowledgement`() {
+        val blank = SenderConfig(provider = ProviderType.TELEGRAM, providerWarningAcknowledged = true)
+        val saved = carryForwardOnSave(blank.copy(apiKey = "bot", userKey = "chat"), blank)
+        assertFalse(saved.providerWarningAcknowledged)
+    }
+
+    // ── fieldSyncKey (what may re-seed the Provider-tab form) ──
+    // The form's field-sync effect is keyed on this. If the key changed on a NON-credential
+    // write, the effect would re-run mid-typing and copy stored values over what the rider is
+    // still entering — losing it, and then persisting the loss via the 700 ms debounce. Tapping
+    // the acknowledgement Switch is exactly such a write.
+    @Test fun `toggling the acknowledgement does not change the field-sync key`() {
+        val c = SenderConfig(provider = ProviderType.TELEGRAM, apiKey = "bot", userKey = "chat")
+        assertEquals(c.fieldSyncKey(), c.copy(providerWarningAcknowledged = true).fieldSyncKey())
+    }
+
+    @Test fun `a successful-send stamp does not change the field-sync key`() {
+        val c = SenderConfig(provider = ProviderType.NTFY, apiKey = "topic")
+        assertEquals(c.fieldSyncKey(), c.copy(lastSuccessfulSendMs = 999L).fieldSyncKey())
+    }
+
+    @Test fun `an edited credential or scope does change the field-sync key`() {
+        val c = SenderConfig(provider = ProviderType.TELEGRAM, apiKey = "bot", userKey = "chat")
+        assertNotEquals(c.fieldSyncKey(), c.copy(apiKey = "bot2").fieldSyncKey())
+        assertNotEquals(c.fieldSyncKey(), c.copy(recipient2Alerts = RecipientAlertScope.EMERGENCY_ONLY).fieldSyncKey())
     }
 
     // ── isSendStale (ride-start re-test reminder) ──
