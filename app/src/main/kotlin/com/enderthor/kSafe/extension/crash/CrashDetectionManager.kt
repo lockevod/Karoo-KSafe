@@ -87,11 +87,19 @@ class CrashDetectionManager(
          * Vigilance speed-freshness gate. True only when speed is BOTH not GPS-stale AND its value
          * changed within [freshMs] — a GPS frozen at a non-zero value reads "not stale" for up to
          * GPS_STALE_MS but its value stops changing; this catches that before the vigilance window clears.
+         *
+         * The age must also be NON-NEGATIVE. [speedLastChangeMs] is stamped on the wall clock, so a
+         * backward GNSS/NTP step puts it in the future and a bare `age < freshMs` reads that as
+         * *maximal* freshness. The vigilance window measures its own duration on the monotonic
+         * clock, so it closes on schedule and takes its verdict from here — meaning a stepped clock
+         * would let it CLEAR a downed rider whose GPS is frozen above the speed floor. Treat a
+         * stepped clock as not fresh, matching [MovingVigilance.onTick]'s negative-elapsed policy:
+         * the fail-safe direction is ESCALATE.
          */
         @JvmStatic
         internal fun isSpeedFreshForVigilance(
             nowMs: Long, gpsStale: Boolean, speedLastChangeMs: Long, freshMs: Long,
-        ): Boolean = !gpsStale && (nowMs - speedLastChangeMs) < freshMs
+        ): Boolean = !gpsStale && (nowMs - speedLastChangeMs) in 0 until freshMs
 
         const val GRAVITY = 9.81
         // "No crash yet / cooldown inactive" sentinel for [lastCrashTime]. The cooldown
@@ -288,14 +296,27 @@ class CrashDetectionManager(
     @Volatile private var vigilanceShadowDeadlineMs: Long = 0L
 
     /**
-     * Whether speed fell below `movingVigilanceSpeedKmh` at ANY sample of the open shadow
-     * window. Without it the probe would report `would_be=CLEAR` for a ride that dipped
-     * below the floor mid-window and recovered — but the rule the probe models escalates
-     * IMMEDIATELY on a floor breach (that dip is the crash signature), so it would have
-     * escalated too. Omitting this would bias the probe toward "the deferred rule would
-     * have suppressed this FP", which is precisely the conclusion it exists to test.
+     * Whether speed fell below `movingVigilanceSpeedKmh` at ANY sample of the open shadow window.
+     * Sticky, because the rule the probe now models (the PRE-2.2.3 rule) escalated on the first
+     * such sample — a mid-window dip that recovered still means "it would have escalated".
      */
     @Volatile private var vigilanceShadowFloorBreach: Boolean = false
+
+    /**
+     * Whether speed was NOT genuinely fresh at any sample of the open shadow window. Sticky, for
+     * the same reason as [vigilanceShadowFloorBreach]: the old rule escalated on the first stale
+     * sample, so a freeze that recovered before window end still counts.
+     *
+     * This latch is what makes the probe measure something again. Until 2.2.2 the probe modelled
+     * the DEFERRED rule — which is now the rule that ships, so it could only ever agree with
+     * itself and confirm nothing. It now models the rule that was REPLACED, so a
+     * `real=CLEAR, would_be=ESCALATE` row marks exactly one flip: an alert the old rule would have
+     * raised and this one does not. That count is the false-negative budget being spent, and it is
+     * the only number worth watching. The converse (`real=ESCALATE, would_be=CLEAR`) is impossible
+     * by construction — any breach or staleness the new rule escalates on is also latched here —
+     * so its appearance in a sweep means the probe and the rule have drifted apart.
+     */
+    @Volatile private var vigilanceShadowStaleSeen: Boolean = false
 
     private val speedDropMonitor = SpeedDropMonitor(
         scope = scope,
@@ -314,6 +335,24 @@ class CrashDetectionManager(
             Timber.d("CrashDetection disabled in config, skipping start")
             return
         }
+        // An armed vigilance window must never be carried across a session boundary. The ride-stop
+        // contract (R8-C) treats an armed confirm as abandonment and escalates, and [stop] does
+        // that — but the Idle path does NOT always route through [stop]: with either outside-ride
+        // option enabled, `KSafeExtension.applyIdleMonitoring` calls start() directly to re-arm
+        // post-ride monitoring. Without this, a crash confirmed in the last seconds of a ride kept
+        // its window open across the boundary and could later CLEAR on fresh riding speed, or
+        // strand if both drivers went quiet. Escalating here (rather than only in that one caller)
+        // means every entry point inherits the guarantee.
+        if (movingVigilance.isArmed) {
+            calibLogger?.log(CalibrationLogger.Event.VIGILANCE_ESCALATE) {
+                "reason=session_restart,speed=%.1f".formatUs(currentSpeedKmh)
+            }
+            movingVigilance.reset()
+            confirmCrash(CrashSource.IMPACT_CONFIRMED, alreadyLogged = true)
+        }
+        vigilanceShadowDeadlineMs = 0L
+        vigilanceShadowFloorBreach = false
+        vigilanceShadowStaleSeen = false
         startTime = clock.nowMs()
         speedDataReceived = false
         lastPeriodicLogMs = 0L
@@ -400,6 +439,7 @@ class CrashDetectionManager(
         movingVigilance.reset()
         vigilanceShadowDeadlineMs = 0L   // never let a pending probe leak into the next ride
         vigilanceShadowFloorBreach = false
+        vigilanceShadowStaleSeen = false
         resetWindowAccumulators()
         // Clear the rolling TMO-cluster deque (cleared in start()/resume() too) so a
         // stop leaves no stale cluster state behind.
@@ -469,6 +509,11 @@ class CrashDetectionManager(
         // as of P1 — the SM holds its own `lastSpeedGpsStale` flag updated by that setter.
         stateMachine.onSpeedUpdate(speedKmh)
         speedDropMonitor.onSpeedUpdate(speedKmh, isGpsStale(now))
+
+        // Second, sensor-independent driver for an armed vigilance window (see
+        // [driveMovingVigilance]): a stalled accelerometer must not be able to strand a
+        // confirmed crash short of its countdown.
+        driveMovingVigilance(now)
     }
 
     fun updateCadence(cadenceRpm: Double) {
@@ -550,6 +595,7 @@ class CrashDetectionManager(
             movingVigilance.reset()
             vigilanceShadowDeadlineMs = 0L
             vigilanceShadowFloorBreach = false
+            vigilanceShadowStaleSeen = false
             Timber.d("CrashDetectionManager: manual pause — state machine reset")
         }
     }
@@ -711,10 +757,17 @@ class CrashDetectionManager(
                     if (!movingVigilance.isArmed) {
                         // First mid-motion confirm of this event → log the suspect CRASH_OK and verify.
                         logCrashConfirmed(sample)
-                        movingVigilance.arm(now)
-                        vigilanceShadowDeadlineMs = now + stateMachine.thresholds.movingVigilanceWindowMs
+                        // Vigilance and its shadow probe measure duration on the MONOTONIC clock,
+                        // not the wall clock the samples are stamped with: a wall-clock step (NTP,
+                        // GPS time fix) would otherwise either close the window early — clearing a
+                        // real crash without ever observing 4 s — or strand it. `elapsedRealtime()`
+                        // cannot step. The two must be armed and read in the SAME domain.
+                        val armMono = clock.monotonicMs()
+                        movingVigilance.arm(armMono)
+                        vigilanceShadowDeadlineMs = armMono + stateMachine.thresholds.movingVigilanceWindowMs
                         // Re-arming over an open probe must not inherit its breach flag.
                         vigilanceShadowFloorBreach = false
+                        vigilanceShadowStaleSeen = false
                         val sx = stateMachine.lastSilenceOrientX
                         val sy = stateMachine.lastSilenceOrientY
                         val sz = stateMachine.lastSilenceOrientZ
@@ -734,6 +787,16 @@ class CrashDetectionManager(
                             "reason=preempted_by_at_rest_confirm,speed=%.1f".formatUs(currentSpeedKmh)
                         }
                         movingVigilance.reset()
+                        // Close the probe too. This arm was resolved by a real confirm, so there
+                        // is nothing left to shadow — and leaving it open manufactures a FALSE
+                        // `real=CLEAR / would_be=ESCALATE` row: the rider is now stopped, so the
+                        // floor latch trips on every following step and the probe fires ESCALATE
+                        // against a CLEAR outcome. That is the exact cell the inverted probe
+                        // exists to count as spent FN budget, so an orphan here corrupts the one
+                        // number the next sweep reads. Every other reset path already does this.
+                        vigilanceShadowDeadlineMs = 0L
+                        vigilanceShadowFloorBreach = false
+                        vigilanceShadowStaleSeen = false
                     }
                     // alreadyLogged=true: logCrashConfirmed already emitted the canonical
                     // CRASH_CONFIRMED row with full context. confirmCrash must NOT emit a
@@ -768,62 +831,7 @@ class CrashDetectionManager(
             }
         }
 
-        // ─── Moving vigilance window (post-confirm, mid-motion) ───────────────
-        if (movingVigilance.isArmed) {
-            // Require GENUINE speed freshness: the speed value must have changed recently,
-            // not merely been emitted recently. The vigilance window is 4 s; GPS_STALE_MS is
-            // 10 s — a GPS frozen at a non-zero value after a crash reads "not stale" for the
-            // full 10 s but its value stops changing. Using speedLastChangeMs (change-gated,
-            // NOT stamped on every emission) with a recency shorter than the vigilance window
-            // catches a frozen-value GPS before the 4 s CLEAR path can fire (FN bug Fix C).
-            val speedGenuinelyFresh = isSpeedFreshForVigilance(
-                now, gpsCurrentlyStale, speedLastChangeMs, stateMachine.thresholds.movingVigilanceSpeedFreshMs)
-            when (movingVigilance.onTick(now, currentSpeedKmh, speedGenuinelyFresh)) {
-                MovingVigilance.Outcome.CLEAR -> calibLogger?.log(CalibrationLogger.Event.VIGILANCE_CLEAR) {
-                    "speed=%.1f,window_ms=${stateMachine.thresholds.movingVigilanceWindowMs},spd_age_ms=${now - speedLastChangeMs}".formatUs(currentSpeedKmh)
-                }
-                MovingVigilance.Outcome.ESCALATE -> {
-                    calibLogger?.log(CalibrationLogger.Event.VIGILANCE_ESCALATE) {
-                        // spd_age_ms separates the two escalate causes that `speed` alone
-                        // cannot: below the floor (real collapse) vs a speed VALUE frozen
-                        // past fresh_thr_ms while still riding (the 2026-07-25 FP class).
-                        "speed=%.1f,gps_stale=$gpsCurrentlyStale,spd_age_ms=${now - speedLastChangeMs}".formatUs(currentSpeedKmh)
-                    }
-                    confirmCrash(CrashSource.IMPACT_CONFIRMED, alreadyLogged = true)
-                }
-                MovingVigilance.Outcome.PENDING -> { /* keep watching */ }
-            }
-        }
-
-        // ─── Vigilance shadow probe (diagnostic only — changes NO behaviour) ──
-        // Fires once per ARM at arm+window, whether or not vigilance already resolved.
-        // `would_be` is the verdict of the candidate rule "escalate immediately only on a
-        // speed-floor breach; defer the STALENESS verdict to window end" — so a mid-window
-        // floor breach forces ESCALATE regardless of how fresh the speed looks at the end.
-        //
-        // Read the deadline ONCE into a local: `stop()` / manual pause clear it from the main
-        // thread, and a clear landing between a `!= 0L` check and a `now >= field` comparison
-        // would make the second read `0L` — and `now >= 0L` is always true, firing a premature
-        // probe row for a window that never elapsed. That is the same phantom row the
-        // stop()/pause clearing exists to prevent, just via a race instead of a leak.
-        val shadowDeadlineMs = vigilanceShadowDeadlineMs
-        if (shadowDeadlineMs != 0L) {
-            if (currentSpeedKmh < stateMachine.thresholds.movingVigilanceSpeedKmh) {
-                vigilanceShadowFloorBreach = true
-            }
-            if (now >= shadowDeadlineMs) {
-                val floorBreached = vigilanceShadowFloorBreach
-                vigilanceShadowDeadlineMs = 0L
-                vigilanceShadowFloorBreach = false
-                calibLogger?.log(CalibrationLogger.Event.VIGILANCE_SHADOW) {
-                    val freshNow = isSpeedFreshForVigilance(
-                        now, gpsCurrentlyStale, speedLastChangeMs,
-                        stateMachine.thresholds.movingVigilanceSpeedFreshMs)
-                    val wouldBe = if (freshNow && !floorBreached) "CLEAR" else "ESCALATE"
-                    "would_be=$wouldBe,floor_breach=$floorBreached,speed=%.1f,spd_age_ms=${now - speedLastChangeMs},gps_stale=$gpsCurrentlyStale".formatUs(currentSpeedKmh)
-                }
-            }
-        }
+        driveMovingVigilance(now)
 
         // ─── Periodic ride-context snapshot ──────────────────────────────────
         if (calibLogger != null && calibLogger.isEnabled &&
@@ -1162,6 +1170,111 @@ class CrashDetectionManager(
         minDeviationInWindow = seedDeviation
         gyroBlockedCnt       = 0
         speedReachedInWindow = false
+    }
+
+    /**
+     * Advance the moving-vigilance window and its shadow probe by one step.
+     *
+     * Called from BOTH [onSensorSample] and [updateSpeed], because an armed window must not
+     * depend on the accelerometer alone. [MovingVigilance.onTick] deliberately never consults
+     * the accelerometer — it needs only speed and freshness — yet while the sensor path was its
+     * only driver, a sensor/HAL stall with no ride-state transition (no `stop()`, no pause, so
+     * none of the escalate-on-abandon paths fire) left the window armed forever: a confirmed
+     * crash that never reached its countdown. Deferring the staleness verdict is what made that
+     * reachable, since the old rule escalated on the arming tick itself when it was already stale.
+     *
+     * The SPEED stream is the independent second clock, and it is delivered on EVERY emission
+     * (identical values are not filtered upstream), so it keeps driving the window even when the
+     * GPS value is frozen — which is exactly when the verdict matters.
+     *
+     * Both callers run on the main looper (sensor callbacks are registered without a Handler, and
+     * the extension scope is `Dispatchers.Main`), so this needs no synchronisation; a duplicated
+     * step is harmless because every non-PENDING outcome disarms before returning.
+     *
+     * @param nowWall wall-clock now, for the freshness comparison and log payloads only. The
+     *   window's own duration is measured on the monotonic clock inside this method.
+     */
+    private fun driveMovingVigilance(nowWall: Long) {
+        val gpsCurrentlyStale = isGpsStale(nowWall)
+        // ONE monotonic read per step, for the same reason the shadow deadline is read once into a
+        // local below: two reads can straddle the deadline, so the window could stay PENDING while
+        // the probe already fired, emitting a `would_be` computed from a different instant than the
+        // real verdict — a spurious `real=ESCALATE / would_be=CLEAR`, which the doc says to read as
+        // a bug signal. Sensor batching delivers samples back-to-back, so consecutive drives can be
+        // microseconds apart and the straddle is not merely theoretical.
+        val nowMono = clock.monotonicMs()
+        // ─── Moving vigilance window (post-confirm, mid-motion) ───────────────
+        if (movingVigilance.isArmed) {
+            // Require GENUINE speed freshness: the speed value must have changed recently,
+            // not merely been emitted recently. The vigilance window is 4 s; GPS_STALE_MS is
+            // 10 s — a GPS frozen at a non-zero value after a crash reads "not stale" for the
+            // full 10 s but its value stops changing. Using speedLastChangeMs (change-gated,
+            // NOT stamped on every emission) with a recency shorter than the vigilance window
+            // catches a frozen-value GPS at the 4 s window end, where the staleness verdict is
+            // now taken (FN bug Fix C; deferred to window end by the 2026-09-06 shadow verdict).
+            val speedGenuinelyFresh = isSpeedFreshForVigilance(
+                nowWall, gpsCurrentlyStale, speedLastChangeMs, stateMachine.thresholds.movingVigilanceSpeedFreshMs)
+            when (movingVigilance.onTick(nowMono, currentSpeedKmh, speedGenuinelyFresh)) {
+                MovingVigilance.Outcome.CLEAR -> calibLogger?.log(CalibrationLogger.Event.VIGILANCE_CLEAR) {
+                    "speed=%.1f,window_ms=${stateMachine.thresholds.movingVigilanceWindowMs},spd_age_ms=${nowWall - speedLastChangeMs}".formatUs(currentSpeedKmh)
+                }
+                MovingVigilance.Outcome.ESCALATE -> {
+                    calibLogger?.log(CalibrationLogger.Event.VIGILANCE_ESCALATE) {
+                        // spd_age_ms separates the two escalate causes that `speed` alone
+                        // cannot: below the floor (real collapse) vs a speed VALUE frozen
+                        // past fresh_thr_ms while still riding (the 2026-07-25 FP class).
+                        "speed=%.1f,gps_stale=$gpsCurrentlyStale,spd_age_ms=${nowWall - speedLastChangeMs}".formatUs(currentSpeedKmh)
+                    }
+                    confirmCrash(CrashSource.IMPACT_CONFIRMED, alreadyLogged = true)
+                }
+                MovingVigilance.Outcome.PENDING -> { /* keep watching */ }
+            }
+        }
+
+        // ─── Vigilance shadow probe (diagnostic only — changes NO behaviour) ──
+        // Fires once per ARM at arm+window, whether or not vigilance already resolved.
+        //
+        // `would_be` is the verdict of the PRE-2.2.3 rule — "escalate on the FIRST sample that is
+        // below the floor OR not genuinely fresh" — modelled with two sticky latches because that
+        // rule fired immediately and a mid-window dip or freeze that recovered still means it
+        // would have escalated. Until 2.2.2 the probe modelled the deferred rule instead; that
+        // rule now SHIPS, so the probe was comparing the rule against itself and could only ever
+        // report agreement. Shadowing the replaced rule makes the interesting row possible again:
+        // `real=CLEAR, would_be=ESCALATE` is one flip — an alert the old rule raised and this one
+        // does not — i.e. the false-negative budget being spent. `real=ESCALATE, would_be=CLEAR`
+        // is impossible by construction; if a sweep ever shows one, the probe and the rule have
+        // drifted apart and one of them is wrong.
+        //
+        // Read the deadline ONCE into a local: `stop()` / manual pause clear it from the main
+        // thread, and a clear landing between a `!= 0L` check and a `now >= field` comparison
+        // would make the second read `0L` — and `now >= 0L` is always true, firing a premature
+        // probe row for a window that never elapsed. That is the same phantom row the
+        // stop()/pause clearing exists to prevent, just via a race instead of a leak.
+        val shadowDeadlineMs = vigilanceShadowDeadlineMs
+        if (shadowDeadlineMs != 0L) {
+            if (currentSpeedKmh < stateMachine.thresholds.movingVigilanceSpeedKmh) {
+                vigilanceShadowFloorBreach = true
+            }
+            // Recomputed here rather than reused from the vigilance block above: the probe
+            // outlives an early ESCALATE that already disarmed the vigilance, so that block may
+            // not have run for this sample.
+            if (!isSpeedFreshForVigilance(
+                    nowWall, gpsCurrentlyStale, speedLastChangeMs,
+                    stateMachine.thresholds.movingVigilanceSpeedFreshMs)) {
+                vigilanceShadowStaleSeen = true
+            }
+            if (nowMono >= shadowDeadlineMs) {
+                val floorBreached = vigilanceShadowFloorBreach
+                val staleSeen = vigilanceShadowStaleSeen
+                vigilanceShadowDeadlineMs = 0L
+                vigilanceShadowFloorBreach = false
+                vigilanceShadowStaleSeen = false
+                calibLogger?.log(CalibrationLogger.Event.VIGILANCE_SHADOW) {
+                    val wouldBe = if (floorBreached || staleSeen) "ESCALATE" else "CLEAR"
+                    "would_be=$wouldBe,rule=legacy_immediate,floor_breach=$floorBreached,stale_seen=$staleSeen,speed=%.1f,spd_age_ms=${nowWall - speedLastChangeMs},gps_stale=$gpsCurrentlyStale".formatUs(currentSpeedKmh)
+                }
+            }
+        }
     }
 
     private fun schedulePostResetSnapshot(cancelledBy: String) {
