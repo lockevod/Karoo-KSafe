@@ -117,6 +117,11 @@ Donde eliges y configuras cómo se envían las alertas. Cubierto en
 Algo que conviene saber: cada contacto tiene un ajuste de qué recibe —
 **Todas** (por defecto), **SOS** o **Info**. La mayoría lo deja en **Todas**.
 
+Si dejas esta pestaña vacía, KSafe te avisa al empezar cada ruta de que las alertas no
+se enviarán. ¿No usas alertas a propósito? Activa **"No usaré alertas — no me avises al
+empezar la ruta"** en ese mismo aviso y deja de salir. Todo lo demás — pitidos de caída,
+pantalla de SOS, check-in, recordatorios de nutrición — sigue funcionando igual.
+
 ### ⚙️ Ajustes (Settings) — mantenimiento (déjalo casi todo como está)
 
 - El **idioma** sigue al de tu Karoo automáticamente (inglés o español) — no hay selector.

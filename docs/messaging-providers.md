@@ -37,6 +37,39 @@ Set it per slot in the **Provider** tab, below each recipient's credentials.
 
 ---
 
+## Ride-start checks
+
+At the start of every ride KSafe looks at the **active** provider and shows a
+10-second orange banner if something would stop an emergency alert from
+arriving. Two different checks:
+
+| Banner | When | What to do |
+|---|---|---|
+| **"KSafe: alerts won't send"** | The active provider is missing a credential (no bot token, no topic, no recipient…). The banner names the missing field. | Fill it in on the **Provider** tab. |
+| **"KSafe: re-test your alerts"** | The provider is fully configured but nothing has been sent successfully in **30 days**. | Press **Test send** once. A successful send clears it for another 30 days. |
+
+Neither banner changes what KSafe does in an emergency — it always tries to
+send with whatever is configured. They only tell you in advance.
+
+### "I won't use alerts" — silencing the first banner *(v2.2.3)*
+
+Some riders run KSafe purely for the on-device features (crash beeps, SOS
+overlay, check-in, fueling reminders) and never configure a provider. For them
+the first banner fired on every single ride.
+
+The incomplete-provider banner now carries a switch on the **Provider** tab:
+
+> **I won't use alerts — stop warning me at ride start**
+
+Turn it on and the banner stops. Nothing else changes: no message is
+suppressed, no detection is disabled, and if you later add credentials the
+switch clears itself automatically. It also clears whenever you edit that
+provider's credentials, so a half-finished setup starts warning you again.
+
+The 30-day re-test reminder is **not** affected — it only fires for a provider
+that is fully configured and has sent successfully before, which is exactly the
+case where you do want to know it has gone quiet.
+
 ## ntfy (free and unlimited — easiest setup)
 
 ntfy.sh is the simplest option: no account, no registration, no limits. Just pick a topic name and subscribe to it in the ntfy app. Notifications are delivered instantly, for free, with no monthly caps.
