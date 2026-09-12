@@ -129,6 +129,13 @@ class CrashDetectionManagerWiringTest {
         check(vigilance.isArmed) { "reflection arm() failed — vigilance not armed" }
     }
 
+    private fun armVigilanceDeadlineViaReflection(manager: CrashDetectionManager, armMono: Long) {
+        val m = CrashDetectionManager::class.java
+            .getDeclaredMethod("armVigilanceDeadline", Long::class.javaPrimitiveType)
+        m.isAccessible = true
+        m.invoke(manager, armMono)
+    }
+
     // ── T1: clearCrashCooldown ───────────────────────────────────────────────
 
     /**
@@ -447,6 +454,51 @@ class CrashDetectionManagerWiringTest {
                 "the speed stream is the independent second clock that prevents a dead sensor " +
                 "from swallowing a confirmed crash.",
             1, crashCount.get()
+        )
+    }
+
+    // ── MV-1c: the window owns a real deadline ──────────────────────────────
+
+    /**
+     * An armed window must resolve even if BOTH drivers go silent.
+     *
+     * [CrashDetectionManager.driveMovingVigilance] is reached from exactly two places —
+     * `updateSpeed` and the private `onSensorSample`. MV-1a pins that the speed stream rescues a
+     * stalled accelerometer, but it cannot rescue anything if the speed stream is gone too: a
+     * dropped SDK stream plus a wedged sensor HAL, with the service still alive so none of the
+     * escalate-on-abandon paths fire, left a confirmed crash armed forever and no countdown ever
+     * started. That is NOT the accepted process-death gap — the process is alive, and the
+     * exposure is unbounded rather than one window.
+     *
+     * Deferring the staleness verdict is what made it reachable: the pre-2.2.3 rule escalated on
+     * the arming tick when that tick was already stale, so there was nothing left pending.
+     *
+     * No `updateSpeed`, no sensor sample: only the owned deadline can resolve this.
+     */
+    @Test
+    fun `an armed window resolves on its own deadline when both drivers go silent`() = runTest {
+        val crashCount = AtomicInteger(0)
+        val clock = FakeClock(now = 5_000_000L)
+        val manager = newManagerForVigilance(this, crashCount, clock)
+
+        armVigilanceViaReflection(manager, nowMs = clock.now)
+        armVigilanceDeadlineViaReflection(manager, armMono = clock.now)
+
+        // Speed was last seen long enough ago that the window can only ESCALATE, and nothing
+        // ever drives the manager again.
+        advanceUntilIdle()
+
+        assertEquals(
+            "an armed vigilance window must resolve on its own timer when neither the speed " +
+                "stream nor the accelerometer delivers again — otherwise a confirmed crash " +
+                "stays armed indefinitely on a live service.",
+            1, crashCount.get()
+        )
+        val mvField = CrashDetectionManager::class.java.getDeclaredField("movingVigilance")
+        mvField.isAccessible = true
+        assertTrue(
+            "the window must be disarmed once its own deadline resolved it",
+            !(mvField.get(manager) as MovingVigilance).isArmed
         )
     }
 

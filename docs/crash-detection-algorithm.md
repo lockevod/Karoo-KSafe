@@ -315,7 +315,9 @@ val mag = sqrt(silOrientX² + silOrientY² + silOrientZ²)
 val readInMotion = (mag < onSideTrustMinAccel)   // 8.83 ≈ 0.90 × GRAVITY
 ```
 
-If `readInMotion = true` the confirm is NOT fired immediately. Instead, `movingVigilance.arm(clock.monotonicMs())` is called and the confirm becomes a **pending verification**.
+If `readInMotion = true` the confirm is NOT fired immediately — **provided the speed reading that diverted it was itself trustworthy**. If `isSpeedFreshForVigilance` is already false on the arming sample the window is never opened: a `VIGIL_ARM` row is still logged (with `armed=false`, because its `spd_age_ms` is the number the guard is measured by) and the confirm escalates immediately, exactly as the pre-2.2.3 rule did. Otherwise `movingVigilance.arm(clock.monotonicMs())` is called and the confirm becomes a **pending verification**.
+
+The guard exists because a confirm taken on an already-stale value is indistinguishable, at that instant, from a crash that killed the speed feed — and the deferred rule would clear it on a single late sample arriving inside the window. Corpus-wide, three arms carried `spd_age_ms` of 5.0 / 5.6 / 7.9 s (`67c8ff_248d4c`, `b49412_bbfcb9`, `67c8ff_9e08f3`). It costs nothing measured: every escalate in the 2026-09-12 sweep armed fresh (356 / 857 / 2424 / 2739 ms), including `bd5fc1_5d1905`, the only one whose alert actually reached a contact.
 
 If `readInMotion = false` (magnitude close to gravity → bike was at rest → angle is trustworthy) the confirm is routed directly to `confirmCrash` as before.
 
@@ -328,7 +330,7 @@ Once armed, `MovingVigilance.onTick(nowMono, speedKmh, speedFresh)` is called on
 | Outcome | Condition | Action |
 |---------|-----------|--------|
 | `CLEAR` | `speedKmh ≥ movingVigilanceSpeedKmh` for the full `movingVigilanceWindowMs` (4 000 ms) AND `speedFresh` when it closes | Log `VIGIL_CLEAR`. Disarm. No alert. Rider held ≥ 8 km/h throughout and the GPS was live at the end → the earlier accel pattern was a riding FP. |
-| `ESCALATE` | `speedKmh < movingVigilanceSpeedKmh` at ANY sample (immediate), OR `!speedFresh` **when the window closes** | Log `VIGIL_ESCALATE`. Disarm. Route to `confirmCrash` — the same cancellable countdown as a normal detection. |
+| `ESCALATE` | `speedKmh < movingVigilanceSpeedKmh` at ANY sample (immediate), OR `!speedFresh` **when the window closes** (a confirm whose speed is already stale never enters the window — see above, `reason=stale_at_arm`) | Log `VIGIL_ESCALATE`. Disarm. Route to `confirmCrash` — the same cancellable countdown as a normal detection. |
 | `PENDING` | Window has not yet closed and no sample has breached the speed floor | Continue watching. |
 
 The two doubts are deliberately **not** treated alike. A speed-floor breach is positive evidence that the bike is stopping, so it escalates on the sample that sees it and a real fall keeps its immediate countdown. Stale speed is only a *measurement* doubt — the GPS value went quiet — so its verdict waits for window end, by which point a momentary freeze has usually resolved itself.
@@ -348,7 +350,7 @@ freshness — but while the sensor path was its only caller, a sensor/HAL stall 
 transition left an armed window unresolved forever. No `stop()`, no pause, so none of the
 escalate-on-abandon paths below fire either: a confirmed crash that never reaches its countdown.
 Deferring the staleness verdict is what made that reachable, because the old rule escalated on the
-arming tick itself when that tick was already stale. The SPEED stream is the independent second
+arming tick itself when that tick was already stale. Two guards now bound it. First, an armed window owns a real deadline: `armVigilanceDeadline` launches a monotonic timer at arm that drives the window once shortly after it would elapse, so a window both feeds abandon still resolves — and resolves fail-safe, since a window reaching its end with no fresh speed can only ESCALATE. The timer is cancelled on every reset path and a late fire over an already-resolved window is a no-op. Second, the arm-time staleness guard above means a confirm that was already stale never becomes pending at all. The SPEED stream is the independent second
 clock and is delivered on every emission (identical values are not filtered upstream), so it keeps
 the window advancing even when the GPS value is frozen — precisely when the verdict matters.
 

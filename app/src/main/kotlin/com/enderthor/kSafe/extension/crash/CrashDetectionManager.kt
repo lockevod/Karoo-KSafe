@@ -10,6 +10,7 @@ import com.enderthor.kSafe.extension.util.Clock
 import com.enderthor.kSafe.extension.util.SystemClock
 import com.enderthor.kSafe.extension.util.formatUs
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import timber.log.Timber
@@ -100,6 +101,9 @@ class CrashDetectionManager(
         internal fun isSpeedFreshForVigilance(
             nowMs: Long, gpsStale: Boolean, speedLastChangeMs: Long, freshMs: Long,
         ): Boolean = !gpsStale && (nowMs - speedLastChangeMs) in 0 until freshMs
+
+        /** Slack past the window end so a driver-delivered close wins the normal race. */
+        private const val DEADLINE_GRACE_MS = 150L
 
         const val GRAVITY = 9.81
         // "No crash yet / cooldown inactive" sentinel for [lastCrashTime]. The cooldown
@@ -293,6 +297,24 @@ class CrashDetectionManager(
      * the earlier probe is lost. Deliberate: re-arming means a fresh window, and a
      * diagnostic row is not worth a queue.
      */
+    /**
+     * Owned deadline for an armed vigilance window (2026-09-12 adversarial review).
+     *
+     * [driveMovingVigilance] is called from exactly two places — [updateSpeed] and
+     * [onSensorSample]. The SPEED stream was added as the sensor-independent second driver
+     * precisely so a stalled accelerometer could not strand a confirmed crash, but if BOTH
+     * feeds go quiet while the service is still alive (no `stop()`, no pause, so none of the
+     * escalate-on-abandon paths fire) an armed window stays armed indefinitely and no
+     * countdown ever starts. Deferring the staleness verdict is what made that reachable:
+     * the old rule escalated on the arming tick when it was already stale.
+     *
+     * This is NOT the accepted process-death gap — the process is alive here, and the
+     * exposure is unbounded rather than one window. So the window owns a real timer: a
+     * missed deadline resolves the same way a driver-delivered one would, and the resolution
+     * is fail-safe because a window that reaches its end with no fresh speed can only
+     * ESCALATE.
+     */
+    @Volatile private var vigilanceDeadlineJob: Job? = null
     @Volatile private var vigilanceShadowDeadlineMs: Long = 0L
 
     /**
@@ -348,6 +370,7 @@ class CrashDetectionManager(
                 "reason=session_restart,speed=%.1f".formatUs(currentSpeedKmh)
             }
             movingVigilance.reset()
+            cancelVigilanceDeadline()
             confirmCrash(CrashSource.IMPACT_CONFIRMED, alreadyLogged = true)
         }
         vigilanceShadowDeadlineMs = 0L
@@ -437,6 +460,7 @@ class CrashDetectionManager(
             confirmCrash(CrashSource.IMPACT_CONFIRMED, alreadyLogged = true)
         }
         movingVigilance.reset()
+        cancelVigilanceDeadline()
         vigilanceShadowDeadlineMs = 0L   // never let a pending probe leak into the next ride
         vigilanceShadowFloorBreach = false
         vigilanceShadowStaleSeen = false
@@ -593,6 +617,7 @@ class CrashDetectionManager(
                 confirmCrash(CrashSource.IMPACT_CONFIRMED, alreadyLogged = true)
             }
             movingVigilance.reset()
+            cancelVigilanceDeadline()
             vigilanceShadowDeadlineMs = 0L
             vigilanceShadowFloorBreach = false
             vigilanceShadowStaleSeen = false
@@ -757,23 +782,51 @@ class CrashDetectionManager(
                     if (!movingVigilance.isArmed) {
                         // First mid-motion confirm of this event → log the suspect CRASH_OK and verify.
                         logCrashConfirmed(sample)
+                        // ARM-TIME STALENESS GUARD (2026-09-12 adversarial review). Deferring the
+                        // verdict is only defensible while the speed reading that diverted this
+                        // confirm was itself trustworthy. A confirm taken on a value that is
+                        // ALREADY past fresh_thr_ms is indistinguishable from a crash that killed
+                        // the speed feed, and the deferred rule would clear it on a single late
+                        // sample arriving inside the window. Field: three corpus rows armed on
+                        // values 5.0 / 5.6 / 7.9 s old (`67c8ff_248d4c`, `b49412_bbfcb9`,
+                        // `67c8ff_9e08f3`), all cleared by the deferred rule. Cost of the guard is
+                        // nil on the measured FP class — every escalate in the 2026-09-12 sweep
+                        // armed fresh (356 / 857 / 2424 / 2739 ms), including `bd5fc1_5d1905`,
+                        // the only one that actually dispatched an alert.
+                        val freshAtArm = isSpeedFreshForVigilance(
+                            now, isGpsStale(now), speedLastChangeMs,
+                            stateMachine.thresholds.movingVigilanceSpeedFreshMs,
+                        )
                         // Vigilance and its shadow probe measure duration on the MONOTONIC clock,
                         // not the wall clock the samples are stamped with: a wall-clock step (NTP,
                         // GPS time fix) would otherwise either close the window early — clearing a
                         // real crash without ever observing 4 s — or strand it. `elapsedRealtime()`
                         // cannot step. The two must be armed and read in the SAME domain.
-                        val armMono = clock.monotonicMs()
-                        movingVigilance.arm(armMono)
-                        vigilanceShadowDeadlineMs = armMono + stateMachine.thresholds.movingVigilanceWindowMs
-                        // Re-arming over an open probe must not inherit its breach flag.
-                        vigilanceShadowFloorBreach = false
-                        vigilanceShadowStaleSeen = false
+                        if (freshAtArm) {
+                            val armMono = clock.monotonicMs()
+                            movingVigilance.arm(armMono)
+                            vigilanceShadowDeadlineMs = armMono + stateMachine.thresholds.movingVigilanceWindowMs
+                            // Re-arming over an open probe must not inherit its breach flag.
+                            vigilanceShadowFloorBreach = false
+                            vigilanceShadowStaleSeen = false
+                            armVigilanceDeadline(armMono)
+                        }
                         val sx = stateMachine.lastSilenceOrientX
                         val sy = stateMachine.lastSilenceOrientY
                         val sz = stateMachine.lastSilenceOrientZ
                         val mag = kotlin.math.sqrt(sx * sx + sy * sy + sz * sz)
                         calibLogger?.log(CalibrationLogger.Event.VIGILANCE_ARM) {
-                            "sil_mag=%.2f,trust_min=${stateMachine.thresholds.onSideTrustMinAccel},speed=%.1f,window_ms=${stateMachine.thresholds.movingVigilanceWindowMs},spd_age_ms=${now - speedLastChangeMs},floor_kmh=${stateMachine.thresholds.movingVigilanceSpeedKmh},fresh_thr_ms=${stateMachine.thresholds.movingVigilanceSpeedFreshMs}".formatUs(mag, currentSpeedKmh)
+                            "sil_mag=%.2f,trust_min=${stateMachine.thresholds.onSideTrustMinAccel},speed=%.1f,window_ms=${stateMachine.thresholds.movingVigilanceWindowMs},spd_age_ms=${now - speedLastChangeMs},floor_kmh=${stateMachine.thresholds.movingVigilanceSpeedKmh},fresh_thr_ms=${stateMachine.thresholds.movingVigilanceSpeedFreshMs},armed=$freshAtArm".formatUs(mag, currentSpeedKmh)
+                        }
+                        if (!freshAtArm) {
+                            // Not armed: the ARM row above is still emitted because its
+                            // `spd_age_ms` is the number this guard is measured by, and
+                            // `armed=false` plus the ESCALATE below disambiguates it for the
+                            // sweep scripts. Escalate now, exactly as the pre-2.2.3 rule did.
+                            calibLogger?.log(CalibrationLogger.Event.VIGILANCE_ESCALATE) {
+                                "reason=stale_at_arm,speed=%.1f,gps_stale=${isGpsStale(now)},spd_age_ms=${now - speedLastChangeMs}".formatUs(currentSpeedKmh)
+                            }
+                            confirmCrash(CrashSource.IMPACT_CONFIRMED, alreadyLogged = true)
                         }
                     }
                     // else: a 2nd mid-motion confirm during the open window — already being verified.
@@ -787,6 +840,7 @@ class CrashDetectionManager(
                             "reason=preempted_by_at_rest_confirm,speed=%.1f".formatUs(currentSpeedKmh)
                         }
                         movingVigilance.reset()
+                        cancelVigilanceDeadline()
                         // Close the probe too. This arm was resolved by a real confirm, so there
                         // is nothing left to shadow — and leaving it open manufactures a FALSE
                         // `real=CLEAR / would_be=ESCALATE` row: the rider is now stopped, so the
@@ -1290,6 +1344,36 @@ class CrashDetectionManager(
                 }
             }
         }
+    }
+
+    /**
+     * Arm the owned window deadline. See [vigilanceDeadlineJob].
+     *
+     * Fires one drive shortly AFTER the window would elapse, so a driver-delivered close still
+     * wins the race in the normal case and this only ever resolves a window both feeds
+     * abandoned. Re-entrancy is safe: the drive runs on the same main-looper scope as the two
+     * callback drivers, and `onTick` self-disarms, so a late timer over an already-resolved
+     * window sees `!isArmed` and does nothing.
+     */
+    private fun armVigilanceDeadline(armMono: Long) {
+        vigilanceDeadlineJob?.cancel()
+        val windowMs = stateMachine.thresholds.movingVigilanceWindowMs
+        vigilanceDeadlineJob = scope.launch {
+            // Sleep the remaining window measured on the same monotonic clock the window uses,
+            // so a wall-clock step cannot shorten or strand it. `delay` is itself monotonic;
+            // the recompute only covers time already spent between arm and launch.
+            val remaining = windowMs - (clock.monotonicMs() - armMono)
+            if (remaining > 0) delay(remaining)
+            delay(DEADLINE_GRACE_MS)
+            if (movingVigilance.isArmed || vigilanceShadowDeadlineMs != 0L) {
+                driveMovingVigilance(clock.nowMs())
+            }
+        }
+    }
+
+    private fun cancelVigilanceDeadline() {
+        vigilanceDeadlineJob?.cancel()
+        vigilanceDeadlineJob = null
     }
 
     private fun schedulePostResetSnapshot(cancelledBy: String) {
