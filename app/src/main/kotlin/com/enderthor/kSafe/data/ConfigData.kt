@@ -726,6 +726,17 @@ data class SenderConfig(
      *  reminder (worked once but quiet > 30 days — see [com.enderthor.kSafe.extension.isSendStale]).
      *  Optional field with a default → backward-compatible with old "sender" JSON (no migration). */
     val lastSuccessfulSendMs: Long = 0L,
+    /** Rider ticked "I won't use alerts — stop warning me" on the Provider-tab incomplete banner.
+     *  Suppresses ONLY the recurring ride-start warning ([com.enderthor.kSafe.extension.managers
+     *  .EmergencyManager.warnIfProviderIncomplete]); detection, countdown, beep and the send attempt
+     *  are all untouched, and the `PROVIDER_NOT_READY` calibration row is still emitted (with
+     *  `acked=true`) so the field data keeps distinguishing "acknowledged" from "stopped riding".
+     *
+     *  Deliberately per-provider and cleared by any credential edit (see
+     *  [com.enderthor.kSafe.extension.carryForwardOnSave]): switching providers or entering a WRONG
+     *  credential must warn again, or a typo stays silent until the crash that needed the alert.
+     *  Optional field with a default → backward-compatible with old "sender" JSON (no migration). */
+    val providerWarningAcknowledged: Boolean = false,
 )
 
 // ─── Rider biological sex (v18) ─────────────────────────────────────────────

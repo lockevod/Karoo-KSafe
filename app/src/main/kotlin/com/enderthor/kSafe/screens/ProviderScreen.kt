@@ -12,7 +12,9 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
+import androidx.compose.ui.Alignment
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
@@ -29,6 +31,7 @@ import com.enderthor.kSafe.activity.MainViewModel
 import com.enderthor.kSafe.data.ProviderType
 import com.enderthor.kSafe.data.SenderConfig
 import com.enderthor.kSafe.extension.ProviderReadiness
+import com.enderthor.kSafe.extension.fieldSyncKey
 import com.enderthor.kSafe.extension.providerReadiness
 import com.enderthor.kSafe.data.RecipientAlertScope
 import com.enderthor.kSafe.extension.KSafeExtension
@@ -88,7 +91,10 @@ fun ProviderScreen(vm: MainViewModel) {
     // Refresh fields when the active sender's data changes in DataStore (e.g. after an
     // import or a save from another screen). The `fieldsProvider` guard prevents
     // overwriting fields mid-switch when activeProvider and fieldsProvider diverge.
-    LaunchedEffect(activeSender) {
+    // Keyed on the MIRRORED fields only ([fieldSyncKey]), not on the whole SenderConfig: a write
+    // that changes nothing the form displays (a successful-send stamp, or the acknowledgement
+    // Switch below) must not re-seed the fields while the rider is still typing into them.
+    LaunchedEffect(activeSender?.fieldSyncKey()) {
         activeSender?.let { sender ->
             if (sender.provider == fieldsProvider) {
                 if (sender.apiKey       != apiKey)       apiKey       = sender.apiKey
@@ -305,6 +311,28 @@ fun ProviderScreen(vm: MainViewModel) {
                 color = MaterialTheme.colorScheme.error,
                 modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
             )
+            // "I won't use alerts — stop warning me": silences ONLY the per-ride warning, and only
+            // for this provider. Reads the SAVED flag (not the live fields) and writes straight
+            // through, so it does not depend on the credential form being saved. Offered only
+            // while the provider is incomplete, so a configured rider never sees a way to switch
+            // the warning off by accident.
+            val ackedNow = senderConfigs.find { it.provider == fieldsProvider }?.providerWarningAcknowledged == true
+            Row(
+                modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Text(
+                    text = stringResource(R.string.provider_warn_ack_label),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.weight(1f),
+                )
+                Switch(
+                    checked = ackedNow,
+                    onCheckedChange = { vm.acknowledgeProviderWarning(fieldsProvider, it) },
+                )
+            }
         } else {
             // Soft nudge: credentials look complete, but no send has ever succeeded for them yet
             // — encourage (don't force) verifying. The timestamp comes from the SAVED config (set

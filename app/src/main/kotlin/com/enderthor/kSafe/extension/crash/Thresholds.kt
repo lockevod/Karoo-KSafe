@@ -210,7 +210,15 @@ data class Thresholds(
 
     /**
      * Moving-vigilance "clearly still riding" speed floor (km/h). Speed must stay at/above this
-     * AND be fresh on every sample to silent-clear; otherwise escalate (fail-safe, no FN).
+     * on every sample to silent-clear — a breach escalates on the sample that sees it.
+     *
+     * Freshness is NOT judged per sample: since 2.2.3 the staleness verdict is taken once, at
+     * window end, so a speed feed that goes quiet and recovers inside the window now clears
+     * where it used to escalate. That is a deliberately spent false-negative budget, not a
+     * fail-safe property — the old "no FN" wording here was wrong. Two guards bound it: a
+     * confirm whose speed is ALREADY stale never enters the window at all (it escalates
+     * immediately), and a window that reaches its end with stale speed escalates. See
+     * [MovingVigilance] and `CrashDetectionManager.driveMovingVigilance`.
      */
     val movingVigilanceSpeedKmh: Double = 8.0,
 

@@ -256,6 +256,7 @@
     <string name="provider_missing_ntfy_topic">ntfy: falta el nombre del topic</string>
     <string name="provider_missing_telegram_token">Telegram: falta el Bot Token</string>
     <string name="provider_missing_telegram_chat">Telegram: falta el Chat ID</string>
+    <string name="provider_warn_ack_label">No usaré alertas — no me avises al empezar la ruta</string>
     <string name="provider_warn_unverified">Sin verificar — pulsa Probar envío para confirmar que las alertas funcionan</string>
     <!-- Recordatorio al iniciar ruta: el proveedor lleva > 30 días en silencio -->
     <string name="provider_warn_stale_title">KSafe: re-prueba las alertas</string>

@@ -31,7 +31,8 @@ package com.enderthor.kSafe.extension.util
  *     accumulate, capped at ×4 so the reminder never goes fully silent
  *     (dehydration matters most on the long rides where this triggers). Any log
  *     resets the caller's counter, so the next reminder is back at the base
- *     interval.
+ *     interval — measured from the log itself, never from an older fire whose
+ *     backed-off cooldown has already elapsed (see `lastRealLogMs`).
  *
  * **Coincidence resolution** (deficit + time tick on the same call) is NOT
  * handled here — it's the tracker's responsibility because resolving it
@@ -99,6 +100,17 @@ internal object FuelingAlertScheduler {
      * logged anything. 0 or 1 → the configured [reminderIntervalMs]; 2 → ×2;
      * 3 or more → ×4 (the cap). The caller owns the counter and resets it on any
      * log — see `HydrationTracker.evaluateDeficitAlert`.
+     *
+     * [lastRealLogMs] restarts the cooldown from the rider's last log. Without it,
+     * dropping the ladder back to ×1 on a log can leave an already-elapsed cooldown
+     * behind and the reminder re-fires seconds after the rider drank (2026-09-12
+     * sweep: `0e6f39_8f1921` fired a deficit prompt 5.8 s and 12.8 s after a
+     * `HYD_LOG`, because a ×2 gap of 27 min had accrued under the ×1 interval of
+     * 15 min). Only applied once a deficit alert has fired this session, so the
+     * first-fire initial-delay grace above is untouched, and clamped so total silence
+     * never exceeds the x(1 shl MAX_BACKOFF_SHIFT) ceiling however often the rider logs.
+     * Defaulted to 0 for callers that do not track it (tests); no production caller
+     * passes 0, since both trackers seed the field in `start()`.
      */
     fun shouldFireDeficit(
         enabled: Boolean,
@@ -111,6 +123,7 @@ internal object FuelingAlertScheduler {
         sessionStartMs: Long,
         now: Long,
         unackedFires: Int = 0,
+        lastRealLogMs: Long = 0L,
     ): Boolean {
         if (!enabled) return false
         // Initial-delay grace: only blocks the first fire AND only while no log
@@ -119,8 +132,20 @@ internal object FuelingAlertScheduler {
             if (now - sessionStartMs < initialDelayMs) return false
         }
         if (deficit < deficitThreshold) return false
+        // The log may push the cooldown origin forward, but never so far that the next
+        // reminder would land beyond the x(1 shl MAX_BACKOFF_SHIFT) ceiling measured from
+        // the last fire. Without this clamp a rider logging small amounts more often than
+        // the interval — exactly the rider the deficit channel exists for, drinking but
+        // not enough — silences the channel for the rest of the ride, and a single log
+        // placed just under the ceiling already buys one interval more silence than the
+        // ladder promises.
+        val latestLogAnchor =
+            lastDeficitAlertFireMs + (reminderIntervalMs shl MAX_BACKOFF_SHIFT) - reminderIntervalMs
+        val cooldownFrom =
+            if (lastDeficitAlertFireMs == 0L) lastDeficitAlertFireMs
+            else maxOf(lastDeficitAlertFireMs, minOf(lastRealLogMs, latestLogAnchor))
         val backoffShift = (unackedFires - 1).coerceIn(0, MAX_BACKOFF_SHIFT)
-        if (now - lastDeficitAlertFireMs < (reminderIntervalMs shl backoffShift)) return false
+        if (now - cooldownFrom < (reminderIntervalMs shl backoffShift)) return false
         return true
     }
 }

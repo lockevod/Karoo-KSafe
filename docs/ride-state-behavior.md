@@ -19,7 +19,7 @@ without having to dig through the source.
 | **Wellness monitor** (sustained HR + decoupling) | Stopped | Active | Active |
 | **Crash detection** (accelerometer) | **Depends on the `Monitor crash outside ride` setting** (off by default) | Active | **Active** (a fall while paused is still detected) |
 | **Speed-drop watchdog** | Same as crash detection | Active | Zero-speed accumulator reset on pause (intentional pauses don't false-trigger) |
-| **Power / HR / Temperature / Headwind sensor streams** | **Not subscribed** (battery win — the SDK isn't keeping radios alive) | Subscribed | Stay subscribed across pause/resume |
+| **Power / HR / Temperature / Headwind / UserProfile sensor streams** | **Not subscribed** (battery win — the SDK isn't keeping radios alive) | **Only the ones an enabled feature reads** (v2.2.3) | Stay subscribed across pause/resume |
 | **Speed / Cadence / Grade / RideProfile streams** | Subscribed (needed by crash detection if monitor-outside-ride is on) | Subscribed | Subscribed |
 | **Check-in timer** | Stopped | Active, counting down | **Frozen — elapsed preserved, resumes from where it left off** (does NOT reset; any active warning/countdown cancelled) |
 | **SOS button + emergency flow** | Available | Available | Available |
@@ -89,6 +89,30 @@ as "Recording-light":
 The sensor streams (Power, HR, Temperature, Headwind, UserProfile) stay
 subscribed across pause cycles to avoid the cost of resubscribing every
 time Karoo autopauses on a long downhill or at every traffic light.
+
+### Which streams Recording actually opens (v2.2.3)
+
+Recording no longer subscribes to all six sensor streams unconditionally —
+each one is opened only if a feature that reads it is enabled:
+
+| Stream | Opened when |
+|---|---|
+| **Power** | Fueling (carbs or HR calories), Hydration, Wellness or Medical is on |
+| **Heart rate** | same set as Power |
+| **UserProfile** (zones, physiology) | Fueling, Hydration or Wellness is on |
+| **Temperature + Headwind ambient** | Hydration is on |
+
+Every emission is a Binder round-trip that wakes the process roughly once a
+second, so this matters on long rides. A default install (medical episode on,
+everything else off) opens two streams instead of six; a rider using KSafe
+purely for crash detection opens none. Enabling a feature mid-ride rebuilds
+the block, so it still receives its inputs immediately.
+
+If the Karoo SDK ends a stream mid-ride (the producer completing or erroring —
+for the Headwind streams that producer is a third-party extension), KSafe now
+resubscribes with backoff instead of staying silently dead for the rest of the
+ride. Before v2.2.3 a dropped HR stream disabled medical detection and a
+dropped speed stream could reject every impact until the ride ended.
 
 ## The check-in dead-man's-switch across pauses
 

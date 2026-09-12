@@ -75,6 +75,13 @@ class LocationManager(
             // opens its own one-shot consumer with H5's broad catch), but webhook
             // geo-fence and the rider's last-known-position calibration log entries
             // would silently degrade.
+            // RETAINED DELIBERATELY, even though streamLocation() now retries internally.
+            // retryKarooStream sits INSIDE the wrapper and only ever sees upstream
+            // terminations (KarooStreamEnded); it is transparent to anything thrown
+            // downstream of it — and `.sample(...)` plus the collect body below run
+            // downstream. Without this loop a future exception in that processing would kill
+            // locationJob permanently. There is no double retry: SDK terminations are
+            // absorbed inside the wrapper and never reach here.
             while (true) {
                 try {
                     // `.sample(LOCATION_SAMPLE_MS)` caps the downstream wake-rate at
@@ -92,10 +99,11 @@ class LocationManager(
                             lastFix = GpsFix(event.lat, event.lng, System.currentTimeMillis())
                             if (BuildConfig.DEBUG) Timber.d("Location sampled: ${event.lat}, ${event.lng}")
                         }
-                    // collect() returned cleanly (upstream completed) — extremely rare
-                    // for an infinite SDK flow but possible after a Companion teardown
-                    // that doesn't fire the connected=false callback. Re-subscribe.
-                    Timber.w("Location stream completed unexpectedly — re-subscribing in 5 s")
+                    // Unreachable since streamLocation() gained its own retry: the operator
+                    // converts a clean upstream completion into a resubscription, so collect()
+                    // no longer returns normally. Kept as a belt-and-braces guard — if that
+                    // ever changes, falling through here silently would kill locationJob.
+                    Timber.w("Location stream returned cleanly — unexpected, re-subscribing in 5 s")
                     kotlinx.coroutines.delay(5_000L)
                 } catch (e: kotlinx.coroutines.CancellationException) {
                     throw e

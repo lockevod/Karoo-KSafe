@@ -11,6 +11,7 @@ import kotlinx.coroutines.test.TestScope
 import kotlinx.coroutines.test.advanceUntilIdle
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -126,6 +127,13 @@ class CrashDetectionManagerWiringTest {
         val vigilance = field.get(manager) as MovingVigilance
         vigilance.arm(nowMs)
         check(vigilance.isArmed) { "reflection arm() failed — vigilance not armed" }
+    }
+
+    private fun armVigilanceDeadlineViaReflection(manager: CrashDetectionManager, armMono: Long) {
+        val m = CrashDetectionManager::class.java
+            .getDeclaredMethod("armVigilanceDeadline", Long::class.javaPrimitiveType)
+        m.isAccessible = true
+        m.invoke(manager, armMono)
     }
 
     // ── T1: clearCrashCooldown ───────────────────────────────────────────────
@@ -371,6 +379,129 @@ class CrashDetectionManagerWiringTest {
         )
     }
 
+    // ── MV-1c: start() must not inherit an armed window from the previous session ──
+
+    /**
+     * `start()` must escalate an armed vigilance window instead of silently carrying it over.
+     *
+     * The ride-stop contract (R8-C) says an armed confirm is abandonment and must escalate, and
+     * `stop()` implements that. But the Idle path does not always route through `stop()`: with
+     * either outside-ride monitoring option enabled, `KSafeExtension.applyIdleMonitoring` calls
+     * `crashManager.start(...)` directly to re-arm monitoring for the post-ride period. `start()`
+     * resets the state machine but used to leave `movingVigilance` untouched, so a crash confirmed
+     * in the last seconds of a ride could have its verification window carried across the ride
+     * boundary — later CLEARing on fresh high speed, or stranding if both drivers go quiet.
+     *
+     * An armed window surviving a session boundary is incoherent regardless of the caller, so the
+     * guard belongs in `start()` where every caller inherits it.
+     */
+    @Test
+    fun `start() while vigilance armed escalates instead of carrying the window over`() = runTest {
+        val crashCount = AtomicInteger(0)
+        val clock = FakeClock(now = 1_000_000L)
+        val manager = newManagerForVigilance(this, crashCount, clock)
+
+        armVigilanceViaReflection(manager, nowMs = clock.now)
+        manager.start(KSafeConfig())
+        advanceUntilIdle()
+
+        assertEquals(
+            "start() with an armed vigilance window must escalate — the rider may be down and " +
+                "the Idle path re-arms via start(), not stop(), when outside-ride monitoring is on.",
+            1, crashCount.get()
+        )
+        val mvField = CrashDetectionManager::class.java.getDeclaredField("movingVigilance")
+        mvField.isAccessible = true
+        assertTrue(
+            "the carried-over window must be disarmed after escalating",
+            !(mvField.get(manager) as MovingVigilance).isArmed
+        )
+    }
+
+    // ── MV-1a: the speed stream is a second clock for the vigilance window ───
+
+    /**
+     * An armed vigilance window must not depend on the accelerometer alone.
+     *
+     * `MovingVigilance.onTick` deliberately never consults the accelerometer — it needs only
+     * speed and freshness — but until this wiring existed the ONLY caller was the sensor-sample
+     * path. A sensor/HAL stall with no ride-state transition (no `stop()`, no pause, so none of
+     * the escalate-on-abandon paths fire) therefore left the window armed forever: a confirmed
+     * crash that never reaches its countdown. The pre-2.2.3 rule escalated on the arming tick
+     * itself when that tick was already stale, so deferring the verdict is what made a dead
+     * sensor able to swallow the alert entirely.
+     *
+     * Driving the window from [CrashDetectionManager.updateSpeed] closes it: the SPEED stream is
+     * a wholly independent source, and it is invoked on EVERY emission (identical values are not
+     * filtered upstream), so it keeps ticking even when the GPS value itself is frozen.
+     */
+    @Test
+    fun `speed updates alone resolve an armed vigilance window when sensor samples stop`() = runTest {
+        val crashCount = AtomicInteger(0)
+        val clock = FakeClock(now = 1_000_000L)
+        val manager = newManagerForVigilance(this, crashCount, clock)
+
+        armVigilanceViaReflection(manager, nowMs = clock.now)
+
+        // Sensor is dead from here on — not a single onSensorSample. Only the speed stream
+        // keeps arriving, and it reports the bike has stopped: a floor breach, which must
+        // escalate on the sample that sees it.
+        manager.updateSpeed(0.0)
+        advanceUntilIdle()
+
+        assertEquals(
+            "an armed vigilance window must still resolve when the accelerometer stalls — " +
+                "the speed stream is the independent second clock that prevents a dead sensor " +
+                "from swallowing a confirmed crash.",
+            1, crashCount.get()
+        )
+    }
+
+    // ── MV-1c: the window owns a real deadline ──────────────────────────────
+
+    /**
+     * An armed window must resolve even if BOTH drivers go silent.
+     *
+     * [CrashDetectionManager.driveMovingVigilance] is reached from exactly two places —
+     * `updateSpeed` and the private `onSensorSample`. MV-1a pins that the speed stream rescues a
+     * stalled accelerometer, but it cannot rescue anything if the speed stream is gone too: a
+     * dropped SDK stream plus a wedged sensor HAL, with the service still alive so none of the
+     * escalate-on-abandon paths fire, left a confirmed crash armed forever and no countdown ever
+     * started. That is NOT the accepted process-death gap — the process is alive, and the
+     * exposure is unbounded rather than one window.
+     *
+     * Deferring the staleness verdict is what made it reachable: the pre-2.2.3 rule escalated on
+     * the arming tick when that tick was already stale, so there was nothing left pending.
+     *
+     * No `updateSpeed`, no sensor sample: only the owned deadline can resolve this.
+     */
+    @Test
+    fun `an armed window resolves on its own deadline when both drivers go silent`() = runTest {
+        val crashCount = AtomicInteger(0)
+        val clock = FakeClock(now = 5_000_000L)
+        val manager = newManagerForVigilance(this, crashCount, clock)
+
+        armVigilanceViaReflection(manager, nowMs = clock.now)
+        armVigilanceDeadlineViaReflection(manager, armMono = clock.now)
+
+        // Speed was last seen long enough ago that the window can only ESCALATE, and nothing
+        // ever drives the manager again.
+        advanceUntilIdle()
+
+        assertEquals(
+            "an armed vigilance window must resolve on its own timer when neither the speed " +
+                "stream nor the accelerometer delivers again — otherwise a confirmed crash " +
+                "stays armed indefinitely on a live service.",
+            1, crashCount.get()
+        )
+        val mvField = CrashDetectionManager::class.java.getDeclaredField("movingVigilance")
+        mvField.isAccessible = true
+        assertTrue(
+            "the window must be disarmed once its own deadline resolved it",
+            !(mvField.get(manager) as MovingVigilance).isArmed
+        )
+    }
+
     // ── MV-1b: the diagnostic shadow probe never outlives its ride ───────────
 
     /**
@@ -558,6 +689,29 @@ class CrashDetectionManagerWiringTest {
      * Boundary: elapsed == freshMs is NOT fresh (strict < check). This pins the
      * off-by-one so a future change to >= does not silently pass.
      */
+    /**
+     * A NEGATIVE age means the wall clock stepped backwards (GNSS/NTP time fix), not that speed
+     * was just updated — yet `now - speedLastChangeMs < freshMs` reads a negative age as maximal
+     * freshness. That is a false-negative path: the vigilance window measures its duration on the
+     * monotonic clock, so it closes on schedule and takes its verdict from this predicate. With a
+     * backward step, a downed rider whose GPS is frozen above the floor reads "fresh and riding"
+     * and the window CLEARs a real crash. Fail-safe is to treat a stepped clock as NOT fresh,
+     * matching `MovingVigilance.onTick`'s own negative-elapsed policy.
+     */
+    @Test
+    fun `isSpeedFreshForVigilance treats a backward clock step as not fresh`() {
+        val result = CrashDetectionManager.isSpeedFreshForVigilance(
+            nowMs = 999_100L,               // wall clock stepped back 5 s
+            gpsStale = false,               // also inverted by the same step
+            speedLastChangeMs = 1_000_000L, // stamped before the step -> age = -900
+            freshMs = 3_000L,
+        )
+        assertFalse(
+            "a negative age is a stepped clock, not freshness — reading it as fresh lets the " +
+                "vigilance window clear a real crash", result
+        )
+    }
+
     @Test
     fun `isSpeedFreshForVigilance boundary at exactly freshMs returns false`() {
         val freshMs = 3_500L

@@ -543,6 +543,23 @@ class CalibrationLogger(
      * Main dispatcher for tens of milliseconds. Use [disableAsync] instead.
      */
     fun disable() {
+        // Already-disabled guard. `KSafeExtension.onDestroy` calls this unconditionally,
+        // so without it every teardown — on the ~all installs that never enable calibration
+        // logging — formatted a LOG_END row and appended it to a file that has no session
+        // in it. `addEntryDirect` writes regardless of [isEnabled] by design (it is how
+        // LOG_END gets past the flag we just cleared), so the guard belongs here.
+        //
+        // It must still FLUSH on the way out. [disableAsync] (the mid-ride settings path)
+        // clears `isEnabled` and adds LOG_END synchronously but dispatches the write to
+        // IO on a scope that is a child of the extension's job. If the service is destroyed
+        // before that coroutine is dispatched, `onDestroy`'s `job.cancel()` kills it — and
+        // a bare `return` here would drop up to 500 buffered rows plus the LOG_END that the
+        // async path had already queued. `flush()` early-returns on an empty buffer, so this
+        // costs nothing on the common never-logged teardown.
+        if (!isEnabled) {
+            flush()
+            return
+        }
         isEnabled = false
         flushJob?.cancel()
         flushJob = null
@@ -1070,8 +1087,17 @@ class CalibrationLogger(
             uploadedChunkCount++
             // Log a marker row so the next chunk's CSV self-identifies as a continuation.
             // Done OUTSIDE the fileLock — addEntryDirect only touches the in-memory buffer.
-            addEntryDirect(Event.LOGGER_START,
-                "logging_resumed_after_periodic_send,install_id=$installId,session=$sessionId,uploaded_lines=$uploadedLineCount,uploaded_chunks=$uploadedChunkCount")
+            //
+            // Only while the session is still LIVE. The "Logging disabled" drain also lands
+            // here, after LOG_END has been written and the file fully sent; queueing a
+            // continuation row for a session that has ended leaves it in the buffer for the
+            // next flush to append — resurrecting a drained, HEADER-only file into a sendable
+            // one and producing a phantom session that gets uploaded again. There is no next
+            // chunk to self-identify when logging is off, so the marker has no purpose here.
+            if (isEnabled) {
+                addEntryDirect(Event.LOGGER_START,
+                    "logging_resumed_after_periodic_send,install_id=$installId,session=$sessionId,uploaded_lines=$uploadedLineCount,uploaded_chunks=$uploadedChunkCount")
+            }
             dropped
         } catch (e: Exception) {
             Timber.w(e, "CalibrationLogger: truncate after send failed")

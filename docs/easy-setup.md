@@ -112,6 +112,11 @@ Where you choose and configure how alerts are sent. Covered in
 One thing worth knowing: each contact has a "what this contact receives" setting —
 **All** (default), **Emergency**, or **Info**. Most people leave it on **All**.
 
+If you leave this tab empty, KSafe warns you at the start of every ride that alerts
+won't send. Not using alerts on purpose? Turn on **"I won't use alerts — stop warning
+me at ride start"** in that warning box and it stops. Everything else — crash beeps,
+the SOS screen, check-in, fueling reminders — keeps working exactly the same.
+
 ### ⚙️ Settings — housekeeping (mostly leave alone)
 
 - **Language** follows your Karoo automatically (English or Spanish) — there's no switch.

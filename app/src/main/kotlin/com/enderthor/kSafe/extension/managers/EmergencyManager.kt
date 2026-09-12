@@ -330,19 +330,26 @@ class EmergencyManager(
             .find { it.provider == active } ?: SenderConfig(provider = active)
         when (val readiness = providerReadiness(active, senderConfig)) {
             is ProviderReadiness.Incomplete -> {
-                karooSystem.dispatch(InRideAlert(
-                    id = "ksafe-provider-incomplete-${System.currentTimeMillis()}",
-                    icon = R.drawable.ic_ksafe,
-                    title = context.getString(R.string.provider_warn_ridestart_title),
-                    detail = context.getString(providerMissingResId(readiness.missing)),
-                    autoDismissMs = 10_000L,
-                    backgroundColor = R.color.alert_orange,
-                    textColor = R.color.alert_text_white,
-                ))
-                calibLogger?.log(CalibrationLogger.Event.PROVIDER_NOT_READY) {
-                    "provider=$active,missing=${readiness.missing.name}"
+                // The rider can acknowledge this once ("I won't use alerts") to stop the per-ride
+                // nag. Only the visual warning is suppressed — the calibration row below is still
+                // emitted so a sweep can still tell "acknowledged" apart from "stopped riding",
+                // and every emergency path stays exactly as it was.
+                val acked = senderConfig.providerWarningAcknowledged
+                if (!acked) {
+                    karooSystem.dispatch(InRideAlert(
+                        id = "ksafe-provider-incomplete-${System.currentTimeMillis()}",
+                        icon = R.drawable.ic_ksafe,
+                        title = context.getString(R.string.provider_warn_ridestart_title),
+                        detail = context.getString(providerMissingResId(readiness.missing)),
+                        autoDismissMs = 10_000L,
+                        backgroundColor = R.color.alert_orange,
+                        textColor = R.color.alert_text_white,
+                    ))
                 }
-                Timber.d("Provider-incomplete warning dispatched: $active / ${readiness.missing}")
+                calibLogger?.log(CalibrationLogger.Event.PROVIDER_NOT_READY) {
+                    "provider=$active,missing=${readiness.missing.name},acked=$acked"
+                }
+                Timber.d("Provider incomplete: $active / ${readiness.missing} (acked=$acked)")
             }
             ProviderReadiness.Ready -> {
                 val now = System.currentTimeMillis()

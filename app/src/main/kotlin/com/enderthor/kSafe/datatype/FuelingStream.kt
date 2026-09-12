@@ -13,6 +13,7 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.collectLatest
+import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.filterNotNull
 import kotlinx.coroutines.flow.first
@@ -71,7 +72,24 @@ internal fun <T : Any, S : Any> DataTypeImpl.startFuelingStream(
                     status == null -> StreamState.NotAvailable
                     else -> mapState(status)
                 }
-            }.collectLatest { emitter.onNext(it) }
+            }
+                // The seven numeric fueling fields all derive from ONE shared snapshot
+                // (CarbStatus / HydrationStatus bundles deficit, burn rate, average,
+                // zone, calories, enable state). Every tracker tick republishes the whole
+                // snapshot, so without this each field emitted — and paid a Binder
+                // round-trip — whenever ANY sibling value moved. StreamState.Streaming
+                // and DataPoint both have value equality (DataPoint carries no timestamp),
+                // so this compares the number the field actually shows.
+                //
+                // NOTE: this is a `startStream` emitter, not the `updateView` frame dedupe
+                // the tap/graphical fields do — there the host latches the last RemoteViews
+                // by construction. Here we rely on the host latching the last StreamState,
+                // which the SDK does not document. A field whose value is genuinely constant
+                // (hydration ml between drinks) now goes minutes without an emission where
+                // it used to re-send every 15 s. Verified against karoo-ext 1.1.9: no TTL or
+                // staleness concept on the stream API.
+                .distinctUntilChanged()
+                .collectLatest { emitter.onNext(it) }
         } catch (_: CancellationException) {
             // normal
         } catch (e: Exception) {

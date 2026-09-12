@@ -90,6 +90,21 @@ private const val CONFIG_SEED_TIMEOUT_MS: Long = 5_000L
  *  ride starts / before the health-check resumes after logging is enabled, both of
  *  which are non-critical. The ACTIVE cadence is unchanged once the gate is met. */
 private const val BACKGROUND_IDLE_POLL_MS: Long = 2L * 60_000L
+/**
+ * How long a Headwind ambient reading keeps overriding the onboard sensor. See
+ * [KSafeExtension.headwindTempFresh].
+ *
+ * Sized against Headwind's OWN cadence, not against how fast we would like to notice a
+ * problem: it refetches on a few km of movement, or hourly at worst, so a rider holding
+ * position inside one weather cell can legitimately go a long time between updates. A short
+ * window (10 min was tried) makes the source oscillate between Headwind and the onboard
+ * sensor during completely healthy operation.
+ *
+ * That leaves the window covering only the "alive but silently stopped publishing" case. The
+ * "stream is gone" case is handled precisely instead, by the `onInterrupted` callback on the
+ * Headwind collector, which releases the override immediately.
+ */
+private const val HEADWIND_FRESH_MS: Long = 75L * 60_000L
 /** Auto-send the calibration log every 20 minutes while a ride is recording so a
  *  long ride with intermittent coverage still trickles data out instead of waiting
  *  for the post-ride upload (which may itself fail). On success, the file is
@@ -260,15 +275,27 @@ class KSafeExtension : KarooExtension("ksafe", BuildConfig.VERSION_NAME), Corout
      *  When set, we ignore the onboard temperature sensor (device-heat biased) and trust
      *  Headwind's meteo data. Reset implicitly on process restart — Headwind re-emits early
      *  on subscription so we re-flip within seconds if it's still installed. */
-    @Volatile private var hasHeadwindTemp = false
+    /** When Headwind last published an ambient reading (monotonic), or 0 if never this ride.
+     *
+     *  This used to be a one-way `hasHeadwindTemp` boolean: it latched true on the FIRST
+     *  Headwind emission and was cleared only when the whole collector block was torn down,
+     *  while every onboard TEMPERATURE reading was discarded for as long as it was set. So a
+     *  Headwind stream that published once and then stopped — because the extension died, or
+     *  simply because it went quiet — left stale temperature and humidity in effect for the
+     *  rest of the ride with the onboard fallback permanently blocked, and neither ambient
+     *  field carries its own freshness stamp. A timestamp fixes both failure shapes: the
+     *  stream ending, and the stream staying alive but silent. */
+    @Volatile private var headwindTempAtMs = 0L
 
     /** Parent Job for the "Recording-only" stream collectors (POWER, HR, TEMPERATURE,
      *  Headwind temp + humidity, UserProfile). Their consumers — the fueling trackers,
      *  WellnessMonitor, MedicalEpisodeDetector — only do real work during a recording,
      *  so the upstream SDK subscriptions waste IPC + collector wakes outside a ride.
      *  Cancelled on the Idle transition; (re-)launched on the first Recording entry.
-     *  Idempotent — extra calls to [startRecordingCollectors] while already active
-     *  are no-ops. */
+     *  Which of the streams actually get a subscription is decided per-ride by
+     *  [recordingStreamNeeds]; a call to [startRecordingCollectors] while this job is
+     *  active is a no-op only when the need set is UNCHANGED — a mid-ride feature
+     *  toggle rebuilds the block. */
     @Volatile private var recordingCollectorsJob: kotlinx.coroutines.Job? = null
     /** Tracks the in-flight calibration-log periodic-send drain. The 20-min cycle
      *  skips re-launching when this job is still active so two parallel periodic
@@ -380,6 +407,37 @@ class KSafeExtension : KarooExtension("ksafe", BuildConfig.VERSION_NAME), Corout
     }
 
     companion object {
+        /** Pure decision behind [recordingStreamNeeds] — see [RecordingStreamNeeds]. Lives in
+         *  the companion so it is reachable from JVM unit tests without a Service instance. */
+        /** Pure predicate behind [headwindTempFresh], in the companion so it is reachable
+         *  from JVM unit tests without a Service instance. A `0L` stamp means Headwind has
+         *  published nothing this ride, so the onboard sensor owns the reading. */
+        internal fun isHeadwindTempFresh(stampMs: Long, nowMs: Long): Boolean {
+            if (stampMs == 0L) return false
+            val ageMs = nowMs - stampMs
+            // Non-negative age required, matching CrashDetectionManager.isSpeedFreshForVigilance.
+            // A bare `age < window` reads a future stamp as MAXIMAL freshness and would pin the
+            // source to Headwind indefinitely. elapsedRealtime cannot step backwards mid-process
+            // so this should be unreachable, but the fail-safe direction is cheap and obvious:
+            // an untrustworthy stamp hands the reading back to the live onboard sensor.
+            return ageMs >= 0 && ageMs < HEADWIND_FRESH_MS
+        }
+
+        internal fun recordingStreamNeeds(c: KSafeConfig): RecordingStreamNeeds {
+            // Master switch OFF stops every consumer, so nothing needs a stream.
+            if (!c.isActive) return RecordingStreamNeeds(false, false, false, false)
+            // Mirrors CarbsTracker.fuelMonitorEnabled() — either fueling half keeps the
+            // carb tracker integrating, and both halves want power / profile / HR.
+            val fuel = c.carbsTrackerEnabled || c.hrCaloriesEnabled
+            val hyd = c.hydrationTrackerEnabled
+            return RecordingStreamNeeds(
+                power = fuel || hyd || c.wellnessEnabled || c.medicalEpisodeEnabled,
+                userProfile = fuel || hyd || c.wellnessEnabled,
+                heartRate = fuel || hyd || c.wellnessEnabled || c.medicalEpisodeEnabled,
+                ambient = hyd,
+            )
+        }
+
         // @Volatile: written from onCreate / onDestroy on the Main thread but read from
         // FieldTapReceiver (binder thread), DataType polling coroutines (Dispatchers.Default),
         // and the BeepPatternPicker preview (Compose's recomposition dispatcher). Without the
@@ -704,7 +762,16 @@ class KSafeExtension : KarooExtension("ksafe", BuildConfig.VERSION_NAME), Corout
                             emergencyManager.stopAll()
                         }
                     }
-                    is RideState.Recording -> applyMasterSwitchTransition(prevActive)
+                    is RideState.Recording -> {
+                        applyMasterSwitchTransition(prevActive)
+                        // A feature toggle that is NOT a master-switch transition (rider
+                        // enables hydration mid-ride, say) never reaches the branch above,
+                        // so the Recording-only collectors would stay built for the old
+                        // consumer set — the just-enabled tracker would get no inputs for
+                        // the rest of the ride. Idempotent when the set is unchanged;
+                        // a no-op when the master switch is OFF (needs are all false).
+                        startRecordingCollectors()
+                    }
                     is RideState.Paused -> applyMasterSwitchTransitionPaused(prevActive)
                     else -> { /* null: not yet observed, leave as-is */ }
                 }
@@ -832,7 +899,11 @@ class KSafeExtension : KarooExtension("ksafe", BuildConfig.VERSION_NAME), Corout
                 // Recording, then persist at the active 30 s cadence. Only the FIRST persist
                 // after a ride starts is delayed (by ≤ one idle interval); the accumulation
                 // in that window is small and within the deadband loss bound documented above.
-                if (currentRideState !is RideState.Recording) {
+                // Idle backoff also covers "recording, but nothing to persist": with
+                // carbs, HR-calories and hydration all off the trackers never started,
+                // so this loop was waking every 30 s to build two snapshot objects and
+                // have FuelingPersistPolicy reject them as all-zero.
+                if (currentRideState !is RideState.Recording || !fuelingPersistNeeded()) {
                     kotlinx.coroutines.delay(BACKGROUND_IDLE_POLL_MS)
                     continue
                 }
@@ -989,14 +1060,81 @@ class KSafeExtension : KarooExtension("ksafe", BuildConfig.VERSION_NAME), Corout
     }
 
     /**
+     * Which Recording-only streams currently have a live consumer.
+     *
+     * Being inside a ride is not enough to justify a subscription: each of these
+     * streams exists only to feed a feature the rider can switch off, and every
+     * emission is a Binder round-trip that wakes this process ~once a second for
+     * the whole ride. A rider using KSafe purely for crash detection was paying
+     * for six of them feeding trackers that had already returned from `start()`.
+     * The default install (medical episode ON, everything else OFF) needs only
+     * HR + POWER — the other four are pure waste for that rider.
+     *
+     * Consumers, from the fan-out blocks in [startRecordingCollectors]:
+     *  - POWER       → carbs, wellness, hydration, medical (FLATLINE cross-check)
+     *  - UserProfile → carbs, wellness, hydration
+     *  - HEART_RATE  → medical, wellness, carbs, hydration
+     *  - ambient (onboard TEMPERATURE + Headwind temp/humidity) → hydration only
+     *
+     * INVARIANT: `ambient` implies all three others, because its only consumer
+     * (the hydration tracker) also reads power, profile and HR. That is what makes
+     * [stopRecordingCollectors]'s `headwindTempAtMs = 0L` safe inside a rebuild:
+     * the only tuple with `ambient == true` is (T,T,T,T), and a rebuild requires the
+     * tuple to CHANGE — so the Headwind collectors are never torn down and recreated
+     * while still wanted, and the onboard-temperature fallback can't race the Headwind
+     * source. Asserted in `RecordingStreamNeedsTest`; it holds only as long as nothing
+     * else starts consuming ambient temperature.
+     */
+    internal data class RecordingStreamNeeds(
+        val power: Boolean,
+        val userProfile: Boolean,
+        val heartRate: Boolean,
+        val ambient: Boolean,
+    ) {
+        val any: Boolean get() = power || userProfile || heartRate || ambient
+    }
+
+    /** The needs the live [recordingCollectorsJob] was built for, or null when no job is
+     *  running. A config emission that changes the set rebuilds the block — see
+     *  [startRecordingCollectors]. */
+    @Volatile private var activeRecordingStreamNeeds: RecordingStreamNeeds? = null
+
+    /** True while Headwind ambient data is recent enough to keep overriding the onboard
+     *  sensor. Ten minutes: long enough that Headwind's own multi-minute publish cadence
+     *  does not flap the source back and forth, short enough that a multi-hour ride is never
+     *  run on one stale reading. */
+    private fun headwindTempFresh(): Boolean =
+        isHeadwindTempFresh(headwindTempAtMs, android.os.SystemClock.elapsedRealtime())
+
+    /** True when a fueling accumulator is actually running and therefore has state worth
+     *  persisting across a process kill. Mirrors the trackers' own enable gates
+     *  (`CarbsTracker.fuelMonitorEnabled()`, `HydrationTracker.start`). */
+    private fun fuelingPersistNeeded(c: KSafeConfig = activeConfig): Boolean =
+        c.carbsTrackerEnabled || c.hrCaloriesEnabled || c.hydrationTrackerEnabled
+
+
+    /**
      * Launches the Recording-only stream collectors (POWER, HR, TEMPERATURE,
-     * Headwind temp+humidity, UserProfile). Idempotent — extra calls while a job
-     * is already active are no-ops. Cancellation is via [stopRecordingCollectors]
-     * on the Idle transition, which lets the upstream SDK subscriptions close
-     * cleanly so they stop consuming IPC bandwidth while the device is on the dock.
+     * Headwind temp+humidity, UserProfile) that [recordingStreamNeeds] says have a
+     * consumer. Idempotent — a call while a job built for the SAME needs is active is
+     * a no-op; a call after the rider toggled a feature mid-ride rebuilds the block so
+     * a just-enabled tracker gets its inputs (and a just-disabled one stops paying for
+     * them). Cancellation is via [stopRecordingCollectors] on the Idle transition,
+     * which lets the upstream SDK subscriptions close cleanly so they stop consuming
+     * IPC bandwidth while the device is on the dock.
      */
     private fun startRecordingCollectors() {
-        if (recordingCollectorsJob?.isActive == true) return
+        val needs = recordingStreamNeeds(activeConfig)
+        if (recordingCollectorsJob?.isActive == true) {
+            if (needs == activeRecordingStreamNeeds) return
+            // Consumer set changed mid-ride — rebuild rather than leave the block
+            // built for the old config. Cheap: these are subscription handles, not
+            // accumulating state, and the trackers keep their own totals.
+            Timber.d("Recording stream needs changed ($activeRecordingStreamNeeds -> $needs) — rebuilding collectors")
+            stopRecordingCollectors()
+        }
+        if (!needs.any) return
+        activeRecordingStreamNeeds = needs
         // K8 — CoroutineExceptionHandler so a failing inner collector under
         // supervisorScope produces a Timber.e line instead of dying into the
         // default JVM uncaught-exception handler (logcat-only, no Timber tree).
@@ -1024,7 +1162,7 @@ class KSafeExtension : KarooExtension("ksafe", BuildConfig.VERSION_NAME), Corout
             // hydrationTracker uses it as the preferred metabolic-rate input for the sweat
             // estimator. If absent, the carb tracker falls back to HR zones, decoupling
             // auto-skips, and hydration falls back to HR-derived metabolic rate.
-            launch {
+            if (needs.power) launch {
                 karooSystem.streamDataFlow(io.hammerhead.karooext.models.DataType.Type.POWER)
                     .collect { streamState ->
                         val w = streamState.powerW() ?: return@collect
@@ -1045,7 +1183,7 @@ class KSafeExtension : KarooExtension("ksafe", BuildConfig.VERSION_NAME), Corout
             // HR/power zone multiplier, the wellness monitor for the optional % of max HR
             // threshold mode, and the hydration tracker for the body-mass scaling factor
             // in the sweat estimator.
-            launch {
+            if (needs.userProfile) launch {
                 karooSystem.streamUserProfile()
                     .collect { profile ->
                         carbsTracker.updateUserProfile(profile)
@@ -1055,7 +1193,7 @@ class KSafeExtension : KarooExtension("ksafe", BuildConfig.VERSION_NAME), Corout
             }
 
             // HR stream (ANT+/BLE). Optional: silent when no sensor is paired.
-            launch {
+            if (needs.heartRate) launch {
                 karooSystem.streamDataFlow(io.hammerhead.karooext.models.DataType.Type.HEART_RATE)
                     .collect { streamState ->
                         val hr = streamState.heartRateBpm() ?: return@collect
@@ -1069,13 +1207,14 @@ class KSafeExtension : KarooExtension("ksafe", BuildConfig.VERSION_NAME), Corout
             // Onboard Karoo temperature sensor. Device-heat biased (typically reads
             // +3–8 °C above ambient when in direct sun / after warm-up), but always
             // available — used as fallback when Headwind isn't publishing.
-            launch {
+            if (needs.ambient) launch {
                 karooSystem.streamDataFlow(io.hammerhead.karooext.models.DataType.Type.TEMPERATURE)
                     .collect { streamState ->
                         val s = streamState as? io.hammerhead.karooext.models.StreamState.Streaming
                             ?: return@collect
                         val tempC = s.dataPoint.singleValue ?: return@collect
-                        if (!hasHeadwindTemp) hydrationTracker.updateAmbientTemp(tempC)
+                        // Defer to Headwind only while its data is actually fresh.
+                        if (!headwindTempFresh()) hydrationTracker.updateAmbientTemp(tempC)
                     }
             }
 
@@ -1084,18 +1223,24 @@ class KSafeExtension : KarooExtension("ksafe", BuildConfig.VERSION_NAME), Corout
             // its weather data (real meteo API) over the onboard sensor. The streams
             // below are silent on devices without Headwind — no error, just no emissions.
             // TypeId convention documented at https://github.com/timklge/karoo-headwind.
-            launch {
-                karooSystem.streamDataFlow("TYPE_EXT::karoo-headwind::temperature")
+            if (needs.ambient) launch {
+                karooSystem.streamDataFlow(
+                    "TYPE_EXT::karoo-headwind::temperature",
+                    StreamPolicy.OPTIONAL,
+                    // Hand the reading straight back to the onboard sensor the moment the
+                    // Headwind stream dies, instead of waiting out the freshness window.
+                    onInterrupted = { headwindTempAtMs = 0L },
+                )
                     .collect { streamState ->
                         val s = streamState as? io.hammerhead.karooext.models.StreamState.Streaming
                             ?: return@collect
                         val tempC = s.dataPoint.singleValue ?: return@collect
-                        hasHeadwindTemp = true
+                        headwindTempAtMs = android.os.SystemClock.elapsedRealtime()
                         hydrationTracker.updateAmbientTemp(tempC)
                     }
             }
-            launch {
-                karooSystem.streamDataFlow("TYPE_EXT::karoo-headwind::relativeHumidity")
+            if (needs.ambient) launch {
+                karooSystem.streamDataFlow("TYPE_EXT::karoo-headwind::relativeHumidity", StreamPolicy.OPTIONAL)
                     .collect { streamState ->
                         val s = streamState as? io.hammerhead.karooext.models.StreamState.Streaming
                             ?: return@collect
@@ -1111,10 +1256,11 @@ class KSafeExtension : KarooExtension("ksafe", BuildConfig.VERSION_NAME), Corout
     private fun stopRecordingCollectors() {
         recordingCollectorsJob?.cancel()
         recordingCollectorsJob = null
+        activeRecordingStreamNeeds = null
         // Reset Headwind detection — if the rider's setup changes between rides
         // (uninstalls Headwind, for instance) we want the onboard temperature
         // fallback to engage cleanly on the next ride.
-        hasHeadwindTemp = false
+        headwindTempAtMs = 0L
     }
 
     /**

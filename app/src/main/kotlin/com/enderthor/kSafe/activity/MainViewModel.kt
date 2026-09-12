@@ -13,7 +13,7 @@ import com.enderthor.kSafe.data.materializeAlertDefaults
 import com.enderthor.kSafe.data.migrateToLatest
 import com.enderthor.kSafe.data.toBackupExport
 import com.enderthor.kSafe.data.toSenderConfigs
-import com.enderthor.kSafe.extension.sameCredentials
+import com.enderthor.kSafe.extension.carryForwardOnSave
 import com.enderthor.kSafe.extension.jsonForExport
 import com.enderthor.kSafe.extension.jsonWithUnknownKeys
 import com.enderthor.kSafe.extension.managers.ConfigurationManager
@@ -135,12 +135,32 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     val list = current.toMutableList()
                     val idx = list.indexOfFirst { it.provider == provider }
                     if (idx >= 0) {
-                        // Preserve the last-successful-send timestamp only when the credentials are
-                        // unchanged — editing a token/phone/key invalidates a prior successful send,
-                        // but a scope-only change must NOT reset the "it works" / staleness clock.
-                        val keep = if (sameCredentials(newConfig, list[idx])) list[idx].lastSuccessfulSendMs else 0L
-                        list[idx] = newConfig.copy(lastSuccessfulSendMs = keep)
+                        // Carry forward the trust-carrying fields (last-successful-send stamp and
+                        // the provider-warning acknowledgement) only when the credentials are
+                        // unchanged — editing a token/phone/key invalidates both, but a scope-only
+                        // change must NOT reset the "it works" / staleness clock.
+                        list[idx] = carryForwardOnSave(newConfig, list[idx])
                     } else list.add(newConfig)
+                    list
+                }
+            }
+        }
+    }
+
+    /**
+     * Rider ticked "I won't use alerts — stop warning me" on the incomplete-provider banner.
+     * Deliberately its own targeted write rather than a field on the credential form's save:
+     * [carryForwardOnSave] preserves the STORED acknowledgement, so routing this through
+     * `updateSenderConfig` would discard it.
+     */
+    fun acknowledgeProviderWarning(provider: ProviderType, acknowledged: Boolean) {
+        viewModelScope.launch {
+            settingsWriteMutex.withLock {
+                configManager.updateSenderConfigs { current ->
+                    val list = current.toMutableList()
+                    val idx = list.indexOfFirst { it.provider == provider }
+                    if (idx >= 0) list[idx] = list[idx].copy(providerWarningAcknowledged = acknowledged)
+                    else list.add(SenderConfig(provider = provider, providerWarningAcknowledged = acknowledged))
                     list
                 }
             }

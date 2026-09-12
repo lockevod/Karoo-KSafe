@@ -89,8 +89,8 @@ Every CSV row is tagged with a short event identifier. The current catalogue:
 | `CAD_GATE_SUPPRESSED` | Cadence-active gate WOULD have fired but was suppressed because the live orientation evidence shows the device decisively non-upright (angle ≥ uprightAngleThresholdDegrees). A bike on its side cannot be pedalled; the "fresh" cadence is therefore phantom/stale. Payload: `cadence`, `speed`, `deviation`, `grade`, `angle`, `upright_thr` |
 | `GYRO_BLK` | IMPACT→SILENCE_CHECK blocked because gyro is still high |
 | `RST_SNAP` | Post-reset snapshot — see `docs/crash-detection-algorithm.md` |
-| `HIGH_MAG` | Sample crossed the peak threshold but didn't enter IMPACT |
-| `SPD_REJECT` | Speed-gate rejection (sample below minSpeedForCrashKmh) |
+| `HIGH_MAG` | Sample crossed the peak threshold but didn't enter IMPACT. **Rate-limited to 1 row/s** — row counts are not sample counts. |
+| `SPD_REJECT` | Speed-gate rejection (sample below minSpeedForCrashKmh). **Not** rate-limited — one row per sample, deliberately: this is the only event carrying supra-threshold magnitudes recorded under the speed gate, and a throttle drops the burst peak. |
 | `TERRAIN_CLUST` | ≥3 IMPACT_TMOs within the rough-terrain window — cluster detected |
 | `GPS_STALE` | Detected GPS-stale entry / exit |
 | `POST_TMO_BOOST` | Peak-threshold boost active after recent IMPACT_TMO |
