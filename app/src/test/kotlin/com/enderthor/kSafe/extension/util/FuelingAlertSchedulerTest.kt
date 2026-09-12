@@ -354,4 +354,116 @@ class FuelingAlertSchedulerTest {
         assertFalse("backed off at ×4", deficitDueAfter(20, unacked = 5))
         assertTrue("after a log, 20 min is well past the base interval", deficitDueAfter(20, unacked = 0))
     }
+
+    // ── re-fire right after a log (2026-09-12 field sweep) ────────────────────
+
+    /** The `0e6f39_8f1921` shape: 15-min base interval, one deficit alert fired at
+     *  t=0, then nothing for 27 min while the ×2 ladder held. The rider drinks at
+     *  27 min and the amount does not clear the deficit. */
+    private fun deficitDueAfterLog(minutesSinceLog: Long, lastLogMin: Long = 27L): Boolean =
+        FuelingAlertScheduler.shouldFireDeficit(
+            enabled = true,
+            deficit = 513, deficitThreshold = 200,
+            lastDeficitAlertFireMs = 0L + 1L,   // fired at t≈0; non-zero = not the first fire
+            reminderIntervalMs = 15L * 60_000L,
+            initialDelayMs = 30L * 60_000L, cumLogged = 100,
+            sessionStartMs = 0L,
+            now = (lastLogMin + minutesSinceLog) * 60_000L,
+            unackedFires = 0,                   // the log reset the ladder
+            lastRealLogMs = lastLogMin * 60_000L,
+        )
+
+    @Test
+    fun `logging a drink does not re-fire the deficit reminder seconds later`() {
+        // Before the fix the ×2 gap of 27 min had already elapsed against the base
+        // ×1 interval, so the reset ladder made the alert due on the very next tick.
+        assertFalse("at the log instant", deficitDueAfterLog(minutesSinceLog = 0))
+        assertFalse("5 min after the log", deficitDueAfterLog(minutesSinceLog = 5))
+        assertFalse("one tick short of the interval", deficitDueAfterLog(minutesSinceLog = 14))
+    }
+
+    @Test
+    fun `the reminder still arrives a full interval after the log`() {
+        assertTrue("15 min after the drink", deficitDueAfterLog(minutesSinceLog = 15))
+        assertTrue("and later still", deficitDueAfterLog(minutesSinceLog = 40))
+    }
+
+    @Test
+    fun `a log older than the last fire leaves the back-off ladder intact`() {
+        // The other branch of the maxOf: a stale log from earlier in the ride must not
+        // shorten the x2/x4 cooldown the 2026-07-22 back-off put there.
+        fun due(minutesSinceFire: Long, unacked: Int) =
+            FuelingAlertScheduler.shouldFireDeficit(
+                enabled = true,
+                deficit = 500, deficitThreshold = 300,
+                lastDeficitAlertFireMs = 30L * 60_000L,
+                reminderIntervalMs = 10L * 60_000L,
+                initialDelayMs = 0L, cumLogged = 100,
+                sessionStartMs = 0L,
+                now = (30L + minutesSinceFire) * 60_000L,
+                unackedFires = unacked,
+                lastRealLogMs = 10L * 60_000L,   // logged BEFORE the last fire
+            )
+        assertFalse("2 ignored -> x2 = 20 min, not due at 19", due(19, unacked = 2))
+        assertTrue("2 ignored -> due at 20", due(20, unacked = 2))
+    }
+
+    @Test
+    fun `however often the rider logs, silence never exceeds the back-off ceiling`() {
+        // A rider logging small amounts more often than the interval must still be
+        // reminded. Base 15 min, ceiling x4 = 60 min from the last fire.
+        fun due(nowMin: Long, lastLogMin: Long) =
+            FuelingAlertScheduler.shouldFireDeficit(
+                enabled = true,
+                deficit = 500, deficitThreshold = 300,
+                lastDeficitAlertFireMs = 0L,
+                reminderIntervalMs = 15L * 60_000L,
+                initialDelayMs = 0L, cumLogged = 100,
+                sessionStartMs = 0L,
+                now = nowMin * 60_000L,
+                unackedFires = 0,
+                lastRealLogMs = lastLogMin * 60_000L,
+            ).let { it }
+        // lastDeficitAlertFireMs must be non-zero for the log anchor to apply at all.
+        fun dueAfterFire(nowMin: Long, lastLogMin: Long) =
+            FuelingAlertScheduler.shouldFireDeficit(
+                enabled = true,
+                deficit = 500, deficitThreshold = 300,
+                lastDeficitAlertFireMs = 1L,
+                reminderIntervalMs = 15L * 60_000L,
+                initialDelayMs = 0L, cumLogged = 100,
+                sessionStartMs = 0L,
+                now = nowMin * 60_000L,
+                unackedFires = 0,
+                lastRealLogMs = lastLogMin * 60_000L,
+            )
+        assertFalse("inside the ceiling, a recent log still defers", dueAfterFire(40, lastLogMin = 35))
+        assertFalse("still inside the ceiling at 59 min", dueAfterFire(59, lastLogMin = 55))
+        // The fire is stamped at 1 ms, so the ceiling lands 1 ms past the 60-minute mark;
+        // assert at 61 rather than encode that artefact.
+        assertTrue("past the x4 ceiling the reminder fires despite a log 6 min ago",
+            dueAfterFire(61, lastLogMin = 55))
+        assertTrue("and keeps firing however recent the log", dueAfterFire(75, lastLogMin = 74))
+        assertTrue("sanity: no prior fire is governed by the interval alone", due(20, lastLogMin = 19))
+    }
+
+    @Test
+    fun `a log never delays the first deficit alert of the session`() {
+        // lastDeficitAlertFireMs == 0 means the initial-delay grace still owns the
+        // gate; the log timestamp must not push the first reminder out.
+        assertTrue(
+            "first fire, past the initial delay",
+            FuelingAlertScheduler.shouldFireDeficit(
+                enabled = true,
+                deficit = 500, deficitThreshold = 300,
+                lastDeficitAlertFireMs = 0L,
+                reminderIntervalMs = 15L * 60_000L,
+                initialDelayMs = 30L * 60_000L, cumLogged = 100,
+                sessionStartMs = 0L,
+                now = 31L * 60_000L,
+                unackedFires = 0,
+                lastRealLogMs = 30L * 60_000L,
+            )
+        )
+    }
 }

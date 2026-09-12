@@ -804,6 +804,7 @@ class CarbsTracker(
             sessionStartMs         = sessionStartMs,
             now                    = now,
             unackedFires           = deficitFiresSinceLog,
+            lastRealLogMs          = lastRealLogMs,
         )
         if (!fire) return false
         // Defer during an emergency: don't beep over the SOS, and DON'T stamp the cooldown,

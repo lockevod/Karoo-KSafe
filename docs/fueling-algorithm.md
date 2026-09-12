@@ -212,8 +212,12 @@ The `lastTickMs == 0L` guard makes `CarbIntegrator` return all-zero deltas on th
 Deficit alert (CarbsTracker.evaluateDeficitAlert):
    if carbDeficitAlertEnabled
       AND (cumBurnedG − cumLoggedG) >= carbDeficitThresholdG
-      AND (now − lastDeficitAlertFireMs) >= carbDeficitReminderIntervalMin × 60_000 × backoff
+      AND (now − cooldownFrom) >= carbDeficitReminderIntervalMin × 60_000 × backoff
                                             (default 10 min; backoff = 1 / 2 / 4, see below)
+                                            cooldownFrom = max(lastDeficitAlertFireMs,
+                                                               min(lastRealLogMs, lastFire + 3 × interval))
+                                            i.e. a log restarts the cooldown, but never past
+                                            the ×4 ceiling (see 'Capped, never silenced')
       AND (deficit-initial-delay grace passed; see below)
    → fire
 
@@ -248,8 +252,8 @@ The reminder cooldown alone has no ceiling. The deficit only ever grows for a ri
 | 2 | ×2 | 20 min |
 | 3 or more | ×4 (cap) | 40 min |
 
-- **Capped, never silenced.** A rider who never logs still gets a prompt every 4 intervals — dehydration matters most on exactly the long rides where the back-off engages. There is no "stop after N" mode.
-- **Any log resets it.** The trackers hold `deficitFiresSinceLog` and re-zero it whenever `lastRealLogMs` moves — anchoring on that timestamp (rather than resetting inside each log path) covers `logEntry`, `logAmount`, the in-alert LOG button and `undoLastForSlot` for free, including any log path added later. Verified: `lastRealLogMs` is written **only** by `start` (session seed / restore), `logEntry`, `logAmount` and `undoLastForSlot` — no alert path touches it (I8), so a fire can never silently reset its own back-off.
+- **Capped, never silenced.** Every rider gets a prompt at least every 4 intervals — dehydration matters most on exactly the long rides where the back-off engages. There is no "stop after N" mode. The cap is absolute: a log restarts the cooldown (2026-09-12 field fix, see below) but is clamped to `lastFire + 3 × interval`, so even a rider logging small amounts more often than the interval cannot push the next reminder past `lastFire + 4 × interval`. Without that clamp the log anchor was unbounded and that rider — drinking, but not enough — was silenced for the rest of the ride.
+- **Any log resets it — and rebases the cooldown.** Resetting the ladder alone was not enough: a gap already accrued under the ×2 interval counted as elapsed against the reset ×1 interval, so the reminder re-fired seconds after the rider drank (field: `0e6f39_8f1921`, +5.8 s and +12.8 s after a `HYD_LOG`). The cooldown is therefore measured from `lastRealLogMs` too, clamped as above. The trackers hold `deficitFiresSinceLog` and re-zero it whenever `lastRealLogMs` moves — anchoring on that timestamp (rather than resetting inside each log path) covers `logEntry`, `logAmount`, the in-alert LOG button and `undoLastForSlot` for free, including any log path added later. Verified: `lastRealLogMs` is written **only** by `start` (session seed / restore), `logEntry`, `logAmount` and `undoLastForSlot` — no alert path touches it (I8), so a fire can never silently reset its own back-off.
 - **Scope: deficit alerts only.** The time-alert grid is deliberately untouched. "Remind me every N minutes" is an explicit rider contract and the grid is documented as log-independent; backing it off would break both. A rider who wants fewer time reminders lengthens the interval. (Corpus split: 1261 deficit fires vs 283 time fires, so the deficit channel is where the noise lives.)
 - **The two channels back off independently.** A rider running carb + hydration deficit alerts on the same cadence still gets two ladders, so the combined rate is halved rather than quartered. Cross-channel coordination would mean merging the two trackers' cooldown state — not worth it unless the field logs say otherwise.
 - **Lifetime.** The trackers are instantiated once by `KSafeExtension` and `start()`ed per ride, and the counter is in-memory. A **new ride** reseeds `lastRealLogMs`, so the anchor mismatches and the ladder resets — correct. A **pause/resume** (RideState pause→resume, master-switch OFF→ON) goes through `resume()`, which touches neither the counter nor `lastRealLogMs`, so the anchor still matches and the ladder is *preserved* — also correct (same rider, same ride, still not logging). The one exception is `resume()`'s no-live-session fallback, which delegates to `start()` and therefore resets. Only a process restart drops it otherwise. Persisting it would need a `CarbFuelingState`/`HydFuelingState` field plus a `CONFIG_VERSION` bump; not worth it for that one case.
