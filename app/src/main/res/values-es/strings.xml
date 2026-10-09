@@ -110,7 +110,7 @@
     <string name="fueling_color_label">Color</string>
     <string name="fueling_combined_section">Registro combinado</string>
     <string name="fueling_combined_concentration_label">Carbos por 500 ml (g)</string>
-    <string name="fueling_combined_hint">Un toque registra una bebida + sus carbohidratos. Fija la concentración una vez; los carbos de cada botón se autocompletan según su volumen (editable). Activo cuando el seguimiento de carbos y/o hidratación está ON.</string>
+    <string name="fueling_combined_hint">Un toque registra una bebida + sus carbohidratos. Fija la concentración una vez; los carbos de cada botón se autocompletan según su volumen (editable).</string>
     <string name="fueling_combined_pointer">¿Bebida con carbohidratos? Configúrala en Hidratación → Registro combinado: un toque registra la bebida y sus carbos.</string>
     <string name="fueling_fit_export_label">Escribir datos KSafe en FIT (Intervals.icu / TrainingPeaks)</string>
     <string name="settings_fit_std_cal_label">Calorías como campo estándar del FIT</string>

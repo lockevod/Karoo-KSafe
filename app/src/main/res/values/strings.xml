@@ -118,7 +118,7 @@
     <string name="fueling_color_label">Colour</string>
     <string name="fueling_combined_section">Combined logging</string>
     <string name="fueling_combined_concentration_label">Carbs per 500 ml (g)</string>
-    <string name="fueling_combined_hint">One tap logs a drink + its carbs. Set the carb concentration once; each button\'s carbs auto-fill from its volume (still editable). Active when carbs and/or hydration tracking is on.</string>
+    <string name="fueling_combined_hint">One tap logs a drink + its carbs. Set the carb concentration once; each button\'s carbs auto-fill from its volume (still editable).</string>
     <string name="fueling_combined_pointer">Carb drink mix? Set it up in Hydration → Combined logging: one tap logs the drink and its carbs.</string>
     <string name="fueling_fit_export_label">Write KSafe data to FIT (Intervals.icu / TrainingPeaks)</string>
     <string name="settings_fit_std_cal_label">Calories as standard FIT field</string>

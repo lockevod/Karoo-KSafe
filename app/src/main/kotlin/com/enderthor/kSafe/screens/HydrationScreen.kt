@@ -6,6 +6,10 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.fillMaxHeight
+import androidx.compose.foundation.layout.IntrinsicSize
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
@@ -518,17 +522,18 @@ private fun YourSweatCard(
             // this 4 dp spacing gives the same 8 dp visual rhythm as the rest of the card.
             Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
                 Text(text = stringResource(R.string.fueling_hyd_mult_hint), style = small, color = muted)
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+                // IntrinsicSize.Min + fillMaxHeight keeps both buttons the same height when one label wraps.
+                Row(modifier = Modifier.height(IntrinsicSize.Min), horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
                     // Equal weights: without them the long Calibrate label took the whole row and squeezed
                     // Reset to ~0 width, wrapping its text one letter per line into a tall blank block.
-                    OutlinedButton(onClick = { calibOpen = !calibOpen }, modifier = Modifier.weight(1f)) {
-                        Text(stringResource(R.string.fueling_calib_title))
+                    OutlinedButton(onClick = { calibOpen = !calibOpen }, modifier = Modifier.weight(1f).fillMaxHeight()) {
+                        Text(stringResource(R.string.fueling_calib_title), textAlign = TextAlign.Center)
                     }
                     // Reset wipes the calibration, so it takes a second tap within 3 s.
                     TextButton(onClick = {
                         if (resetArmed) { resetArmed = false; vm.resetHydrationCalibration() } else resetArmed = true
-                    }, modifier = Modifier.weight(1f)) {
-                        Text(stringResource(if (resetArmed) R.string.fueling_calib_reset_confirm else R.string.fueling_calib_reset))
+                    }, modifier = Modifier.weight(1f).fillMaxHeight()) {
+                        Text(stringResource(if (resetArmed) R.string.fueling_calib_reset_confirm else R.string.fueling_calib_reset), textAlign = TextAlign.Center)
                     }
                 }
                 if (calibOpen) {
