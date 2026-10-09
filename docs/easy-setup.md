@@ -224,7 +224,11 @@ to your ride screen (in the Karoo profile editor):
 - **Carb log slots** (e.g. labelled *"Gel"*, *"Bar"*) — one tap = one item logged.
 - **Drink log slots** (e.g. *"Bottle"*) — one tap = one drink logged.
 - **Combined button** (called *Fuel Combo* in the profile editor) — logs a drink *and* its
-  carbs in one tap.
+  carbs in one tap. Set it up in the **Hydration** tab, **Combined logging** card, right below
+  the drink slots (it shows when Carbs or Hydration is on).
+
+You can also log straight from the reminder: **Log fueling from the alert**, the card right
+below the Carbs or Hydration card. It is one setting for both tabs.
 
 Tapped by mistake? Tap the same slot again within ~5 seconds to undo it.
 

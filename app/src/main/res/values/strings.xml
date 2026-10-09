@@ -481,7 +481,7 @@
     <string name="webhook_alert_text_hint">Alert text</string>
     <string name="webhook_alert_text_example">e.g. Garage door opened!</string>
     <string name="webhook_alert_text_desc">This message will appear as an on-screen notification every time the action fires</string>
-    <string name="calibration_desc">When enabled, KSafe records anonymous sensor data (accelerometer values, speed readings, detection states) to help the developer calibrate the crash detection algorithm. No GPS coordinates, no messages, no personal information of any kind is ever included. Data is sent automatically to the developer when you disable this option or finish a ride. Disabled by default — completely optional.</string>
+    <string name="calibration_desc">When enabled, KSafe records anonymous sensor data (accelerometer values, speed readings, detection states and, if you use them, fueling and weigh-in figures such as weight change, never your weight) to help the developer calibrate the crash detection and fueling algorithms. No GPS coordinates, no messages, no personal information of any kind is ever included. Data is sent automatically to the developer when you disable this option or finish a ride. Disabled by default — completely optional.</string>
     <string name="calibration_logging_label">Send anonymous calibration data</string>
     <string name="update_check_label">Notify me about updates</string>
     <string name="update_available_title">Update available</string>

@@ -248,7 +248,7 @@ KSafe is provided **"as is"**, without warranty. The developer (lockevod) accept
 - All configuration is stored locally on the Karoo.
 - Message content and identifiers (phone number, chat ID, user key…) are shared with whichever third-party provider you select. Read their terms.
 - KSafe has no relationship with any of these providers.
-- The opt-in **anonymous calibration data** toggle records sensor / algorithm data only — no GPS, no messages, no personal identifier. Full disclosure: [docs/calibration-logging.md](docs/calibration-logging.md).
+- The opt-in **anonymous calibration data** toggle records sensor / algorithm data only (plus fueling and weigh-in figures when you use them: weight change, never your weight) — no GPS, no messages, no personal identifier. Full disclosure: [docs/calibration-logging.md](docs/calibration-logging.md).
 
 ## Documentation
 

@@ -232,7 +232,12 @@ campos de registro que quieras a tu pantalla de ruta (en el editor de perfiles d
 - **Slots de registro de carbos** (p. ej. *"Gel"*, *"Barrita"*) — un toque = un ítem registrado.
 - **Slots de registro de bebida** (p. ej. *"Bidón"*) — un toque = una bebida registrada.
 - **Botón combinado** (en el editor de perfiles se llama *Fuel Combo*) — registra una bebida
-  *y* sus carbos en un solo toque.
+  *y* sus carbos en un solo toque. Se configura en la pestaña **Hidratación**, tarjeta
+  **Registro combinado**, justo debajo de los slots de bebida (aparece con Carbos o Hidratación
+  activado).
+
+También puedes registrar desde el propio aviso: **Registrar nutrición desde la alerta**, la
+tarjeta justo debajo de la de Carbos o Hidratación. Es un único ajuste para las dos pestañas.
 
 ¿Lo tocaste sin querer? Vuelve a tocar el mismo slot en ~5 segundos para deshacerlo.
 

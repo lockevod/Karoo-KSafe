@@ -23,6 +23,8 @@ When enabled, KSafe records detailed sensor events to a local CSV file:
 | Heart rate *(when paired)* | `bpm=152`, `avg5min=149` |
 | Terrain noise level | `noise=2.4 m/s²` (std-dev over 5 s) |
 | Ride profile type | `profile=GRAVEL` (from Karoo profile) |
+| Fueling *(when Carbs / Hydration is on)* | what you logged, estimated burn, sweat and sodium, e.g. `cum_logged=1200`, `sweat=1500` |
+| Weigh-in calibration *(only if you use it)* | the weight **change** in grams (`loss_g=900`, never your body weight), what you drank and ate, and whether you urinated before the second weigh-in |
 | **Anonymous session ID** | `session=a3f9c2` (random, per-session) |
 | Device model | `device=Karoo-3` |
 | App version | `app_version=1.5.3` |
@@ -117,8 +119,12 @@ Every CSV row is tagged with a short event identifier. The current catalogue:
 | `WARN` / `SILENT` | Generic incident dispatched at WARNING / SILENT level |
 | `INC_SUPP` | An incident arrived while another emergency was in progress and was dropped (audit trail for co-occurring detectors) |
 | `HR_STALE` / `HR_PERIODIC` | HR signal staleness transition / 2-min periodic snapshot |
-| `CARB_START` / `CARB_LOG` / `CARB_UNDO` / `CARB_DEFICIT` / `CARB_TIME` | Carbs tracker events |
-| `HYD_START` / `HYD_LOG` / `HYD_UNDO` / `HYD_DEFICIT` / `HYD_TIME` | Hydration tracker events |
+| `CARB_START` / `CARB_LOG` / `CARB_UNDO` / `CARB_FIRE` / `CARB_PERIODIC` | Carbs tracker: config at start, logs, undos, alerts fired (deficit or time), 2-min snapshot |
+| `HYD_START` / `HYD_LOG` / `HYD_UNDO` / `HYD_FIRE` / `HYD_PERIODIC` | Hydration tracker, same shape as the carb rows |
+| `FUEL_QUIET` | A time reminder was due but swallowed because a deficit alert had just fired (never counts as a fire) |
+| `HYD_OVER_SHADOW` | *(2.3.0, shadow only)* logged drinks exceed estimated sweat by a new 500 ml level; never alerts |
+| `HYD_END` | *(2.3.0)* once at ride end: final sweat / sodium / logged totals, coverage and `blocker` (why this ride can't be calibrated, or `none`) |
+| `HYD_CALIB` | *(2.3.0)* each weigh-in calibration from the Hydration tab: accepted (ratio, new multiplier) or rejected (reason). Usually lands in the next ride's log |
 
 ### Emergency dispatch
 | Tag | Meaning |
