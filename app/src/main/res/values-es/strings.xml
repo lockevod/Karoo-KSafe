@@ -46,7 +46,8 @@
     <string name="tab_settings">Ajustes</string>
     <string name="tab_actions">Acciones</string>
     <string name="tab_health">Salud</string>
-    <string name="tab_fueling">Nutrición</string>
+    <string name="tab_carbs">Carbos</string>
+    <string name="tab_hydration">Hidratación</string>
 
     <!-- Pantalla de Ajustes -->
     <string name="settings_screen_title">Ajustes</string>
@@ -65,8 +66,7 @@
     <string name="dialog_cancel">Cancelar</string>
 
     <!-- Pantalla de Nutrición -->
-    <string name="fueling_title">Nutrición</string>
-    <string name="fueling_info_banner">Los carbohidratos usan zonas de FC/potencia si están disponibles para un objetivo según intensidad; sin sensores el objetivo es proporcional al tiempo. La hidratación siempre es proporcional al tiempo — ajusta el objetivo a mano en días calurosos.</string>
+    <string name="fueling_info_banner">Los carbohidratos usan zonas de FC/potencia si están disponibles para un objetivo según intensidad; sin sensores el objetivo es proporcional al tiempo.</string>
     <string name="fueling_carb_section">Carbohidratos</string>
     <string name="fueling_calories_section">Calorías</string>
     <string name="fueling_physiology_section">Fisiología del ciclista</string>
