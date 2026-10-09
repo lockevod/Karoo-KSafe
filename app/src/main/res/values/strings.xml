@@ -85,6 +85,7 @@
     <string name="fueling_alert_time_label">Alert by time</string>
     <string name="fueling_deficit_threshold_g_label">Threshold (g)</string>
     <string name="fueling_deficit_threshold_ml_label">Threshold (ml)</string>
+    <string name="fueling_deficit_threshold_hint">Also sets when the status field turns amber (this far behind) and red (1.5× this far behind), even with the deficit alert off.</string>
     <!-- Timer labels: v17 — grid-aligned pure-interval reminders. The "Remind every"
          cadence is anchored to the session start (ticks at t = N × interval). "Skip
          first" is a filter — reminders whose scheduled tick falls earlier than the
@@ -559,6 +560,7 @@
     <string name="fueling_calib_urinated_label">I urinated before the second weigh-in</string>
     <string name="fueling_calib_button">Calibrate</string>
     <string name="fueling_calib_reset">Reset calibration</string>
+    <string name="fueling_calib_reset_confirm">Tap again to reset</string>
     <string name="fueling_calib_result_ok">Measured/estimated ratio %1$.2f. How much you sweat is now %2$d%%.</string>
     <string name="fueling_calib_reject_no_ride">There is no ride to calibrate.</string>
     <string name="fueling_calib_reject_ride_changed">A newer ride has been recorded. Reopen this screen and try again.</string>

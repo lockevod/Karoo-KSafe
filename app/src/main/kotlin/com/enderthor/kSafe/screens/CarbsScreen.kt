@@ -121,14 +121,18 @@ fun CarbsScreen(vm: MainViewModel) {
                         }
                     )
                 }
+                IntField(
+                    label = stringResource(R.string.fueling_deficit_threshold_g_label),
+                    text = carbDeficitThreshold,
+                    range = 5..60,
+                    onCommit = { carbDeficitThreshold = it; vm.updateConfig { cfg -> cfg.copy(carbDeficitThresholdG = it.toInt()) } },
+                    onTextChange = { carbDeficitThreshold = it },
+                )
+                Text(
+                    text = stringResource(R.string.fueling_deficit_threshold_hint),
+                    style = MaterialTheme.typography.bodyMedium,
+                )
                 if (carbDeficitOn) {
-                    IntField(
-                        label = stringResource(R.string.fueling_deficit_threshold_g_label),
-                        text = carbDeficitThreshold,
-                        range = 5..60,
-                        onCommit = { carbDeficitThreshold = it; vm.updateConfig { cfg -> cfg.copy(carbDeficitThresholdG = it.toInt()) } },
-                        onTextChange = { carbDeficitThreshold = it },
-                    )
                     IntField(
                         label = stringResource(R.string.fueling_deficit_initial_delay_label),
                         text = carbDeficitInitialDelay,

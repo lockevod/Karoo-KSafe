@@ -17,8 +17,8 @@ import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.CompositionLocalProvider
-import androidx.compose.material3.LocalMinimumInteractiveComponentSize
+import androidx.compose.runtime.LaunchedEffect
+import kotlinx.coroutines.delay
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.collectAsState
@@ -185,14 +185,18 @@ fun HydrationScreen(vm: MainViewModel) {
                         }
                     )
                 }
+                IntField(
+                    label = stringResource(R.string.fueling_deficit_threshold_ml_label),
+                    text = hydDeficitThreshold,
+                    range = 50..800,
+                    onCommit = { hydDeficitThreshold = it; vm.updateConfig { cfg -> cfg.copy(hydrationDeficitThresholdMl = it.toInt()) } },
+                    onTextChange = { hydDeficitThreshold = it },
+                )
+                Text(
+                    text = stringResource(R.string.fueling_deficit_threshold_hint),
+                    style = MaterialTheme.typography.bodyMedium,
+                )
                 if (hydDeficitOn) {
-                    IntField(
-                        label = stringResource(R.string.fueling_deficit_threshold_ml_label),
-                        text = hydDeficitThreshold,
-                        range = 50..800,
-                        onCommit = { hydDeficitThreshold = it; vm.updateConfig { cfg -> cfg.copy(hydrationDeficitThresholdMl = it.toInt()) } },
-                        onTextChange = { hydDeficitThreshold = it },
-                    )
                     IntField(
                         label = stringResource(R.string.fueling_deficit_initial_delay_label),
                         text = hydDeficitInitialDelay,
@@ -487,6 +491,10 @@ private fun YourSweatCard(
     val muted = MaterialTheme.colorScheme.onSurface
     var calibOpen by remember { mutableStateOf(false) }
     var lastOpen by remember { mutableStateOf(false) }
+    var resetArmed by remember { mutableStateOf(false) }
+    LaunchedEffect(resetArmed) {
+        if (resetArmed) { delay(3_000); resetArmed = false }
+    }
     Card(elevation = CardDefaults.cardElevation(defaultElevation = 2.dp)) {
         Column(modifier = Modifier.padding(10.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
             Text(
@@ -501,25 +509,30 @@ private fun YourSweatCard(
                 onCommit = { onMultChange(it); vm.updateConfig { cfg -> cfg.copy(hydrationSweatMultiplierPct = it.toInt()) } },
                 onTextChange = onMultChange,
             )
-            Text(text = stringResource(R.string.fueling_hyd_mult_hint), style = small, color = muted)
-            // The 48 dp minimum-touch box pads each 40 dp button with 4 dp of invisible space
-            // above and below, which on top of the column's 8 dp spacing read as a double gap
-            // around the calibration toggle. 40 dp is still a comfortable Karoo touch target.
-            CompositionLocalProvider(LocalMinimumInteractiveComponentSize provides 0.dp) {
+            // Hint, buttons, form and divider share a tighter 4 dp column: the buttons keep
+            // their 48 dp touch box (gloved touchscreen), and its invisible 4 dp padding plus
+            // this 4 dp spacing gives the same 8 dp visual rhythm as the rest of the card.
+            Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                Text(text = stringResource(R.string.fueling_hyd_mult_hint), style = small, color = muted)
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
                     OutlinedButton(onClick = { calibOpen = !calibOpen }) {
                         Text(stringResource(R.string.fueling_calib_title))
                     }
-                    TextButton(onClick = { vm.resetHydrationCalibration() }) {
-                        Text(stringResource(R.string.fueling_calib_reset))
+                    // Reset wipes the calibration, so it takes a second tap within 3 s.
+                    TextButton(onClick = {
+                        if (resetArmed) { resetArmed = false; vm.resetHydrationCalibration() } else resetArmed = true
+                    }) {
+                        Text(stringResource(if (resetArmed) R.string.fueling_calib_reset_confirm else R.string.fueling_calib_reset))
                     }
                 }
+                if (calibOpen) {
+                    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        if (r == null) Text(stringResource(R.string.fueling_lastride_empty), style = small, color = muted)
+                        else CalibrationForm(vm, r)
+                    }
+                }
+                HorizontalDivider()
             }
-            if (calibOpen) {
-                if (r == null) Text(stringResource(R.string.fueling_lastride_empty), style = small, color = muted)
-                else CalibrationForm(vm, r)
-            }
-            HorizontalDivider()
             Text(text = stringResource(R.string.fueling_hyd_salt_label), style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.Bold)
             SaltinessChips(
                 selected = profile,

@@ -2355,7 +2355,7 @@ class KSafeExtension : KarooExtension("ksafe", BuildConfig.VERSION_NAME), Corout
         }
     }
 
-    /** Called from FuelingScreen to preview a carb/hydration alert without logging any intake.
+    /** Called from the Carbs/Hydration screens to preview a carb/hydration alert without logging any intake.
      * Mode-faithful (honours fuelingAlertButtonMode), silent (no beep — the tracker's beep stays
      * in fireAlert), and safe (yields to a real emergency). Returns a UI status string. */
     fun simulateFuelingAlert(channel: com.enderthor.kSafe.extension.util.FuelingChannel): String {

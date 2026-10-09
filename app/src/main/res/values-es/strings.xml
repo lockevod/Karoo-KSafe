@@ -85,6 +85,7 @@
     <string name="fueling_alert_time_label">Avisar por tiempo</string>
     <string name="fueling_deficit_threshold_g_label">Umbral (g)</string>
     <string name="fueling_deficit_threshold_ml_label">Umbral (ml)</string>
+    <string name="fueling_deficit_threshold_hint">También marca cuándo el campo de estado se pone ámbar (con este déficit) y rojo (con 1,5× este déficit), aunque la alerta de déficit esté apagada.</string>
     <string name="fueling_time_interval_label">Recordar cada (min)</string>
     <string name="fueling_initial_delay_label">Saltar primeros (min, 0 = off)</string>
     <string name="fueling_deficit_initial_delay_label">Saltar primeros (min, 0 = off)</string>
@@ -510,6 +511,7 @@
     <string name="fueling_calib_urinated_label">Oriné antes del segundo pesaje</string>
     <string name="fueling_calib_button">Calibrar</string>
     <string name="fueling_calib_reset">Restablecer calibración</string>
+    <string name="fueling_calib_reset_confirm">Toca otra vez para restablecer</string>
     <string name="fueling_calib_result_ok">Relación medido/estimado %1$.2f. «Cuánto sudas» pasa a %2$d%%.</string>
     <string name="fueling_calib_reject_no_ride">No hay ninguna salida que calibrar.</string>
     <string name="fueling_calib_reject_ride_changed">Se ha registrado una salida más reciente. Vuelve a abrir esta pantalla e inténtalo de nuevo.</string>
