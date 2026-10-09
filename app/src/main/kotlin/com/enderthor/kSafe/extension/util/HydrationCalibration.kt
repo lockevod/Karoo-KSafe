@@ -37,6 +37,14 @@ sealed interface CalibrationResult {
     data class Rejected(val reason: CalibrationRejection) : CalibrationResult
 }
 
+/** Why this ride's record can never be calibrated whatever the weigh-in, or null if it can. */
+fun rideCalibrationBlocker(ride: LastHydrationRide): CalibrationRejection? = when {
+    ride.rideTimeMs <= 0 -> CalibrationRejection.NO_RIDE_TIME
+    ride.rideTimeMs < MIN_RIDE_MS -> CalibrationRejection.TOO_SHORT
+    !coverageOk(ride.coveredMs, ride.rideTimeMs) -> CalibrationRejection.LOW_COVERAGE
+    else -> null
+}
+
 /** Weigh-in calibration. The first failing check (in enum order) wins. */
 fun calibrate(
     ride: LastHydrationRide?,
@@ -50,9 +58,7 @@ fun calibrate(
     if (ride.calibrated) return reject(CalibrationRejection.ALREADY_CALIBRATED)
     if (input.nowMs - ride.endedAtMs > MAX_RIDE_AGE_MS) return reject(CalibrationRejection.TOO_OLD)
     if (input.urinated) return reject(CalibrationRejection.URINATED)
-    if (ride.rideTimeMs <= 0) return reject(CalibrationRejection.NO_RIDE_TIME)
-    if (ride.rideTimeMs < MIN_RIDE_MS) return reject(CalibrationRejection.TOO_SHORT)
-    if (!coverageOk(ride.coveredMs, ride.rideTimeMs)) return reject(CalibrationRejection.LOW_COVERAGE)
+    rideCalibrationBlocker(ride)?.let { return reject(it) }
     val lossKg = input.preKg - input.postKg
     if (input.preKg !in 30.0..200.0 || lossKg !in -1.0..5.0) return reject(CalibrationRejection.IMPLAUSIBLE_WEIGHT)
     val measured = (lossKg * 1000 * BODY_MASS_SWEAT_FACTOR + input.drinkMl + input.foodG).roundToInt()

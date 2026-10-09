@@ -28,6 +28,10 @@ import com.enderthor.kSafe.extension.crash.CrashDetectionManager
 import com.enderthor.kSafe.extension.managers.EmergencyManager
 import com.enderthor.kSafe.extension.managers.LocationManager
 import com.enderthor.kSafe.extension.util.LogReporter
+import com.enderthor.kSafe.extension.util.CalibrationInput
+import com.enderthor.kSafe.extension.util.CalibrationResult
+import com.enderthor.kSafe.extension.util.rideCalibrationBlocker
+import kotlin.math.roundToInt
 import com.enderthor.kSafe.extension.util.learnProfile
 import com.enderthor.kSafe.extension.util.resolveEffectiveCrashConfig
 import com.enderthor.kSafe.extension.managers.MedicalEpisodeDetector
@@ -1591,6 +1595,16 @@ class KSafeExtension : KarooExtension("ksafe", BuildConfig.VERSION_NAME), Corout
                 // Last-ride record (weigh-in calibration / sodium summary) BEFORE stop() — null
                 // unless this ride had a live hydration session. Ride time is cleared after it.
                 val hydRecord = hydrationTracker.lastRideSnapshot()
+                if (hydRecord != null && this@KSafeExtension::calibLogger.isInitialized) {
+                    calibLogger.log(CalibrationLogger.Event.FUELING_HYDRATION_END) {
+                        val r = hydRecord
+                        "ride_min=${r.rideTimeMs / 60_000},cov_pct=${if (r.rideTimeMs > 0) r.coveredMs * 100 / r.rideTimeMs else -1}," +
+                            "low_min=${r.lowConfMs / 60_000},sweat=${r.cumSweatMl.toInt()},base=${r.cumSweatBaseMl.toInt()}," +
+                            "logged=${r.cumLoggedMl},na_mg=${r.cumSodiumMg.toInt()},na=${r.naMmolL}," +
+                            "mult=${r.multiplierPctAtRide},mode=${if (r.dynamicMode) "dynamic" else "fixed"}," +
+                            "blocker=${rideCalibrationBlocker(r) ?: "none"}"
+                    }
+                }
                 rideTimeMs = null
                 hydrationTracker.stop(endOfSession = true)
                 // A fueling overlay shown in the final seconds otherwise lingers for its full
@@ -2320,6 +2334,21 @@ class KSafeExtension : KarooExtension("ksafe", BuildConfig.VERSION_NAME), Corout
 
     /** Active Karoo ride-profile id for the Settings UI's per-profile crash section. */
     fun getActiveProfileIdForUi(): String? = activeProfileId
+
+    /** HYD_CALIB row for a weigh-in done in the settings UI (same process). No-op when logging is off. */
+    fun logHydrationCalibration(input: CalibrationInput, result: CalibrationResult, oldMultiplierPct: Int) {
+        if (!::calibLogger.isInitialized) return
+        calibLogger.log(CalibrationLogger.Event.FUELING_HYDRATION_CALIB) {
+            val head = "loss_g=${((input.preKg - input.postKg) * 1000).roundToInt()},drink_ml=${input.drinkMl}," +
+                "food_g=${input.foodG},urinated=${input.urinated},old_mult=$oldMultiplierPct,"
+            head + when (result) {
+                is CalibrationResult.Accepted ->
+                    "result=accepted,measured_ml=${result.measuredMl},ratio=${"%.3f".format(java.util.Locale.US, result.ratio)}," +
+                        "new_mult=${result.newMultiplierPct},n_ratios=${result.newRatios.size}"
+                is CalibrationResult.Rejected -> "result=rejected,reason=${result.reason}"
+            }
+        }
+    }
 
     /** Returns a string with file location info for display in the Settings UI.
      *  `suspend` + [Dispatchers.IO]: scans the whole CSV (line count) and reads the

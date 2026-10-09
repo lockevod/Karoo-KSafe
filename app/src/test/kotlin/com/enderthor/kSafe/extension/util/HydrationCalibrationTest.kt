@@ -31,6 +31,13 @@ class HydrationCalibrationTest {
     private fun rejection(r: LastHydrationRide?, i: CalibrationInput, id: Long = 42) =
         (calibrate(r, id, i, emptyList()) as CalibrationResult.Rejected).reason
 
+    @Test fun `ride blocker reports why a record can never calibrate`() {
+        assertNull(rideCalibrationBlocker(ride()))
+        assertEquals(CalibrationRejection.NO_RIDE_TIME, rideCalibrationBlocker(ride(rideTime = 0)))
+        assertEquals(CalibrationRejection.TOO_SHORT, rideCalibrationBlocker(ride(rideTime = h / 2, covered = h / 2)))
+        assertEquals(CalibrationRejection.LOW_COVERAGE, rideCalibrationBlocker(ride(covered = h)))
+    }
+
     @Test fun `accepted calibration computes measured and ratio`() {
         val a = accepted(ride(), input())
         assertEquals(1520, a.measuredMl)

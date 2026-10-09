@@ -660,6 +660,8 @@ The `cancelAndJoin` inside the *new* coroutine ensures the previous tick loop is
 | `FUELING_HYDRATION_PERIODIC` (`HYD_PERIODIC`) | every 2 min: `mode, rate_ml_h, conf, hr, pwr, temp, rh, cum_target, cum_logged, deficit` plus (2.3.0) `mult, repl, sweat, base, na_mg, cov_pct, low_pct, spd`. `conf` is the real estimator confidence in fixed mode too: filter by `mode` |
 | `FUELING_HYDRATION_START` (`HYD_START`) | config snapshot plus (2.3.0) `mult, repl, na` |
 | `FUELING_HYDRATION_OVER_SHADOW` (`HYD_OVER_SHADOW`) | 2.3.0, shadow only: `excess, cum_logged, cum_sweat, mult, conf, cov_pct, mode, ride_min` |
+| `FUELING_HYDRATION_END` (`HYD_END`) | 2.3.0, once at ride end with the saved Last-ride record: `ride_min, cov_pct, low_min, sweat, base, logged, na_mg, na, mult, mode, blocker` (`none` or the ride-level calibration rejection: `NO_RIDE_TIME`, `TOO_SHORT`, `LOW_COVERAGE`) |
+| `FUELING_HYDRATION_CALIB` (`HYD_CALIB`) | 2.3.0, each weigh-in from the settings UI: `loss_g, drink_ml, food_g, urinated, old_mult, result` plus `measured_ml, ratio, new_mult, n_ratios` (accepted) or `reason` (rejected). Lands in whichever session is logging at that moment, usually the next ride's file |
 
 v18: the legacy `multiplier=` field is gone from `CARB_FIRE` and `CARB_PERIODIC`. It was vestigial after the integrator switched from `base × multiplier` to the physiological estimator; the new load-bearing signals are `confidence` (which tier ran), `kcal_h` (the kcal/h that drove the integration step) and `cho_fraction` (Romijn / Jeukendrup table lookup at the current zone). The CSV column header was updated; older logs still parse — the column slots a `multiplier` value into a `confidence` header which is wrong but is also recognizable as legacy v17 data.
 

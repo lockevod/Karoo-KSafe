@@ -271,6 +271,13 @@ class CalibrationLogger(
         FUELING_HYDRATION_PERIODIC("HYD_PERIODIC"),
         /** SHADOW over-drink verdict: logged excess reached a new 500 ml level. Never alerts. */
         FUELING_HYDRATION_OVER_SHADOW("HYD_OVER_SHADOW"),
+        /** Ride-end Last-ride record: final totals + whether the ride can be calibrated
+         *  (`blocker=` none / NO_RIDE_TIME / TOO_SHORT / LOW_COVERAGE). The last HYD_PERIODIC
+         *  can be up to 2 min stale; this is the value the calibration actually judges. */
+        FUELING_HYDRATION_END("HYD_END"),
+        /** Weigh-in calibration attempt from the settings UI: accepted (ratio, new multiplier)
+         *  or rejected (reason). Lands in whichever session is logging when it happens. */
+        FUELING_HYDRATION_CALIB("HYD_CALIB"),
         /**
          * A TIME-grid fueling reminder was due but swallowed by the quiet window
          * (`FuelingAlertScheduler.suppressedByRecentAlert`) — a deficit alert had
