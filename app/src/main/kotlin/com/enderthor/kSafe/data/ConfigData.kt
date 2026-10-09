@@ -124,8 +124,13 @@ const val KAROO_LIVE_BASE_URL = "https://dashboard.hammerhead.io/live/"
  *             Pure version stamp; absent in old blobs decodes to NONE (off).
  *  v25 → v26: webhook slots 3 & 4 added (tap-only, no BonusAction). 26 additive fields with
  *             sensible defaults (disabled, "Action 3/4"). Pure version stamp.
+ *  v26 → v27: speed-drop watchdog floor raised 1 → 5 min (default 5 → 10); saved values
+ *             below 5 are bumped.
+ *  v27 → v28: hydration sweat/sodium model fields added (sweat multiplier, replacement %,
+ *             sodium profile + measured mmol/L, calibration ratios). Pure version stamp;
+ *             all fields have defaults, so existing installs are unaffected.
  */
-const val CONFIG_VERSION = 27
+const val CONFIG_VERSION = 28
 
 /**
  * Canonical minSpeedForCrashKmh value per preset.
@@ -614,6 +619,15 @@ data class KSafeConfig(
      *  device-heat +3-8 °C). Humidity comes from Headwind only; without it the estimator
      *  assumes 50 % RH. Opt-in: default OFF so existing riders keep the fixed target. */
     val hydrationDynamicEstimateEnabled: Boolean = false,
+    /** Personal sweat-rate multiplier (%) applied on top of the estimator output. */
+    val hydrationSweatMultiplierPct: Int = 100,
+    /** Share (%) of estimated sweat loss the rider aims to replace. */
+    val hydrationReplacementPct: Int = 80,
+    val sweatSodiumProfile: SweatSodiumProfile = SweatSodiumProfile.TYPICAL,
+    /** Sweat sodium (mmol/L) used when [sweatSodiumProfile] is MEASURED. */
+    val sweatSodiumMeasuredMmolL: Int = 36,
+    /** Per-ride logged/estimated ratios used to auto-calibrate the sweat multiplier. */
+    val hydrationCalibrationRatios: List<Float> = emptyList(),
     val hydrationDeficitAlertEnabled: Boolean = true,
     val hydrationDeficitThresholdMl: Int = 300,
     /** Same semantics as [carbDeficitInitialDelayMin]. 0 = disabled. */
@@ -904,6 +918,17 @@ data class CarbFuelingState(
 )
 
 @Serializable
+enum class SweatSodiumProfile { LIGHT, TYPICAL, SALTY, MEASURED }
+
+/** Sweat sodium concentration in mmol/L; MEASURED is clamped to 10..90. */
+fun SweatSodiumProfile.mmolL(measured: Int): Int = when (this) {
+    SweatSodiumProfile.LIGHT -> 25
+    SweatSodiumProfile.TYPICAL -> 36
+    SweatSodiumProfile.SALTY -> 50
+    SweatSodiumProfile.MEASURED -> measured.coerceIn(10, 90)
+}
+
+@Serializable
 data class HydFuelingState(
     val cumTargetMl: Float = 0f,
     val cumLoggedMl: Int = 0,
@@ -916,6 +941,36 @@ data class HydFuelingState(
     val lastTimeAlertFireMs: Long = 0L,
     /** See [CarbFuelingState.lastDeficitAlertFireMs] — same field, hydration side. */
     val lastDeficitAlertFireMs: Long = 0L,
+    /** Cumulative estimated sweat loss before the personal multiplier (ml). */
+    val cumSweatBaseMl: Float = 0f,
+    /** Cumulative estimated sweat loss after the personal multiplier (ml). */
+    val cumSweatMl: Float = 0f,
+    /** Cumulative sodium lost in sweat (mg). */
+    val cumSodiumMg: Float = 0f,
+    /** Ride time (ms) with a sweat estimate available. */
+    val coveredMs: Long = 0L,
+    /** Subset of [coveredMs] estimated at LOW confidence. */
+    val lowConfMs: Long = 0L,
+    /** SHADOW-only over-drink level; never drives an alert. */
+    val overShadowLevel: Int = 0,
+)
+
+/** Summary of the last finished ride's hydration accounting, used for calibration. */
+@Serializable
+data class LastHydrationRide(
+    val rideId: Long,
+    val endedAtMs: Long,
+    val rideTimeMs: Long,
+    val coveredMs: Long,
+    val lowConfMs: Long,
+    val cumSweatBaseMl: Float,
+    val cumSweatMl: Float,
+    val cumLoggedMl: Int,
+    val cumSodiumMg: Float,
+    val naMmolL: Int,
+    val multiplierPctAtRide: Int,
+    val dynamicMode: Boolean,
+    val calibrated: Boolean = false,
 )
 
 /**
@@ -1479,6 +1534,13 @@ fun KSafeConfig.migrateToLatest(): KSafeConfig {
         }
         c = c.copy(configVersion = 27)
         Timber.i("KSafeConfig migrated v%d→v27 (speed-drop floor 5 min)", originalVersion)
+    }
+
+    if (c.configVersion < 28) {
+        // v27 → v28: hydration sweat/sodium fields added. Pure version stamp — all
+        // additive with defaults, so existing installs behave identically.
+        c = c.copy(configVersion = 28)
+        Timber.i("KSafeConfig migrated v%d→v28 (hydration sweat/sodium model)", originalVersion)
     }
 
     return c
