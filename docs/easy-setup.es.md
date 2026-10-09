@@ -206,15 +206,21 @@ pensar en ello, activa **Dynamic estimate** y KSafe ajusta el objetivo según tu
 temperatura. En modo dinámico KSafe apunta a cerca del 80 % del sudor estimado (ajústalo en
 **Objetivo de reposición**): reponer cada gota durante la salida no es lo recomendable.
 
-**Aprende tu propio sudor (opcional).** Cada persona suda distinto. Después de una salida, abre la
-pestaña **Nutrición**, tarjeta **Última salida**, e introduce tu peso antes y después (desnudo y
+**Aprende tu propio sudor (opcional).** Cada persona suda distinto. Abre la pestaña
+**Nutrición**, tarjeta **Tu sudor** (aparece al activar el seguimiento de hidratación).
+**Cuánto sudas** es un porcentaje: 100 % es un ciclista medio. En vez de adivinarlo, pulsa
+**Calibrar con un pesaje** después de una salida e introduce tu peso antes y después (desnudo y
 antes de ir al baño) junto con lo que has bebido y comido. KSafe lo compara con su estimación y
-ajusta tu **Multiplicador de sudoración** personal. Hace falta una salida de al menos 1 hora con buenos
-datos, sin parada para orinar, y hacerlo en las 6 horas siguientes. Repítelo en varias salidas (se
-promedian las 3 últimas) y vuelve a hacerlo al cambiar de estación. La misma tarjeta muestra tu
-pérdida estimada de sodio y, tras salidas largas, una concentración de sal opcional para tu bidón.
-Si sabes lo salado que sudas, elige tu **Salinidad del sudor** (Baja / Normal / Alta / Medida) en la
-sección **Hidratación**.
+ajusta ese porcentaje por ti. Hace falta una salida de al menos 1 hora con buenos datos, sin
+parada para orinar, y hacerlo en las 6 horas siguientes. Repítelo en varias salidas (se promedian
+las 3 últimas) y vuelve a hacerlo al cambiar de estación, o pulsa **Restablecer calibración**
+para empezar de cero.
+
+La misma tarjeta pregunta **¿Cómo de salado es tu sudor?** (Poca / Normal / Mucha / Medida). Elige
+Mucha si la ropa o la cinta del casco quedan con marcas blancas de sal. Solo se usa para estimar
+el sodio perdido; no cambia los avisos de bebida. Pulsa **Última salida** en la tarjeta para ver
+tu sudor y sodio perdido estimados y, tras salidas largas, una concentración de sal opcional para
+tu bidón.
 
 ### "¿Qué toco?"
 

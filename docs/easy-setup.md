@@ -199,14 +199,20 @@ about it, turn on **Dynamic estimate** and KSafe adjusts the target from your ef
 temperature. In dynamic mode KSafe aims at about 80 % of the sweat it estimates (you can change
 this): drinking back every drop during a ride is not recommended.
 
-**Learn your own sweat rate (optional).** Everyone sweats differently. After a ride, open the
-**Fueling** tab, **Last ride** card, and enter your weight before and after the ride (naked,
-before using the toilet) plus what you drank and ate. KSafe compares it with its estimate and
-adjusts a personal **sweat multiplier**. It needs a ride of at least 1 hour with good data, no
-toilet stop, and must be done within 6 hours. Repeat on a few rides (the last 3 are averaged);
-redo it when the season changes. The same card shows your estimated sodium loss and, after long
-rides, an optional salt concentration for your bottle. Pick your sweat saltiness (Light / Typical /
-Salty / Measured) in the Hydration card if you know it.
+**Learn your own sweat rate (optional).** Everyone sweats differently. Open the **Fueling** tab,
+**Your sweat** card (it appears when the Hydration tracker is on). **How much you sweat** is a
+percentage: 100 % is an average rider. Rather than guessing, tap **Calibrate with a weigh-in**
+after a ride and enter your weight before and after (naked, before using the toilet) plus what
+you drank and ate. KSafe compares it with its estimate and adjusts that percentage for you. It
+needs a ride of at least 1 hour with good data, no toilet stop, and must be done within 6 hours.
+Repeat on a few rides (the last 3 are averaged); redo it when the season changes, or tap
+**Reset calibration** to start over.
+
+The same card asks **How salty is your sweat?** (Low / Normal / High / Measured). Choose
+High if your kit or helmet strap dries with white salt marks. It is only used to estimate the
+sodium you lost; it does not change your drink reminders. Tap **Last ride** in the card to see
+your estimated sweat and sodium loss and, after long rides, an optional salt concentration for
+your bottle.
 
 ### "What do I tap?"
 
