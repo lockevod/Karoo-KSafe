@@ -196,7 +196,17 @@ Set a **drink target per hour**. Use this rough guide by weather:
 
 The default (750 ml/h) suits a mild day — bump it up for summer. If you'd rather not think
 about it, turn on **Dynamic estimate** and KSafe adjusts the target from your effort and the
-temperature.
+temperature. In dynamic mode KSafe aims at about 80 % of the sweat it estimates (you can change
+this): drinking back every drop during a ride is not recommended.
+
+**Learn your own sweat rate (optional).** Everyone sweats differently. After a ride, open the
+**Fueling** tab, **Last ride** card, and enter your weight before and after the ride (naked,
+before using the toilet) plus what you drank and ate. KSafe compares it with its estimate and
+adjusts a personal **sweat multiplier**. It needs a ride of at least 1 hour with good data, no
+toilet stop, and must be done within 6 hours. Repeat on a few rides (the last 3 are averaged);
+redo it when the season changes. The same card shows your estimated sodium loss and, after long
+rides, an optional salt concentration for your bottle. Pick your sweat saltiness (Light / Typical /
+Salty / Measured) in the Hydration card if you know it.
 
 ### "What do I tap?"
 

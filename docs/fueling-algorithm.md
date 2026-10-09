@@ -380,26 +380,73 @@ fun getSummary(): CarbSummary    // for the post-ride summary InRideAlert
 
 ## HydrationTracker
 
-`HydrationTracker.kt` mirrors `CarbsTracker` structurally but is **simpler** — there is no biosensor for sweat rate so the model stays target-based:
+`HydrationTracker.kt` mirrors `CarbsTracker` structurally. Since 2.3.0 it always runs a sweat/sodium model next to the drink target.
 
-- **No physiological burn estimator.** The rider sets `hydrationTargetMlPerHour` (default 750 ml/h) directly. Raising it for hot days remains a manual step.
-- **Optional dynamic estimator.** `dynamicHydrationEnabled` switches on `SweatEstimator` (HR + power + weight + ambient temperature + humidity from Headwind, when available); otherwise the flat per-hour rate applies. Anchors target the literature median (Sawka 2007 / Baker 2017) with a small (~5–10 %) conservative bias — comparable to Garmin's Firstbeat HeatStress targeting. See `SweatEstimator.kt` `heatFactor` for the WBGT-anchored curve.
-- **No HR / power consumed in the default path** (the dynamic estimator does consume them).
-- **2 logging slots** instead of 3.
-- Same dual-mode alerts (deficit + time) with the same configurable reminder cooldown (`hydrationDeficitReminderIntervalMin`, default 10 min), the same unacknowledged back-off ladder, and the same grid-aligned time alert.
-- Same initial-delay grace period and same custom-title option as carbs, with their own per-tracker config fields.
+- **Static mode (default).** The rider sets `hydrationTargetMlPerHour` (default 750 ml/h); `cumTargetMl` integrates it.
+- **Dynamic mode.** `hydrationDynamicEstimateEnabled` switches the target to the `SweatEstimator` output (HR + power + weight + ambient temperature + humidity from Headwind, when available). Anchors follow the literature median (Sawka 2007 / Baker 2017) with a small conservative bias. See `SweatEstimator.kt` `heatFactor`.
+- **Same alert machinery as carbs**: deficit + time alerts, `hydrationDeficitReminderIntervalMin` (default 10), the unacknowledged back-off ladder, the grid-aligned time alert, 2 logging slots.
 
-### Per-tick integration
+### Per-tick integration (2.3.0)
 
-```kotlin
-if (lastTickMs != 0L && moving) {
-    val dtSec = (now - lastTickMs).coerceAtLeast(0L) / 1000f
-    val ratePerSec = effectiveMlPerHour / 3600f       // flat target OR SweatEstimator
-    cumTargetMl += dtSec * ratePerSec
-}
+`hydrationStep` (`HydrationAccumulator.kt`, pure) runs every tick in **both** modes, only while the ride is Recording (not Paused), speed >= 2 km/h and GPS not stale:
+
+```
+sweatRate = baseSweat * multiplierPct/100            // multiplier clamped 50..200
+drinkRate = dynamic ? sweatRate * replacementPct/100 // clamped 50..100
+                    : hydrationTargetMlPerHour
+cumSweatBaseMl += baseSweat*dt     // no multiplier: the calibration denominator
+cumSweatMl     += sweatRate*dt
+cumSodiumMg    += sweatRate*dt * [Na] * 22.99 / 1000
+cumTargetMl    += drinkRate*dt
+coveredMs / lowConfMs += dt        // by estimator confidence (LOW or not)
 ```
 
-`effectiveMlPerHour` is `hydrationTargetMlPerHour` in the static path; in the dynamic path it comes from `SweatEstimator.estimate(...)`. The movement gate (`speedKmh >= 2.0`) and GPS-stale freeze apply on the hydration side too — same rationale as carbs. The two trackers are kept as separate classes because the burn-estimator path materially differs between them (real physiology on the carb side, target on the hydration side).
+The replacement fraction is applied once to the rate before the deficit rate is derived, so `FuelingAlertScheduler` projects the same rate that is integrated. `currentRateMlPerHour` and the `{target}` token show the drink rate, not the sweat rate. Before the first non-LOW estimate the dynamic `{target}` fallback is also scaled by the replacement %. Deficit crossings come later at 80 %; time-grid reminders are independent.
+
+**Coverage** = `coveredMs / rideTimeMs`, where ride time is the Karoo `ELAPSED_TIME` stream (recording time, pauses excluded). One rule catches every gap (tracker started mid-ride, disabled mid-ride, service death, legacy restore). Unknown ride time never qualifies. `MIN_COVERAGE = 0.85`.
+
+### Personal multiplier and weigh-in calibration
+
+`calibrate()` (`HydrationCalibration.kt`, pure), run as ONE DataStore transaction by `ConfigurationManager.calibrateHydration(expectedRideId, input)`:
+
+```
+measuredMl = (preKg - postKg) * 1000 * 0.92 + drinkMl + foodG    // 0.92 on the body-mass change only
+ratio      = measuredMl / cumSweatBaseMl                         // must lie in 0.3..3.0 (rejected, not clamped)
+multiplier = round(mean(last 3 ratios) * 100), clamped 50..200
+```
+
+Rejection order: NO_RIDE, RIDE_CHANGED, ALREADY_CALIBRATED, TOO_OLD (> 6 h after the ride), URINATED, NO_RIDE_TIME, TOO_SHORT (< 60 min ride time), LOW_COVERAGE (< 0.85), IMPLAUSIBLE_WEIGHT (30..200 kg, loss -1..5 kg), TOO_LITTLE_SWEAT (measured < 800 ml), RATIO_OUT_OF_RANGE. A hand edit of the multiplier does not clear the history; the next calibration recomputes from it. Known residual bias, not corrected: sweat during stops and pauses is on the scale but not in the model (about <= 5 % with the coverage floor).
+
+### Sodium
+
+`cumSodiumMg` uses the profile concentration: LIGHT 25, TYPICAL 36, SALTY 50 mmol/L, or MEASURED (10..90). The Last-ride card (`sodiumAdvice`) shows sodium lost (total and per hour) and an **optional** bottle concentration, only when ride time >= 2 h, coverage holds and `r = cumLoggedMl / cumSweatMl >= 0.5`:
+
+```
+bottle mg/L = 0.5 * [Na] * 22.99 / r      // would replace half the sodium given what was drunk
+```
+
+It is flagged "recommended" only when [Na] >= 50 mmol/L and r > 0.8 (McCubbin 2021 criterion). With r < 0.5 the card says fluid, not sodium, was the limit. If coverage fails the totals are marked "partial" and no bottle line is shown. There is no in-ride sodium alert and no sodium logging.
+
+### Last-ride record
+
+At `RideState.Idle`, before `stop(endOfSession = true)`, a snapshot of a live session is taken and `ConfigurationManager.finalizeHydrationRide(record)` stores `lasthydride` (`LastHydrationRide`) and clears `fuelingstate` in a single DataStore edit. A ride that ends while the service is dead writes nothing; the 6 h window and `rideId` stop a calibration against the wrong ride.
+
+### Over-drinking check (SHADOW, developer only)
+
+`overDrinkShadowLevel` (`OverDrinkShadow.kt`) logs `HYD_OVER_SHADOW` when ride time >= 90 min, `cumSweatMl` >= 1000, confidence != LOW, the tracker is integrating, coverage holds and `cumLoggedMl - cumSweatMl >= max(500 ml, 0.35 * cumSweatMl)`; one row per new 500 ml level (persisted). It never calls `onFuelingAlert`, never beeps, never shows an overlay. Going live needs a separate change through `FuelingAlertScheduler` with the emergency deferral, and suppression of the hydration time tick while an excess is active. Decide after 2-3 log sweeps.
+
+### Evidence: literature values vs our inferences
+
+Literature values:
+- Whole-body sweat [Na] 35.9 +/- 10.4 mmol/L (Baker 2016, n=506); cycling washdown 41 +/- 19 (Baker 2009); plausibility 10..90 (Baker 2017). Profile values 25/36/50 follow this spread.
+- Body-mass change overstates sweat by about 5-15 % (respiratory water, metabolic loss), hence 0.92 (Baker 2017).
+- Avoid > 2 % body-mass loss; do not replace all losses (Sawka 2007, ACSM); overdrinking is the primary cause of exercise-associated hyponatraemia and sodium does not prevent it under fluid overload (Hew-Butler 2015); sodium supplementation matters only with high [Na] and > 80 % fluid replacement (McCubbin 2021; Hoffman and Stuempfle 2015).
+- Individual sweat rates differ 2-3x at equal workload; required evaporative heat loss explains R2 = 0.93 of whole-body sweat rate, with a residual individual factor (Gagnon, Jay, Kenny 2013; Barnes 2019: 1.28 +/- 0.57 L/h).
+- Heat acclimation raises sweat rate (+163 ml/h) and lowers sweat [Na] (-20 mmol/L) (McDonald 2025): recalibrate seasonally.
+
+Our inferences (not literature values): multiplier range 50..200, the 3-ride mean, the 800 ml and 0.85-coverage guards, the 80 % default replacement, the 0.5 half-replacement bottle rule, and every over-drink shadow threshold. No airspeed term (Cramer and Jay 2019 partitional calorimetry shows why it is not a simple add-on); speed is logged in `HYD_PERIODIC` to revisit.
+
+References: Baker LB 2017 Sports Med 47:S111; Baker LB et al. 2016 J Sports Sci 34:358; Baker LB et al. 2009 J Appl Physiol 107:887; Gagnon D, Jay O, Kenny GP 2013 J Physiol 591:2925; Barnes KA et al. 2019 J Sports Sci 37:2304; Sawka MN et al. 2007 MSSE 39:377; Hew-Butler T et al. 2015 Clin J Sport Med 25:303; McCubbin AJ 2021 Auton Neurosci; Hoffman MD, Stuempfle KJ 2015 MSSE; McDonald et al. 2025 Compr Physiol; Cramer MN, Jay O 2019 J Appl Physiol.
 
 ---
 
@@ -468,7 +515,7 @@ When `RideState` transitions to `Idle`, KSafe captures totals (before stopping t
 
 ## FIT export — fueling + wellness developer fields
 
-KSafe writes seven developer fields into the Karoo's FIT file so the rider's activity in Strava / Intervals.icu / TrainingPeaks carries native graphs of fueling and cardiac decoupling alongside HR / power / cadence — coaches can correlate substrate / hydration / wellness with effort directly without exporting a separate CSV.
+KSafe writes developer fields into the Karoo's FIT file so the rider's activity in Strava / Intervals.icu / TrainingPeaks carries native graphs of fueling and cardiac decoupling alongside HR / power / cadence — coaches can correlate substrate / hydration / wellness with effort directly without exporting a separate CSV.
 
 ### SDK surface
 
@@ -483,7 +530,7 @@ Both take a `List<FieldValue>`, where each `FieldValue(developerField, value: Do
 
 ### Developer fields
 
-All seven fields are float32 (`fitBaseTypeId = 136`) and live in developer-data index 0. The field-definition numbers are **public API** — once shipped they cannot move because tools that learned the schema from a rider's earlier FIT file would otherwise misinterpret new files.
+All fields are float32 (`fitBaseTypeId = 136`) and live in developer-data index 0. The field-definition numbers are **public API** — once shipped they cannot move because tools that learned the schema from a rider's earlier FIT file would otherwise misinterpret new files.
 
 | # | Field name | Units | In record | In session | Source |
 |---|---|---|---|---|---|
@@ -494,6 +541,8 @@ All seven fields are float32 (`fitBaseTypeId = 136`) and live in developer-data 
 | 4 | `ksafe_wellness_fires` | count | — | ✅ | Number of wellness alerts that fired |
 | 5 | `ksafe_carbs_burned_g` | g | ✅ | ✅ | `CarbsTracker.cumBurnedG` — total estimated physiological carb burn |
 | 6 | `ksafe_carb_burn_rate_gph` | g/h | ✅ | — | `CarbsTracker.burnRateGph` — instantaneous burn rate (post-cap) |
+| 9 | `ksafe_sweat_ml` | ml | — | ✅ | `HydrationTracker` `cumSweatMl` — estimated sweat loss (2.3.0). Written only when the hydration tracker is on; 10 ml deadband |
+| 10 | `ksafe_sodium_mg` | mg | — | ✅ | `HydrationTracker` `cumSodiumMg` — estimated sodium loss (2.3.0). Same gating; 10 mg deadband |
 
 `#7` is **reserved** — the session-average burn rate is derivable downstream from the `#6` time series, so writing it again would just duplicate information for 4 bytes.
 
@@ -608,7 +657,9 @@ The `cancelAndJoin` inside the *new* coroutine ensures the previous tick loop is
 | `FUELING_HYDRATION_LOGGED` (`HYD_LOG`) | `slot, ml, cum_logged, cum_target` |
 | `FUELING_HYDRATION_UNDONE` (`HYD_UNDO`) | `slot, ml (negative — the reversal amount), cum_logged, cum_target` |
 | `FUELING_HYDRATION_FIRED` (`HYD_FIRE`) | `source, deficit_ml, since_log_min, cum_target, cum_logged` |
-| `FUELING_HYDRATION_PERIODIC` (`HYD_PERIODIC`) | every 2 min: `cum_target, cum_logged, deficit` |
+| `FUELING_HYDRATION_PERIODIC` (`HYD_PERIODIC`) | every 2 min: `mode, rate_ml_h, conf, hr, pwr, temp, rh, cum_target, cum_logged, deficit` plus (2.3.0) `mult, repl, sweat, base, na_mg, cov_pct, low_pct, spd`. `conf` is the real estimator confidence in fixed mode too: filter by `mode` |
+| `FUELING_HYDRATION_START` (`HYD_START`) | config snapshot plus (2.3.0) `mult, repl, na` |
+| `FUELING_HYDRATION_OVER_SHADOW` (`HYD_OVER_SHADOW`) | 2.3.0, shadow only: `excess, cum_logged, cum_sweat, mult, conf, cov_pct, mode, ride_min` |
 
 v18: the legacy `multiplier=` field is gone from `CARB_FIRE` and `CARB_PERIODIC`. It was vestigial after the integrator switched from `base × multiplier` to the physiological estimator; the new load-bearing signals are `confidence` (which tier ran), `kcal_h` (the kcal/h that drove the integration step) and `cho_fraction` (Romijn / Jeukendrup table lookup at the current zone). The CSV column header was updated; older logs still parse — the column slots a `multiplier` value into a `confidence` header which is wrong but is also recognizable as legacy v17 data.
 
@@ -623,7 +674,7 @@ The 2-minute cadence of `*_PERIODIC` matches the existing crash-detection `PERIO
 - **Soft-fall detection via fueling state.** A rider with high carb deficit + low recent intake who suddenly has an accel impact below the smoothed crash threshold could be a candidate for HR-confirmed soft-fall handling. Requires expanding the crash detector's trigger paths — out of scope for v1.
 - **Power-meter battery awareness.** If the power meter sensor reports low battery, the burn estimator should explicitly downgrade from Tier 1 (POWER) to Tier 2/3 (HR-based). Currently it uses whichever data is flowing; a dying power meter that emits 0 W is read as "rider is freewheeling", under-counting burn.
 - **Adaptive deficit threshold.** A future iteration could learn from logged intake across rides ("you consistently let the deficit grow to 40 g before logging — consider lowering threshold"). Out of scope for v1.
-- **Dynamic sweat-rate refinement.** `SweatEstimator` already accepts ambient temperature and humidity when Headwind is paired. Future: validate the formula against real-rider field data and expose tuning knobs.
+- **Dynamic sweat-rate refinement.** 2.3.0 added the personal multiplier. Future: validate against field `HYD_PERIODIC` data (speed is logged for a possible airspeed term), and promote the over-drinking shadow (`HYD_OVER_SHADOW`) to a live alert after 2-3 log sweeps.
 - **GI-distress upper bound.** Currently nothing alerts the rider if they over-consume. The intestinal absorption ceiling is ~90 g/h; sustained intake above that often causes GI issues. Out of scope per the original spec, but worth re-evaluating with calibration data.
 - **`ZoneSnapshot.multiplier` field removal.** Still present in the data class for backwards compat with the v17 calibration CSV column header. Schedule for removal once enough v18-shipped logs have accumulated that the historical analysis pipeline can drop the legacy column.
 - **Inter-app integration.** Other Karoo extensions might want to consume the carb / hydration state. Requires a defined contract — see future spec.
@@ -673,7 +724,11 @@ Riders who don't fill these in still get a useful carb estimate via Swain. Both 
 |---|---|---|
 | `hydrationTrackerEnabled` | `false` (opt-in master — same gating as carbs) | ✅ |
 | `hydrationTargetMlPerHour` | 750 | ✅ |
-| `dynamicHydrationEnabled` | `false` | ✅ — switches to `SweatEstimator` (HR + power + weight + ambient temperature + humidity from Headwind, when paired) |
+| `hydrationDynamicEstimateEnabled` | `false` | ✅ — switches to `SweatEstimator` (HR + power + weight + ambient temperature + humidity from Headwind, when paired) |
+| `hydrationSweatMultiplierPct` | 100 (50..200) | ✅ — Hydration card; set by weigh-in calibration (Last-ride card) or by hand |
+| `hydrationReplacementPct` | 80 (50..100) | ✅ — dynamic mode only |
+| `sweatSodiumProfile` / `sweatSodiumMeasuredMmolL` | `TYPICAL` / 36 (10..90) | ✅ — LIGHT 25, TYPICAL 36, SALTY 50, MEASURED |
+| `hydrationCalibrationRatios` | empty (last 3) | internal |
 | `hydrationDeficitAlertEnabled` | `true` | ✅ |
 | `hydrationDeficitThresholdMl` | 300 ml | ✅ |
 | `hydrationDeficitInitialDelayMin` | 30 | ✅ (0 = off) |
@@ -701,6 +756,6 @@ Riders who don't fill these in still get a useful carb estimate via Swain. Both 
 |---|---|---|
 | `fuelingFitExportEnabled` | `true` | ✅ Switch — Settings tab. Sampled once at FIT-pipeline start; mid-ride toggle takes effect on the next ride. |
 
-Internal: developer-field definitions and pacing live in `extension/KSafeExtension.startFit`. Field names `ksafe_carbs_g` / `ksafe_hyd_ml` / `ksafe_hr_drift_pct` / `ksafe_max_drift_pct` / `ksafe_wellness_fires` / `ksafe_carbs_burned_g` / `ksafe_carb_burn_rate_gph` and field definition numbers `0..6` are stable identifiers — do not change once shipped. `#7` is reserved.
+Internal: developer-field definitions and pacing live in `extension/KSafeExtension.startFit`. Field names `ksafe_carbs_g` / `ksafe_hyd_ml` / `ksafe_hr_drift_pct` / `ksafe_max_drift_pct` / `ksafe_wellness_fires` / `ksafe_carbs_burned_g` / `ksafe_carb_burn_rate_gph` and field definition numbers `0..6` are stable identifiers — do not change once shipped. `#7` is reserved; `8` is calories; `9` / `10` are `ksafe_sweat_ml` / `ksafe_sodium_mg` (2.3.0).
 
 Internal constants (`CarbIntegrator.MOVING_GATE_KMH`, `CarbIntegrator.SPEED_STALE_MS`, `ABSORPTION_CAP_GPH`, `MONITOR_TICK_MS`, `PERIODIC_LOG_INTERVAL_MS`, the Keytel / Swain coefficients in `CarbBurnEstimator`, etc.) are NOT exposed. Calibrated in code from the spec-defined values described above.
