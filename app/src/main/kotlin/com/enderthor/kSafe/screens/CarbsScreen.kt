@@ -277,6 +277,10 @@ fun CarbsScreen(vm: MainViewModel) {
             }
         }
 
+        // Right after the tracker card: it configures that tracker's alerts. Hidden while
+        // the tracker is off (no alerts to log from).
+        if (carbsEnabled) FuelingAlertButtonModeCard(vm, config.fuelingAlertButtonMode)
+
         // Calories card — independent of the carb tracker. The estimate uses your
         // power meter when paired (most accurate) and only falls back to HR, so it
         // does NOT replace power; HR just covers the no-power-meter case.
@@ -342,8 +346,6 @@ fun CarbsScreen(vm: MainViewModel) {
             }
         }
         }
-
-        FuelingAlertButtonModeCard(vm, config.fuelingAlertButtonMode)
 
         // Discreet footer with the GitHub docs reference. Karoo cannot open URLs from a
         // Compose Activity, so this is plain text the rider reads and looks up later

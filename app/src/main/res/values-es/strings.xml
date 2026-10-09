@@ -503,7 +503,7 @@
     <string name="fueling_lastride_bottle_optional">Opcional: unos %1$d mg de sodio por litro de bebida.</string>
     <string name="fueling_lastride_bottle_recommended">Recomendado: unos %1$d mg de sodio por litro de bebida.</string>
     <string name="fueling_lastride_calibrated">Calibrada con un pesaje.</string>
-    <string name="fueling_calib_title">Calibrar con un pesaje</string>
+    <string name="fueling_calib_title">Calibrar</string>
     <string name="fueling_calib_instructions">Pésate desnudo antes y después de la salida. Después de la salida, pésate ANTES de orinar.</string>
     <string name="fueling_calib_pre_label">Peso antes (kg)</string>
     <string name="fueling_calib_post_label">Peso después (kg)</string>

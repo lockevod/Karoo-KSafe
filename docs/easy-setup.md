@@ -203,7 +203,7 @@ this): drinking back every drop during a ride is not recommended.
 
 **Learn your own sweat rate (optional).** Everyone sweats differently. Open the **Hydration** tab,
 **Your sweat** card (it appears when the Hydration tracker is on). **How much you sweat** is a
-percentage: 100 % is an average rider. Rather than guessing, tap **Calibrate with a weigh-in**
+percentage: 100 % is an average rider. Rather than guessing, tap **Calibrate** (a weigh-in)
 after a ride and enter your weight before and after (naked, before using the toilet) plus what
 you drank and ate. KSafe compares it with its estimate and adjusts that percentage for you. It
 needs a ride of at least 1 hour with good data, no toilet stop, and must be done within 6 hours.

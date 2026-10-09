@@ -552,7 +552,7 @@
     <string name="fueling_lastride_bottle_optional">Optional: about %1$d mg sodium per litre of drink.</string>
     <string name="fueling_lastride_bottle_recommended">Recommended: about %1$d mg sodium per litre of drink.</string>
     <string name="fueling_lastride_calibrated">Calibrated with a weigh-in.</string>
-    <string name="fueling_calib_title">Calibrate with a weigh-in</string>
+    <string name="fueling_calib_title">Calibrate</string>
     <string name="fueling_calib_instructions">Weigh yourself nude before and after the ride. Weigh after the ride BEFORE urinating.</string>
     <string name="fueling_calib_pre_label">Weight before (kg)</string>
     <string name="fueling_calib_post_label">Weight after (kg)</string>

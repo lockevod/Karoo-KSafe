@@ -211,7 +211,7 @@ temperatura. En modo dinámico KSafe apunta a cerca del 80 % del sudor estimado 
 **Aprende tu propio sudor (opcional).** Cada persona suda distinto. Abre la pestaña
 **Hidratación**, tarjeta **Tu sudor** (aparece al activar el seguimiento de hidratación).
 **Cuánto sudas** es un porcentaje: 100 % es un ciclista medio. En vez de adivinarlo, pulsa
-**Calibrar con un pesaje** después de una salida e introduce tu peso antes y después (desnudo y
+**Calibrar** (un pesaje) después de una salida e introduce tu peso antes y después (desnudo y
 antes de ir al baño) junto con lo que has bebido y comido. KSafe lo compara con su estimación y
 ajusta ese porcentaje por ti. Hace falta una salida de al menos 1 hora con buenos datos, sin
 parada para orinar, y hacerlo en las 6 horas siguientes. Repítelo en varias salidas (se promedian

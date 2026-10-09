@@ -322,6 +322,10 @@ fun HydrationScreen(vm: MainViewModel) {
             }
         }
 
+        // Right after the tracker card: it configures that tracker's alerts. Hidden while
+        // the tracker is off (no alerts to log from).
+        if (hydEnabled) FuelingAlertButtonModeCard(vm, config.fuelingAlertButtonMode)
+
         // Combined logging card. One tap logs a drink + its carbs together. The carb
         // concentration is set once; each button's carbs auto-fill from its volume via
         // carbsFromVolume but stay editable as a manual override. No icon picker — the
@@ -424,8 +428,6 @@ fun HydrationScreen(vm: MainViewModel) {
                 profile = config.sweatSodiumProfile, saltMeasured = saltMeasured, onSaltChange = { saltMeasured = it },
             )
         }
-
-        FuelingAlertButtonModeCard(vm, config.fuelingAlertButtonMode)
 
         // Discreet footer with the GitHub docs reference. Karoo cannot open URLs from a
         // Compose Activity, so this is plain text the rider reads and looks up later
