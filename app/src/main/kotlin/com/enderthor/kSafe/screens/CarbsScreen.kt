@@ -268,6 +268,11 @@ fun CarbsScreen(vm: MainViewModel) {
                         },
                     )
                 }
+                Text(
+                    text = stringResource(R.string.fueling_combined_pointer),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
                 }  // end if (carbsEnabled)
             }
         }

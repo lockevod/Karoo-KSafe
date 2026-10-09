@@ -318,6 +318,102 @@ fun HydrationScreen(vm: MainViewModel) {
             }
         }
 
+        // Combined logging card. One tap logs a drink + its carbs together. The carb
+        // concentration is set once; each button's carbs auto-fill from its volume via
+        // carbsFromVolume but stay editable as a manual override. No icon picker — the
+        // combined field's icon is fixed.
+        // Sits next to the drink slots (it is set up as a bottle) and only shows when it can
+        // actually log something: carbs and/or hydration tracking on.
+        if (hydEnabled || config.carbsTrackerEnabled) {
+            Card(elevation = CardDefaults.cardElevation(defaultElevation = 2.dp)) {
+                Column(
+                    modifier = Modifier.padding(10.dp),
+                    verticalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    Text(
+                        text = stringResource(R.string.fueling_combined_section),
+                        style = MaterialTheme.typography.titleSmall,
+                        fontWeight = FontWeight.Bold,
+                    )
+                    Text(
+                        text = stringResource(R.string.fueling_combined_hint),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                    IntField(
+                        label = stringResource(R.string.fueling_combined_concentration_label),
+                        text = combinedConcentration,
+                        range = 0..200,
+                        onCommit = { v ->
+                            combinedConcentration = v
+                            val conc = v.toIntOrNull()?.coerceIn(0, 200) ?: config.combinedCarbConcentrationPer500ml
+                            // Derive from the LOCAL ml field state (what the rider currently sees), not the
+                            // DataStore snapshot, so display and persisted value agree even if the ml field
+                            // was just edited but hasn't round-tripped through config yet.
+                            val ml1 = combined1Ml.toIntOrNull()?.coerceIn(0, 1000) ?: config.combined1Ml
+                            val ml2 = combined2Ml.toIntOrNull()?.coerceIn(0, 1000) ?: config.combined2Ml
+                            vm.updateConfig { cfg ->
+                                cfg.copy(
+                                    combinedCarbConcentrationPer500ml = conc,
+                                    combined1Carbs = carbsFromVolume(ml1, conc),
+                                    combined2Carbs = carbsFromVolume(ml2, conc),
+                                )
+                            }
+                            combined1Carbs = carbsFromVolume(ml1, conc).toString()
+                            combined2Carbs = carbsFromVolume(ml2, conc).toString()
+                        },
+                        onTextChange = { combinedConcentration = it },
+                    )
+                    HorizontalDivider()
+                    Text(text = stringResource(R.string.fueling_items_section), style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.Bold)
+                    val combinedMlLabel = stringResource(R.string.fueling_slot_ml_label)
+                    val combinedGLabel = stringResource(R.string.fueling_slot_grams_label)
+                    // Button 1
+                    SlotRow(label = "Slot 1", labelText = combined1Label, amountText = combined1Ml, unitLabel = combinedMlLabel, range = 0..1000,
+                        onLabel = { v -> combined1Label = v.safeTake(8); vm.updateConfig { cfg -> cfg.copy(combined1Label = v.safeTake(8)) } },
+                        onAmountCommit = { v ->
+                            combined1Ml = v
+                            val ml = (v.toIntOrNull() ?: 0).coerceIn(0, 1000)
+                            val conc = combinedConcentration.toIntOrNull()?.coerceIn(0, 200) ?: config.combinedCarbConcentrationPer500ml
+                            combined1Carbs = carbsFromVolume(ml, conc).toString()
+                            vm.updateConfig { cfg -> cfg.copy(combined1Ml = ml, combined1Carbs = carbsFromVolume(ml, conc)) }
+                        },
+                        onAmountText = { combined1Ml = it },
+                    )
+                    IntField(
+                        label = combinedGLabel,
+                        text = combined1Carbs,
+                        range = 0..999,
+                        onCommit = { v -> combined1Carbs = v; vm.updateConfig { it.copy(combined1Carbs = (v.toIntOrNull() ?: 0).coerceIn(0, 999)) } },
+                        onTextChange = { combined1Carbs = it },
+                    )
+                    FieldColorPicker(label = stringResource(R.string.fueling_color_label), selected = combined1Color,
+                        onSelected = { v -> combined1Color = v; vm.updateConfig { it.copy(combined1Color = v) } })
+                    // Button 2
+                    SlotRow(label = "Slot 2", labelText = combined2Label, amountText = combined2Ml, unitLabel = combinedMlLabel, range = 0..1000,
+                        onLabel = { v -> combined2Label = v.safeTake(8); vm.updateConfig { cfg -> cfg.copy(combined2Label = v.safeTake(8)) } },
+                        onAmountCommit = { v ->
+                            combined2Ml = v
+                            val ml = (v.toIntOrNull() ?: 0).coerceIn(0, 1000)
+                            val conc = combinedConcentration.toIntOrNull()?.coerceIn(0, 200) ?: config.combinedCarbConcentrationPer500ml
+                            combined2Carbs = carbsFromVolume(ml, conc).toString()
+                            vm.updateConfig { cfg -> cfg.copy(combined2Ml = ml, combined2Carbs = carbsFromVolume(ml, conc)) }
+                        },
+                        onAmountText = { combined2Ml = it },
+                    )
+                    IntField(
+                        label = combinedGLabel,
+                        text = combined2Carbs,
+                        range = 0..999,
+                        onCommit = { v -> combined2Carbs = v; vm.updateConfig { it.copy(combined2Carbs = (v.toIntOrNull() ?: 0).coerceIn(0, 999)) } },
+                        onTextChange = { combined2Carbs = it },
+                    )
+                    FieldColorPicker(label = stringResource(R.string.fueling_color_label), selected = combined2Color,
+                        onSelected = { v -> combined2Color = v; vm.updateConfig { it.copy(combined2Color = v) } })
+                }
+            }
+        }
+
         if (hydEnabled) {
             YourSweatCard(
                 vm = vm, hydMult = hydMult, onMultChange = { hydMult = it },
@@ -326,98 +422,6 @@ fun HydrationScreen(vm: MainViewModel) {
         }
 
         FuelingAlertButtonModeCard(vm, config.fuelingAlertButtonMode)
-
-        // Combined logging card. One tap logs a drink + its carbs together. The carb
-        // concentration is set once; each button's carbs auto-fill from its volume via
-        // carbsFromVolume but stay editable as a manual override. No icon picker — the
-        // combined field's icon is fixed.
-        Card(elevation = CardDefaults.cardElevation(defaultElevation = 2.dp)) {
-            Column(
-                modifier = Modifier.padding(10.dp),
-                verticalArrangement = Arrangement.spacedBy(8.dp),
-            ) {
-                Text(
-                    text = stringResource(R.string.fueling_combined_section),
-                    style = MaterialTheme.typography.titleSmall,
-                    fontWeight = FontWeight.Bold,
-                )
-                Text(
-                    text = stringResource(R.string.fueling_combined_hint),
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-                IntField(
-                    label = stringResource(R.string.fueling_combined_concentration_label),
-                    text = combinedConcentration,
-                    range = 0..200,
-                    onCommit = { v ->
-                        combinedConcentration = v
-                        val conc = v.toIntOrNull()?.coerceIn(0, 200) ?: config.combinedCarbConcentrationPer500ml
-                        // Derive from the LOCAL ml field state (what the rider currently sees), not the
-                        // DataStore snapshot, so display and persisted value agree even if the ml field
-                        // was just edited but hasn't round-tripped through config yet.
-                        val ml1 = combined1Ml.toIntOrNull()?.coerceIn(0, 1000) ?: config.combined1Ml
-                        val ml2 = combined2Ml.toIntOrNull()?.coerceIn(0, 1000) ?: config.combined2Ml
-                        vm.updateConfig { cfg ->
-                            cfg.copy(
-                                combinedCarbConcentrationPer500ml = conc,
-                                combined1Carbs = carbsFromVolume(ml1, conc),
-                                combined2Carbs = carbsFromVolume(ml2, conc),
-                            )
-                        }
-                        combined1Carbs = carbsFromVolume(ml1, conc).toString()
-                        combined2Carbs = carbsFromVolume(ml2, conc).toString()
-                    },
-                    onTextChange = { combinedConcentration = it },
-                )
-                HorizontalDivider()
-                Text(text = stringResource(R.string.fueling_items_section), style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.Bold)
-                val combinedMlLabel = stringResource(R.string.fueling_slot_ml_label)
-                val combinedGLabel = stringResource(R.string.fueling_slot_grams_label)
-                // Button 1
-                SlotRow(label = "Slot 1", labelText = combined1Label, amountText = combined1Ml, unitLabel = combinedMlLabel, range = 0..1000,
-                    onLabel = { v -> combined1Label = v.safeTake(8); vm.updateConfig { cfg -> cfg.copy(combined1Label = v.safeTake(8)) } },
-                    onAmountCommit = { v ->
-                        combined1Ml = v
-                        val ml = (v.toIntOrNull() ?: 0).coerceIn(0, 1000)
-                        val conc = combinedConcentration.toIntOrNull()?.coerceIn(0, 200) ?: config.combinedCarbConcentrationPer500ml
-                        combined1Carbs = carbsFromVolume(ml, conc).toString()
-                        vm.updateConfig { cfg -> cfg.copy(combined1Ml = ml, combined1Carbs = carbsFromVolume(ml, conc)) }
-                    },
-                    onAmountText = { combined1Ml = it },
-                )
-                IntField(
-                    label = combinedGLabel,
-                    text = combined1Carbs,
-                    range = 0..999,
-                    onCommit = { v -> combined1Carbs = v; vm.updateConfig { it.copy(combined1Carbs = (v.toIntOrNull() ?: 0).coerceIn(0, 999)) } },
-                    onTextChange = { combined1Carbs = it },
-                )
-                FieldColorPicker(label = stringResource(R.string.fueling_color_label), selected = combined1Color,
-                    onSelected = { v -> combined1Color = v; vm.updateConfig { it.copy(combined1Color = v) } })
-                // Button 2
-                SlotRow(label = "Slot 2", labelText = combined2Label, amountText = combined2Ml, unitLabel = combinedMlLabel, range = 0..1000,
-                    onLabel = { v -> combined2Label = v.safeTake(8); vm.updateConfig { cfg -> cfg.copy(combined2Label = v.safeTake(8)) } },
-                    onAmountCommit = { v ->
-                        combined2Ml = v
-                        val ml = (v.toIntOrNull() ?: 0).coerceIn(0, 1000)
-                        val conc = combinedConcentration.toIntOrNull()?.coerceIn(0, 200) ?: config.combinedCarbConcentrationPer500ml
-                        combined2Carbs = carbsFromVolume(ml, conc).toString()
-                        vm.updateConfig { cfg -> cfg.copy(combined2Ml = ml, combined2Carbs = carbsFromVolume(ml, conc)) }
-                    },
-                    onAmountText = { combined2Ml = it },
-                )
-                IntField(
-                    label = combinedGLabel,
-                    text = combined2Carbs,
-                    range = 0..999,
-                    onCommit = { v -> combined2Carbs = v; vm.updateConfig { it.copy(combined2Carbs = (v.toIntOrNull() ?: 0).coerceIn(0, 999)) } },
-                    onTextChange = { combined2Carbs = it },
-                )
-                FieldColorPicker(label = stringResource(R.string.fueling_color_label), selected = combined2Color,
-                    onSelected = { v -> combined2Color = v; vm.updateConfig { it.copy(combined2Color = v) } })
-            }
-        }
 
         // Discreet footer with the GitHub docs reference. Karoo cannot open URLs from a
         // Compose Activity, so this is plain text the rider reads and looks up later
