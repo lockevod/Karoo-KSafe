@@ -446,18 +446,6 @@ fun FuelingScreen(vm: MainViewModel) {
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
                 }
-                IntField(
-                    label = stringResource(R.string.fueling_hyd_mult_label),
-                    text = hydMult,
-                    range = 50..200,
-                    onCommit = { hydMult = it; vm.updateConfig { cfg -> cfg.copy(hydrationSweatMultiplierPct = it.toInt()) } },
-                    onTextChange = { hydMult = it },
-                )
-                Text(
-                    text = stringResource(R.string.fueling_hyd_mult_hint),
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
                 if (hydDynamic) {
                     IntField(
                         label = stringResource(R.string.fueling_hyd_repl_label),
@@ -471,23 +459,6 @@ fun FuelingScreen(vm: MainViewModel) {
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
-                }
-                Text(text = stringResource(R.string.fueling_hyd_salt_label), style = MaterialTheme.typography.bodyMedium)
-                SaltinessChips(
-                    selected = config.sweatSodiumProfile,
-                    onSelected = { v -> vm.updateConfig { cfg -> cfg.copy(sweatSodiumProfile = v) } },
-                )
-                if (config.sweatSodiumProfile == SweatSodiumProfile.MEASURED) {
-                    IntField(
-                        label = stringResource(R.string.fueling_hyd_salt_measured_label),
-                        text = saltMeasured,
-                        range = 10..90,
-                        onCommit = { saltMeasured = it; vm.updateConfig { cfg -> cfg.copy(sweatSodiumMeasuredMmolL = it.toInt()) } },
-                        onTextChange = { saltMeasured = it },
-                    )
-                }
-                TextButton(onClick = { vm.resetHydrationCalibration() }) {
-                    Text(stringResource(R.string.fueling_calib_reset))
                 }
                 HorizontalDivider()
                 FuelingRow(label = stringResource(R.string.fueling_alert_deficit_label)) {
@@ -616,7 +587,12 @@ fun FuelingScreen(vm: MainViewModel) {
             }
         }
 
-        LastRideCard(vm)
+        if (hydEnabled) {
+            YourSweatCard(
+                vm = vm, hydMult = hydMult, onMultChange = { hydMult = it },
+                profile = config.sweatSodiumProfile, saltMeasured = saltMeasured, onSaltChange = { saltMeasured = it },
+            )
+        }
 
         // Alert-mode card. Controls whether fueling alerts (carbs + hydration) show a
         // one-tap log button, a log+undo pair, or no button at all. Placed here so it
@@ -1039,24 +1015,28 @@ private fun AlertColorPicker(
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun SaltinessChips(selected: SweatSodiumProfile, onSelected: (SweatSodiumProfile) -> Unit) {
-    val options = SweatSodiumProfile.entries
-    SingleChoiceSegmentedButtonRow(modifier = Modifier.fillMaxWidth()) {
-        options.forEachIndexed { index, p ->
-            SegmentedButton(
-                selected = selected == p,
-                onClick = { onSelected(p) },
-                shape = SegmentedButtonDefaults.itemShape(index = index, count = options.size),
-            ) {
-                Text(
-                    text = stringResource(when (p) {
-                        SweatSodiumProfile.LIGHT -> R.string.fueling_hyd_salt_light
-                        SweatSodiumProfile.TYPICAL -> R.string.fueling_hyd_salt_typical
-                        SweatSodiumProfile.SALTY -> R.string.fueling_hyd_salt_salty
-                        SweatSodiumProfile.MEASURED -> R.string.fueling_hyd_salt_measured
-                    }),
-                    style = MaterialTheme.typography.bodySmall,
-                    maxLines = 1,
-                )
+    // 2x2: four labels in one row are too narrow for readable text on the 480 px Karoo screen.
+    Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+        SweatSodiumProfile.entries.chunked(2).forEach { row ->
+            SingleChoiceSegmentedButtonRow(modifier = Modifier.fillMaxWidth()) {
+                row.forEachIndexed { index, p ->
+                    SegmentedButton(
+                        selected = selected == p,
+                        onClick = { onSelected(p) },
+                        shape = SegmentedButtonDefaults.itemShape(index = index, count = row.size),
+                    ) {
+                        Text(
+                            text = stringResource(when (p) {
+                                SweatSodiumProfile.LIGHT -> R.string.fueling_hyd_salt_light
+                                SweatSodiumProfile.TYPICAL -> R.string.fueling_hyd_salt_typical
+                                SweatSodiumProfile.SALTY -> R.string.fueling_hyd_salt_salty
+                                SweatSodiumProfile.MEASURED -> R.string.fueling_hyd_salt_measured
+                            }),
+                            style = MaterialTheme.typography.bodyMedium,
+                            maxLines = 1,
+                        )
+                    }
+                }
             }
         }
     }
@@ -1091,65 +1071,120 @@ private fun DecimalField(label: String, text: String, onTextChange: (String) -> 
     )
 }
 
-/** Last hydration ride summary (sodium) + weigh-in calibration form. */
+/** "Your sweat": multiplier + weigh-in calibration, saltiness question and last-ride summary. */
 @Composable
-private fun LastRideCard(vm: MainViewModel) {
+private fun YourSweatCard(
+    vm: MainViewModel,
+    hydMult: String,
+    onMultChange: (String) -> Unit,
+    profile: SweatSodiumProfile,
+    saltMeasured: String,
+    onSaltChange: (String) -> Unit,
+) {
     val ride by vm.lastHydrationRide.collectAsState()
+    val r = ride
+    val small = MaterialTheme.typography.bodyMedium
+    val muted = MaterialTheme.colorScheme.onSurface
+    var calibOpen by remember { mutableStateOf(false) }
+    var lastOpen by remember { mutableStateOf(false) }
     Card(elevation = CardDefaults.cardElevation(defaultElevation = 2.dp)) {
         Column(modifier = Modifier.padding(10.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
             Text(
-                text = stringResource(R.string.fueling_lastride_title),
+                text = stringResource(R.string.fueling_sweat_section),
                 style = MaterialTheme.typography.titleSmall,
                 fontWeight = FontWeight.Bold,
             )
-            val r = ride
-            if (r == null) {
-                Text(
-                    text = stringResource(R.string.fueling_lastride_empty),
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+            IntField(
+                label = stringResource(R.string.fueling_hyd_mult_label),
+                text = hydMult,
+                range = 50..200,
+                onCommit = { onMultChange(it); vm.updateConfig { cfg -> cfg.copy(hydrationSweatMultiplierPct = it.toInt()) } },
+                onTextChange = onMultChange,
+            )
+            Text(text = stringResource(R.string.fueling_hyd_mult_hint), style = small, color = muted)
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+                OutlinedButton(onClick = { calibOpen = !calibOpen }) {
+                    Text(stringResource(R.string.fueling_calib_title))
+                }
+                TextButton(onClick = { vm.resetHydrationCalibration() }) {
+                    Text(stringResource(R.string.fueling_calib_reset))
+                }
+            }
+            if (calibOpen) {
+                if (r == null) Text(stringResource(R.string.fueling_lastride_empty), style = small, color = muted)
+                else CalibrationForm(vm, r)
+            }
+            HorizontalDivider()
+            Text(text = stringResource(R.string.fueling_hyd_salt_label), style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.Bold)
+            SaltinessChips(
+                selected = profile,
+                onSelected = { v -> vm.updateConfig { cfg -> cfg.copy(sweatSodiumProfile = v) } },
+            )
+            Text(text = stringResource(R.string.fueling_hyd_salt_hint), style = small, color = muted)
+            if (profile == SweatSodiumProfile.MEASURED) {
+                IntField(
+                    label = stringResource(R.string.fueling_hyd_salt_measured_label),
+                    text = saltMeasured,
+                    range = 10..90,
+                    onCommit = { onSaltChange(it); vm.updateConfig { cfg -> cfg.copy(sweatSodiumMeasuredMmolL = it.toInt()) } },
+                    onTextChange = onSaltChange,
                 )
+            }
+            HorizontalDivider()
+            if (r == null) {
+                Text(stringResource(R.string.fueling_lastride_empty), style = small, color = muted)
             } else {
-                LastRideBody(vm, r)
+                val ctx = androidx.compose.ui.platform.LocalContext.current
+                val advice = remember(r) { sodiumAdvice(r) }
+                val date = remember(r.endedAtMs) { android.text.format.DateFormat.getMediumDateFormat(ctx).format(Date(r.endedAtMs)) }
+                val minutes = (r.rideTimeMs / 60_000L).toInt()
+                val loc = java.util.Locale.getDefault()
+                Row(
+                    modifier = Modifier.fillMaxWidth().clickable { lastOpen = !lastOpen },
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Text(
+                        text = stringResource(
+                            R.string.fueling_lastride_summary, date, minutes / 60, minutes % 60,
+                            String.format(loc, "%.1f", r.cumSweatMl / 1000.0),
+                            String.format(loc, "%.1f", advice.mgLost / 1000.0),
+                        ),
+                        style = MaterialTheme.typography.bodyMedium,
+                        modifier = Modifier.weight(1f),
+                    )
+                    Text(if (lastOpen) "▴" else "▾", style = MaterialTheme.typography.bodyMedium)
+                }
+                if (lastOpen) {
+                    Text(stringResource(R.string.fueling_lastride_fluids, r.cumSweatMl.toInt(), r.cumLoggedMl), style = MaterialTheme.typography.bodyMedium)
+                    Text(stringResource(R.string.fueling_lastride_sodium, advice.mgLost, advice.mgPerHour), style = MaterialTheme.typography.bodyMedium)
+                    if (advice.partial) {
+                        Text(stringResource(R.string.fueling_lastride_partial), style = small, color = MaterialTheme.colorScheme.error)
+                    }
+                    if (advice.fluidLimited) {
+                        Text(stringResource(R.string.fueling_lastride_fluid_limited), style = small, color = muted)
+                    } else if (advice.bottleMgPerL != null) {
+                        Text(
+                            stringResource(
+                                if (advice.recommended) R.string.fueling_lastride_bottle_recommended else R.string.fueling_lastride_bottle_optional,
+                                advice.bottleMgPerL,
+                            ),
+                            style = small, color = muted,
+                        )
+                    }
+                }
             }
         }
     }
 }
 
 @Composable
-private fun LastRideBody(vm: MainViewModel, r: LastHydrationRide) {
-    val ctx = androidx.compose.ui.platform.LocalContext.current
+private fun CalibrationForm(vm: MainViewModel, r: LastHydrationRide) {
     val scope = rememberCoroutineScope()
-    val advice = remember(r) { sodiumAdvice(r) }
-    val date = remember(r.endedAtMs) {
-        val d = Date(r.endedAtMs)
-        android.text.format.DateFormat.getMediumDateFormat(ctx).format(d) + " " +
-            android.text.format.DateFormat.getTimeFormat(ctx).format(d)
-    }
-    val minutes = (r.rideTimeMs / 60_000L).toInt()
-    val small = MaterialTheme.typography.bodySmall
-    val muted = MaterialTheme.colorScheme.onSurfaceVariant
-
-    Text(stringResource(R.string.fueling_lastride_when, date, minutes / 60, minutes % 60), style = MaterialTheme.typography.bodyMedium)
-    Text(stringResource(R.string.fueling_lastride_fluids, r.cumSweatMl.toInt(), r.cumLoggedMl), style = MaterialTheme.typography.bodyMedium)
-    Text(stringResource(R.string.fueling_lastride_sodium, advice.mgLost, advice.mgPerHour), style = MaterialTheme.typography.bodyMedium)
-    if (advice.partial) {
-        Text(stringResource(R.string.fueling_lastride_partial), style = small, color = MaterialTheme.colorScheme.error)
-    }
-    if (advice.fluidLimited) {
-        Text(stringResource(R.string.fueling_lastride_fluid_limited), style = small, color = muted)
-    } else if (advice.bottleMgPerL != null) {
-        Text(
-            stringResource(
-                if (advice.recommended) R.string.fueling_lastride_bottle_recommended else R.string.fueling_lastride_bottle_optional,
-                advice.bottleMgPerL,
-            ),
-            style = small, color = muted,
-        )
-    }
-    HorizontalDivider()
+    val small = MaterialTheme.typography.bodyMedium
+    val muted = MaterialTheme.colorScheme.onSurface
     // Hoisted above the calibrated early-return: the DataStore write flips r.calibrated before
     // this composable sees the result, so the success text must survive that recomposition.
+
     var result by remember(r.rideId) { mutableStateOf<CalibrationResult?>(null) }
     if (r.calibrated) {
         Text(stringResource(R.string.fueling_lastride_calibrated), style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.Bold)
@@ -1169,7 +1204,6 @@ private fun LastRideBody(vm: MainViewModel, r: LastHydrationRide) {
     val preKg = pre.replace(',', '.').toDoubleOrNull()
     val postKg = post.replace(',', '.').toDoubleOrNull()
 
-    Text(stringResource(R.string.fueling_calib_title), style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.Bold)
     Text(stringResource(R.string.fueling_calib_instructions), style = small, color = muted)
     DecimalField(stringResource(R.string.fueling_calib_pre_label), pre) { pre = it }
     DecimalField(stringResource(R.string.fueling_calib_post_label), post) { post = it }

@@ -528,19 +528,21 @@
     <string name="webhook_blocked_no_gps">Blocked — no GPS fix yet</string>
     <string name="webhook_blocked_no_target">Blocked — no target location configured</string>
     <string name="webhook_blocked_too_far">Blocked — %1$dm away (max %2$dm)</string>
-    <string name="fueling_hyd_mult_label">Sweat multiplier (%)</string>
-    <string name="fueling_hyd_mult_hint">Scales the estimated sweat rate. Raise it if you sweat more than estimated; weigh-in calibration adjusts it for you.</string>
+    <string name="fueling_sweat_section">Your sweat</string>
+    <string name="fueling_lastride_summary">Last ride: %1$s · %2$d h %3$02d min · %4$s L sweat · %5$s g sodium</string>
+    <string name="fueling_hyd_mult_label">How much you sweat (%)</string>
+    <string name="fueling_hyd_mult_hint">100 % = average rider. Calibrate it with a weigh-in below instead of guessing.</string>
     <string name="fueling_hyd_repl_label">Replacement target (%)</string>
     <string name="fueling_hyd_repl_hint">Share of estimated sweat loss to replace by drinking (typically 70–90%).</string>
-    <string name="fueling_hyd_salt_label">Sweat saltiness</string>
-    <string name="fueling_hyd_salt_light">Light</string>
-    <string name="fueling_hyd_salt_typical">Typical</string>
-    <string name="fueling_hyd_salt_salty">Salty</string>
+    <string name="fueling_hyd_salt_label">How salty is your sweat?</string>
+    <string name="fueling_hyd_salt_hint">High = your kit or helmet strap dries with white salt marks. Only used to estimate the sodium you lost; it does not change your drink reminders.</string>
+    <string name="fueling_hyd_salt_light">Low</string>
+    <string name="fueling_hyd_salt_typical">Normal</string>
+    <string name="fueling_hyd_salt_salty">High</string>
     <string name="fueling_hyd_salt_measured">Measured</string>
     <string name="fueling_hyd_salt_measured_label">Sweat sodium (mmol/L)</string>
     <string name="fueling_lastride_title">Last ride</string>
     <string name="fueling_lastride_empty">No hydration data yet. Finish a ride with the hydration tracker on and the summary will appear here.</string>
-    <string name="fueling_lastride_when">%1$s · ride time %2$d h %3$02d min</string>
     <string name="fueling_lastride_fluids">Sweat ≈ %1$d ml · drank %2$d ml</string>
     <string name="fueling_lastride_sodium">Sodium lost ≈ %1$d mg (%2$d mg/h)</string>
     <string name="fueling_lastride_partial">Partial data: the ride was not fully tracked, so figures may be low.</string>

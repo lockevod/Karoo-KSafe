@@ -479,19 +479,21 @@
     <string name="webhook_blocked_no_gps">Bloqueado — aún sin señal GPS</string>
     <string name="webhook_blocked_no_target">Bloqueado — sin ubicación objetivo configurada</string>
     <string name="webhook_blocked_too_far">Bloqueado — a %1$dm (máx %2$dm)</string>
-    <string name="fueling_hyd_mult_label">Multiplicador de sudoración (%)</string>
-    <string name="fueling_hyd_mult_hint">Ajusta la tasa de sudoración estimada. Súbelo si sudas más de lo estimado; la calibración con pesaje lo ajusta por ti.</string>
+    <string name="fueling_sweat_section">Tu sudor</string>
+    <string name="fueling_lastride_summary">Última salida: %1$s · %2$d h %3$02d min · %4$s L de sudor · %5$s g de sodio</string>
+    <string name="fueling_hyd_mult_label">Cuánto sudas (%)</string>
+    <string name="fueling_hyd_mult_hint">100 % = ciclista medio. Calíbralo con un pesaje abajo en vez de adivinarlo.</string>
     <string name="fueling_hyd_repl_label">Objetivo de reposición (%)</string>
     <string name="fueling_hyd_repl_hint">Parte de la pérdida de sudor estimada que quieres reponer bebiendo (normalmente 70–90%).</string>
-    <string name="fueling_hyd_salt_label">Salinidad del sudor</string>
-    <string name="fueling_hyd_salt_light">Baja</string>
+    <string name="fueling_hyd_salt_label">¿Cómo de salado es tu sudor?</string>
+    <string name="fueling_hyd_salt_hint">Mucha = la ropa o la cinta del casco quedan con marcas blancas de sal. Solo se usa para estimar el sodio perdido; no cambia los avisos de bebida.</string>
+    <string name="fueling_hyd_salt_light">Poca</string>
     <string name="fueling_hyd_salt_typical">Normal</string>
-    <string name="fueling_hyd_salt_salty">Alta</string>
+    <string name="fueling_hyd_salt_salty">Mucha</string>
     <string name="fueling_hyd_salt_measured">Medida</string>
     <string name="fueling_hyd_salt_measured_label">Sodio en sudor (mmol/L)</string>
     <string name="fueling_lastride_title">Última salida</string>
     <string name="fueling_lastride_empty">Aún no hay datos de hidratación. Termina una salida con el seguimiento de hidratación activo y el resumen aparecerá aquí.</string>
-    <string name="fueling_lastride_when">%1$s · tiempo de marcha %2$d h %3$02d min</string>
     <string name="fueling_lastride_fluids">Sudor ≈ %1$d ml · bebido %2$d ml</string>
     <string name="fueling_lastride_sodium">Sodio perdido ≈ %1$d mg (%2$d mg/h)</string>
     <string name="fueling_lastride_partial">Datos parciales: la salida no se registró por completo, así que las cifras pueden ser bajas.</string>
