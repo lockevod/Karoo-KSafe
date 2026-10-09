@@ -66,7 +66,7 @@ Each `DataType` implements a Karoo data field:
 
 ### UI layer (`screens/` + `activity/`)
 
-- `MainActivity` hosts `TabLayout` (Compose) with six tabs in order: **Safety**, **Health**, **Fueling**, **Actions**, **Provider**, **Settings** (`SafetyScreen`, `HealthScreen`, `FuelingScreen`, `ActionsScreen` / `WebhookScreen`, `ProviderScreen`, `SettingsScreen`). The DataStore is exposed once via `Context.dataStore by preferencesDataStore("settings")` in `activity/MainActivity.kt` and reused everywhere — do not create another DataStore on the same `Context`.
+- `MainActivity` hosts `TabLayout` (Compose) with seven tabs in order: **Safety**, **Health**, **Carbs**, **Hydration**, **Actions**, **Provider**, **Settings** (`SafetyScreen`, `HealthScreen`, `CarbsScreen`, `HydrationScreen`, `ActionsScreen` / `WebhookScreen`, `ProviderScreen`, `SettingsScreen`; the composables shared by Carbs and Hydration live in `FuelingComponents.kt`). The DataStore is exposed once via `Context.dataStore by preferencesDataStore("settings")` in `activity/MainActivity.kt` and reused everywhere — do not create another DataStore on the same `Context`.
 - `CancelEmergencyActivity` is a transparent `Theme.NoDisplay` activity used as a fallback Cancel route (e.g. for future deep links). It immediately calls `KSafeExtension.getInstance()?.cancelEmergency()` and finishes.
 
 ### Distribution / OTA

@@ -56,7 +56,7 @@ sensatos. El resto de esta guía es "para mejorar", pestaña a pestaña.
 
 ## 📑 Pestaña a pestaña, en lenguaje claro
 
-Tu Karoo muestra seis pestañas. Esto es para qué sirve cada una, qué poner y qué dejar
+Tu Karoo muestra siete pestañas. Esto es para qué sirve cada una, qué poner y qué dejar
 tranquilo.
 
 ### 🛡️ Seguridad (Safety) — el núcleo (configúralo)
@@ -90,9 +90,11 @@ Sáltate toda esta pestaña si no usas sensor de pulso. Si lo usas:
 
 Detalle completo: [Referencia de Health y Fueling](health-fueling.md).
 
-### 🍫 Nutrición (Fueling) — recordatorios de comer y beber (opcional, mira la versión simple abajo)
+### 🍫 Carbos (Carbs) y 💧 Hidratación (Hydration) — recordatorios de comer y beber (opcional, mira la versión simple abajo)
 
-Es la pestaña que más cuesta entender, así que tiene su propia sección en lenguaje claro:
+Dos pestañas: **Carbos** (recordatorios de comer, calorías, tu edad y sexo) e **Hidratación**
+(recordatorios de beber, **Tu sudor**, botones combinados de bebida + carbos). Son las pestañas
+que más cuesta entender, así que tienen su propia sección en lenguaje claro:
 [Fueling sin complicaciones](#-fueling-sin-complicaciones). En corto: **no** escribes ningún
 número de calorías ni carbohidratos — KSafe lo calcula. Tú solo le dices tu edad y sexo, y
 cada cuánto quieres que te recuerde.
@@ -183,7 +185,7 @@ Tú no pones ningún número objetivo de carbohidratos — KSafe calcula la quem
 
 1. **Empareja un sensor.** Lo mejor es un **medidor de potencia**; lo siguiente, una **banda
    de pulso**. Sin ninguno, KSafe no puede estimar la quema (el campo muestra *"Pair HR/Pwr"*).
-2. **Si solo tienes pulso:** en la pestaña **Nutrición** (Fueling), rellena tu **Edad** y **Sexo**. Es el
+2. **Si solo tienes pulso:** en la pestaña **Carbos** (Carbs), rellena tu **Edad** y **Sexo**. Es el
    único dato personal que necesita — hace la estimación bastante más precisa.
 3. **Elige cada cuánto recibir el recordatorio.** Deja los valores por defecto (avísame
    cuando vaya ~25 g por detrás, y como mucho cada 10 min) salvo que te resulten muy pesados
@@ -207,7 +209,7 @@ temperatura. En modo dinámico KSafe apunta a cerca del 80 % del sudor estimado 
 **Objetivo de reposición**): reponer cada gota durante la salida no es lo recomendable.
 
 **Aprende tu propio sudor (opcional).** Cada persona suda distinto. Abre la pestaña
-**Nutrición**, tarjeta **Tu sudor** (aparece al activar el seguimiento de hidratación).
+**Hidratación**, tarjeta **Tu sudor** (aparece al activar el seguimiento de hidratación).
 **Cuánto sudas** es un porcentaje: 100 % es un ciclista medio. En vez de adivinarlo, pulsa
 **Calibrar con un pesaje** después de una salida e introduce tu peso antes y después (desnudo y
 antes de ir al baño) junto con lo que has bebido y comido. KSafe lo compara con su estimación y

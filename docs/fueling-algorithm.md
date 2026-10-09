@@ -321,7 +321,7 @@ The same pattern applies to hydration via `hydrationAlertCustomTitle` / `hydrati
 
 ### Per-slot field appearance — colour and icon
 
-Each of the three carb slots and two hydration slots carries an idle background colour and an optional emoji icon prefix, both customisable in the Fueling tab via `screens/FieldColorPicker` and `screens/FieldEmojiPicker`:
+Each of the three carb slots and two hydration slots carries an idle background colour and an optional emoji icon prefix, both customisable in the Carbs / Hydration tabs via `screens/FieldColorPicker` and `screens/FieldEmojiPicker`:
 
 | Config field | Default | Used by |
 |---|---|---|
@@ -699,7 +699,7 @@ Riders who don't fill these in still get a useful carb estimate via Swain. Both 
 | Field | Default | UI exposed |
 |---|---|---|
 | `carbsTrackerEnabled` | `false` (opt-in master — gates all sub-fields and collapses them when off) | ✅ |
-| `fuelingAlertButtonMode` | `OFF` (**global** — applies to carb **and** hydration alerts; `OFF` / `LOG` / `LOG_UNDO`; added v22) | ✅ — Fueling tab, own card. See [In-alert logging button](#in-alert-logging-button-overlay). |
+| `fuelingAlertButtonMode` | `OFF` (**global** — applies to carb **and** hydration alerts; `OFF` / `LOG` / `LOG_UNDO`; added v22) | ✅ — own card, shown on both the Carbs and Hydration tabs. See [In-alert logging button](#in-alert-logging-button-overlay). |
 | `carbDeficitAlertEnabled` | `true` | ✅ |
 | `carbDeficitThresholdG` | 25 g | ✅ |
 | `carbDeficitInitialDelayMin` | 30 | ✅ (0 = off — fire as soon as threshold crossed) |

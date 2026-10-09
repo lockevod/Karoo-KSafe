@@ -88,7 +88,7 @@ When a field is in **Karoo default** mode (no painted background, theme-driven a
 - **Safety Timer field** → **Safety tab** → *Timer field colour* swatch row (just below the Check-in interval setting).
 - **Custom Message 1 / 2 / 3** → **Actions tab** → expand the message slot → colour swatches below the message text field.
 - **Webhook 1 / 2** → **Actions tab** → expand the webhook slot → colour swatches below the label field.
-- **Carb / Hydration log slots** *(v2.0)* → **Fueling tab** → expand the slot → colour swatches alongside the icon picker.
-- **Combined Fuel Log 1 / 2** *(Fuel Combo)* → **Fueling tab** → **Combined logging** section → per-button colour swatches (`combined1Color` / `combined2Color`). Unlike the Carb / Hydration log slots, the combined field has **no icon picker** — its icon (a bundled bottle + gel drawable) is **fixed**, so only the colour, label, volume and carbs are configurable.
+- **Carb / Hydration log slots** *(v2.0)* → **Carbs** / **Hydration** tab → expand the slot → colour swatches alongside the icon picker.
+- **Combined Fuel Log 1 / 2** *(Fuel Combo)* → **Hydration tab** → **Combined logging** section → per-button colour swatches (`combined1Color` / `combined2Color`). Unlike the Carb / Hydration log slots, the combined field has **no icon picker** — its icon (a bundled bottle + gel drawable) is **fixed**, so only the colour, label, volume and carbs are configurable.
 
 In every picker the **first swatch** is the Karoo-default (auto day/night). Selecting it stores a sentinel value internally; existing saved colours (any non-sentinel ARGB int) remain valid forever and keep rendering exactly as before.

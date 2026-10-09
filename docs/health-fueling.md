@@ -4,7 +4,7 @@
 > plain-English "Fueling made simple" section (pair a sensor, fill age/sex, set a drink
 > target, tap when you eat). This page is the complete reference.
 
-> Full configuration reference for the **Health** tab (HR-based detectors) and the **Fueling** tab (carb / hydration tracker). The README has a one-paragraph overview of each; this page covers every field, every tier, every alert mode, and the FIT-file integration.
+> Full configuration reference for the **Health** tab (HR-based detectors) and the **Carbs** / **Hydration** tabs (carb / hydration tracker; one "Fueling" tab before v2.3). The README has a one-paragraph overview of each; this page covers every field, every tier, every alert mode, and the FIT-file integration.
 >
 > For the underlying algorithms (thresholds, baselines, hysteresis) see:
 > - [Medical episode & wellness algorithms](medical-wellness-algorithm.md)
@@ -90,8 +90,8 @@ Karoo's SDK has no sound catalogue — every "different sound" is a sequence of 
 
 Three independent pickers:
 
-- **Fueling tab → Carbs → Sound**: applies to carb deficit / time alerts.
-- **Fueling tab → Hydration → Sound**: applies to hydration deficit / time alerts.
+- **Carbs tab → Sound**: applies to carb deficit / time alerts.
+- **Hydration tab → Sound**: applies to hydration deficit / time alerts.
 - **Health tab → wellness → Sound**: applies to all WARNING-level alerts (wellness sustained / critical / decoupling, plus any medical incident the rider downgraded to Warning).
 
 Emergency-level countdown beeps (crash, medical-collapse on Emergency, the in-emergency urgent pulses) stay on the urgent default. Making them rider-mutable would defeat the safety guarantee that the Karoo grabs your attention when something serious happens.
@@ -104,15 +104,15 @@ When calibration logging is enabled, anonymised HR data does appear in the local
 
 ---
 
-## Fueling tab
+## Carbs and Hydration tabs
 
 > [!NOTE]
-> **Available from v2.0.** The Fueling tab — carb / hydration tracker, log-slot fields, customisable alert templates, FIT export — requires KSafe v2.0 or newer.
+> **Available from v2.0.** The Carbs and Hydration tabs (a single Fueling tab before v2.3) — carb / hydration tracker, log-slot fields, customisable alert templates, FIT export — require KSafe v2.0 or newer.
 
 > [!TIP]
-> The Fueling tab is KSafe's **preventive safety layer**. The other safety features (crash detection, medical episodes, SOS) react *after* something has gone wrong. Fueling tries to keep things from going wrong in the first place: a rider who is properly fueled and hydrated has clearer judgment, faster reaction time, and fewer mistakes — and is much less likely to crash, blow up, or need to be rescued. Bonking and dehydration are real, common causes of cycling incidents, not just performance problems.
+> Fueling (the Carbs and Hydration tabs) is KSafe's **preventive safety layer**. The other safety features (crash detection, medical episodes, SOS) react *after* something has gone wrong. Fueling tries to keep things from going wrong in the first place: a rider who is properly fueled and hydrated has clearer judgment, faster reaction time, and fewer mistakes — and is much less likely to crash, blow up, or need to be rescued. Bonking and dehydration are real, common causes of cycling incidents, not just performance problems.
 
-The Fueling tab is **fully optional**. It is **disabled by default** because the right targets depend on each rider. When you enable it, KSafe begins integrating a per-second carb and fluid target while you ride, watches what you log, and warns you when you fall behind.
+Fueling is **fully optional**. It is **disabled by default** because the right targets depend on each rider. When you enable it, KSafe begins integrating a per-second carb and fluid target while you ride, watches what you log, and warns you when you fall behind.
 
 ### How it works (no biometrics required)
 
@@ -169,7 +169,7 @@ The dynamic mode biases **high** in hot conditions by design: the estimator's jo
 **Carbs**: there is **no per-hour target to configure**. The burn estimator computes real physiological carb burn from your paired sensors. Your job is to:
 
 1. **Pair a sensor** (in this order of accuracy): power meter → HR sensor.
-2. **If HR-only**: fill in **Age** and **Sex** in the Fueling tab. This unlocks the Keytel formula (~10-15 % error). Without them the tracker falls back to Swain (~20-30 % error).
+2. **If HR-only**: fill in **Age** and **Sex** in the Carbs tab. This unlocks the Keytel formula (~10-15 % error). Without them the tracker falls back to Swain (~20-30 % error).
 3. **Pick a deficit threshold** (default 25 g, configurable). The threshold is "how many grams behind real burn before I want to be reminded". For a guideline:
    - Casual / endurance riding: 25-35 g (about 25-35 min of typical intake).
    - Race / long events with trained gut: 15-25 g (tighter — you can absorb a lot, want to stay on top).
@@ -287,12 +287,12 @@ Two complementary mechanisms:
 
 - **Data fields**: 3 carb log slots + 2 drink log slots, each with its own configurable **label** (e.g. *"Gel"*, *"Bar"*, *"Bottle"*), **amount** (g or ml), **idle background colour** (Karoo default auto day/night, or any of 20 dark hues — see [field-colours.md](field-colours.md)) and **icon** (emoji like 🍫 / 🥤 / 💧, or one of the two bundled vector drawables for sports gel pouch and cyclist bidón — Unicode has no good emoji for those shapes). One tap = one log. The slot flashes green for **6 seconds** showing `+Xg ✓` (or `+Xml`) with the hint `TAP UNDO`, then returns to its idle label. Add as many or as few slots to your ride profile as you want.
   - **On-screen undo**: a **second tap on the same slot during the 6 s green window reverses the log**. The slot then flashes red `−Xg ✓` (or `−Xml`) for ~1.5 s as confirmation and returns to idle. Per-slot and one-shot: a third tap is a no-op until the next log populates the slot again. Undo restores the time-alert clock to its value before the wrong tap, so the next time-based alert isn't shifted by the bad entry.
-- **Combined fuel-log fields** *(Fuel Combo 1 / 2)*: a tappable field that logs a **drink volume (ml) and carbs (g) in one tap**, feeding the **same** hydration and carb cumulative totals as the separate drink-log / carb-log slots above. It logs only the **enabled** side(s): with only the carb tracker on it logs only the carbs, with only the hydration tracker on it logs only the drink, and with **neither** on the field renders grey/`OFF` and tap is disabled. It has the same ~6 s green confirmation + undo window as the other slots (a second tap reverses the log). Each button stores its own **volume (ml)**, **carbs (g)**, **label** and **idle background colour**, configured in the Fueling tab's **Combined logging** section. That section also has a single **carb concentration** value (grams of carb per 500 ml of mix) that **auto-fills** each button's carbs from its volume via `carbsFromVolume(ml, conc) = round(ml × conc / 500)`; the auto-filled value is an editable override, not a hard binding. Unlike the drink-log slots, the combined field's **icon is fixed** (a bundled bottle + gel drawable) and is **not** rider-pickable.
+- **Combined fuel-log fields** *(Fuel Combo 1 / 2)*: a tappable field that logs a **drink volume (ml) and carbs (g) in one tap**, feeding the **same** hydration and carb cumulative totals as the separate drink-log / carb-log slots above. It logs only the **enabled** side(s): with only the carb tracker on it logs only the carbs, with only the hydration tracker on it logs only the drink, and with **neither** on the field renders grey/`OFF` and tap is disabled. It has the same ~6 s green confirmation + undo window as the other slots (a second tap reverses the log). Each button stores its own **volume (ml)**, **carbs (g)**, **label** and **idle background colour**, configured in the Hydration tab's **Combined logging** section. That section also has a single **carb concentration** value (grams of carb per 500 ml of mix) that **auto-fills** each button's carbs from its volume via `carbsFromVolume(ml, conc) = round(ml × conc / 500)`; the auto-filled value is an editable override, not a hard binding. Unlike the drink-log slots, the combined field's **icon is fixed** (a bundled bottle + gel drawable) and is **not** rider-pickable.
 - **Hardware buttons (BonusActions, SRAM AXS only)**: KSafe registers two extra actions, *"KSafe: Log Carb"* and *"KSafe: Log Drink"*, both wired to slot 1 of each category. Map them to your AXS shifter buttons so you can log without looking at the screen.
-- **Log straight from the alert (optional)**: in the Fueling tab you can enable an **in-alert log button**. When a carb or hydration alert fires, it appears as a tappable prompt that **names the item it suggests** (e.g. *"Gel"*) with a big **EAT!** / **DRINK!** button showing the suggested amount (e.g. *25 g*) — so you log without hunting for its field. Three modes: **Off** (default — alert only, no button), **One tap** (Log), and **Log + undo** (after logging, a brief **UNDO** appears for ~4 s, confirming *what* was logged, e.g. *"Logged Gel 25 g"*). Logging from the alert updates the on-screen log field and the running totals exactly like tapping the field. The suggested item is the slot whose size is closest to your current shortfall (or your first slot for a time-based reminder); if you've left every slot at 0 the alert simply shows with no button. The prompt is tinted with the category's configured **alert background colour** (kept translucent, so a fueling nudge never reads as the red/amber emergency overlay), and its title runs on its own full-width line so a custom title isn't truncated. It needs the overlay permission, and during a crash / SOS countdown the fueling alert is held back entirely so it can never cover the emergency screen.
+- **Log straight from the alert (optional)**: in the Carbs or Hydration tab (same setting, shown on both) you can enable an **in-alert log button**. When a carb or hydration alert fires, it appears as a tappable prompt that **names the item it suggests** (e.g. *"Gel"*) with a big **EAT!** / **DRINK!** button showing the suggested amount (e.g. *25 g*) — so you log without hunting for its field. Three modes: **Off** (default — alert only, no button), **One tap** (Log), and **Log + undo** (after logging, a brief **UNDO** appears for ~4 s, confirming *what* was logged, e.g. *"Logged Gel 25 g"*). Logging from the alert updates the on-screen log field and the running totals exactly like tapping the field. The suggested item is the slot whose size is closest to your current shortfall (or your first slot for a time-based reminder); if you've left every slot at 0 the alert simply shows with no button. The prompt is tinted with the category's configured **alert background colour** (kept translucent, so a fueling nudge never reads as the red/amber emergency overlay), and its title runs on its own full-width line so a custom title isn't truncated. It needs the overlay permission, and during a crash / SOS countdown the fueling alert is held back entirely so it can never cover the emergency screen.
   - **Preview alert**: each channel section (Carbs, Hydration) has a **Preview alert** button that shows the prompt exactly as it will look mid-ride — same title, detail, icon, colour, verb and the real Log→Undo flow — but **records no intake and plays no beep**, so you can check your wording and colour from Settings before a ride. It honours whichever button mode you've selected; if you have overlay permission off or every slot at 0, the status line tells you why nothing appeared.
 
-When the master Carb / Hydration toggle is off, the corresponding log fields render in grey with `OFF` and tap is disabled — the data field is still visible on the ride profile but clearly inactive, so a stray tap does nothing instead of silently no-op'ing. Re-enable the master in the Fueling tab and the colour / emoji come back.
+When the master Carb / Hydration toggle is off, the corresponding log fields render in grey with `OFF` and tap is disabled — the data field is still visible on the ride profile but clearly inactive, so a stray tap does nothing instead of silently no-op'ing. Re-enable the master in the Carbs / Hydration tab and the colour / emoji come back.
 
 There are also four **status data fields** for carbs (deficit, burn rate, cumulative burned) plus one for hydration (deficit). All are optional — only the ones you add to your ride profile actually appear:
 
@@ -334,7 +334,7 @@ Pacing aligns with the Karoo's native 1 Hz Record sampling, so the developer fie
 
 ### What you configure
 
-Per category (Carbs, Hydration) the Fueling tab lets you:
+Per category, the Carbs and Hydration tabs let you:
 
 - Enable / disable the tracker (master toggle — when off, the rest of the fields collapse for a tidier screen)
 - Set the per-hour target
