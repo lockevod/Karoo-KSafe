@@ -47,7 +47,28 @@ Event catalogue understood by this script:
 
   Fueling (carbs + hydration):
     CARB_START / CARB_LOG / CARB_UNDO / CARB_FIRE / CARB_PERIODIC
-    HYD_START / HYD_LOG / HYD_UNDO / HYD_FIRE / HYD_PERIODIC
+    HYD_START / HYD_LOG / HYD_UNDO / HYD_FIRE / HYD_PERIODIC / HYD_OVER_SHADOW
+    HYD_END / HYD_CALIB
+    2.3.0 hydration keys:
+      HYD_PERIODIC adds mult (personal sweat multiplier %), repl (replacement %),
+        sweat (cumulative estimated sweat ml, incl. multiplier), base (same without
+        the multiplier), na_mg (cumulative sodium mg), cov_pct (model-covered share
+        of the Karoo ride time, -1 if unknown), low_pct (share of integrated time at
+        LOW confidence) and spd (speed km/h). conf= now reports the real estimator
+        confidence in fixed mode too, so filter by mode= when analysing confidence.
+        In dynamic mode rate_ml_h is the BASE sweat rate, while cum_target
+        integrates at base x mult x repl, so rate_ml_h x hours != cum_target.
+      HYD_START adds mult, repl and na (sweat sodium mmol/L).
+      HYD_OVER_SHADOW (SHADOW only, never an alert): logged each time logged fluid
+        exceeds estimated sweat by a new 500 ml level. Keys: excess, cum_logged,
+        cum_sweat, mult, conf, cov_pct, mode, ride_min.
+      HYD_END (once at ride end): final Last-ride totals. Keys: ride_min, cov_pct,
+        low_min, sweat, base, logged, na_mg, na, mult, mode, blocker (none /
+        NO_RIDE_TIME / TOO_SHORT / LOW_COVERAGE). Full rides with blocker=LOW_COVERAGE
+        mean the 0.85 coverage gate or the 2 km/h movement gate is too strict.
+      HYD_CALIB (weigh-in from the settings UI): loss_g, drink_ml, food_g, urinated,
+        old_mult, result=accepted (measured_ml, ratio, new_mult, n_ratios) or
+        result=rejected (reason). Usually lands in the NEXT ride's file.
     FUEL_QUIET  — a time-grid reminder was due but the 3-min quiet window
                   swallowed it (a deficit alert had just fired). Never a fire.
                   Since 2.2.4 also reason=deficit_wins: a deficit alert fired at its

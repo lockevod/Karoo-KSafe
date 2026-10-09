@@ -4,6 +4,10 @@ import android.app.Application
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.enderthor.kSafe.data.KSafeConfig
+import com.enderthor.kSafe.data.LastHydrationRide
+import com.enderthor.kSafe.extension.KSafeExtension
+import com.enderthor.kSafe.extension.util.CalibrationInput
+import com.enderthor.kSafe.extension.util.CalibrationResult
 import com.enderthor.kSafe.data.KSafeBackupExport
 import com.enderthor.kSafe.data.ProviderType
 import com.enderthor.kSafe.data.RecipientAlertScope
@@ -48,6 +52,20 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     val config: StateFlow<KSafeConfig> = configManager.loadConfigFlow()
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), KSafeConfig())
+
+    val lastHydrationRide: StateFlow<LastHydrationRide?> = configManager.loadLastHydrationRideFlow()
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), null)
+
+    suspend fun calibrateHydration(expectedRideId: Long, input: CalibrationInput): CalibrationResult {
+        val oldMult = config.value.hydrationSweatMultiplierPct
+        return configManager.calibrateHydration(expectedRideId, input).also {
+            KSafeExtension.getInstance()?.logHydrationCalibration(input, it, oldMult)
+        }
+    }
+
+    fun resetHydrationCalibration() {
+        viewModelScope.launch { configManager.resetHydrationCalibration() }
+    }
 
     val senderConfigs: StateFlow<List<SenderConfig>> = configManager.loadSenderConfigFlow()
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())

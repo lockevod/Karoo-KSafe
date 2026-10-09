@@ -28,6 +28,10 @@ import com.enderthor.kSafe.extension.crash.CrashDetectionManager
 import com.enderthor.kSafe.extension.managers.EmergencyManager
 import com.enderthor.kSafe.extension.managers.LocationManager
 import com.enderthor.kSafe.extension.util.LogReporter
+import com.enderthor.kSafe.extension.util.CalibrationInput
+import com.enderthor.kSafe.extension.util.CalibrationResult
+import com.enderthor.kSafe.extension.util.rideCalibrationBlocker
+import kotlin.math.roundToInt
 import com.enderthor.kSafe.extension.util.learnProfile
 import com.enderthor.kSafe.extension.util.resolveEffectiveCrashConfig
 import com.enderthor.kSafe.extension.managers.MedicalEpisodeDetector
@@ -192,6 +196,12 @@ private const val CALIBRATION_RIDE_END_MAX_CHUNKS: Int = CALIBRATION_PERIODIC_MA
  *  the session-write rate drops ~5× vs writing on every gram increment. */
 private const val SESSION_BURN_DEADBAND_G: Double = 5.0
 
+/** Deadbands on the cumulative sweat-loss / sodium-loss totals for FIT session writes —
+ *  same "last write wins" rationale as [SESSION_BURN_DEADBAND_G]: the header is at most
+ *  10 ml / 10 mg behind the true ride total. */
+private const val SESSION_SWEAT_DEADBAND_ML: Double = 10.0
+private const val SESSION_SODIUM_DEADBAND_MG: Double = 10.0
+
 /** STANDARD FIT field number of `total_calories` (uint16, kcal) in the SessionMesg —
  *  FIT SDK `SessionMesg.TotalCaloriesFieldNum`. The Karoo's ride app does not write
  *  this field, so platforms that ignore developer fields (Suunto, …) import no
@@ -297,6 +307,10 @@ class KSafeExtension : KarooExtension("ksafe", BuildConfig.VERSION_NAME), Corout
      *  active is a no-op only when the need set is UNCHANGED — a mid-ride feature
      *  toggle rebuilds the block. */
     @Volatile private var recordingCollectorsJob: kotlinx.coroutines.Job? = null
+    /** Karoo "Ride Time" (ELAPSED_TIME, recording time excluding pauses) in ms, fed by the
+     *  Recording-only collectors; the hydration tracker's coverage denominator. Null until the
+     *  first emission of a ride, reset on Idle after the Last-ride snapshot. */
+    @Volatile private var rideTimeMs: Long? = null
     /** Tracks the in-flight calibration-log periodic-send drain. The 20-min cycle
      *  skips re-launching when this job is still active so two parallel periodic
      *  drains can't read the same first chunk before the first finishes
@@ -422,6 +436,11 @@ class KSafeExtension : KarooExtension("ksafe", BuildConfig.VERSION_NAME), Corout
             // an untrustworthy stamp hands the reading back to the live onboard sensor.
             return ageMs >= 0 && ageMs < HEADWIND_FRESH_MS
         }
+
+        /** FIT session write gate for a cumulative value: true on the first tick (`last` NaN)
+         *  or once it has moved at least [deadband] either way since the last session write. */
+        internal fun sessionDeadbandExceeded(current: Double, last: Double, deadband: Double): Boolean =
+            last.isNaN() || kotlin.math.abs(current - last) >= deadband
 
         internal fun recordingStreamNeeds(c: KSafeConfig): RecordingStreamNeeds {
             // Master switch OFF stops every consumer, so nothing needs a stream.
@@ -626,6 +645,9 @@ class KSafeExtension : KarooExtension("ksafe", BuildConfig.VERSION_NAME), Corout
             context = applicationContext,
             onFuelingAlert = { presentFuelingAlert(it) },
             isEmergencyActive = ::emergencyActive,
+            // Strictly Recording: nothing accrues while Paused (spec A3).
+            isRecording = { currentRideState is RideState.Recording },
+            rideTimeMs = { rideTimeMs },
             calibLogger = calibLogger,
         )
         // Publish tracker references so the status DataTypes can suspend on the flow
@@ -1239,6 +1261,19 @@ class KSafeExtension : KarooExtension("ksafe", BuildConfig.VERSION_NAME), Corout
                         hydrationTracker.updateAmbientTemp(tempC)
                     }
             }
+            // Karoo Ride Time — the hydration tracker's coverage denominator. Gated on `ambient`
+            // because the hydration tracker is that flag's only consumer (see RecordingStreamNeeds).
+            // UNIT: milliseconds, confirmed from KGhost field logs (kghost_v0.7.2 session
+            // 015282_7a24ab: raw/1000 advances 1 s per wall-clock second).
+            if (needs.ambient) launch {
+                karooSystem.streamDataFlow(io.hammerhead.karooext.models.DataType.Type.ELAPSED_TIME)
+                    .collect { streamState ->
+                        val s = streamState as? io.hammerhead.karooext.models.StreamState.Streaming
+                            ?: return@collect
+                        val v = s.dataPoint.singleValue ?: return@collect
+                        if (v.isFinite() && v >= 0.0) rideTimeMs = v.toLong()
+                    }
+            }
             if (needs.ambient) launch {
                 karooSystem.streamDataFlow("TYPE_EXT::karoo-headwind::relativeHumidity", StreamPolicy.OPTIONAL)
                     .collect { streamState ->
@@ -1257,6 +1292,13 @@ class KSafeExtension : KarooExtension("ksafe", BuildConfig.VERSION_NAME), Corout
         recordingCollectorsJob?.cancel()
         recordingCollectorsJob = null
         activeRecordingStreamNeeds = null
+        // No ELAPSED_TIME subscription any more: a stale value would make an untracked gap
+        // (master OFF mid-ride) look covered. A rebuild that re-subscribes re-emits the true
+        // cumulative ride time; a ride ended without one records 0 → NO_RIDE_TIME.
+        // EXCEPT while Paused: ride time doesn't advance during a pause, so the last value is
+        // still exact (master OFF in a pause, then end ride, must not lose it). A Recording
+        // span run without the collector clears it in handleRideState's Recording branch.
+        if (currentRideState !is RideState.Paused) rideTimeMs = null
         // Reset Headwind detection — if the rider's setup changes between rides
         // (uninstalls Headwind, for instance) we want the onboard temperature
         // fallback to engage cleanly on the next ride.
@@ -1498,9 +1540,18 @@ class KSafeExtension : KarooExtension("ksafe", BuildConfig.VERSION_NAME), Corout
                         }
                     }
                     rideWasActive = true
+                } else {
+                    // Recording with the master OFF: ride time advances with no ELAPSED_TIME
+                    // collector, so a value kept from a pause would now be stale (see
+                    // stopRecordingCollectors).
+                    rideTimeMs = null
                 }
             }
             is RideState.Paused -> {
+                // First: close the hydration Recording interval up to the pause instant so
+                // a stop-start ride doesn't lose up to one tick per autopause (no-op when
+                // the tracker isn't running).
+                hydrationTracker.onPaused()
                 // Keep crash detection active while paused (rider may have crashed).
                 // BUT reset the speed-drop accumulator — speed is 0 on any pause (manual
                 // or automatic), so without this reset the speed-drop watchdog would fire
@@ -1541,6 +1592,20 @@ class KSafeExtension : KarooExtension("ksafe", BuildConfig.VERSION_NAME), Corout
                 // instead of reviving them. Mid-ride master/feature stops keep the default
                 // false — their retained state is still this ride's live session.
                 carbsTracker.stop(endOfSession = true)
+                // Last-ride record (weigh-in calibration / sodium summary) BEFORE stop() — null
+                // unless this ride had a live hydration session. Ride time is cleared after it.
+                val hydRecord = hydrationTracker.lastRideSnapshot()
+                if (hydRecord != null && this@KSafeExtension::calibLogger.isInitialized) {
+                    calibLogger.log(CalibrationLogger.Event.FUELING_HYDRATION_END) {
+                        val r = hydRecord
+                        "ride_min=${r.rideTimeMs / 60_000},cov_pct=${if (r.rideTimeMs > 0) r.coveredMs * 100 / r.rideTimeMs else -1}," +
+                            "low_min=${r.lowConfMs / 60_000},sweat=${r.cumSweatMl.toInt()},base=${r.cumSweatBaseMl.toInt()}," +
+                            "logged=${r.cumLoggedMl},na_mg=${r.cumSodiumMg.toInt()},na=${r.naMmolL}," +
+                            "mult=${r.multiplierPctAtRide},mode=${if (r.dynamicMode) "dynamic" else "fixed"}," +
+                            "blocker=${rideCalibrationBlocker(r) ?: "none"}"
+                    }
+                }
+                rideTimeMs = null
                 hydrationTracker.stop(endOfSession = true)
                 // A fueling overlay shown in the final seconds otherwise lingers for its full
                 // ~15 s auto-dismiss; tear it down now the ride has ended so it can't sit as a
@@ -1550,7 +1615,8 @@ class KSafeExtension : KarooExtension("ksafe", BuildConfig.VERSION_NAME), Corout
                 // Ride ended cleanly — drop the persisted fueling snapshot so the next ride
                 // starts from zero. Fire-and-forget on IO; if the write loses to a process
                 // kill the next boot's stale-age check (FUELING_RESTORE_MAX_AGE_MS) catches it.
-                launch(Dispatchers.IO) { configManager.clearFuelingState() }
+                // Same transaction writes the Last-ride hydration record (when there is one).
+                launch(Dispatchers.IO) { configManager.finalizeHydrationRide(hydRecord) }
                 // Drop the IN-MEMORY restore too. If the extension was rebooted mid-ride and
                 // the first ride-state event it saw was this Idle (rider already stopping),
                 // the boot-loaded snapshot would otherwise survive here and seed the NEXT
@@ -2269,6 +2335,21 @@ class KSafeExtension : KarooExtension("ksafe", BuildConfig.VERSION_NAME), Corout
     /** Active Karoo ride-profile id for the Settings UI's per-profile crash section. */
     fun getActiveProfileIdForUi(): String? = activeProfileId
 
+    /** HYD_CALIB row for a weigh-in done in the settings UI (same process). No-op when logging is off. */
+    fun logHydrationCalibration(input: CalibrationInput, result: CalibrationResult, oldMultiplierPct: Int) {
+        if (!::calibLogger.isInitialized) return
+        calibLogger.log(CalibrationLogger.Event.FUELING_HYDRATION_CALIB) {
+            val head = "loss_g=${((input.preKg - input.postKg) * 1000).roundToInt()},drink_ml=${input.drinkMl}," +
+                "food_g=${input.foodG},urinated=${input.urinated},old_mult=$oldMultiplierPct,"
+            head + when (result) {
+                is CalibrationResult.Accepted ->
+                    "result=accepted,measured_ml=${result.measuredMl},ratio=${"%.3f".format(java.util.Locale.US, result.ratio)}," +
+                        "new_mult=${result.newMultiplierPct},n_ratios=${result.newRatios.size}"
+                is CalibrationResult.Rejected -> "result=rejected,reason=${result.reason}"
+            }
+        }
+    }
+
     /** Returns a string with file location info for display in the Settings UI.
      *  `suspend` + [Dispatchers.IO]: scans the whole CSV (line count) and reads the
      *  previous-session file — never run this on Main. */
@@ -2303,7 +2384,7 @@ class KSafeExtension : KarooExtension("ksafe", BuildConfig.VERSION_NAME), Corout
         }
     }
 
-    /** Called from FuelingScreen to preview a carb/hydration alert without logging any intake.
+    /** Called from the Carbs/Hydration screens to preview a carb/hydration alert without logging any intake.
      * Mode-faithful (honours fuelingAlertButtonMode), silent (no beep — the tracker's beep stays
      * in fireAlert), and safe (yields to a real emergency). Returns a UI status string. */
     fun simulateFuelingAlert(channel: com.enderthor.kSafe.extension.util.FuelingChannel): String {
@@ -3235,6 +3316,24 @@ class KSafeExtension : KarooExtension("ksafe", BuildConfig.VERSION_NAME), Corout
             nativeFieldNum = null,
             developerDataIndex = 0,
         )
+        // Hydration model totals: estimated sweat loss and sodium loss for the ride. Session
+        // only (cumulative totals for the activity header). Immutable once shipped.
+        val sweatField = DeveloperField(
+            fieldDefinitionNumber = 9,
+            fitBaseTypeId = 136,
+            fieldName = "ksafe_sweat_ml",
+            units = "ml",
+            nativeFieldNum = null,
+            developerDataIndex = 0,
+        )
+        val sodiumField = DeveloperField(
+            fieldDefinitionNumber = 10,
+            fitBaseTypeId = 136,
+            fieldName = "ksafe_sodium_mg",
+            units = "mg",
+            nativeFieldNum = null,
+            developerDataIndex = 0,
+        )
         // Dispatchers.IO: every emit is a karoo-ext `Emitter.onNext`, which serialises the
         // effect and makes a BLOCKING (non-oneway) Binder round-trip to the Karoo recording
         // service. At the per-record cadence below that would otherwise run ~1×/s on the Main
@@ -3263,12 +3362,15 @@ class KSafeExtension : KarooExtension("ksafe", BuildConfig.VERSION_NAME), Corout
                                else FitCaloriesSource.NONE
             if (!writeDevFields && stdCalSource == FitCaloriesSource.NONE) return@launch
             val writeCalories = writeDevFields && activeConfig.hrCaloriesEnabled
+            // Re-evaluated per session write below: hydration can be toggled mid-ride.
+            var writeSweat = writeDevFields && activeConfig.hydrationTrackerEnabled
 
             calibLogger.log(CalibrationLogger.Event.FIT_WRITER_START) {
                 // Field-definition numbers are public-API once shipped; record them so the CSV
                 // can be cross-referenced with the developer-field schema in the resulting FIT.
                 "fields=${if (writeDevFields) "0,1,2,3,4,5,6" else "-"}" +
-                    "${if (writeCalories) ",8" else ""},std_cal=${stdCalSource.name}"
+                    "${if (writeCalories) ",8" else ""}${if (writeSweat) ",9,10" else ""}" +
+                    ",std_cal=${stdCalSource.name}"
             }
             fitWriterStarted.set(true)
 
@@ -3309,6 +3411,8 @@ class KSafeExtension : KarooExtension("ksafe", BuildConfig.VERSION_NAME), Corout
             var lastSesFires        = Double.NaN
             var lastSesKcal         = Double.NaN
             var lastSesStdKcal      = Double.NaN
+            var lastSesSweatMl      = Double.NaN
+            var lastSesSodiumMg     = Double.NaN
 
             karooSystem.streamDataFlow(DataType.Type.ELAPSED_TIME)
                 .mapNotNull { (it as? StreamState.Streaming)?.dataPoint?.singleValue }
@@ -3328,7 +3432,10 @@ class KSafeExtension : KarooExtension("ksafe", BuildConfig.VERSION_NAME), Corout
                     val carbsBurnedG = (carbStatus?.cumBurnedG ?: 0).toDouble()
                     val burnRateGph  = (carbStatus?.burnRateGph ?: 0).toDouble()
                     val kcal         = (carbStatus?.kcalTotal ?: 0).toDouble()
-                    val hydMl  = (hydrationTrackerOrNull()?.statusFlow?.value?.cumLoggedMl ?: 0).toDouble()
+                    val hydStatus = hydrationTrackerOrNull()?.statusFlow?.value
+                    val hydMl  = (hydStatus?.cumLoggedMl ?: 0).toDouble()
+                    val sweatMl  = (hydStatus?.cumSweatMl ?: 0).toDouble()
+                    val sodiumMg = (hydStatus?.cumSodiumMg ?: 0).toDouble()
                     val wellness = wellnessMonitorOrNull()?.summaryFlow?.value
                     val driftPct    = wellness?.currentDriftPct?.toDouble() ?: 0.0
                     val maxDriftPct = wellness?.maxDriftPct?.toDouble() ?: 0.0
@@ -3414,9 +3521,22 @@ class KSafeExtension : KarooExtension("ksafe", BuildConfig.VERSION_NAME), Corout
                                 FitCaloriesSource.HR    -> kcal
                                 FitCaloriesSource.KAROO -> karooKcalFlow.value
                             }
+                            // Fields 9/10 follow the LIVE hydration toggle (FIT_WRITER_START only
+                            // records the eligibility at writer start). Enabling forces the first
+                            // 9/10 write via the NaN sentinels; disabling stops writing them.
+                            val sweatNow = writeDevFields && activeConfig.hydrationTrackerEnabled
+                            if (sweatNow != writeSweat) {
+                                writeSweat = sweatNow
+                                if (sweatNow) { lastSesSweatMl = Double.NaN; lastSesSodiumMg = Double.NaN }
+                                Timber.d("FIT session fields 9,10 ${if (sweatNow) "enabled" else "disabled"} mid-ride")
+                            }
                             val burnDelta = if (lastSesCarbsBurnedG.isNaN()) Double.POSITIVE_INFINITY
                                             else carbsBurnedG - lastSesCarbsBurnedG
                             val burnSignificant = burnDelta >= SESSION_BURN_DEADBAND_G
+                            // Sweat / sodium: continuously integrated like burn, same deadband idea.
+                            val sweatSignificant = writeSweat && (
+                                sessionDeadbandExceeded(sweatMl, lastSesSweatMl, SESSION_SWEAT_DEADBAND_ML) ||
+                                sessionDeadbandExceeded(sodiumMg, lastSesSodiumMg, SESSION_SODIUM_DEADBAND_MG))
                             val otherSesChanged =
                                 carbsG      != lastSesCarbsG      ||
                                 hydMl       != lastSesHydMl       ||
@@ -3424,7 +3544,7 @@ class KSafeExtension : KarooExtension("ksafe", BuildConfig.VERSION_NAME), Corout
                                 fires       != lastSesFires       ||
                                 (writeCalories && kcal != lastSesKcal) ||
                                 (stdCalSource != FitCaloriesSource.NONE && stdKcal != lastSesStdKcal)
-                            if (burnSignificant || otherSesChanged) {
+                            if (burnSignificant || sweatSignificant || otherSesChanged) {
                                 val sessionFields = mutableListOf<FieldValue>()
                                 if (writeDevFields) {
                                     sessionFields.add(FieldValue(carbField,        carbsG))
@@ -3433,6 +3553,10 @@ class KSafeExtension : KarooExtension("ksafe", BuildConfig.VERSION_NAME), Corout
                                     sessionFields.add(FieldValue(maxDriftField,    maxDriftPct))
                                     sessionFields.add(FieldValue(firesField,       fires))
                                     if (writeCalories) sessionFields.add(FieldValue(caloriesField, kcal))
+                                    if (writeSweat) {
+                                        sessionFields.add(FieldValue(sweatField,  sweatMl))
+                                        sessionFields.add(FieldValue(sodiumField, sodiumMg))
+                                    }
                                 }
                                 if (stdCalSource != FitCaloriesSource.NONE && stdKcal > 0.0) {
                                     sessionFields.add(
@@ -3449,6 +3573,8 @@ class KSafeExtension : KarooExtension("ksafe", BuildConfig.VERSION_NAME), Corout
                                 lastSesFires        = fires
                                 lastSesKcal         = kcal
                                 lastSesStdKcal      = stdKcal
+                                lastSesSweatMl      = sweatMl
+                                lastSesSodiumMg     = sodiumMg
                             }
                         }
                         else -> { /* Paused / Idle / null: don't emit */ }

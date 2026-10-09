@@ -70,13 +70,14 @@ fun TabLayout(vm: MainViewModel = viewModel()) {
     }
 
     // Order matches the rider's mental model: protective features first (Safety, Health,
-    // Fueling), then notification-shaped actions (Actions = custom messages, webhooks,
+    // Carbs, Hydration), then notification-shaped actions (Actions = custom messages, webhooks,
     // Karoo Live ride-start/end), then the channel that carries them (Providers), and
     // finally Settings for the master kill-switch + calibration + FIT export + backup.
     val tabs = listOf(
         stringResource(R.string.tab_safety),
         stringResource(R.string.tab_health),
-        stringResource(R.string.tab_fueling),
+        stringResource(R.string.tab_carbs),
+        stringResource(R.string.tab_hydration),
         stringResource(R.string.tab_actions),
         stringResource(R.string.tab_provider),
         stringResource(R.string.tab_settings),
@@ -144,10 +145,11 @@ fun TabLayout(vm: MainViewModel = viewModel()) {
         when (selectedTab) {
             0 -> SafetyScreen(vm)
             1 -> HealthScreen(vm)
-            2 -> FuelingScreen(vm)
-            3 -> ActionsScreen(vm)
-            4 -> ProviderScreen(vm)
-            5 -> SettingsScreen(vm)
+            2 -> CarbsScreen(vm)
+            3 -> HydrationScreen(vm)
+            4 -> ActionsScreen(vm)
+            5 -> ProviderScreen(vm)
+            6 -> SettingsScreen(vm)
         }
     }
 }

@@ -298,4 +298,17 @@ class ConfigMigrationTest {
         assertEquals(CONFIG_VERSION, migrated.configVersion)
         assertEquals(12, migrated.speedDropMinutes)
     }
+
+    @Test
+    fun `v27 config migrates to v28 with hydration defaults`() {
+        val migrated = KSafeConfig(configVersion = 27, hydrationTargetMlPerHour = 640).migrateToLatest()
+        assertEquals(CONFIG_VERSION, migrated.configVersion)
+        assertEquals(28, migrated.configVersion)
+        assertEquals(100, migrated.hydrationSweatMultiplierPct)
+        assertEquals(80, migrated.hydrationReplacementPct)
+        assertEquals(SweatSodiumProfile.TYPICAL, migrated.sweatSodiumProfile)
+        assertEquals(36, migrated.sweatSodiumMeasuredMmolL)
+        assertEquals(emptyList<Float>(), migrated.hydrationCalibrationRatios)
+        assertEquals(640, migrated.hydrationTargetMlPerHour)
+    }
 }

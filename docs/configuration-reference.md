@@ -89,3 +89,14 @@ The combined drink+carbs tap field logs a drink volume **and** its carbs in a si
 
 - **`combinedCarbConcentrationPer500ml`** (default **60**): Carbs (g) per 500 ml of your drink mix. Drives the auto-fill of each combined button's carbs from its volume (`ml × concentration / 500`). Editable; only used by the Fueling screen to pre-fill — the per-button carbs value is what actually gets logged.
 - **`combined1Label` / `combined1Ml` / `combined1Carbs` / `combined1Color`** (defaults `"Sip"` / 250 ml / 30 g / Auto) and **`combined2Label` / `combined2Ml` / `combined2Carbs` / `combined2Color`** (defaults `"Bottle"` / 500 ml / 60 g / Auto): The two combined buttons' label, volume, carbs, and idle background colour. Carbs auto-fill from `ml × combinedCarbConcentrationPer500ml / 500` but are independently editable. The field is active when **either** the carbs or hydration tracker is enabled (it logs only the enabled side) and greyed when both are off — there is no separate enable flag. The icon is fixed (not configurable).
+
+## Hydration model (Fueling, 2.3.0)
+
+Full detail in [fueling-algorithm.md](fueling-algorithm.md#hydrationtracker).
+
+- **`hydrationSweatMultiplierPct`** (default **100**, 50..200): personal multiplier on the estimated sweat rate (both modes). Set by a weigh-in calibration on the Last-ride card, or by hand. "Reset" returns it to 100 and clears the history.
+- **`hydrationCalibrationRatios`** (default empty, last 3 kept): measured/estimated ratios; the multiplier is their mean.
+- **`hydrationReplacementPct`** (default **80**, 50..100): dynamic mode only; the drink target is this share of estimated sweat.
+- **`sweatSodiumProfile`** (default `TYPICAL`): `LIGHT` 25, `TYPICAL` 36, `SALTY` 50 or `MEASURED` mmol/L.
+- **`sweatSodiumMeasuredMmolL`** (default **36**, 10..90): used when the profile is `MEASURED`.
+- FIT: session developer fields 9 `ksafe_sweat_ml` and 10 `ksafe_sodium_mg` (see fueling-algorithm.md).

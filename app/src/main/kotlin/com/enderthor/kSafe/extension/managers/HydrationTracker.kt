@@ -1,17 +1,27 @@
 package com.enderthor.kSafe.extension.managers
 
 import android.content.Context
+import androidx.annotation.VisibleForTesting
 import com.enderthor.kSafe.R
 import com.enderthor.kSafe.data.HydFuelingState
 import com.enderthor.kSafe.data.KSafeConfig
+import com.enderthor.kSafe.data.LastHydrationRide
+import com.enderthor.kSafe.data.mmolL
 import com.enderthor.kSafe.data.fuelingAlertColorRes
 import com.enderthor.kSafe.extension.util.ALERT_DETAIL_MAX_CHARS
 import com.enderthor.kSafe.extension.util.ALERT_TITLE_MAX_CHARS
 import com.enderthor.kSafe.extension.util.CarbIntegrator
+import com.enderthor.kSafe.extension.util.Clock
 import com.enderthor.kSafe.extension.util.FuelingAlertScheduler
+import com.enderthor.kSafe.extension.util.HydAccum
+import com.enderthor.kSafe.extension.util.HydTickInput
 import com.enderthor.kSafe.extension.util.SweatConfidence
+import com.enderthor.kSafe.extension.util.SweatEstimate
 import com.enderthor.kSafe.extension.util.SweatEstimateInputs
+import com.enderthor.kSafe.extension.util.SystemClock
 import com.enderthor.kSafe.extension.util.estimateSweatRate
+import com.enderthor.kSafe.extension.util.hydrationStep
+import com.enderthor.kSafe.extension.util.overDrinkShadowLevel
 import com.enderthor.kSafe.extension.util.renderAlertText
 import io.hammerhead.karooext.KarooSystemService
 import io.hammerhead.karooext.models.InRideAlert
@@ -45,6 +55,12 @@ class HydrationTracker(
      *  DEFERRED (not fired, cooldown not consumed) so it doesn't beep over the SOS and re-fires
      *  once the emergency clears. Injected so the tracker stays decoupled from EmergencyManager. */
     private val isEmergencyActive: () -> Boolean,
+    /** Strictly Recording (not Paused). Nothing accrues while paused, even if the bike moves. */
+    private val isRecording: () -> Boolean = { true },
+    /** Karoo ride time (excludes pauses); null = unknown. Coverage denominator for the shadow
+     *  and the Last-ride record. */
+    private val rideTimeMs: () -> Long? = { null },
+    private val clock: Clock = SystemClock,
     private val calibLogger: CalibrationLogger? = null,
 ) {
 
@@ -79,7 +95,12 @@ class HydrationTracker(
     private val AUTO_DISMISS_MS = 10_000L
 
     // ─── Session state (reset by start()) ────────────────────────────────────
-    @Volatile private var cumTargetMl = 0f
+    /** All per-session hydration totals (drink target, sweat, sodium, coverage) — see [HydAccum]. */
+    @Volatile private var accum = HydAccum()
+    /** Last HYD_OVER_SHADOW level logged this session. SHADOW only: never drives an alert. */
+    @Volatile private var overShadowLevel = 0
+    /** [isRecording] as seen by the previous [tick]; a change re-anchors dt (Recording↔Paused). */
+    private var wasRecording = true
     /** Deficit growth over the last tick (ml/ms), for the hold's first-crossing projection. */
     private var deficitRatePerMs = 0.0
     @Volatile private var cumLoggedMl = 0
@@ -201,10 +222,20 @@ class HydrationTracker(
         // Same restart pattern as CarbsTracker — wait for the previous monitor to fully
         // stop inside the new coroutine to avoid late ticks producing spurious log rows.
         val oldJob = monitorJob
-        val now = System.currentTimeMillis()
+        val now = clock.nowMs()
         if (restoreFrom != null) {
             // Extension was killed mid-ride — see [CarbsTracker.start] for full rationale.
-            cumTargetMl = restoreFrom.cumTargetMl
+            // A legacy snapshot restores coveredMs = 0, which is what keeps it out of
+            // calibration and the shadow (coverage is measured against ride time).
+            accum = HydAccum(
+                cumTargetMl = restoreFrom.cumTargetMl,
+                cumSweatBaseMl = restoreFrom.cumSweatBaseMl,
+                cumSweatMl = restoreFrom.cumSweatMl,
+                cumSodiumMg = restoreFrom.cumSodiumMg,
+                coveredMs = restoreFrom.coveredMs,
+                lowConfMs = restoreFrom.lowConfMs,
+            )
+            overShadowLevel = restoreFrom.overShadowLevel
             cumLoggedMl = restoreFrom.cumLoggedMl
             sessionStartMs = restoreFrom.sessionStartMs.takeIf { it > 0 } ?: now
             lastLogMs = restoreFrom.lastLogMs.takeIf { it > 0 } ?: now
@@ -217,7 +248,8 @@ class HydrationTracker(
             lastTimeAlertFireMs = restoreFrom.lastTimeAlertFireMs
             lastDeficitAlertFireMs = restoreFrom.lastDeficitAlertFireMs
         } else {
-            cumTargetMl = 0f
+            accum = HydAccum()
+            overShadowLevel = 0
             cumLoggedMl = 0
             sessionStartMs = now
             lastLogMs = now
@@ -254,22 +286,55 @@ class HydrationTracker(
                 "time_interval_min=${config.hydrationTimeIntervalMin}," +
                 "time_initial_delay_min=${config.hydrationTimeInitialDelayMin}," +
                 "beep=${config.hydBeepPattern}," +
-                "restored=${restoreFrom != null}"
+                "restored=${restoreFrom != null}," +
+                "mult=${config.hydrationSweatMultiplierPct}," +
+                "repl=${config.hydrationReplacementPct}," +
+                "na=${naMmolL()}"
         }
         Timber.d("HydrationTracker started, target=${config.hydrationTargetMlPerHour} ml/h, restored=${restoreFrom != null}")
         publishStatus()
     }
 
     /** See [CarbsTracker.getPersistableState] — same contract for the hydration tracker. */
-    fun getPersistableState(): HydFuelingState = HydFuelingState(
-        cumTargetMl = cumTargetMl,
+    fun getPersistableState(): HydFuelingState = accum.let { a -> HydFuelingState(
+        cumTargetMl = a.cumTargetMl,
         cumLoggedMl = cumLoggedMl,
         sessionStartMs = sessionStartMs,
         lastLogMs = lastLogMs,
         lastRealLogMs = lastRealLogMs,
         lastTimeAlertFireMs = lastTimeAlertFireMs,
         lastDeficitAlertFireMs = lastDeficitAlertFireMs,
-    )
+        cumSweatBaseMl = a.cumSweatBaseMl,
+        cumSweatMl = a.cumSweatMl,
+        cumSodiumMg = a.cumSodiumMg,
+        coveredMs = a.coveredMs,
+        lowConfMs = a.lowConfMs,
+        overShadowLevel = overShadowLevel,
+    ) }
+
+    /**
+     * Totals for the post-ride "Last ride" record, or null when there is no live session for
+     * THIS ride (hydration disabled, already ended, or never started) so a later ride can't
+     * re-snapshot a previous ride's retained totals. Coverage is judged by the consumer.
+     */
+    fun lastRideSnapshot(): LastHydrationRide? {
+        if (!config.hydrationTrackerEnabled || sessionEnded || sessionStartMs <= 0L) return null
+        val a = accum
+        return LastHydrationRide(
+            rideId = sessionStartMs,
+            endedAtMs = clock.nowMs(),
+            rideTimeMs = rideTimeMs() ?: 0L,
+            coveredMs = a.coveredMs,
+            lowConfMs = a.lowConfMs,
+            cumSweatBaseMl = a.cumSweatBaseMl,
+            cumSweatMl = a.cumSweatMl,
+            cumLoggedMl = cumLoggedMl,
+            cumSodiumMg = a.cumSodiumMg,
+            naMmolL = naMmolL(),
+            multiplierPctAtRide = config.hydrationSweatMultiplierPct,
+            dynamicMode = config.hydrationDynamicEstimateEnabled,
+        )
+    }
 
     /** See [CarbsTracker.sessionEnded] — same live-session bookkeeping. */
     @Volatile private var sessionEnded = true
@@ -280,17 +345,17 @@ class HydrationTracker(
         monitorJob = null
         if (endOfSession) sessionEnded = true
         Timber.d("HydrationTracker stopped (endOfSession=$endOfSession)")
-        // State is intentionally retained so getSummary() / getStatus() remain readable
-        // for the post-ride summary.
+        // State is intentionally retained so getStatus() / lastRideSnapshot() remain
+        // readable after the ride ends.
         publishStatus()
     }
 
     /**
      * Re-launch the monitor without resetting accumulators. Used by the master-switch
      * mid-ride OFF→ON transition: the rider's cumulative target and logged volumes are
-     * preserved so a brief toggle does not erase the ride's totals. The first tick after
-     * resume skips integration (lastTickMs = 0L sentinel) so the OFF window is not
-     * integrated as if it had been a ride segment.
+     * preserved so a brief toggle does not erase the ride's totals. dt is anchored at the
+     * resume instant (lastTickMs = now), so the OFF / paused window is never integrated
+     * while the first tick's interval after resume still counts.
      */
     fun resume(config: KSafeConfig) {
         this.config = config
@@ -304,7 +369,8 @@ class HydrationTracker(
             return
         }
         val oldJob = monitorJob
-        lastTickMs = 0L
+        lastTickMs = clock.nowMs()
+        wasRecording = isRecording()
         monitorJob = scope.launch {
             oldJob?.cancelAndJoin()
             // H3 — defensive try/catch around tick() so a single throw doesn't
@@ -316,7 +382,20 @@ class HydrationTracker(
                 catch (e: Exception) { Timber.e(e, "HydrationTracker.tick threw — continuing") }
             }
         }
-        Timber.d("HydrationTracker resumed (cumTargetMl=${cumTargetMl.toInt()}, cumLoggedMl=$cumLoggedMl)")
+        Timber.d("HydrationTracker resumed (cumTargetMl=${accum.cumTargetMl.toInt()}, cumLoggedMl=$cumLoggedMl)")
+        publishStatus()
+    }
+
+    /**
+     * Ride went Recording → Paused. Closes the open Recording interval (last tick → now) so
+     * it isn't dropped, then marks the tracker paused so neither the paused span nor the
+     * next tick integrates anything; [resume] re-anchors on the way back. No-op when the
+     * monitor isn't running. The in-tick Recording↔Paused re-anchor stays as a safety net.
+     */
+    fun onPaused() {
+        if (monitorJob == null) return
+        integrateTo(clock.nowMs(), recording = true)
+        wasRecording = false
         publishStatus()
     }
 
@@ -350,8 +429,8 @@ class HydrationTracker(
     // Called from KSafeExtension whenever a stream emits. All are no-ops unless
     // [KSafeConfig.hydrationDynamicEstimateEnabled] is true at tick time.
 
-    fun updateHr(bpm: Int)            { lastHrBpm = bpm; lastHrUpdateMs = System.currentTimeMillis() }
-    fun updatePower(w: Int)           { lastPowerW = w; lastPowerUpdateMs = System.currentTimeMillis() }
+    fun updateHr(bpm: Int)            { lastHrBpm = bpm; lastHrUpdateMs = clock.nowMs() }
+    fun updatePower(w: Int)           { lastPowerW = w; lastPowerUpdateMs = clock.nowMs() }
     fun updateSpeed(kmh: Double) {
         // D6/G2 fix — drop NaN AND Infinity samples; see MedicalEpisodeDetector
         // for the IEEE-754 taint mechanism this guards against.
@@ -360,7 +439,7 @@ class HydrationTracker(
         // See CarbsTracker.updateSpeed — stamp on value change OR explicit zero OR
         // bootstrap so a stopped rider isn't misclassified as GPS-stale.
         if (prev == null || prev != kmh || kmh == 0.0) {
-            lastSpeedChangeMs = System.currentTimeMillis()
+            lastSpeedChangeMs = clock.nowMs()
         }
         // Publish only on movement-gate crossings — see CarbsTracker.updateSpeed.
         val wasMoving = prev != null && prev >= MOVING_GATE_KMH
@@ -383,7 +462,7 @@ class HydrationTracker(
     }
     fun updateHumidity(pct: Int) {
         lastHumidityPct = pct
-        lastHumidityAtMs = System.currentTimeMillis()
+        lastHumidityAtMs = clock.nowMs()
     }
 
     /** Humidity, or null once it is older than [HUMIDITY_MAX_AGE_MS]. Read at the point of
@@ -391,7 +470,7 @@ class HydrationTracker(
     private fun freshHumidityPct(): Int? {
         val stamp = lastHumidityAtMs
         if (stamp == 0L) return null
-        val age = System.currentTimeMillis() - stamp
+        val age = clock.nowMs() - stamp
         // Non-negative age required: a wall-clock step backwards would otherwise read a
         // future stamp as maximal freshness and pin a stale value indefinitely.
         return if (age in 0 until HUMIDITY_MAX_AGE_MS) lastHumidityPct else null
@@ -414,11 +493,11 @@ class HydrationTracker(
         lastRealLogMsBeforeBySlot[slot] = lastRealLogMs
         lastLoggedMlBySlot[slot] = ml
         cumLoggedMl += ml
-        val now = System.currentTimeMillis()
+        val now = clock.nowMs()
         lastLogMs = now
         lastRealLogMs = now
         calibLogger?.log(CalibrationLogger.Event.FUELING_HYDRATION_LOGGED) {
-            "slot=$slot,ml=$ml,cum_logged=$cumLoggedMl,cum_target=${cumTargetMl.toInt()}"
+            "slot=$slot,ml=$ml,cum_logged=$cumLoggedMl,cum_target=${accum.cumTargetMl.toInt()}"
         }
         publishStatus()
         return ml
@@ -446,7 +525,7 @@ class HydrationTracker(
         lastLogMsBeforeBySlot[slot] = 0L
         lastRealLogMsBeforeBySlot[slot] = 0L
         calibLogger?.log(CalibrationLogger.Event.FUELING_HYDRATION_UNDONE) {
-            "slot=$slot,ml=-$ml,cum_logged=$cumLoggedMl,cum_target=${cumTargetMl.toInt()}"
+            "slot=$slot,ml=-$ml,cum_logged=$cumLoggedMl,cum_target=${accum.cumTargetMl.toInt()}"
         }
         publishStatus()
         return ml
@@ -463,12 +542,12 @@ class HydrationTracker(
     fun logAmount(ml: Int): Int {
         if (ml <= 0) return 0
         cumLoggedMl += ml
-        val now = System.currentTimeMillis()
+        val now = clock.nowMs()
         lastLogMs = now
         lastRealLogMs = now
         lastAmountLogMs = now
         calibLogger?.log(CalibrationLogger.Event.FUELING_HYDRATION_LOGGED) {
-            "slot=combined,ml=$ml,cum_logged=$cumLoggedMl,cum_target=${cumTargetMl.toInt()}"
+            "slot=combined,ml=$ml,cum_logged=$cumLoggedMl,cum_target=${accum.cumTargetMl.toInt()}"
         }
         publishStatus()
         return ml
@@ -482,7 +561,7 @@ class HydrationTracker(
         if (ml <= 0) return
         cumLoggedMl = (cumLoggedMl - ml).coerceAtLeast(0)
         calibLogger?.log(CalibrationLogger.Event.FUELING_HYDRATION_UNDONE) {
-            "slot=combined,ml=-$ml,cum_logged=$cumLoggedMl,cum_target=${cumTargetMl.toInt()}"
+            "slot=combined,ml=-$ml,cum_logged=$cumLoggedMl,cum_target=${accum.cumTargetMl.toInt()}"
         }
         publishStatus()
     }
@@ -505,41 +584,49 @@ class HydrationTracker(
      * the snapshot internally consistent to within one tick's worth of integration.
      */
     fun getStatus(): HydrationStatus = HydrationStatus(
-        cumTargetMl = cumTargetMl.toInt(),
+        cumTargetMl = accum.cumTargetMl.toInt(),
+        cumSweatMl = accum.cumSweatMl.toInt(),
+        cumSodiumMg = accum.cumSodiumMg.toInt(),
         cumLoggedMl = cumLoggedMl,
-        deficitMl = (cumTargetMl - cumLoggedMl).toInt(),
+        deficitMl = (accum.cumTargetMl - cumLoggedMl).toInt(),
         deficitThresholdMl = config.hydrationDeficitThresholdMl,
-        // Mirror fireAlert: before the first real estimate (lastSweatRateMlHr == 0.0)
-        // report the configured target rather than a misleading "0 ml/h".
-        currentRateMlPerHour = if (config.hydrationDynamicEstimateEnabled && lastSweatRateMlHr > 0.0)
-                                   lastSweatRateMlHr.toInt()
-                               else config.hydrationTargetMlPerHour,
+        currentRateMlPerHour = drinkRateMlPerHour(),
         // LIVE confidence (not the cached lastSweatConfidence, which only updates on
         // moving ticks): computed from the current fresh sensor inputs so the "~"
         // marker is right while stopped and at ride start. See [freshSweatInputs].
         estimateConfidence = if (config.hydrationDynamicEstimateEnabled)
-                                 estimateSweatRate(freshSweatInputs(System.currentTimeMillis())).confidence
+                                 estimateSweatRate(freshSweatInputs(clock.nowMs())).confidence
                              else null,
         // See CarbsTracker.getStatus — mirrors the movement + staleness gate in
         // tick() so UI consumers stay coherent with the integrator.
-        isIntegrating = monitorJob != null && run {
+        isIntegrating = monitorJob != null && isRecording() && run {
             val speed = lastSpeedKmh ?: return@run false
             val stale = lastSpeedChangeMs > 0 &&
-                (System.currentTimeMillis() - lastSpeedChangeMs) > SPEED_STALE_MS
+                (clock.nowMs() - lastSpeedChangeMs) > SPEED_STALE_MS
             !stale && speed >= MOVING_GATE_KMH
         },
         masterEnabled = config.isActive,
         hydrationEnabled = config.hydrationTrackerEnabled,
     )
 
-    fun getSummary(): HydrationSummary = HydrationSummary(
-        cumTargetMl = cumTargetMl.toInt(),
-        cumLoggedMl = cumLoggedMl,
-        deficitMl = (cumTargetMl - cumLoggedMl).toInt(),
-        percentageHit = if (cumTargetMl > 0f) ((cumLoggedMl / cumTargetMl) * 100f).toInt() else 0,
-    )
-
     // ─── Internals ───────────────────────────────────────────────────────────
+
+    private fun naMmolL(): Int = config.sweatSodiumProfile.mmolL(config.sweatSodiumMeasuredMmolL)
+
+    /**
+     * The per-hour DRINK rate shown to the rider (status field and the `{target}` token).
+     * Dynamic mode: latest sweat estimate × multiplier × replacement — the same rate the
+     * integrator uses. Before the first MEDIUM-or-better estimate (`lastSweatRateMlHr == 0.0`,
+     * see the guard in [tick]) fall back to the configured target × replacement (spec A8)
+     * rather than a misleading "0 ml/h". Clamps mirror [hydrationStep].
+     */
+    private fun drinkRateMlPerHour(): Int {
+        if (!config.hydrationDynamicEstimateEnabled) return config.hydrationTargetMlPerHour
+        val repl = config.hydrationReplacementPct.coerceIn(50, 100) / 100.0
+        return if (lastSweatRateMlHr > 0.0)
+            (lastSweatRateMlHr * config.hydrationSweatMultiplierPct.coerceIn(50, 200) / 100.0 * repl).toInt()
+        else (config.hydrationTargetMlPerHour * repl).toInt()
+    }
 
     /** Sweat-estimate inputs with HR/power gated on freshness: a sensor silent for
      *  longer than [SENSOR_STALE_MS] is passed as null (see
@@ -557,44 +644,84 @@ class HydrationTracker(
         humidityPct  = freshHumidityPct(),
     )
 
-    private fun tick() {
-        val now = System.currentTimeMillis()
+    /**
+     * Integrates [lastTickMs, now] into [accum] when [recording] and moving, then re-anchors
+     * [lastTickMs] to now. Shared by [tick] and [onPaused]. Returns whether it integrated and
+     * the sweat estimate used.
+     */
+    private fun integrateTo(now: Long, recording: Boolean): Pair<Boolean, SweatEstimate> {
         // Movement gate — see CarbsTracker.tick() for the full rationale and the
         // GPS-staleness branch. Same shape: stop integrating when stationary OR when
         // the SDK's last reading has been stuck unchanged for SPEED_STALE_MS.
         val speed = lastSpeedKmh
         val stale = lastSpeedChangeMs > 0 && (now - lastSpeedChangeMs) > SPEED_STALE_MS
         val moving = !stale && speed != null && speed >= MOVING_GATE_KMH
-        if (lastTickMs != 0L && moving) {
-            // Clamp negative dt — see CarbsTracker.tick() for rationale (NTP correction).
-            val dtSec = (now - lastTickMs).coerceAtLeast(0L) / 1000f
-            val ratePerHour: Float = if (config.hydrationDynamicEstimateEnabled) {
-                // Pull all available signals into the estimator on every tick, with
-                // HR/power gated on freshness (a dead sensor's frozen value is dropped
-                // to null so the rate falls back to the live sensor / documented
-                // defaults). See [freshSweatInputs].
-                val estimate = estimateSweatRate(freshSweatInputs(now))
-                lastSweatConfidence = estimate.confidence
-                // Only publish the LOW-confidence default (~298 ml/h) to the UI/alert path
-                // after at least one MEDIUM-or-better tick has happened. Without this guard,
-                // the very first integration with no HR/power yet would bleed a misleading
-                // "≈300 ml/h" through `getStatus().currentRateMlPerHour` and into the
-                // `{target}` token of the first alert. Internal integration still uses the
-                // LOW estimate (better than nothing while the sensors wake up).
-                if (estimate.confidence != SweatConfidence.LOW || lastSweatRateMlHr > 0.0) {
-                    lastSweatRateMlHr = estimate.mlPerHour
-                }
-                estimate.mlPerHour.toFloat()
-            } else {
-                config.hydrationTargetMlPerHour.toFloat()
+        // Recording only (spec A3). A Recording↔Paused change re-anchors dt: that tick
+        // integrates nothing, so no paused span leaks into the next tick's dt.
+        val recordingChanged = recording != wasRecording
+        wasRecording = recording
+        val integrating = lastTickMs != 0L && !recordingChanged && recording && moving
+        // Clamp negative dt — see CarbsTracker.tick() for rationale (NTP correction).
+        val dtMs = if (integrating) (now - lastTickMs).coerceAtLeast(0L) else 0L
+        // The estimate runs in BOTH modes so the sweat / sodium / coverage accumulators
+        // work for every rider (spec D1). HR/power are gated on freshness: a dead sensor's
+        // frozen value is dropped to null — see [freshSweatInputs].
+        val estimate = estimateSweatRate(freshSweatInputs(now))
+        val step = hydrationStep(accum, HydTickInput(
+            dtMs = dtMs,
+            integrating = integrating,
+            baseSweatMlPerHour = estimate.mlPerHour,
+            confidence = estimate.confidence,
+            dynamicMode = config.hydrationDynamicEstimateEnabled,
+            staticTargetMlPerHour = config.hydrationTargetMlPerHour,
+            multiplierPct = config.hydrationSweatMultiplierPct,
+            replacementPct = config.hydrationReplacementPct,
+            naMmolL = naMmolL(),
+        ))
+        accum = step.accum
+        // The replacement fraction is already inside the drink rate, so the scheduler's
+        // hold / lookahead projects exactly the rate that is integrated.
+        deficitRatePerMs = step.drinkRateMlPerHour / 3600.0 / 1000.0
+        if (integrating) {
+            lastSweatConfidence = estimate.confidence
+            // Only publish the LOW-confidence default (~298 ml/h) to the UI/alert path
+            // after at least one MEDIUM-or-better tick has happened. Without this guard,
+            // the very first integration with no HR/power yet would bleed a misleading
+            // "≈300 ml/h" through `getStatus().currentRateMlPerHour` and into the
+            // `{target}` token of the first alert. Internal integration still uses the
+            // LOW estimate (better than nothing while the sensors wake up).
+            if (estimate.confidence != SweatConfidence.LOW || lastSweatRateMlHr > 0.0) {
+                lastSweatRateMlHr = estimate.mlPerHour
             }
-            val ratePerSec = ratePerHour / 3600f
-            cumTargetMl += dtSec * ratePerSec
-            deficitRatePerMs = ratePerSec / 1000.0
-        } else {
-            deficitRatePerMs = 0.0
         }
         lastTickMs = now
+        return integrating to estimate
+    }
+
+    @VisibleForTesting internal fun tickForTest() = tick()
+
+    private fun tick() {
+        val now = clock.nowMs()
+        val (integrating, estimate) = integrateTo(now, isRecording())
+        val dynamic = config.hydrationDynamicEstimateEnabled
+
+        // Over-drink SHADOW (spec D5): log a new excess level, nothing else — no alert,
+        // no beep, no overlay. Going live is a separate change through the scheduler.
+        val rideMs = rideTimeMs()
+        val level = overDrinkShadowLevel(
+            rideTimeMs = rideMs, coveredMs = accum.coveredMs, cumSweatMl = accum.cumSweatMl,
+            cumLoggedMl = cumLoggedMl, confidenceNow = estimate.confidence,
+            integrating = integrating, lastLoggedLevel = overShadowLevel,
+        )
+        if (level > 0) {
+            overShadowLevel = level
+            calibLogger?.log(CalibrationLogger.Event.FUELING_HYDRATION_OVER_SHADOW) {
+                "excess=${(cumLoggedMl - accum.cumSweatMl).toInt()},cum_logged=$cumLoggedMl," +
+                    "cum_sweat=${accum.cumSweatMl.toInt()},mult=${config.hydrationSweatMultiplierPct}," +
+                    "conf=${estimate.confidence},cov_pct=${coveragePct(rideMs)}," +
+                    "mode=${if (dynamic) "dynamic" else "fixed"},ride_min=${rideMs?.div(60_000) ?: -1}"
+            }
+        }
 
         // Alert channels. The decision — emergency deferral, deficit wins a same-tick
         // coincidence (v17), quiet window after a deficit alert, the 2.2.4 hold (2.2.5: also on the first threshold crossing) of a time tick
@@ -658,7 +785,7 @@ class HydrationTracker(
      *  [FuelingAlertScheduler.shouldFireDeficit] (v18.2 B9) so carbs and hydration share it
      *  and it is unit-tested; the back-off counter is refreshed in [tick] before this runs. */
     private fun deficitDue(now: Long, lookaheadMs: Long): Boolean {
-        val deficit = (cumTargetMl - cumLoggedMl).toInt()
+        val deficit = (accum.cumTargetMl - cumLoggedMl).toInt()
         return FuelingAlertScheduler.shouldFireDeficit(
             enabled                = config.hydrationDeficitAlertEnabled,
             deficit                = deficit,
@@ -673,14 +800,14 @@ class HydrationTracker(
             lastRealLogMs          = lastRealLogMs,
             lookaheadMs            = lookaheadMs,
             deficitPerMs           = deficitRatePerMs,
-            exactDeficit           = (cumTargetMl - cumLoggedMl).toDouble(),
+            exactDeficit           = (accum.cumTargetMl - cumLoggedMl).toDouble(),
         )
     }
 
     /** Dispatch the deficit alert and stamp its cooldown. Only [tick] calls this, after
      *  [FuelingAlertScheduler.resolveTick] said so (never during an emergency). */
     private fun fireDeficitAlert(now: Long) {
-        val deficit = (cumTargetMl - cumLoggedMl).toInt()
+        val deficit = (accum.cumTargetMl - cumLoggedMl).toInt()
         fireAlert("deficit", deficit, elapsedMinutesSinceRealLog(now))
         lastDeficitAlertFireMs = now
         deficitFiresSinceLog++
@@ -732,25 +859,18 @@ class HydrationTracker(
      *  [FuelingAlertScheduler.resolveTick] said so. `{elapsed}` measures since the last
      *  reminder (interval-driven), and `lastRealLogMs` stays untouched (I8). */
     private fun fireTimeAlert(now: Long) {
-        fireAlert("time", (cumTargetMl - cumLoggedMl).toInt(), elapsedMinutesSinceLastTimeAlert(now))
+        fireAlert("time", (accum.cumTargetMl - cumLoggedMl).toInt(), elapsedMinutesSinceLastTimeAlert(now))
         lastTimeAlertFireMs = now
     }
 
     private fun buildAlertRequest(source: String, deficitMl: Int, elapsedMin: Long): com.enderthor.kSafe.extension.util.FuelingAlertRequest {
         // v18 L1 — see CarbsTracker.fireAlert for rationale.
-        val dispatchedAtMs = System.currentTimeMillis()
-        // In dynamic-estimate mode the {target} placeholder must report the live
-        // estimator output, not the fixed config value — a rider on a 30 °C ride
-        // configured for 750 ml/h but estimating 1300 ml/h would otherwise see the
-        // wrong number in their custom template. BUT until the first MEDIUM-or-better
-        // estimate arrives, `lastSweatRateMlHr` is still 0.0 (the LOW default is
-        // intentionally withheld from the UI/alert path — see the guard in tick()).
-        // Falling back to the configured target avoids rendering a misleading
-        // "0 ml/h" on an early deficit/time alert fired before HR/power connect.
-        val effectiveTarget = if (config.hydrationDynamicEstimateEnabled && lastSweatRateMlHr > 0.0)
-            lastSweatRateMlHr.toInt()
-        else
-            config.hydrationTargetMlPerHour
+        val dispatchedAtMs = clock.nowMs()
+        // In dynamic-estimate mode the {target} placeholder must report the live drink
+        // rate, not the fixed config value — a rider on a 30 °C ride configured for
+        // 750 ml/h but estimating 1300 ml/h would otherwise see the wrong number in their
+        // custom template. See [drinkRateMlPerHour] for the pre-estimate fallback.
+        val effectiveTarget = drinkRateMlPerHour()
         val tokens = mapOf(
             "deficit" to deficitMl.toString(),
             "elapsed" to elapsedMin.toString(),
@@ -801,7 +921,7 @@ class HydrationTracker(
         config.hydBeepPattern.toPlayBeepPattern()?.let { karooSystem.dispatch(it) }
         onFuelingAlert(buildAlertRequest(source, deficitMl, elapsedMin))
         calibLogger?.log(CalibrationLogger.Event.FUELING_HYDRATION_FIRED) {
-            "source=$source,deficit_ml=$deficitMl,since_log_min=$elapsedMin,cum_target=${cumTargetMl.toInt()},cum_logged=$cumLoggedMl,beep=${config.hydBeepPattern}"
+            "source=$source,deficit_ml=$deficitMl,since_log_min=$elapsedMin,cum_target=${accum.cumTargetMl.toInt()},cum_logged=$cumLoggedMl,beep=${config.hydBeepPattern}"
         }
         Timber.d(">>> Hydration alert fired ($source): deficit=${deficitMl}ml elapsed=${elapsedMin}min")
     }
@@ -810,15 +930,26 @@ class HydrationTracker(
         if (calibLogger == null || !calibLogger.isEnabled) return
         if (now - lastPeriodicLogMs < PERIODIC_LOG_INTERVAL_MS) return
         lastPeriodicLogMs = now
-        val deficit = (cumTargetMl - cumLoggedMl).toInt()
+        val deficit = (accum.cumTargetMl - cumLoggedMl).toInt()
         val mode = if (config.hydrationDynamicEstimateEnabled) "dynamic" else "fixed"
+        val a = accum
+        val integratedMs = a.coveredMs + a.lowConfMs
         calibLogger.log(CalibrationLogger.Event.FUELING_HYDRATION_PERIODIC) {
             "mode=$mode,rate_ml_h=${if (config.hydrationDynamicEstimateEnabled) lastSweatRateMlHr.toInt() else config.hydrationTargetMlPerHour}," +
                 "conf=$lastSweatConfidence,hr=${lastHrBpm ?: -1},pwr=${lastPowerW ?: -1}," +
                 "temp=${lastAmbientTempC ?: Double.NaN},rh=${lastHumidityPct ?: -1}," +
-                "cum_target=${cumTargetMl.toInt()},cum_logged=$cumLoggedMl,deficit=$deficit"
+                "cum_target=${accum.cumTargetMl.toInt()},cum_logged=$cumLoggedMl,deficit=$deficit," +
+                "mult=${config.hydrationSweatMultiplierPct},repl=${config.hydrationReplacementPct}," +
+                "sweat=${a.cumSweatMl.toInt()},base=${a.cumSweatBaseMl.toInt()}," +
+                "na_mg=${a.cumSodiumMg.toInt()},cov_pct=${coveragePct(rideTimeMs())}," +
+                "low_pct=${if (integratedMs > 0) a.lowConfMs * 100 / integratedMs else -1}," +
+                "spd=${lastSpeedKmh ?: -1.0}"
         }
     }
+
+    /** coveredMs as a % of the Karoo ride time, or -1 when the ride time is unknown. */
+    private fun coveragePct(rideMs: Long?): Long =
+        if (rideMs == null || rideMs <= 0L) -1L else accum.coveredMs * 100 / rideMs
 }
 
 /**
@@ -844,12 +975,8 @@ data class HydrationStatus(
     val masterEnabled: Boolean = true,
     /** See [CarbStatus.carbsEnabled] — false when the hydration feature toggle is off. */
     val hydrationEnabled: Boolean = true,
-)
-
-/** Totals captured at end-of-ride for the post-ride summary InRideAlert. */
-data class HydrationSummary(
-    val cumTargetMl: Int,
-    val cumLoggedMl: Int,
-    val deficitMl: Int,
-    val percentageHit: Int,
+    /** Estimated sweat lost this session, after the personal multiplier (ml). */
+    val cumSweatMl: Int = 0,
+    /** Estimated sodium lost in sweat this session (mg). */
+    val cumSodiumMg: Int = 0,
 )

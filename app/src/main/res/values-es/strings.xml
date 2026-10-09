@@ -46,7 +46,8 @@
     <string name="tab_settings">Ajustes</string>
     <string name="tab_actions">Acciones</string>
     <string name="tab_health">Salud</string>
-    <string name="tab_fueling">Nutrición</string>
+    <string name="tab_carbs">Carbos</string>
+    <string name="tab_hydration">Hidratación</string>
 
     <!-- Pantalla de Ajustes -->
     <string name="settings_screen_title">Ajustes</string>
@@ -65,8 +66,7 @@
     <string name="dialog_cancel">Cancelar</string>
 
     <!-- Pantalla de Nutrición -->
-    <string name="fueling_title">Nutrición</string>
-    <string name="fueling_info_banner">Los carbohidratos usan zonas de FC/potencia si están disponibles para un objetivo según intensidad; sin sensores el objetivo es proporcional al tiempo. La hidratación siempre es proporcional al tiempo — ajusta el objetivo a mano en días calurosos.</string>
+    <string name="fueling_info_banner">Los carbohidratos usan zonas de FC/potencia si están disponibles para un objetivo según intensidad; sin sensores el objetivo es proporcional al tiempo.</string>
     <string name="fueling_carb_section">Carbohidratos</string>
     <string name="fueling_calories_section">Calorías</string>
     <string name="fueling_physiology_section">Fisiología del ciclista</string>
@@ -85,6 +85,7 @@
     <string name="fueling_alert_time_label">Avisar por tiempo</string>
     <string name="fueling_deficit_threshold_g_label">Umbral (g)</string>
     <string name="fueling_deficit_threshold_ml_label">Umbral (ml)</string>
+    <string name="fueling_deficit_threshold_hint">También marca cuándo el campo de estado se pone ámbar (con este déficit) y rojo (con 1,5× este déficit), aunque la alerta de déficit esté apagada.</string>
     <string name="fueling_time_interval_label">Recordar cada (min)</string>
     <string name="fueling_initial_delay_label">Saltar primeros (min, 0 = off)</string>
     <string name="fueling_deficit_initial_delay_label">Saltar primeros (min, 0 = off)</string>
@@ -109,7 +110,8 @@
     <string name="fueling_color_label">Color</string>
     <string name="fueling_combined_section">Registro combinado</string>
     <string name="fueling_combined_concentration_label">Carbos por 500 ml (g)</string>
-    <string name="fueling_combined_hint">Un toque registra una bebida + sus carbohidratos. Fija la concentración una vez; los carbos de cada botón se autocompletan según su volumen (editable). Activo cuando el seguimiento de carbos y/o hidratación está ON.</string>
+    <string name="fueling_combined_hint">Un toque registra una bebida + sus carbohidratos. Fija la concentración una vez; los carbos de cada botón se autocompletan según su volumen (editable).</string>
+    <string name="fueling_combined_pointer">¿Bebida con carbohidratos? Configúrala en Hidratación → Registro combinado: un toque registra la bebida y sus carbos.</string>
     <string name="fueling_fit_export_label">Escribir datos KSafe en FIT (Intervals.icu / TrainingPeaks)</string>
     <string name="settings_fit_std_cal_label">Calorías como campo estándar del FIT</string>
     <string name="settings_fit_std_cal_off">Off</string>
@@ -139,6 +141,7 @@
     <string name="fueling_hyd_alert_detail_deficit">Bebe ya — {deficit} ml de retraso</string>
     <string name="fueling_hyd_alert_detail_time">Bebe ya — {elapsed} min desde la última</string>
     <string name="fueling_alert_button_mode_label">Registrar nutrición desde la alerta</string>
+    <string name="fueling_alert_button_mode_shared_hint">Se aplica a las alertas de carbohidratos y de hidratación.</string>
     <string name="fueling_alert_button_off">Off</string>
     <string name="fueling_alert_button_log">Un toque</string>
     <string name="fueling_alert_button_log_undo">+ Deshacer</string>
@@ -430,7 +433,7 @@
     <string name="webhook_alert_text_hint">Texto de la alerta</string>
     <string name="webhook_alert_text_example">p. ej. ¡Puerta del garaje abierta!</string>
     <string name="webhook_alert_text_desc">Este mensaje aparecerá como notificación en pantalla cada vez que se lance la acción</string>
-    <string name="calibration_desc">Cuando está activo, KSafe registra datos anónimos de sensores (valores del acelerómetro, lecturas de velocidad, estados de detección) para ayudar al desarrollador a calibrar el algoritmo de detección de choque. Nunca se incluyen coordenadas GPS, ni mensajes, ni información personal de ningún tipo. Los datos se envían automáticamente al desarrollador cuando desactivas esta opción o terminas una ruta. Desactivado por defecto — totalmente opcional.</string>
+    <string name="calibration_desc">Cuando está activo, KSafe registra datos anónimos de sensores (valores del acelerómetro, lecturas de velocidad, estados de detección y, si los usas, datos de nutrición y del pesaje como la variación de peso, nunca tu peso) para ayudar al desarrollador a calibrar los algoritmos de detección de choque y de nutrición. Nunca se incluyen coordenadas GPS, ni mensajes, ni información personal de ningún tipo. Los datos se envían automáticamente al desarrollador cuando desactivas esta opción o terminas una ruta. Desactivado por defecto — totalmente opcional.</string>
     <string name="calibration_logging_label">Enviar datos de calibración anónimos</string>
     <string name="update_check_label">Avisarme de actualizaciones</string>
     <string name="update_available_title">Actualización disponible</string>
@@ -479,4 +482,48 @@
     <string name="webhook_blocked_no_gps">Bloqueado — aún sin señal GPS</string>
     <string name="webhook_blocked_no_target">Bloqueado — sin ubicación objetivo configurada</string>
     <string name="webhook_blocked_too_far">Bloqueado — a %1$dm (máx %2$dm)</string>
+    <string name="fueling_sweat_section">Tu sudor</string>
+    <string name="fueling_lastride_summary">Última salida: %1$s · %2$d h %3$02d min · %4$s L de sudor · %5$s g de sodio</string>
+    <string name="fueling_hyd_mult_label">Cuánto sudas (%)</string>
+    <string name="fueling_hyd_mult_hint">100 % = ciclista medio. Calíbralo con un pesaje abajo en vez de adivinarlo.</string>
+    <string name="fueling_hyd_repl_label">Objetivo de reposición (%)</string>
+    <string name="fueling_hyd_repl_hint">Parte de la pérdida de sudor estimada que quieres reponer bebiendo (normalmente 70–90%).</string>
+    <string name="fueling_hyd_salt_label">¿Cómo de salado es tu sudor?</string>
+    <string name="fueling_hyd_salt_hint">Mucha = la ropa o la cinta del casco quedan con marcas blancas de sal. Solo se usa para estimar el sodio perdido; no cambia los avisos de bebida.</string>
+    <string name="fueling_hyd_salt_light">Poca</string>
+    <string name="fueling_hyd_salt_typical">Normal</string>
+    <string name="fueling_hyd_salt_salty">Mucha</string>
+    <string name="fueling_hyd_salt_measured">Medida</string>
+    <string name="fueling_hyd_salt_measured_label">Sodio en sudor (mmol/L)</string>
+    <string name="fueling_lastride_empty">Aún no hay datos de hidratación. Termina una salida con el seguimiento de hidratación activo y el resumen aparecerá aquí.</string>
+    <string name="fueling_lastride_fluids">Sudor ≈ %1$d ml · bebido %2$d ml</string>
+    <string name="fueling_lastride_sodium">Sodio perdido ≈ %1$d mg (%2$d mg/h)</string>
+    <string name="fueling_lastride_partial">Datos parciales: la salida no se registró por completo, así que las cifras pueden ser bajas.</string>
+    <string name="fueling_lastride_fluid_limited">Bebiste poco en comparación con lo que sudaste: es mejor beber más que añadir sodio.</string>
+    <string name="fueling_lastride_bottle_optional">Opcional: unos %1$d mg de sodio por litro de bebida.</string>
+    <string name="fueling_lastride_bottle_recommended">Recomendado: unos %1$d mg de sodio por litro de bebida.</string>
+    <string name="fueling_lastride_calibrated">Calibrada con un pesaje.</string>
+    <string name="fueling_calib_title">Calibrar</string>
+    <string name="fueling_calib_instructions">Pésate desnudo antes y después de la salida. Después de la salida, pésate ANTES de orinar.</string>
+    <string name="fueling_calib_pre_label">Peso antes (kg)</string>
+    <string name="fueling_calib_post_label">Peso después (kg)</string>
+    <string name="fueling_calib_drink_label">Bebido durante la salida (ml)</string>
+    <string name="fueling_calib_food_label">Comida ingerida (g)</string>
+    <string name="fueling_calib_food_hint">gel ≈ 40 g, barrita ≈ 50 g</string>
+    <string name="fueling_calib_urinated_label">Oriné antes del segundo pesaje</string>
+    <string name="fueling_calib_button">Calibrar</string>
+    <string name="fueling_calib_reset">Restablecer calibración</string>
+    <string name="fueling_calib_reset_confirm">Toca otra vez para restablecer</string>
+    <string name="fueling_calib_result_ok">Relación medido/estimado %1$.2f. «Cuánto sudas» pasa a %2$d%%.</string>
+    <string name="fueling_calib_reject_no_ride">No hay ninguna salida que calibrar.</string>
+    <string name="fueling_calib_reject_ride_changed">Se ha registrado una salida más reciente. Vuelve a abrir esta pantalla e inténtalo de nuevo.</string>
+    <string name="fueling_calib_reject_already_calibrated">Esta salida ya está calibrada.</string>
+    <string name="fueling_calib_reject_too_old">Esta salida terminó hace más de 6 horas; calibra justo después de rodar.</string>
+    <string name="fueling_calib_reject_urinated">Orinaste antes de pesarte, así que el resultado no sería correcto.</string>
+    <string name="fueling_calib_reject_no_ride_time">La salida no tiene tiempo de marcha registrado.</string>
+    <string name="fueling_calib_reject_too_short">La salida fue demasiado corta para calibrar (mínimo 1 hora).</string>
+    <string name="fueling_calib_reject_low_coverage">La salida no se registró durante suficiente parte de su duración.</string>
+    <string name="fueling_calib_reject_implausible_weight">Los pesos parecen poco realistas. Revisa ambos valores.</string>
+    <string name="fueling_calib_reject_too_little_sweat">La pérdida de sudor medida es demasiado pequeña para calibrar con fiabilidad.</string>
+    <string name="fueling_calib_reject_ratio_out_of_range">El resultado se aleja demasiado de la estimación para fiarse. Revisa los valores.</string>
 </resources>

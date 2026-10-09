@@ -56,7 +56,7 @@ sensatos. El resto de esta guía es "para mejorar", pestaña a pestaña.
 
 ## 📑 Pestaña a pestaña, en lenguaje claro
 
-Tu Karoo muestra seis pestañas. Esto es para qué sirve cada una, qué poner y qué dejar
+Tu Karoo muestra siete pestañas. Esto es para qué sirve cada una, qué poner y qué dejar
 tranquilo.
 
 ### 🛡️ Seguridad (Safety) — el núcleo (configúralo)
@@ -90,9 +90,11 @@ Sáltate toda esta pestaña si no usas sensor de pulso. Si lo usas:
 
 Detalle completo: [Referencia de Health y Fueling](health-fueling.md).
 
-### 🍫 Nutrición (Fueling) — recordatorios de comer y beber (opcional, mira la versión simple abajo)
+### 🍫 Carbos (Carbs) y 💧 Hidratación (Hydration) — recordatorios de comer y beber (opcional, mira la versión simple abajo)
 
-Es la pestaña que más cuesta entender, así que tiene su propia sección en lenguaje claro:
+Dos pestañas: **Carbos** (recordatorios de comer, calorías, tu edad y sexo) e **Hidratación**
+(recordatorios de beber, **Tu sudor**, botones combinados de bebida + carbos). Son las pestañas
+que más cuesta entender, así que tienen su propia sección en lenguaje claro:
 [Fueling sin complicaciones](#-fueling-sin-complicaciones). En corto: **no** escribes ningún
 número de calorías ni carbohidratos — KSafe lo calcula. Tú solo le dices tu edad y sexo, y
 cada cuánto quieres que te recuerde.
@@ -183,7 +185,7 @@ Tú no pones ningún número objetivo de carbohidratos — KSafe calcula la quem
 
 1. **Empareja un sensor.** Lo mejor es un **medidor de potencia**; lo siguiente, una **banda
    de pulso**. Sin ninguno, KSafe no puede estimar la quema (el campo muestra *"Pair HR/Pwr"*).
-2. **Si solo tienes pulso:** en la pestaña **Nutrición** (Fueling), rellena tu **Edad** y **Sexo**. Es el
+2. **Si solo tienes pulso:** en la pestaña **Carbos** (Carbs), rellena tu **Edad** y **Sexo**. Es el
    único dato personal que necesita — hace la estimación bastante más precisa.
 3. **Elige cada cuánto recibir el recordatorio.** Deja los valores por defecto (avísame
    cuando vaya ~25 g por detrás, y como mucho cada 10 min) salvo que te resulten muy pesados
@@ -203,7 +205,24 @@ Pon un **objetivo de bebida por hora**. Usa esta guía orientativa según el tie
 
 El valor por defecto (750 ml/h) va bien para un día suave — súbelo en verano. Si prefieres no
 pensar en ello, activa **Dynamic estimate** y KSafe ajusta el objetivo según tu esfuerzo y la
-temperatura.
+temperatura. En modo dinámico KSafe apunta a cerca del 80 % del sudor estimado (ajústalo en
+**Objetivo de reposición**): reponer cada gota durante la salida no es lo recomendable.
+
+**Aprende tu propio sudor (opcional).** Cada persona suda distinto. Abre la pestaña
+**Hidratación**, tarjeta **Tu sudor** (aparece al activar el seguimiento de hidratación).
+**Cuánto sudas** es un porcentaje: 100 % es un ciclista medio. En vez de adivinarlo, pulsa
+**Calibrar** (un pesaje) después de una salida e introduce tu peso antes y después (desnudo y
+antes de ir al baño) junto con lo que has bebido y comido. KSafe lo compara con su estimación y
+ajusta ese porcentaje por ti. Hace falta una salida de al menos 1 hora con buenos datos, sin
+parada para orinar, y hacerlo en las 6 horas siguientes. Repítelo en varias salidas (se promedian
+las 3 últimas) y vuelve a hacerlo al cambiar de estación, o pulsa **Restablecer calibración**
+para empezar de cero.
+
+La misma tarjeta pregunta **¿Cómo de salado es tu sudor?** (Poca / Normal / Mucha / Medida). Elige
+Mucha si la ropa o la cinta del casco quedan con marcas blancas de sal. Solo se usa para estimar
+el sodio perdido; no cambia los avisos de bebida. Pulsa **Última salida** en la tarjeta para ver
+tu sudor y sodio perdido estimados y, tras salidas largas, una concentración de sal opcional para
+tu bidón.
 
 ### "¿Qué toco?"
 
@@ -213,7 +232,12 @@ campos de registro que quieras a tu pantalla de ruta (en el editor de perfiles d
 - **Slots de registro de carbos** (p. ej. *"Gel"*, *"Barrita"*) — un toque = un ítem registrado.
 - **Slots de registro de bebida** (p. ej. *"Bidón"*) — un toque = una bebida registrada.
 - **Botón combinado** (en el editor de perfiles se llama *Fuel Combo*) — registra una bebida
-  *y* sus carbos en un solo toque.
+  *y* sus carbos en un solo toque. Se configura en la pestaña **Hidratación**, tarjeta
+  **Registro combinado**, justo debajo de los slots de bebida (aparece con Carbos o Hidratación
+  activado).
+
+También puedes registrar desde el propio aviso: **Registrar nutrición desde la alerta**, la
+tarjeta justo debajo de la de Carbos o Hidratación. Es un único ajuste para las dos pestañas.
 
 ¿Lo tocaste sin querer? Vuelve a tocar el mismo slot en ~5 segundos para deshacerlo.
 

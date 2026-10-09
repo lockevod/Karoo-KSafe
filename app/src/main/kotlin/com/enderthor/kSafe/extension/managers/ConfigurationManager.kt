@@ -9,6 +9,7 @@ import com.enderthor.kSafe.activity.dataStore
 import com.enderthor.kSafe.data.EmergencyState
 import com.enderthor.kSafe.data.FuelingState
 import com.enderthor.kSafe.data.KSafeConfig
+import com.enderthor.kSafe.data.LastHydrationRide
 import com.enderthor.kSafe.data.SenderConfig
 import com.enderthor.kSafe.data.WellnessHistory
 import com.enderthor.kSafe.data.defaultEmergencyStateJson
@@ -19,6 +20,9 @@ import com.enderthor.kSafe.data.defaultWellnessHistoryJson
 import com.enderthor.kSafe.data.migrateToLatest
 import com.enderthor.kSafe.extension.jsonForStorage
 import com.enderthor.kSafe.extension.jsonWithUnknownKeys
+import com.enderthor.kSafe.extension.util.CalibrationInput
+import com.enderthor.kSafe.extension.util.CalibrationResult
+import com.enderthor.kSafe.extension.util.calibrate
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -45,6 +49,7 @@ class ConfigurationManager(private val context: Context) {
     private val emergencyStateKey = stringPreferencesKey("emergencystate")
     private val wellnessHistoryKey = stringPreferencesKey("wellnesshistory")
     private val fuelingStateKey = stringPreferencesKey("fuelingstate")
+    private val lastHydrationRideKey = stringPreferencesKey("lasthydride")
     private val installIdKey = stringPreferencesKey("install_id")
     private val updateRestartCountKey = intPreferencesKey("update_restart_count")
     private val updateNoticeEpochDayKey = longPreferencesKey("update_notice_epoch_day")
@@ -302,6 +307,64 @@ class ConfigurationManager(private val context: Context) {
      *  previous ride's totals. */
     suspend fun clearFuelingState() {
         context.dataStore.edit { prefs -> prefs.remove(fuelingStateKey) }
+    }
+
+    // ─── Last hydration ride (weigh-in calibration source) ────────────────────
+
+    /**
+     * Ride-end write: stores [record] (when the ride had a live hydration session) and
+     * removes the fueling snapshot in ONE transaction, so a crash between the two can never
+     * leave a fresh Last-ride record next to a stale accumulator (or vice versa). The
+     * snapshot key also holds carbs, so the removal is exactly [clearFuelingState].
+     */
+    suspend fun finalizeHydrationRide(record: LastHydrationRide?) {
+        context.dataStore.edit { prefs ->
+            if (record != null) prefs[lastHydrationRideKey] = jsonForStorage.encodeToString(record)
+            prefs.remove(fuelingStateKey)
+        }
+    }
+
+    fun loadLastHydrationRideFlow(): Flow<LastHydrationRide?> {
+        return context.dataStore.data.map { prefs -> decodeLastHydrationRide(prefs[lastHydrationRideKey]) }
+            .distinctUntilChanged()
+    }
+
+    private fun decodeLastHydrationRide(raw: String?): LastHydrationRide? {
+        if (raw == null) return null
+        return try {
+            jsonWithUnknownKeys.decodeFromString<LastHydrationRide>(raw)
+        } catch (e: Throwable) {
+            Timber.e(e, "Failed to read LastHydrationRide (%s: %s)", e.javaClass.simpleName, e.message)
+            null
+        }
+    }
+
+    /**
+     * Weigh-in calibration as ONE DataStore transaction: the config and the Last-ride record
+     * are read, validated by [calibrate] and (on [CalibrationResult.Accepted]) written back
+     * together, so a ride ending mid-calibration (new record) or a double tap cannot apply a
+     * ratio to the wrong ride or apply it twice — [expectedRideId] and `calibrated` guard that.
+     */
+    suspend fun calibrateHydration(expectedRideId: Long, input: CalibrationInput): CalibrationResult {
+        var result: CalibrationResult? = null
+        context.dataStore.edit { prefs ->
+            val config = decodeConfig(prefs[configKey] ?: defaultKSafeConfigJson)
+            val ride = decodeLastHydrationRide(prefs[lastHydrationRideKey])
+            val r = calibrate(ride, expectedRideId, input, config.hydrationCalibrationRatios)
+            if (r is CalibrationResult.Accepted && ride != null) {
+                prefs[configKey] = jsonForStorage.encodeToString(listOf(config.copy(
+                    hydrationCalibrationRatios = r.newRatios,
+                    hydrationSweatMultiplierPct = r.newMultiplierPct,
+                )))
+                prefs[lastHydrationRideKey] = jsonForStorage.encodeToString(ride.copy(calibrated = true))
+            }
+            result = r
+        }
+        return checkNotNull(result)
+    }
+
+    suspend fun resetHydrationCalibration() {
+        updateConfig { it.copy(hydrationCalibrationRatios = emptyList(), hydrationSweatMultiplierPct = 100) }
     }
 
     // ─── WellnessHistory ──────────────────────────────────────────────────────

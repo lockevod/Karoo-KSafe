@@ -54,7 +54,7 @@ of this guide is "nice to have", tab by tab.
 
 ## 📑 Tab by tab, in plain English
 
-Your Karoo shows six tabs. Here's what each is for, what to set, and what to leave alone.
+Your Karoo shows seven tabs. Here's what each is for, what to set, and what to leave alone.
 
 ### 🛡️ Safety — the core (set this)
 
@@ -85,9 +85,11 @@ Skip this whole tab if you don't use a heart-rate sensor. If you do:
 
 Full detail: [Health & Fueling reference](health-fueling.md).
 
-### 🍫 Fueling — eat & drink reminders (optional, see the simple version below)
+### 🍫 Carbs and 💧 Hydration — eat & drink reminders (optional, see the simple version below)
 
-This is the tab people find most confusing, so it has its own plain-English section:
+Two tabs: **Carbs** (eating reminders, calories, your age and sex) and **Hydration**
+(drinking reminders, **Your sweat**, combined drink + carbs buttons). They are the tabs people
+find most confusing, so they have their own plain-English section:
 [Fueling made simple](#-fueling-made-simple). Short version: you **don't** type in a calorie
 or carb number — KSafe works it out. You just tell it your age and sex, and how often you
 want a nudge.
@@ -177,7 +179,7 @@ a target number for carbs — KSafe figures the burn out for you.
 
 1. **Pair a sensor.** Best is a **power meter**; next best is a **heart-rate strap**. Without
    one, KSafe can't estimate carb burn (the field shows *"Pair HR/Pwr"*).
-2. **If you only have heart rate:** in the **Fueling** tab, fill in your **Age** and **Sex**.
+2. **If you only have heart rate:** in the **Carbs** tab, fill in your **Age** and **Sex**.
    That's the only personal info it needs — it makes the estimate noticeably more accurate.
 3. **Pick how often to be reminded.** Leave the defaults (remind me when I'm ~25 g behind,
    and no more than every 10 min) unless you find them too chatty or too quiet.
@@ -196,7 +198,23 @@ Set a **drink target per hour**. Use this rough guide by weather:
 
 The default (750 ml/h) suits a mild day — bump it up for summer. If you'd rather not think
 about it, turn on **Dynamic estimate** and KSafe adjusts the target from your effort and the
-temperature.
+temperature. In dynamic mode KSafe aims at about 80 % of the sweat it estimates (you can change
+this): drinking back every drop during a ride is not recommended.
+
+**Learn your own sweat rate (optional).** Everyone sweats differently. Open the **Hydration** tab,
+**Your sweat** card (it appears when the Hydration tracker is on). **How much you sweat** is a
+percentage: 100 % is an average rider. Rather than guessing, tap **Calibrate** (a weigh-in)
+after a ride and enter your weight before and after (naked, before using the toilet) plus what
+you drank and ate. KSafe compares it with its estimate and adjusts that percentage for you. It
+needs a ride of at least 1 hour with good data, no toilet stop, and must be done within 6 hours.
+Repeat on a few rides (the last 3 are averaged); redo it when the season changes, or tap
+**Reset calibration** to start over.
+
+The same card asks **How salty is your sweat?** (Low / Normal / High / Measured). Choose
+High if your kit or helmet strap dries with white salt marks. It is only used to estimate the
+sodium you lost; it does not change your drink reminders. Tap **Last ride** in the card to see
+your estimated sweat and sodium loss and, after long rides, an optional salt concentration for
+your bottle.
 
 ### "What do I tap?"
 
@@ -206,7 +224,11 @@ to your ride screen (in the Karoo profile editor):
 - **Carb log slots** (e.g. labelled *"Gel"*, *"Bar"*) — one tap = one item logged.
 - **Drink log slots** (e.g. *"Bottle"*) — one tap = one drink logged.
 - **Combined button** (called *Fuel Combo* in the profile editor) — logs a drink *and* its
-  carbs in one tap.
+  carbs in one tap. Set it up in the **Hydration** tab, **Combined logging** card, right below
+  the drink slots (it shows when Carbs or Hydration is on).
+
+You can also log straight from the reminder: **Log fueling from the alert**, the card right
+below the Carbs or Hydration card. It is one setting for both tabs.
 
 Tapped by mistake? Tap the same slot again within ~5 seconds to undo it.
 

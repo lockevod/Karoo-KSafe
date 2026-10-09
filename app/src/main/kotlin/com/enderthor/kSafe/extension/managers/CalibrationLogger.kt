@@ -269,6 +269,15 @@ class CalibrationLogger(
         FUELING_HYDRATION_FIRED("HYD_FIRE"),
         /** Periodic 2-minute snapshot of hydration tracker state. */
         FUELING_HYDRATION_PERIODIC("HYD_PERIODIC"),
+        /** SHADOW over-drink verdict: logged excess reached a new 500 ml level. Never alerts. */
+        FUELING_HYDRATION_OVER_SHADOW("HYD_OVER_SHADOW"),
+        /** Ride-end Last-ride record: final totals + whether the ride can be calibrated
+         *  (`blocker=` none / NO_RIDE_TIME / TOO_SHORT / LOW_COVERAGE). The last HYD_PERIODIC
+         *  can be up to 2 min stale; this is the value the calibration actually judges. */
+        FUELING_HYDRATION_END("HYD_END"),
+        /** Weigh-in calibration attempt from the settings UI: accepted (ratio, new multiplier)
+         *  or rejected (reason). Lands in whichever session is logging when it happens. */
+        FUELING_HYDRATION_CALIB("HYD_CALIB"),
         /**
          * A TIME-grid fueling reminder was due but swallowed by the quiet window
          * (`FuelingAlertScheduler.suppressedByRecentAlert`) — a deficit alert had
@@ -980,34 +989,36 @@ class CalibrationLogger(
      * history without the buffer growing unboundedly in memory.
      */
     private fun flush() {
-        val lines: List<String>
-        synchronized(buffer) {
-            if (buffer.isEmpty()) {
-                // Empty-buffer flush still counts as healthy — the loop ran, the IO
-                // dispatcher is alive. Without this, an idle logger looks unhealthy
-                // and triggers a spurious restart.
+        // Drain AND append under fileLock. Draining outside it let a reader (the ride-end
+        // getFileContentChunked) flush an already-empty buffer and snapshot the file in the
+        // gap between a concurrent periodic flush taking the rows and appending them, so the
+        // last rows (e.g. HYD_END) missed that upload. Lock order is fileLock -> buffer, and
+        // nothing takes fileLock while holding buffer; the buffer lock still guards only the
+        // in-memory copy, never disk IO.
+        synchronized(fileLock) {
+            val lines: List<String>
+            synchronized(buffer) {
+                if (buffer.isEmpty()) {
+                    // Empty-buffer flush still counts as healthy — the loop ran, the IO
+                    // dispatcher is alive. Without this, an idle logger looks unhealthy
+                    // and triggers a spurious restart.
+                    lastFlushAtMs = System.currentTimeMillis()
+                    return
+                }
+                lines = buffer.toList()
+                buffer.clear()
+            }
+            try {
+                val dir = context.getExternalFilesDir(null) ?: return
+                dir.mkdirs()
+                // Append mode — the header was written on enable(), we just add rows. fileLock
+                // also serialises this against [truncateAfterSuccessfulSend]'s read-and-rewrite.
+                File(dir, FILE_NAME).appendText(lines.joinToString("\n", postfix = "\n"))
                 lastFlushAtMs = System.currentTimeMillis()
-                return
+                Timber.d("CalibrationLogger: appended ${lines.size} entries to $FILE_NAME")
+            } catch (e: Exception) {
+                Timber.w(e, "CalibrationLogger: flush failed (${lines.size} entries lost)")
             }
-            lines = buffer.toList()
-            buffer.clear()
-        }
-        try {
-            val dir = context.getExternalFilesDir(null) ?: return
-            dir.mkdirs()
-            val file = File(dir, FILE_NAME)
-            // L1 — fileLock serialises append against [truncateAfterSuccessfulSend]'s
-            // read-and-rewrite. Without it, a flush running mid-truncate could append
-            // rows AFTER the truncate's readLines snapshot, then truncate's writeText
-            // would clobber the appended rows.
-            synchronized(fileLock) {
-                // Append mode — the header was written on enable(), we just add rows.
-                file.appendText(lines.joinToString("\n", postfix = "\n"))
-            }
-            lastFlushAtMs = System.currentTimeMillis()
-            Timber.d("CalibrationLogger: appended ${lines.size} entries to $FILE_NAME")
-        } catch (e: Exception) {
-            Timber.w(e, "CalibrationLogger: flush failed (${lines.size} entries lost)")
         }
     }
 

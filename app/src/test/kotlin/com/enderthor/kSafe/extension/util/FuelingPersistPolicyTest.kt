@@ -94,4 +94,30 @@ class FuelingPersistPolicyTest {
         assertFalse(FuelingPersistPolicy.shouldPersist(carb, prevHyd, carb.copy(), HydFuelingState(cumTargetMl = 440f))) // +40 < 60
         assertTrue(FuelingPersistPolicy.shouldPersist(carb, prevHyd, carb.copy(), HydFuelingState(cumTargetMl = 480f)))  // +80 > 60
     }
+
+    @Test
+    fun `hydration free-running sweat fields stay within deadband`() {
+        val carb = CarbFuelingState(cumBurnedG = 50f)
+        val prev = HydFuelingState(cumTargetMl = 400f, cumSweatBaseMl = 500f, cumSweatMl = 550f,
+            cumSodiumMg = 400f, coveredMs = 600_000L, lowConfMs = 0L)
+        val cur = prev.copy(cumTargetMl = 405f, cumSweatBaseMl = 506f, cumSweatMl = 556f,
+            cumSodiumMg = 405f, coveredMs = 630_000L, lowConfMs = 0L)
+        assertFalse(FuelingPersistPolicy.shouldPersist(carb, prev, carb.copy(), cur))
+    }
+
+    @Test
+    fun `logged change still persists alongside sweat accumulators`() {
+        val carb = CarbFuelingState(cumBurnedG = 50f)
+        val prev = HydFuelingState(cumTargetMl = 400f, cumSweatMl = 550f)
+        val cur = prev.copy(cumTargetMl = 405f, cumSweatMl = 556f, cumLoggedMl = 250)
+        assertTrue(FuelingPersistPolicy.shouldPersist(carb, prev, carb.copy(), cur))
+    }
+
+    @Test
+    fun `overShadowLevel change persists`() {
+        val carb = CarbFuelingState(cumBurnedG = 50f)
+        val prev = HydFuelingState(cumTargetMl = 400f)
+        val cur = prev.copy(overShadowLevel = 1)
+        assertTrue(FuelingPersistPolicy.shouldPersist(carb, prev, carb.copy(), cur))
+    }
 }
