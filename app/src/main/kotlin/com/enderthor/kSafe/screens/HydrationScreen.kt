@@ -515,13 +515,15 @@ private fun YourSweatCard(
             Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
                 Text(text = stringResource(R.string.fueling_hyd_mult_hint), style = small, color = muted)
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
-                    OutlinedButton(onClick = { calibOpen = !calibOpen }) {
+                    // Equal weights: without them the long Calibrate label took the whole row and squeezed
+                    // Reset to ~0 width, wrapping its text one letter per line into a tall blank block.
+                    OutlinedButton(onClick = { calibOpen = !calibOpen }, modifier = Modifier.weight(1f)) {
                         Text(stringResource(R.string.fueling_calib_title))
                     }
                     // Reset wipes the calibration, so it takes a second tap within 3 s.
                     TextButton(onClick = {
                         if (resetArmed) { resetArmed = false; vm.resetHydrationCalibration() } else resetArmed = true
-                    }) {
+                    }, modifier = Modifier.weight(1f)) {
                         Text(stringResource(if (resetArmed) R.string.fueling_calib_reset_confirm else R.string.fueling_calib_reset))
                     }
                 }
