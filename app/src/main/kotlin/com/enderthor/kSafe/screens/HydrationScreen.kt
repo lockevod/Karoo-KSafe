@@ -6,6 +6,7 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.fillMaxHeight
@@ -524,17 +525,20 @@ private fun YourSweatCard(
             // this 4 dp spacing gives the same 8 dp visual rhythm as the rest of the card.
             Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
                 Text(text = stringResource(R.string.fueling_hyd_mult_hint), style = small, color = muted)
+                // Each half is only ~102 dp on the Karoo 3 (480 px @ 300 dpi): Material's 24 dp side
+                // padding left ~54 dp for text and split "Calibrate" across two lines.
+                val narrowPad = PaddingValues(horizontal = 8.dp, vertical = 8.dp)
                 // IntrinsicSize.Min + fillMaxHeight keeps both buttons the same height when one label wraps.
                 Row(modifier = Modifier.height(IntrinsicSize.Min), horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
                     // Equal weights: without them the long Calibrate label took the whole row and squeezed
                     // Reset to ~0 width, wrapping its text one letter per line into a tall blank block.
-                    OutlinedButton(onClick = { calibOpen = !calibOpen }, modifier = Modifier.weight(1f).fillMaxHeight()) {
+                    OutlinedButton(onClick = { calibOpen = !calibOpen }, modifier = Modifier.weight(1f).fillMaxHeight(), contentPadding = narrowPad) {
                         Text(stringResource(R.string.fueling_calib_title), textAlign = TextAlign.Center)
                     }
                     // Reset wipes the calibration, so it takes a second tap within 3 s.
                     TextButton(onClick = {
                         if (resetArmed) { resetArmed = false; vm.resetHydrationCalibration() } else resetArmed = true
-                    }, modifier = Modifier.weight(1f).fillMaxHeight()) {
+                    }, modifier = Modifier.weight(1f).fillMaxHeight(), contentPadding = narrowPad) {
                         Text(stringResource(if (resetArmed) R.string.fueling_calib_reset_confirm else R.string.fueling_calib_reset), textAlign = TextAlign.Center)
                     }
                 }
