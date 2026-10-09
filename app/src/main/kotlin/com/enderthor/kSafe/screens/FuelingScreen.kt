@@ -40,6 +40,21 @@ import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import androidx.compose.material3.Button
 import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.Checkbox
+import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.SegmentedButton
+import androidx.compose.material3.SegmentedButtonDefaults
+import androidx.compose.material3.SingleChoiceSegmentedButtonRow
+import androidx.compose.material3.TextButton
+import androidx.compose.runtime.rememberCoroutineScope
+import kotlinx.coroutines.launch
+import com.enderthor.kSafe.data.LastHydrationRide
+import com.enderthor.kSafe.data.SweatSodiumProfile
+import com.enderthor.kSafe.extension.util.CalibrationInput
+import com.enderthor.kSafe.extension.util.CalibrationRejection
+import com.enderthor.kSafe.extension.util.CalibrationResult
+import com.enderthor.kSafe.extension.util.sodiumAdvice
+import java.util.Date
 import com.enderthor.kSafe.R
 import com.enderthor.kSafe.activity.MainViewModel
 import com.enderthor.kSafe.extension.KSafeExtension
@@ -99,6 +114,9 @@ fun FuelingScreen(vm: MainViewModel) {
     var hydCustomTitle       by remember(config.hydrationAlertCustomTitle)      { mutableStateOf(config.hydrationAlertCustomTitle) }
     var hydCustomDetailTime    by remember(config.hydrationAlertCustomDetailTime)    { mutableStateOf(config.hydrationAlertCustomDetailTime) }
     var hydCustomDetailDeficit by remember(config.hydrationAlertCustomDetailDeficit) { mutableStateOf(config.hydrationAlertCustomDetailDeficit) }
+    var hydMult              by remember(config.hydrationSweatMultiplierPct)    { mutableStateOf(config.hydrationSweatMultiplierPct.toString()) }
+    var hydRepl              by remember(config.hydrationReplacementPct)        { mutableStateOf(config.hydrationReplacementPct.toString()) }
+    var saltMeasured         by remember(config.sweatSodiumMeasuredMmolL)       { mutableStateOf(config.sweatSodiumMeasuredMmolL.toString()) }
     var drink1Label          by remember(config.drink1Label)                     { mutableStateOf(config.drink1Label) }
     var drink1Ml             by remember(config.drink1Ml)                        { mutableStateOf(config.drink1Ml.toString()) }
     var drink1Color          by remember(config.drink1Color)                     { mutableStateOf(config.drink1Color) }
@@ -118,8 +136,6 @@ fun FuelingScreen(vm: MainViewModel) {
     var combined2Ml          by remember(config.combined2Ml)                      { mutableStateOf(config.combined2Ml.toString()) }
     var combined2Carbs       by remember(config.combined2Carbs)                   { mutableStateOf(config.combined2Carbs.toString()) }
     var combined2Color       by remember(config.combined2Color)                   { mutableStateOf(config.combined2Color) }
-
-    // Post-ride summary state
 
     Column(
         modifier = Modifier
@@ -430,6 +446,49 @@ fun FuelingScreen(vm: MainViewModel) {
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
                 }
+                IntField(
+                    label = stringResource(R.string.fueling_hyd_mult_label),
+                    text = hydMult,
+                    range = 50..200,
+                    onCommit = { hydMult = it; vm.updateConfig { cfg -> cfg.copy(hydrationSweatMultiplierPct = it.toInt()) } },
+                    onTextChange = { hydMult = it },
+                )
+                Text(
+                    text = stringResource(R.string.fueling_hyd_mult_hint),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                if (hydDynamic) {
+                    IntField(
+                        label = stringResource(R.string.fueling_hyd_repl_label),
+                        text = hydRepl,
+                        range = 50..100,
+                        onCommit = { hydRepl = it; vm.updateConfig { cfg -> cfg.copy(hydrationReplacementPct = it.toInt()) } },
+                        onTextChange = { hydRepl = it },
+                    )
+                    Text(
+                        text = stringResource(R.string.fueling_hyd_repl_hint),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+                Text(text = stringResource(R.string.fueling_hyd_salt_label), style = MaterialTheme.typography.bodyMedium)
+                SaltinessChips(
+                    selected = config.sweatSodiumProfile,
+                    onSelected = { v -> vm.updateConfig { cfg -> cfg.copy(sweatSodiumProfile = v) } },
+                )
+                if (config.sweatSodiumProfile == SweatSodiumProfile.MEASURED) {
+                    IntField(
+                        label = stringResource(R.string.fueling_hyd_salt_measured_label),
+                        text = saltMeasured,
+                        range = 10..90,
+                        onCommit = { saltMeasured = it; vm.updateConfig { cfg -> cfg.copy(sweatSodiumMeasuredMmolL = it.toInt()) } },
+                        onTextChange = { saltMeasured = it },
+                    )
+                }
+                TextButton(onClick = { vm.resetHydrationCalibration() }) {
+                    Text(stringResource(R.string.fueling_calib_reset))
+                }
                 HorizontalDivider()
                 FuelingRow(label = stringResource(R.string.fueling_alert_deficit_label)) {
                     Switch(
@@ -556,6 +615,8 @@ fun FuelingScreen(vm: MainViewModel) {
                 }  // end if (hydEnabled)
             }
         }
+
+        LastRideCard(vm)
 
         // Alert-mode card. Controls whether fueling alerts (carbs + hydration) show a
         // one-tap log button, a log+undo pair, or no button at all. Placed here so it
@@ -972,5 +1033,178 @@ private fun AlertColorPicker(
                 )
             }
         }
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun SaltinessChips(selected: SweatSodiumProfile, onSelected: (SweatSodiumProfile) -> Unit) {
+    val options = SweatSodiumProfile.entries
+    SingleChoiceSegmentedButtonRow(modifier = Modifier.fillMaxWidth()) {
+        options.forEachIndexed { index, p ->
+            SegmentedButton(
+                selected = selected == p,
+                onClick = { onSelected(p) },
+                shape = SegmentedButtonDefaults.itemShape(index = index, count = options.size),
+            ) {
+                Text(
+                    text = stringResource(when (p) {
+                        SweatSodiumProfile.LIGHT -> R.string.fueling_hyd_salt_light
+                        SweatSodiumProfile.TYPICAL -> R.string.fueling_hyd_salt_typical
+                        SweatSodiumProfile.SALTY -> R.string.fueling_hyd_salt_salty
+                        SweatSodiumProfile.MEASURED -> R.string.fueling_hyd_salt_measured
+                    }),
+                    style = MaterialTheme.typography.bodySmall,
+                    maxLines = 1,
+                )
+            }
+        }
+    }
+}
+
+private fun rejectionRes(r: CalibrationRejection): Int = when (r) {
+    CalibrationRejection.NO_RIDE -> R.string.fueling_calib_reject_no_ride
+    CalibrationRejection.RIDE_CHANGED -> R.string.fueling_calib_reject_ride_changed
+    CalibrationRejection.ALREADY_CALIBRATED -> R.string.fueling_calib_reject_already_calibrated
+    CalibrationRejection.TOO_OLD -> R.string.fueling_calib_reject_too_old
+    CalibrationRejection.URINATED -> R.string.fueling_calib_reject_urinated
+    CalibrationRejection.NO_RIDE_TIME -> R.string.fueling_calib_reject_no_ride_time
+    CalibrationRejection.TOO_SHORT -> R.string.fueling_calib_reject_too_short
+    CalibrationRejection.LOW_COVERAGE -> R.string.fueling_calib_reject_low_coverage
+    CalibrationRejection.IMPLAUSIBLE_WEIGHT -> R.string.fueling_calib_reject_implausible_weight
+    CalibrationRejection.TOO_LITTLE_SWEAT -> R.string.fueling_calib_reject_too_little_sweat
+    CalibrationRejection.RATIO_OUT_OF_RANGE -> R.string.fueling_calib_reject_ratio_out_of_range
+}
+
+/** Decimal weight field: accepts "69.4" or "69,4". */
+@Composable
+private fun DecimalField(label: String, text: String, onTextChange: (String) -> Unit) {
+    val keyboard = LocalSoftwareKeyboardController.current
+    OutlinedTextField(
+        value = text,
+        onValueChange = { v -> onTextChange(v.filter { it.isDigit() || it == '.' || it == ',' }.take(6)) },
+        label = { Text(label) },
+        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal, imeAction = ImeAction.Done),
+        keyboardActions = KeyboardActions(onDone = { keyboard?.hide() }),
+        singleLine = true,
+        modifier = Modifier.fillMaxWidth(),
+    )
+}
+
+/** Last hydration ride summary (sodium) + weigh-in calibration form. */
+@Composable
+private fun LastRideCard(vm: MainViewModel) {
+    val ride by vm.lastHydrationRide.collectAsState()
+    Card(elevation = CardDefaults.cardElevation(defaultElevation = 2.dp)) {
+        Column(modifier = Modifier.padding(10.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Text(
+                text = stringResource(R.string.fueling_lastride_title),
+                style = MaterialTheme.typography.titleSmall,
+                fontWeight = FontWeight.Bold,
+            )
+            val r = ride
+            if (r == null) {
+                Text(
+                    text = stringResource(R.string.fueling_lastride_empty),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            } else {
+                LastRideBody(vm, r)
+            }
+        }
+    }
+}
+
+@Composable
+private fun LastRideBody(vm: MainViewModel, r: LastHydrationRide) {
+    val ctx = androidx.compose.ui.platform.LocalContext.current
+    val scope = rememberCoroutineScope()
+    val advice = remember(r) { sodiumAdvice(r) }
+    val date = remember(r.endedAtMs) {
+        val d = Date(r.endedAtMs)
+        android.text.format.DateFormat.getMediumDateFormat(ctx).format(d) + " " +
+            android.text.format.DateFormat.getTimeFormat(ctx).format(d)
+    }
+    val minutes = (r.rideTimeMs / 60_000L).toInt()
+    val small = MaterialTheme.typography.bodySmall
+    val muted = MaterialTheme.colorScheme.onSurfaceVariant
+
+    Text(stringResource(R.string.fueling_lastride_when, date, minutes / 60, minutes % 60), style = MaterialTheme.typography.bodyMedium)
+    Text(stringResource(R.string.fueling_lastride_fluids, r.cumSweatMl.toInt(), r.cumLoggedMl), style = MaterialTheme.typography.bodyMedium)
+    Text(stringResource(R.string.fueling_lastride_sodium, advice.mgLost, advice.mgPerHour), style = MaterialTheme.typography.bodyMedium)
+    if (advice.partial) {
+        Text(stringResource(R.string.fueling_lastride_partial), style = small, color = MaterialTheme.colorScheme.error)
+    }
+    if (advice.fluidLimited) {
+        Text(stringResource(R.string.fueling_lastride_fluid_limited), style = small, color = muted)
+    } else if (advice.bottleMgPerL != null) {
+        Text(
+            stringResource(
+                if (advice.recommended) R.string.fueling_lastride_bottle_recommended else R.string.fueling_lastride_bottle_optional,
+                advice.bottleMgPerL,
+            ),
+            style = small, color = muted,
+        )
+    }
+    HorizontalDivider()
+    if (r.calibrated) {
+        Text(stringResource(R.string.fueling_lastride_calibrated), style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.Bold)
+        return
+    }
+    var pre by remember(r.rideId) { mutableStateOf("") }
+    var post by remember(r.rideId) { mutableStateOf("") }
+    var drink by remember(r.rideId) { mutableStateOf(r.cumLoggedMl.toString()) }
+    var food by remember(r.rideId) { mutableStateOf("0") }
+    var urinated by remember(r.rideId) { mutableStateOf(false) }
+    var result by remember(r.rideId) { mutableStateOf<CalibrationResult?>(null) }
+    val preKg = pre.replace(',', '.').toDoubleOrNull()
+    val postKg = post.replace(',', '.').toDoubleOrNull()
+
+    Text(stringResource(R.string.fueling_calib_title), style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.Bold)
+    Text(stringResource(R.string.fueling_calib_instructions), style = small, color = muted)
+    DecimalField(stringResource(R.string.fueling_calib_pre_label), pre) { pre = it }
+    DecimalField(stringResource(R.string.fueling_calib_post_label), post) { post = it }
+    OutlinedTextField(
+        value = drink,
+        onValueChange = { drink = it.filter { c -> c.isDigit() }.take(5) },
+        label = { Text(stringResource(R.string.fueling_calib_drink_label)) },
+        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number, imeAction = ImeAction.Next),
+        singleLine = true,
+        modifier = Modifier.fillMaxWidth(),
+    )
+    OutlinedTextField(
+        value = food,
+        onValueChange = { food = it.filter { c -> c.isDigit() }.take(4) },
+        label = { Text(stringResource(R.string.fueling_calib_food_label)) },
+        supportingText = { Text(stringResource(R.string.fueling_calib_food_hint)) },
+        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number, imeAction = ImeAction.Done),
+        singleLine = true,
+        modifier = Modifier.fillMaxWidth(),
+    )
+    FuelingRow(label = stringResource(R.string.fueling_calib_urinated_label)) {
+        Checkbox(checked = urinated, onCheckedChange = { urinated = it })
+    }
+    Button(
+        enabled = preKg != null && postKg != null,
+        onClick = {
+            val input = CalibrationInput(
+                preKg = preKg!!, postKg = postKg!!,
+                drinkMl = drink.toIntOrNull() ?: 0, foodG = food.toIntOrNull() ?: 0,
+                urinated = urinated, nowMs = System.currentTimeMillis(),
+            )
+            scope.launch { result = vm.calibrateHydration(r.rideId, input) }
+        },
+    ) { Text(stringResource(R.string.fueling_calib_button)) }
+    when (val res = result) {
+        is CalibrationResult.Accepted -> Text(
+            stringResource(R.string.fueling_calib_result_ok, res.ratio.toDouble(), res.newMultiplierPct),
+            style = MaterialTheme.typography.bodyMedium,
+        )
+        is CalibrationResult.Rejected -> Text(
+            stringResource(rejectionRes(res.reason)),
+            style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.error,
+        )
+        null -> {}
     }
 }
