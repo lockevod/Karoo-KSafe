@@ -86,7 +86,7 @@ fun CarbsScreen(vm: MainViewModel) {
             Text(
                 text = stringResource(R.string.fueling_info_banner),
                 modifier = Modifier.padding(8.dp),
-                style = MaterialTheme.typography.bodySmall,
+                style = MaterialTheme.typography.bodyMedium,
             )
         }
 
@@ -121,33 +121,35 @@ fun CarbsScreen(vm: MainViewModel) {
                         }
                     )
                 }
-                IntField(
-                    label = stringResource(R.string.fueling_deficit_threshold_g_label),
-                    text = carbDeficitThreshold,
-                    range = 5..60,
-                    onCommit = { carbDeficitThreshold = it; vm.updateConfig { cfg -> cfg.copy(carbDeficitThresholdG = it.toInt()) } },
-                    onTextChange = { carbDeficitThreshold = it },
-                )
-                IntField(
-                    label = stringResource(R.string.fueling_deficit_initial_delay_label),
-                    text = carbDeficitInitialDelay,
-                    range = 0..240,
-                    onCommit = { carbDeficitInitialDelay = it; vm.updateConfig { cfg -> cfg.copy(carbDeficitInitialDelayMin = it.toInt()) } },
-                    onTextChange = { carbDeficitInitialDelay = it },
-                )
-                // Discrete picker (5/10/15/30 min) rather than free-text — those four
-                // are the only values that make sense for an alert cooldown on
-                // endurance rides: too fast and the rider gets nagged, too slow and a
-                // sustained deficit goes silent. Off-grid persisted values (from a
-                // legacy build that exposed the free-text input, or a manual edit)
-                // snap visually to the nearest grid point but are NOT silently
-                // rewritten; the first deliberate tap commits a valid value.
-                MinutesPickerRow(
-                    label = stringResource(R.string.fueling_deficit_reminder_interval_label),
-                    hint = stringResource(R.string.fueling_deficit_reminder_interval_hint),
-                    selected = config.carbDeficitReminderIntervalMin,
-                    onSelected = { vm.updateConfig { cfg -> cfg.copy(carbDeficitReminderIntervalMin = it) } },
-                )
+                if (carbDeficitOn) {
+                    IntField(
+                        label = stringResource(R.string.fueling_deficit_threshold_g_label),
+                        text = carbDeficitThreshold,
+                        range = 5..60,
+                        onCommit = { carbDeficitThreshold = it; vm.updateConfig { cfg -> cfg.copy(carbDeficitThresholdG = it.toInt()) } },
+                        onTextChange = { carbDeficitThreshold = it },
+                    )
+                    IntField(
+                        label = stringResource(R.string.fueling_deficit_initial_delay_label),
+                        text = carbDeficitInitialDelay,
+                        range = 0..240,
+                        onCommit = { carbDeficitInitialDelay = it; vm.updateConfig { cfg -> cfg.copy(carbDeficitInitialDelayMin = it.toInt()) } },
+                        onTextChange = { carbDeficitInitialDelay = it },
+                    )
+                    // Discrete picker (5/10/15/30 min) rather than free-text — those four
+                    // are the only values that make sense for an alert cooldown on
+                    // endurance rides: too fast and the rider gets nagged, too slow and a
+                    // sustained deficit goes silent. Off-grid persisted values (from a
+                    // legacy build that exposed the free-text input, or a manual edit)
+                    // snap visually to the nearest grid point but are NOT silently
+                    // rewritten; the first deliberate tap commits a valid value.
+                    MinutesPickerRow(
+                        label = stringResource(R.string.fueling_deficit_reminder_interval_label),
+                        hint = stringResource(R.string.fueling_deficit_reminder_interval_hint),
+                        selected = config.carbDeficitReminderIntervalMin,
+                        onSelected = { vm.updateConfig { cfg -> cfg.copy(carbDeficitReminderIntervalMin = it) } },
+                    )
+                }
                 FuelingRow(label = stringResource(R.string.fueling_alert_time_label)) {
                     Switch(
                         checked = carbTimeOn,
@@ -157,56 +159,64 @@ fun CarbsScreen(vm: MainViewModel) {
                         }
                     )
                 }
-                IntField(
-                    label = stringResource(R.string.fueling_time_interval_label),
-                    text = carbTimeInterval,
-                    range = 1..60,
-                    onCommit = { carbTimeInterval = it; vm.updateConfig { cfg -> cfg.copy(carbTimeIntervalMin = it.toInt()) } },
-                    onTextChange = { carbTimeInterval = it },
-                )
-                IntField(
-                    label = stringResource(R.string.fueling_initial_delay_label),
-                    text = carbTimeInitialDelay,
-                    range = 0..240,
-                    onCommit = { carbTimeInitialDelay = it; vm.updateConfig { cfg -> cfg.copy(carbTimeInitialDelayMin = it.toInt()) } },
-                    onTextChange = { carbTimeInitialDelay = it },
-                )
-                CustomAlertField(
-                    label = "Carb alert title",
-                    value = carbCustomTitle,
-                    onCommit = { v -> carbCustomTitle = v; vm.updateConfig { cfg -> cfg.copy(carbAlertCustomTitle = v) } },
-                    defaultText = stringResource(R.string.fueling_carb_alert_title),
-                    tokensHint = "",
-                    maxLength = 30,
-                )
-                CustomAlertField(
-                    label = "Carb alert detail (time)",
-                    value = carbCustomDetailTime,
-                    onCommit = { v -> carbCustomDetailTime = v; vm.updateConfig { cfg -> cfg.copy(carbAlertCustomDetailTime = v) } },
-                    defaultText = stringResource(R.string.fueling_carb_alert_detail_time),
-                    tokensHint = "Tokens: {deficit}, {elapsed}, {target}",
-                    maxLength = ALERT_DETAIL_MAX_CHARS,
-                    singleLine = false,
-                )
-                CustomAlertField(
-                    label = "Carb alert detail (deficit)",
-                    value = carbCustomDetailDeficit,
-                    onCommit = { v -> carbCustomDetailDeficit = v; vm.updateConfig { cfg -> cfg.copy(carbAlertCustomDetailDeficit = v) } },
-                    defaultText = stringResource(R.string.fueling_carb_alert_detail_deficit),
-                    tokensHint = "Tokens: {deficit}, {elapsed}, {target}",
-                    maxLength = ALERT_DETAIL_MAX_CHARS,
-                    singleLine = false,
-                )
-                BeepPatternPicker(
-                    label = stringResource(R.string.fueling_beep_pattern_label),
-                    selected = config.carbBeepPattern,
-                    onSelected = { v -> vm.updateConfig { cfg -> cfg.copy(carbBeepPattern = v) } },
-                )
-                AlertColorPicker(
-                    label = stringResource(R.string.fueling_alert_bg_color_label),
-                    selected = carbAlertBgColor,
-                    onSelected = { v -> carbAlertBgColor = v; vm.updateConfig { cfg -> cfg.copy(carbAlertBgColor = v) } },
-                )
+                if (carbTimeOn) {
+                    IntField(
+                        label = stringResource(R.string.fueling_time_interval_label),
+                        text = carbTimeInterval,
+                        range = 1..60,
+                        onCommit = { carbTimeInterval = it; vm.updateConfig { cfg -> cfg.copy(carbTimeIntervalMin = it.toInt()) } },
+                        onTextChange = { carbTimeInterval = it },
+                    )
+                    IntField(
+                        label = stringResource(R.string.fueling_initial_delay_label),
+                        text = carbTimeInitialDelay,
+                        range = 0..240,
+                        onCommit = { carbTimeInitialDelay = it; vm.updateConfig { cfg -> cfg.copy(carbTimeInitialDelayMin = it.toInt()) } },
+                        onTextChange = { carbTimeInitialDelay = it },
+                    )
+                }
+                if (carbDeficitOn || carbTimeOn) {
+                    CustomAlertField(
+                        label = "Carb alert title",
+                        value = carbCustomTitle,
+                        onCommit = { v -> carbCustomTitle = v; vm.updateConfig { cfg -> cfg.copy(carbAlertCustomTitle = v) } },
+                        defaultText = stringResource(R.string.fueling_carb_alert_title),
+                        tokensHint = "",
+                        maxLength = 30,
+                    )
+                    if (carbTimeOn) {
+                        CustomAlertField(
+                            label = "Carb alert detail (time)",
+                            value = carbCustomDetailTime,
+                            onCommit = { v -> carbCustomDetailTime = v; vm.updateConfig { cfg -> cfg.copy(carbAlertCustomDetailTime = v) } },
+                            defaultText = stringResource(R.string.fueling_carb_alert_detail_time),
+                            tokensHint = "Tokens: {deficit}, {elapsed}, {target}",
+                            maxLength = ALERT_DETAIL_MAX_CHARS,
+                            singleLine = false,
+                        )
+                    }
+                    if (carbDeficitOn) {
+                        CustomAlertField(
+                            label = "Carb alert detail (deficit)",
+                            value = carbCustomDetailDeficit,
+                            onCommit = { v -> carbCustomDetailDeficit = v; vm.updateConfig { cfg -> cfg.copy(carbAlertCustomDetailDeficit = v) } },
+                            defaultText = stringResource(R.string.fueling_carb_alert_detail_deficit),
+                            tokensHint = "Tokens: {deficit}, {elapsed}, {target}",
+                            maxLength = ALERT_DETAIL_MAX_CHARS,
+                            singleLine = false,
+                        )
+                    }
+                    BeepPatternPicker(
+                        label = stringResource(R.string.fueling_beep_pattern_label),
+                        selected = config.carbBeepPattern,
+                        onSelected = { v -> vm.updateConfig { cfg -> cfg.copy(carbBeepPattern = v) } },
+                    )
+                    AlertColorPicker(
+                        label = stringResource(R.string.fueling_alert_bg_color_label),
+                        selected = carbAlertBgColor,
+                        onSelected = { v -> carbAlertBgColor = v; vm.updateConfig { cfg -> cfg.copy(carbAlertBgColor = v) } },
+                    )
+                }
                 HorizontalDivider()
                 Text(text = stringResource(R.string.fueling_items_section), style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.Bold)
                 val gLabel = stringResource(R.string.fueling_slot_grams_label)
@@ -243,15 +253,17 @@ fun CarbsScreen(vm: MainViewModel) {
                     FieldEmojiPicker(label = "Icon", selected = carb3Icon, emojis = com.enderthor.kSafe.data.FUEL_EMOJI_CARB, modifier = Modifier.weight(1f),
                         onSelected = { v -> carb3Icon = v; vm.updateConfig { cfg -> cfg.copy(carb3Icon = v) } })
                 }
-                TestActionButton(
-                    label = stringResource(R.string.fueling_preview_label),
-                    runningLabel = stringResource(R.string.fueling_preview_label),
-                    onAction = {
-                        KSafeExtension.getInstance()?.simulateFuelingAlert(
-                            com.enderthor.kSafe.extension.util.FuelingChannel.CARB
-                        ) ?: "Extension not connected — wait a moment and try again."
-                    },
-                )
+                if (carbDeficitOn || carbTimeOn) {
+                    TestActionButton(
+                        label = stringResource(R.string.fueling_preview_label),
+                        runningLabel = stringResource(R.string.fueling_preview_label),
+                        onAction = {
+                            KSafeExtension.getInstance()?.simulateFuelingAlert(
+                                com.enderthor.kSafe.extension.util.FuelingChannel.CARB
+                            ) ?: "Extension not connected — wait a moment and try again."
+                        },
+                    )
+                }
                 }  // end if (carbsEnabled)
             }
         }

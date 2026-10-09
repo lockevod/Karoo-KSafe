@@ -17,6 +17,8 @@ import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.material3.LocalMinimumInteractiveComponentSize
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.collectAsState
@@ -183,26 +185,28 @@ fun HydrationScreen(vm: MainViewModel) {
                         }
                     )
                 }
-                IntField(
-                    label = stringResource(R.string.fueling_deficit_threshold_ml_label),
-                    text = hydDeficitThreshold,
-                    range = 50..800,
-                    onCommit = { hydDeficitThreshold = it; vm.updateConfig { cfg -> cfg.copy(hydrationDeficitThresholdMl = it.toInt()) } },
-                    onTextChange = { hydDeficitThreshold = it },
-                )
-                IntField(
-                    label = stringResource(R.string.fueling_deficit_initial_delay_label),
-                    text = hydDeficitInitialDelay,
-                    range = 0..240,
-                    onCommit = { hydDeficitInitialDelay = it; vm.updateConfig { cfg -> cfg.copy(hydrationDeficitInitialDelayMin = it.toInt()) } },
-                    onTextChange = { hydDeficitInitialDelay = it },
-                )
-                MinutesPickerRow(
-                    label = stringResource(R.string.fueling_deficit_reminder_interval_label),
-                    hint = stringResource(R.string.fueling_deficit_reminder_interval_hint),
-                    selected = config.hydrationDeficitReminderIntervalMin,
-                    onSelected = { vm.updateConfig { cfg -> cfg.copy(hydrationDeficitReminderIntervalMin = it) } },
-                )
+                if (hydDeficitOn) {
+                    IntField(
+                        label = stringResource(R.string.fueling_deficit_threshold_ml_label),
+                        text = hydDeficitThreshold,
+                        range = 50..800,
+                        onCommit = { hydDeficitThreshold = it; vm.updateConfig { cfg -> cfg.copy(hydrationDeficitThresholdMl = it.toInt()) } },
+                        onTextChange = { hydDeficitThreshold = it },
+                    )
+                    IntField(
+                        label = stringResource(R.string.fueling_deficit_initial_delay_label),
+                        text = hydDeficitInitialDelay,
+                        range = 0..240,
+                        onCommit = { hydDeficitInitialDelay = it; vm.updateConfig { cfg -> cfg.copy(hydrationDeficitInitialDelayMin = it.toInt()) } },
+                        onTextChange = { hydDeficitInitialDelay = it },
+                    )
+                    MinutesPickerRow(
+                        label = stringResource(R.string.fueling_deficit_reminder_interval_label),
+                        hint = stringResource(R.string.fueling_deficit_reminder_interval_hint),
+                        selected = config.hydrationDeficitReminderIntervalMin,
+                        onSelected = { vm.updateConfig { cfg -> cfg.copy(hydrationDeficitReminderIntervalMin = it) } },
+                    )
+                }
                 FuelingRow(label = stringResource(R.string.fueling_alert_time_label)) {
                     Switch(
                         checked = hydTimeOn,
@@ -212,56 +216,64 @@ fun HydrationScreen(vm: MainViewModel) {
                         }
                     )
                 }
-                IntField(
-                    label = stringResource(R.string.fueling_time_interval_label),
-                    text = hydTimeInterval,
-                    range = 1..60,
-                    onCommit = { hydTimeInterval = it; vm.updateConfig { cfg -> cfg.copy(hydrationTimeIntervalMin = it.toInt()) } },
-                    onTextChange = { hydTimeInterval = it },
-                )
-                IntField(
-                    label = stringResource(R.string.fueling_initial_delay_label),
-                    text = hydTimeInitialDelay,
-                    range = 0..240,
-                    onCommit = { hydTimeInitialDelay = it; vm.updateConfig { cfg -> cfg.copy(hydrationTimeInitialDelayMin = it.toInt()) } },
-                    onTextChange = { hydTimeInitialDelay = it },
-                )
-                CustomAlertField(
-                    label = "Hydration alert title",
-                    value = hydCustomTitle,
-                    onCommit = { v -> hydCustomTitle = v; vm.updateConfig { cfg -> cfg.copy(hydrationAlertCustomTitle = v) } },
-                    defaultText = stringResource(R.string.fueling_hyd_alert_title),
-                    tokensHint = "",
-                    maxLength = 30,
-                )
-                CustomAlertField(
-                    label = "Hydration alert detail (time)",
-                    value = hydCustomDetailTime,
-                    onCommit = { v -> hydCustomDetailTime = v; vm.updateConfig { cfg -> cfg.copy(hydrationAlertCustomDetailTime = v) } },
-                    defaultText = stringResource(R.string.fueling_hyd_alert_detail_time),
-                    tokensHint = "Tokens: {deficit}, {elapsed}, {target}",
-                    maxLength = ALERT_DETAIL_MAX_CHARS,
-                    singleLine = false,
-                )
-                CustomAlertField(
-                    label = "Hydration alert detail (deficit)",
-                    value = hydCustomDetailDeficit,
-                    onCommit = { v -> hydCustomDetailDeficit = v; vm.updateConfig { cfg -> cfg.copy(hydrationAlertCustomDetailDeficit = v) } },
-                    defaultText = stringResource(R.string.fueling_hyd_alert_detail_deficit),
-                    tokensHint = "Tokens: {deficit}, {elapsed}, {target}",
-                    maxLength = ALERT_DETAIL_MAX_CHARS,
-                    singleLine = false,
-                )
-                BeepPatternPicker(
-                    label = stringResource(R.string.fueling_beep_pattern_label),
-                    selected = config.hydBeepPattern,
-                    onSelected = { v -> vm.updateConfig { cfg -> cfg.copy(hydBeepPattern = v) } },
-                )
-                AlertColorPicker(
-                    label = stringResource(R.string.fueling_alert_bg_color_label),
-                    selected = hydAlertBgColor,
-                    onSelected = { v -> hydAlertBgColor = v; vm.updateConfig { cfg -> cfg.copy(hydrationAlertBgColor = v) } },
-                )
+                if (hydTimeOn) {
+                    IntField(
+                        label = stringResource(R.string.fueling_time_interval_label),
+                        text = hydTimeInterval,
+                        range = 1..60,
+                        onCommit = { hydTimeInterval = it; vm.updateConfig { cfg -> cfg.copy(hydrationTimeIntervalMin = it.toInt()) } },
+                        onTextChange = { hydTimeInterval = it },
+                    )
+                    IntField(
+                        label = stringResource(R.string.fueling_initial_delay_label),
+                        text = hydTimeInitialDelay,
+                        range = 0..240,
+                        onCommit = { hydTimeInitialDelay = it; vm.updateConfig { cfg -> cfg.copy(hydrationTimeInitialDelayMin = it.toInt()) } },
+                        onTextChange = { hydTimeInitialDelay = it },
+                    )
+                }
+                if (hydDeficitOn || hydTimeOn) {
+                    CustomAlertField(
+                        label = "Hydration alert title",
+                        value = hydCustomTitle,
+                        onCommit = { v -> hydCustomTitle = v; vm.updateConfig { cfg -> cfg.copy(hydrationAlertCustomTitle = v) } },
+                        defaultText = stringResource(R.string.fueling_hyd_alert_title),
+                        tokensHint = "",
+                        maxLength = 30,
+                    )
+                    if (hydTimeOn) {
+                        CustomAlertField(
+                            label = "Hydration alert detail (time)",
+                            value = hydCustomDetailTime,
+                            onCommit = { v -> hydCustomDetailTime = v; vm.updateConfig { cfg -> cfg.copy(hydrationAlertCustomDetailTime = v) } },
+                            defaultText = stringResource(R.string.fueling_hyd_alert_detail_time),
+                            tokensHint = "Tokens: {deficit}, {elapsed}, {target}",
+                            maxLength = ALERT_DETAIL_MAX_CHARS,
+                            singleLine = false,
+                        )
+                    }
+                    if (hydDeficitOn) {
+                        CustomAlertField(
+                            label = "Hydration alert detail (deficit)",
+                            value = hydCustomDetailDeficit,
+                            onCommit = { v -> hydCustomDetailDeficit = v; vm.updateConfig { cfg -> cfg.copy(hydrationAlertCustomDetailDeficit = v) } },
+                            defaultText = stringResource(R.string.fueling_hyd_alert_detail_deficit),
+                            tokensHint = "Tokens: {deficit}, {elapsed}, {target}",
+                            maxLength = ALERT_DETAIL_MAX_CHARS,
+                            singleLine = false,
+                        )
+                    }
+                    BeepPatternPicker(
+                        label = stringResource(R.string.fueling_beep_pattern_label),
+                        selected = config.hydBeepPattern,
+                        onSelected = { v -> vm.updateConfig { cfg -> cfg.copy(hydBeepPattern = v) } },
+                    )
+                    AlertColorPicker(
+                        label = stringResource(R.string.fueling_alert_bg_color_label),
+                        selected = hydAlertBgColor,
+                        onSelected = { v -> hydAlertBgColor = v; vm.updateConfig { cfg -> cfg.copy(hydrationAlertBgColor = v) } },
+                    )
+                }
                 HorizontalDivider()
                 Text(text = stringResource(R.string.fueling_items_section), style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.Bold)
                 val mlLabel = stringResource(R.string.fueling_slot_ml_label)
@@ -287,15 +299,17 @@ fun HydrationScreen(vm: MainViewModel) {
                     FieldEmojiPicker(label = "Icon", selected = drink2Icon, emojis = com.enderthor.kSafe.data.FUEL_EMOJI_DRINK, modifier = Modifier.weight(1f),
                         onSelected = { v -> drink2Icon = v; vm.updateConfig { cfg -> cfg.copy(drink2Icon = v) } })
                 }
-                TestActionButton(
-                    label = stringResource(R.string.fueling_preview_label),
-                    runningLabel = stringResource(R.string.fueling_preview_label),
-                    onAction = {
-                        KSafeExtension.getInstance()?.simulateFuelingAlert(
-                            com.enderthor.kSafe.extension.util.FuelingChannel.HYDRATION
-                        ) ?: "Extension not connected — wait a moment and try again."
-                    },
-                )
+                if (hydDeficitOn || hydTimeOn) {
+                    TestActionButton(
+                        label = stringResource(R.string.fueling_preview_label),
+                        runningLabel = stringResource(R.string.fueling_preview_label),
+                        onAction = {
+                            KSafeExtension.getInstance()?.simulateFuelingAlert(
+                                com.enderthor.kSafe.extension.util.FuelingChannel.HYDRATION
+                            ) ?: "Extension not connected — wait a moment and try again."
+                        },
+                    )
+                }
                 }  // end if (hydEnabled)
             }
         }
@@ -488,12 +502,17 @@ private fun YourSweatCard(
                 onTextChange = onMultChange,
             )
             Text(text = stringResource(R.string.fueling_hyd_mult_hint), style = small, color = muted)
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
-                OutlinedButton(onClick = { calibOpen = !calibOpen }) {
-                    Text(stringResource(R.string.fueling_calib_title))
-                }
-                TextButton(onClick = { vm.resetHydrationCalibration() }) {
-                    Text(stringResource(R.string.fueling_calib_reset))
+            // The 48 dp minimum-touch box pads each 40 dp button with 4 dp of invisible space
+            // above and below, which on top of the column's 8 dp spacing read as a double gap
+            // around the calibration toggle. 40 dp is still a comfortable Karoo touch target.
+            CompositionLocalProvider(LocalMinimumInteractiveComponentSize provides 0.dp) {
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+                    OutlinedButton(onClick = { calibOpen = !calibOpen }) {
+                        Text(stringResource(R.string.fueling_calib_title))
+                    }
+                    TextButton(onClick = { vm.resetHydrationCalibration() }) {
+                        Text(stringResource(R.string.fueling_calib_reset))
+                    }
                 }
             }
             if (calibOpen) {
