@@ -1148,8 +1148,17 @@ private fun LastRideBody(vm: MainViewModel, r: LastHydrationRide) {
         )
     }
     HorizontalDivider()
+    // Hoisted above the calibrated early-return: the DataStore write flips r.calibrated before
+    // this composable sees the result, so the success text must survive that recomposition.
+    var result by remember(r.rideId) { mutableStateOf<CalibrationResult?>(null) }
     if (r.calibrated) {
         Text(stringResource(R.string.fueling_lastride_calibrated), style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.Bold)
+        (result as? CalibrationResult.Accepted)?.let {
+            Text(
+                stringResource(R.string.fueling_calib_result_ok, it.ratio.toDouble(), it.newMultiplierPct),
+                style = MaterialTheme.typography.bodyMedium,
+            )
+        }
         return
     }
     var pre by remember(r.rideId) { mutableStateOf("") }
@@ -1157,7 +1166,6 @@ private fun LastRideBody(vm: MainViewModel, r: LastHydrationRide) {
     var drink by remember(r.rideId) { mutableStateOf(r.cumLoggedMl.toString()) }
     var food by remember(r.rideId) { mutableStateOf("0") }
     var urinated by remember(r.rideId) { mutableStateOf(false) }
-    var result by remember(r.rideId) { mutableStateOf<CalibrationResult?>(null) }
     val preKg = pre.replace(',', '.').toDoubleOrNull()
     val postKg = post.replace(',', '.').toDoubleOrNull()
 
