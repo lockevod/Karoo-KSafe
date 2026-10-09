@@ -492,7 +492,6 @@
     <string name="fueling_hyd_salt_salty">Mucha</string>
     <string name="fueling_hyd_salt_measured">Medida</string>
     <string name="fueling_hyd_salt_measured_label">Sodio en sudor (mmol/L)</string>
-    <string name="fueling_lastride_title">Última salida</string>
     <string name="fueling_lastride_empty">Aún no hay datos de hidratación. Termina una salida con el seguimiento de hidratación activo y el resumen aparecerá aquí.</string>
     <string name="fueling_lastride_fluids">Sudor ≈ %1$d ml · bebido %2$d ml</string>
     <string name="fueling_lastride_sodium">Sodio perdido ≈ %1$d mg (%2$d mg/h)</string>
@@ -511,7 +510,7 @@
     <string name="fueling_calib_urinated_label">Oriné antes del segundo pesaje</string>
     <string name="fueling_calib_button">Calibrar</string>
     <string name="fueling_calib_reset">Restablecer calibración</string>
-    <string name="fueling_calib_result_ok">Relación medido/estimado %1$.2f. Nuevo multiplicador de sudoración: %2$d%%.</string>
+    <string name="fueling_calib_result_ok">Relación medido/estimado %1$.2f. «Cuánto sudas» pasa a %2$d%%.</string>
     <string name="fueling_calib_reject_no_ride">No hay ninguna salida que calibrar.</string>
     <string name="fueling_calib_reject_ride_changed">Se ha registrado una salida más reciente. Vuelve a abrir esta pantalla e inténtalo de nuevo.</string>
     <string name="fueling_calib_reject_already_calibrated">Esta salida ya está calibrada.</string>

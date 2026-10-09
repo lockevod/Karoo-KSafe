@@ -541,7 +541,6 @@
     <string name="fueling_hyd_salt_salty">High</string>
     <string name="fueling_hyd_salt_measured">Measured</string>
     <string name="fueling_hyd_salt_measured_label">Sweat sodium (mmol/L)</string>
-    <string name="fueling_lastride_title">Last ride</string>
     <string name="fueling_lastride_empty">No hydration data yet. Finish a ride with the hydration tracker on and the summary will appear here.</string>
     <string name="fueling_lastride_fluids">Sweat ≈ %1$d ml · drank %2$d ml</string>
     <string name="fueling_lastride_sodium">Sodium lost ≈ %1$d mg (%2$d mg/h)</string>
@@ -560,7 +559,7 @@
     <string name="fueling_calib_urinated_label">I urinated before the second weigh-in</string>
     <string name="fueling_calib_button">Calibrate</string>
     <string name="fueling_calib_reset">Reset calibration</string>
-    <string name="fueling_calib_result_ok">Measured/estimated ratio %1$.2f. New sweat multiplier: %2$d%%.</string>
+    <string name="fueling_calib_result_ok">Measured/estimated ratio %1$.2f. How much you sweat is now %2$d%%.</string>
     <string name="fueling_calib_reject_no_ride">There is no ride to calibrate.</string>
     <string name="fueling_calib_reject_ride_changed">A newer ride has been recorded. Reopen this screen and try again.</string>
     <string name="fueling_calib_reject_already_calibrated">This ride is already calibrated.</string>
