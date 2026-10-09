@@ -341,6 +341,11 @@ internal fun FuelingAlertButtonModeCard(vm: MainViewModel, selected: FuelingAler
                 },
                 onSelected = { mode -> vm.updateConfig { it.copy(fuelingAlertButtonMode = mode) } },
             )
+            Text(
+                text = stringResource(R.string.fueling_alert_button_mode_shared_hint),
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
         }
     }
 }

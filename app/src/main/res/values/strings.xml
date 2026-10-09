@@ -150,6 +150,7 @@
     <string name="fueling_hyd_alert_detail_deficit">Drink now — behind {deficit} ml</string>
     <string name="fueling_hyd_alert_detail_time">Drink now — {elapsed} min since last</string>
     <string name="fueling_alert_button_mode_label">Log fueling from the alert</string>
+    <string name="fueling_alert_button_mode_shared_hint">Applies to both carb and hydration alerts.</string>
     <string name="fueling_alert_button_off">Off</string>
     <string name="fueling_alert_button_log">One tap</string>
     <string name="fueling_alert_button_log_undo">+ Undo</string>
