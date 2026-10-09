@@ -203,18 +203,18 @@ Pon un **objetivo de bebida por hora**. Usa esta guía orientativa según el tie
 
 El valor por defecto (750 ml/h) va bien para un día suave — súbelo en verano. Si prefieres no
 pensar en ello, activa **Dynamic estimate** y KSafe ajusta el objetivo según tu esfuerzo y la
-temperatura. En modo dinámico KSafe apunta a cerca del 80 % del sudor estimado (puedes
-cambiarlo): reponer cada gota durante la salida no es lo recomendable.
+temperatura. En modo dinámico KSafe apunta a cerca del 80 % del sudor estimado (ajústalo en
+**Objetivo de reposición**): reponer cada gota durante la salida no es lo recomendable.
 
 **Aprende tu propio sudor (opcional).** Cada persona suda distinto. Después de una salida, abre la
 pestaña **Nutrición**, tarjeta **Última salida**, e introduce tu peso antes y después (desnudo y
 antes de ir al baño) junto con lo que has bebido y comido. KSafe lo compara con su estimación y
-ajusta un **multiplicador de sudor** personal. Hace falta una salida de al menos 1 hora con buenos
+ajusta tu **Multiplicador de sudoración** personal. Hace falta una salida de al menos 1 hora con buenos
 datos, sin parada para orinar, y hacerlo en las 6 horas siguientes. Repítelo en varias salidas (se
 promedian las 3 últimas) y vuelve a hacerlo al cambiar de estación. La misma tarjeta muestra tu
 pérdida estimada de sodio y, tras salidas largas, una concentración de sal opcional para tu bidón.
-Elige lo salado que sudas (Ligero / Típico / Salado / Medido) en la tarjeta de Hidratación si lo
-conoces.
+Si sabes lo salado que sudas, elige tu **Salinidad del sudor** (Baja / Normal / Alta / Medida) en la
+sección **Hidratación**.
 
 ### "¿Qué toco?"
 

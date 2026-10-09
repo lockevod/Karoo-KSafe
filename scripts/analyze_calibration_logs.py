@@ -55,6 +55,8 @@ Event catalogue understood by this script:
         of the Karoo ride time, -1 if unknown), low_pct (share of integrated time at
         LOW confidence) and spd (speed km/h). conf= now reports the real estimator
         confidence in fixed mode too, so filter by mode= when analysing confidence.
+        In dynamic mode rate_ml_h is the BASE sweat rate, while cum_target
+        integrates at base x mult x repl, so rate_ml_h x hours != cum_target.
       HYD_START adds mult, repl and na (sweat sodium mmol/L).
       HYD_OVER_SHADOW (SHADOW only, never an alert): logged each time logged fluid
         exceeds estimated sweat by a new 500 ml level. Keys: excess, cum_logged,
