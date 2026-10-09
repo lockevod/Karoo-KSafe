@@ -75,7 +75,18 @@ object FuelingPersistPolicy {
                 activeIntegrationMs = prevCarb.activeIntegrationMs,
                 cumKcal = prevCarb.cumKcal,
             ) == prevCarb
-            val hydOtherUnchanged = curHyd.copy(cumTargetMl = prevHyd.cumTargetMl) == prevHyd
+            // The sweat/sodium/coverage accumulators advance every cycle alongside
+            // cumTargetMl, so they ride its band. A write lost to a restart only lowers
+            // coverage — the conservative direction. overShadowLevel is NOT free-running
+            // (a level change must persist), so it stays out of this exemption.
+            val hydOtherUnchanged = curHyd.copy(
+                cumTargetMl = prevHyd.cumTargetMl,
+                cumSweatBaseMl = prevHyd.cumSweatBaseMl,
+                cumSweatMl = prevHyd.cumSweatMl,
+                cumSodiumMg = prevHyd.cumSodiumMg,
+                coveredMs = prevHyd.coveredMs,
+                lowConfMs = prevHyd.lowConfMs,
+            ) == prevHyd
             val withinDeadband = carbOtherUnchanged && hydOtherUnchanged &&
                 burnDelta in 0f..PERSIST_CARB_BURN_DEADBAND_G &&
                 targetDelta in 0f..PERSIST_HYD_TARGET_DEADBAND_ML &&
