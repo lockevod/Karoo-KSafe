@@ -105,6 +105,29 @@ class HydrationTrackerTest {
     }
 
     @Test
+    fun `repeated autopauses keep full coverage`() {
+        // KSafeExtension's sequence: Paused → onPaused(); Paused→Recording → resume(). The
+        // monitor restarts on resume so ticks land 15 s after it; the pause lands mid-interval.
+        startRide()
+        rideTime = 0L
+        repeat(40) {
+            recording = true
+            tracker.resume(cfg())
+            repeat(6) { step(); rideTime = rideTime!! + TICK_MS }
+            clock.now += 5_000L; rideTime = rideTime!! + 5_000L
+            recording = false
+            tracker.onPaused()
+            // 30 s paused while still rolling: nothing integrates, ride time frozen.
+            val atPause = tracker.getPersistableState().coveredMs
+            repeat(2) { step() }
+            assertEquals(atPause, tracker.getPersistableState().coveredMs)
+        }
+        val covered = tracker.getPersistableState().coveredMs
+        assertTrue("covered=$covered ride=$rideTime", covered >= 0.98 * rideTime!!)
+        assertTrue("no paused time integrated", covered <= rideTime!!)
+    }
+
+    @Test
     fun `static to dynamic toggle mid-ride keeps accumulating sweat`() {
         startRide(cfg(dynamic = false))
         ride(30 * 60_000L)
@@ -153,8 +176,7 @@ class HydrationTrackerTest {
         ride(HOUR_MS)
         tracker.stop()
         clock.now += HOUR_MS
-        tracker.resume(cfg())
-        step()                          // re-anchor tick after resume integrates nothing
+        tracker.resume(cfg())           // dt anchored at resume: the OFF hour never integrates
         ride(HOUR_MS)
         rideTime = 3 * HOUR_MS
         val snap = tracker.lastRideSnapshot()!!

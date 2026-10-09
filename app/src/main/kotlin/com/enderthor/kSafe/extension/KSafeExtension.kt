@@ -1291,7 +1291,10 @@ class KSafeExtension : KarooExtension("ksafe", BuildConfig.VERSION_NAME), Corout
         // No ELAPSED_TIME subscription any more: a stale value would make an untracked gap
         // (master OFF mid-ride) look covered. A rebuild that re-subscribes re-emits the true
         // cumulative ride time; a ride ended without one records 0 → NO_RIDE_TIME.
-        rideTimeMs = null
+        // EXCEPT while Paused: ride time doesn't advance during a pause, so the last value is
+        // still exact (master OFF in a pause, then end ride, must not lose it). A Recording
+        // span run without the collector clears it in handleRideState's Recording branch.
+        if (currentRideState !is RideState.Paused) rideTimeMs = null
         // Reset Headwind detection — if the rider's setup changes between rides
         // (uninstalls Headwind, for instance) we want the onboard temperature
         // fallback to engage cleanly on the next ride.
@@ -1533,9 +1536,18 @@ class KSafeExtension : KarooExtension("ksafe", BuildConfig.VERSION_NAME), Corout
                         }
                     }
                     rideWasActive = true
+                } else {
+                    // Recording with the master OFF: ride time advances with no ELAPSED_TIME
+                    // collector, so a value kept from a pause would now be stale (see
+                    // stopRecordingCollectors).
+                    rideTimeMs = null
                 }
             }
             is RideState.Paused -> {
+                // First: close the hydration Recording interval up to the pause instant so
+                // a stop-start ride doesn't lose up to one tick per autopause (no-op when
+                // the tracker isn't running).
+                hydrationTracker.onPaused()
                 // Keep crash detection active while paused (rider may have crashed).
                 // BUT reset the speed-drop accumulator — speed is 0 on any pause (manual
                 // or automatic), so without this reset the speed-drop watchdog would fire
@@ -3321,7 +3333,8 @@ class KSafeExtension : KarooExtension("ksafe", BuildConfig.VERSION_NAME), Corout
                                else FitCaloriesSource.NONE
             if (!writeDevFields && stdCalSource == FitCaloriesSource.NONE) return@launch
             val writeCalories = writeDevFields && activeConfig.hrCaloriesEnabled
-            val writeSweat = writeDevFields && activeConfig.hydrationTrackerEnabled
+            // Re-evaluated per session write below: hydration can be toggled mid-ride.
+            var writeSweat = writeDevFields && activeConfig.hydrationTrackerEnabled
 
             calibLogger.log(CalibrationLogger.Event.FIT_WRITER_START) {
                 // Field-definition numbers are public-API once shipped; record them so the CSV
@@ -3478,6 +3491,15 @@ class KSafeExtension : KarooExtension("ksafe", BuildConfig.VERSION_NAME), Corout
                                 FitCaloriesSource.NONE  -> 0.0
                                 FitCaloriesSource.HR    -> kcal
                                 FitCaloriesSource.KAROO -> karooKcalFlow.value
+                            }
+                            // Fields 9/10 follow the LIVE hydration toggle (FIT_WRITER_START only
+                            // records the eligibility at writer start). Enabling forces the first
+                            // 9/10 write via the NaN sentinels; disabling stops writing them.
+                            val sweatNow = writeDevFields && activeConfig.hydrationTrackerEnabled
+                            if (sweatNow != writeSweat) {
+                                writeSweat = sweatNow
+                                if (sweatNow) { lastSesSweatMl = Double.NaN; lastSesSodiumMg = Double.NaN }
+                                Timber.d("FIT session fields 9,10 ${if (sweatNow) "enabled" else "disabled"} mid-ride")
                             }
                             val burnDelta = if (lastSesCarbsBurnedG.isNaN()) Double.POSITIVE_INFINITY
                                             else carbsBurnedG - lastSesCarbsBurnedG

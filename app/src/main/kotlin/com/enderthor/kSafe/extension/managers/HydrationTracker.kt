@@ -16,6 +16,7 @@ import com.enderthor.kSafe.extension.util.FuelingAlertScheduler
 import com.enderthor.kSafe.extension.util.HydAccum
 import com.enderthor.kSafe.extension.util.HydTickInput
 import com.enderthor.kSafe.extension.util.SweatConfidence
+import com.enderthor.kSafe.extension.util.SweatEstimate
 import com.enderthor.kSafe.extension.util.SweatEstimateInputs
 import com.enderthor.kSafe.extension.util.SystemClock
 import com.enderthor.kSafe.extension.util.estimateSweatRate
@@ -352,9 +353,9 @@ class HydrationTracker(
     /**
      * Re-launch the monitor without resetting accumulators. Used by the master-switch
      * mid-ride OFF→ON transition: the rider's cumulative target and logged volumes are
-     * preserved so a brief toggle does not erase the ride's totals. The first tick after
-     * resume skips integration (lastTickMs = 0L sentinel) so the OFF window is not
-     * integrated as if it had been a ride segment.
+     * preserved so a brief toggle does not erase the ride's totals. dt is anchored at the
+     * resume instant (lastTickMs = now), so the OFF / paused window is never integrated
+     * while the first tick's interval after resume still counts.
      */
     fun resume(config: KSafeConfig) {
         this.config = config
@@ -368,7 +369,8 @@ class HydrationTracker(
             return
         }
         val oldJob = monitorJob
-        lastTickMs = 0L
+        lastTickMs = clock.nowMs()
+        wasRecording = isRecording()
         monitorJob = scope.launch {
             oldJob?.cancelAndJoin()
             // H3 — defensive try/catch around tick() so a single throw doesn't
@@ -381,6 +383,19 @@ class HydrationTracker(
             }
         }
         Timber.d("HydrationTracker resumed (cumTargetMl=${accum.cumTargetMl.toInt()}, cumLoggedMl=$cumLoggedMl)")
+        publishStatus()
+    }
+
+    /**
+     * Ride went Recording → Paused. Closes the open Recording interval (last tick → now) so
+     * it isn't dropped, then marks the tracker paused so neither the paused span nor the
+     * next tick integrates anything; [resume] re-anchors on the way back. No-op when the
+     * monitor isn't running. The in-tick Recording↔Paused re-anchor stays as a safety net.
+     */
+    fun onPaused() {
+        if (monitorJob == null) return
+        integrateTo(clock.nowMs(), recording = true)
+        wasRecording = false
         publishStatus()
     }
 
@@ -629,10 +644,12 @@ class HydrationTracker(
         humidityPct  = freshHumidityPct(),
     )
 
-    @VisibleForTesting internal fun tickForTest() = tick()
-
-    private fun tick() {
-        val now = clock.nowMs()
+    /**
+     * Integrates [lastTickMs, now] into [accum] when [recording] and moving, then re-anchors
+     * [lastTickMs] to now. Shared by [tick] and [onPaused]. Returns whether it integrated and
+     * the sweat estimate used.
+     */
+    private fun integrateTo(now: Long, recording: Boolean): Pair<Boolean, SweatEstimate> {
         // Movement gate — see CarbsTracker.tick() for the full rationale and the
         // GPS-staleness branch. Same shape: stop integrating when stationary OR when
         // the SDK's last reading has been stuck unchanged for SPEED_STALE_MS.
@@ -641,7 +658,6 @@ class HydrationTracker(
         val moving = !stale && speed != null && speed >= MOVING_GATE_KMH
         // Recording only (spec A3). A Recording↔Paused change re-anchors dt: that tick
         // integrates nothing, so no paused span leaks into the next tick's dt.
-        val recording = isRecording()
         val recordingChanged = recording != wasRecording
         wasRecording = recording
         val integrating = lastTickMs != 0L && !recordingChanged && recording && moving
@@ -651,13 +667,12 @@ class HydrationTracker(
         // work for every rider (spec D1). HR/power are gated on freshness: a dead sensor's
         // frozen value is dropped to null — see [freshSweatInputs].
         val estimate = estimateSweatRate(freshSweatInputs(now))
-        val dynamic = config.hydrationDynamicEstimateEnabled
         val step = hydrationStep(accum, HydTickInput(
             dtMs = dtMs,
             integrating = integrating,
             baseSweatMlPerHour = estimate.mlPerHour,
             confidence = estimate.confidence,
-            dynamicMode = dynamic,
+            dynamicMode = config.hydrationDynamicEstimateEnabled,
             staticTargetMlPerHour = config.hydrationTargetMlPerHour,
             multiplierPct = config.hydrationSweatMultiplierPct,
             replacementPct = config.hydrationReplacementPct,
@@ -680,6 +695,15 @@ class HydrationTracker(
             }
         }
         lastTickMs = now
+        return integrating to estimate
+    }
+
+    @VisibleForTesting internal fun tickForTest() = tick()
+
+    private fun tick() {
+        val now = clock.nowMs()
+        val (integrating, estimate) = integrateTo(now, isRecording())
+        val dynamic = config.hydrationDynamicEstimateEnabled
 
         // Over-drink SHADOW (spec D5): log a new excess level, nothing else — no alert,
         // no beep, no overlay. Going live is a separate change through the scheduler.
