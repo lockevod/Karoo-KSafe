@@ -269,6 +269,8 @@ class CalibrationLogger(
         FUELING_HYDRATION_FIRED("HYD_FIRE"),
         /** Periodic 2-minute snapshot of hydration tracker state. */
         FUELING_HYDRATION_PERIODIC("HYD_PERIODIC"),
+        /** SHADOW over-drink verdict: logged excess reached a new 500 ml level. Never alerts. */
+        FUELING_HYDRATION_OVER_SHADOW("HYD_OVER_SHADOW"),
         /**
          * A TIME-grid fueling reminder was due but swallowed by the quiet window
          * (`FuelingAlertScheduler.suppressedByRecentAlert`) — a deficit alert had

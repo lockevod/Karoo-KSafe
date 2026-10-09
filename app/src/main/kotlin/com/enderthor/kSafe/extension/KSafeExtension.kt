@@ -626,6 +626,8 @@ class KSafeExtension : KarooExtension("ksafe", BuildConfig.VERSION_NAME), Corout
             context = applicationContext,
             onFuelingAlert = { presentFuelingAlert(it) },
             isEmergencyActive = ::emergencyActive,
+            // Strictly Recording: nothing accrues while Paused (spec A3). rideTimeMs is wired by Task 7.
+            isRecording = { currentRideState is RideState.Recording },
             calibLogger = calibLogger,
         )
         // Publish tracker references so the status DataTypes can suspend on the flow
