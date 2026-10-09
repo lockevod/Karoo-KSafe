@@ -60,6 +60,12 @@ class HydrationCalibrationTest {
         assertEquals(CalibrationRejection.TOO_SHORT, rejection(ride(rideTime = h / 2, covered = h / 2), input()))
     @Test fun `LOW_COVERAGE`() =
         assertEquals(CalibrationRejection.LOW_COVERAGE, rejection(ride(rideTime = 2 * h, covered = h), input()))
+    @Test fun `coverage above ride time is LOW_COVERAGE`() =
+        assertEquals(CalibrationRejection.LOW_COVERAGE, rejection(ride(rideTime = 70 * h / 60, covered = 3 * h), input()))
+    @Test fun `coverage exactly 105 percent of ride time is ok`() {
+        assertTrue(coverageOk(2 * h * 105 / 100, 2 * h))
+        assertFalse(coverageOk(2 * h * 105 / 100 + 1, 2 * h))
+    }
     @Test fun `IMPLAUSIBLE_WEIGHT`() =
         assertEquals(CalibrationRejection.IMPLAUSIBLE_WEIGHT, rejection(ride(), input(pre = 20.0, post = 19.0)))
     @Test fun `TOO_LITTLE_SWEAT`() =

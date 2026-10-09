@@ -1259,10 +1259,8 @@ class KSafeExtension : KarooExtension("ksafe", BuildConfig.VERSION_NAME), Corout
             }
             // Karoo Ride Time — the hydration tracker's coverage denominator. Gated on `ambient`
             // because the hydration tracker is that flag's only consumer (see RecordingStreamNeeds).
-            // UNIT: karoo-ext 1.1.9 DataType.kt documents ELAPSED_TIME only as "Ride Time - Time
-            // spent recording this ride" (FIELD_ELAPSED_TIME_ID) with no unit. Treated as
-            // MILLISECONDS, matching KGhost's elapsedMsToSeconds() assumption; not yet confirmed
-            // against a field log. If it turns out to be seconds, multiply by 1000 here.
+            // UNIT: milliseconds, confirmed from KGhost field logs (kghost_v0.7.2 session
+            // 015282_7a24ab: raw/1000 advances 1 s per wall-clock second).
             if (needs.ambient) launch {
                 karooSystem.streamDataFlow(io.hammerhead.karooext.models.DataType.Type.ELAPSED_TIME)
                     .collect { streamState ->
@@ -1290,6 +1288,10 @@ class KSafeExtension : KarooExtension("ksafe", BuildConfig.VERSION_NAME), Corout
         recordingCollectorsJob?.cancel()
         recordingCollectorsJob = null
         activeRecordingStreamNeeds = null
+        // No ELAPSED_TIME subscription any more: a stale value would make an untracked gap
+        // (master OFF mid-ride) look covered. A rebuild that re-subscribes re-emits the true
+        // cumulative ride time; a ride ended without one records 0 → NO_RIDE_TIME.
+        rideTimeMs = null
         // Reset Headwind detection — if the rider's setup changes between rides
         // (uninstalls Headwind, for instance) we want the onboard temperature
         // fallback to engage cleanly on the next ride.

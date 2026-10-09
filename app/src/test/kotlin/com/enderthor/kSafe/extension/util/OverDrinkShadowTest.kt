@@ -30,6 +30,9 @@ class OverDrinkShadowTest {
     @Test fun `not integrating gives 0`() = assertEquals(0, level(integrating = false))
     @Test fun `coverage 0_7 gives 0`() = assertEquals(0, level(coveredMin = 84))
 
+    @Test fun `coverage above 105 percent of ride time gives 0`() = assertEquals(0, level(coveredMin = 127))
+    @Test fun `coverage at 105 percent still fires`() = assertEquals(1, level(coveredMin = 126))
+
     @Test fun `early big bottle logs do not fire`() =
         assertEquals(0, level(rideMin = 35, coveredMin = 35, sweat = 350f, logged = 1000))
 }

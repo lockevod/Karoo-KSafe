@@ -1193,12 +1193,14 @@ private fun LastRideBody(vm: MainViewModel, r: LastHydrationRide) {
     FuelingRow(label = stringResource(R.string.fueling_calib_urinated_label)) {
         Checkbox(checked = urinated, onCheckedChange = { urinated = it })
     }
+    // Drink is required (type 0 if nothing): a blank field silently counting as 0 biases the ratio low.
+    val drinkMl = drink.toIntOrNull()
     Button(
-        enabled = preKg != null && postKg != null,
+        enabled = preKg != null && postKg != null && drinkMl != null,
         onClick = {
             val input = CalibrationInput(
                 preKg = preKg!!, postKg = postKg!!,
-                drinkMl = drink.toIntOrNull() ?: 0, foodG = food.toIntOrNull() ?: 0,
+                drinkMl = drinkMl!!, foodG = food.toIntOrNull() ?: 0,
                 urinated = urinated, nowMs = System.currentTimeMillis(),
             )
             scope.launch { result = vm.calibrateHydration(r.rideId, input) }

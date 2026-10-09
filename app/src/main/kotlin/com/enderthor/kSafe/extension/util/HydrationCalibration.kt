@@ -12,9 +12,13 @@ private const val MIN_MEASURED_ML = 800
 /** Share of body-mass loss that is sweat (rest: respiratory water, metabolic mass loss). */
 private const val BODY_MASS_SWEAT_FACTOR = 0.92
 
-/** Model-covered share of the ride; null or non-positive ride time never qualifies. */
+/**
+ * Model-covered share of the ride; null or non-positive ride time never qualifies. Covered time
+ * above 105 % of ride time is implausible (cross-ride restore, forward wall-clock jump) and fails.
+ */
 fun coverageOk(coveredMs: Long, rideTimeMs: Long?): Boolean =
-    rideTimeMs != null && rideTimeMs > 0 && coveredMs.toDouble() / rideTimeMs >= MIN_COVERAGE
+    rideTimeMs != null && rideTimeMs > 0 && coveredMs.toDouble() / rideTimeMs >= MIN_COVERAGE &&
+        coveredMs * 100 <= rideTimeMs * 105
 
 data class CalibrationInput(
     val preKg: Double, val postKg: Double, val drinkMl: Int, val foodG: Int,

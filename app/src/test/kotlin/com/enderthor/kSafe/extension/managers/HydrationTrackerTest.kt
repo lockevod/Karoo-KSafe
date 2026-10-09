@@ -3,9 +3,13 @@ package com.enderthor.kSafe.extension.managers
 import android.content.Context
 import com.enderthor.kSafe.data.HydFuelingState
 import com.enderthor.kSafe.data.KSafeConfig
+import com.enderthor.kSafe.extension.util.CalibrationInput
+import com.enderthor.kSafe.extension.util.CalibrationRejection
+import com.enderthor.kSafe.extension.util.CalibrationResult
 import com.enderthor.kSafe.extension.util.Clock
 import com.enderthor.kSafe.extension.util.FuelingAlertRequest
 import com.enderthor.kSafe.extension.util.SweatEstimateInputs
+import com.enderthor.kSafe.extension.util.calibrate
 import com.enderthor.kSafe.extension.util.coverageOk
 import com.enderthor.kSafe.extension.util.estimateSweatRate
 import io.hammerhead.karooext.KarooSystemService
@@ -182,6 +186,23 @@ class HydrationTrackerTest {
         assertEquals(before.cumLoggedMl, after.cumLoggedMl)
         assertEquals(before.cumSweatMl, after.cumSweatMl)
         assertEquals(before.cumTargetMl, after.cumTargetMl)
+    }
+
+    @Test
+    fun `ride ended while ride time is unknown is rejected as NO_RIDE_TIME`() {
+        // Master switch OFF mid-ride tears down the ELAPSED_TIME collector and clears ride time.
+        startRide()
+        rideTime = 2 * HOUR_MS
+        ride(2 * HOUR_MS)
+        tracker.stop()
+        rideTime = null
+        val snap = tracker.lastRideSnapshot()!!
+        assertEquals(0L, snap.rideTimeMs)
+        val input = CalibrationInput(70.0, 69.0, 600, 0, false, snap.endedAtMs)
+        assertEquals(
+            CalibrationResult.Rejected(CalibrationRejection.NO_RIDE_TIME),
+            calibrate(snap, snap.rideId, input, emptyList()),
+        )
     }
 
     @Test
