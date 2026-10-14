@@ -60,6 +60,8 @@ android {
         // as a fallback, but the prior `MODEL.trim()` step NPEs on null. Default
         // values is the standard AGP knob for this — Robolectric would be heavier.
         unitTests.isReturnDefaultValues = true
+        // Robolectric needs the merged manifest and resources for the fake-Karoo tests.
+        unitTests.isIncludeAndroidResources = true
     }
 }
 
@@ -85,4 +87,7 @@ dependencies {
     testImplementation(libs.junit)
     testImplementation(libs.kotlinx.coroutines.test)
     testImplementation(libs.mockito.core)
+    testImplementation("org.robolectric:robolectric:4.17")
+    testImplementation("androidx.test:core:1.7.0")
+    testImplementation("com.github.nikosavola.karoo-ext-testing:karoo-ext-testing-robolectric:0.1.1")
 }
