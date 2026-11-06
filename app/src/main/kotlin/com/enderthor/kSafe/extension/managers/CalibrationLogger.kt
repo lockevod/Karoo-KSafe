@@ -231,7 +231,7 @@ class CalibrationLogger(
          *  never received an alert must be correlatable even when others did. */
         ALERT_DELIVERY_PARTIAL("ALERT_PARTIAL"),
         /** Outbound emergency alert reached every eligible contact. Payload: provider, reason,
-         *  delivered/total and `send_ms` (dispatch → success; > 0 s means retries were needed).
+         *  delivered/total and `send_ms` (ms, dispatch → success; ≥ 60 000 means at least one retry backoff).
          *  Without it "no ALERT_FAIL" was the only evidence of delivery, which could not tell a
          *  delivered alert from one cancelled or silently dropped (2026-11-06 sweep, dea8f7). */
         ALERT_DELIVERED("ALERT_OK"),

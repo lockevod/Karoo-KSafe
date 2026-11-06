@@ -102,6 +102,6 @@ class KSafeFakeKarooRule(val karoo: FakeKarooRule) : ExternalResource() {
     fun calibrationLog(): String {
         val ext = KSafeExtension.getInstance() ?: return ""
         val field = KSafeExtension::class.java.getDeclaredField("calibLogger").apply { isAccessible = true }
-        return (field.get(ext) as CalibrationLogger).getFileContent()
+        return (field.get(ext) as? CalibrationLogger)?.getFileContent() ?: ""
     }
 }
