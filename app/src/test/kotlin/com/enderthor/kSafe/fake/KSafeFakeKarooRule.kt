@@ -7,6 +7,7 @@ import com.enderthor.kSafe.activity.dataStore
 import com.enderthor.kSafe.data.KSafeConfig
 import com.enderthor.kSafe.data.SenderConfig
 import com.enderthor.kSafe.extension.KSafeExtension
+import com.enderthor.kSafe.extension.managers.CalibrationLogger
 import com.enderthor.kSafe.extension.managers.ConfigurationManager
 import fi.nikosavola.karooext.testing.FakeKarooHost
 import fi.nikosavola.karooext.testing.robolectric.FakeKarooRule
@@ -95,4 +96,12 @@ class KSafeFakeKarooRule(val karoo: FakeKarooRule) : ExternalResource() {
 
     lateinit var host: FakeKarooHost
         private set
+
+    // Calibration rows written so far (disk + unflushed buffer). The logger is private to the
+    // extension, so the test reads it reflectively rather than widening production visibility.
+    fun calibrationLog(): String {
+        val ext = KSafeExtension.getInstance() ?: return ""
+        val field = KSafeExtension::class.java.getDeclaredField("calibLogger").apply { isAccessible = true }
+        return (field.get(ext) as CalibrationLogger).getFileContent()
+    }
 }

@@ -78,6 +78,9 @@ Event catalogue understood by this script:
 
   Emergency dispatch:
     EMERG_TRIG (EMERGENCY_TRIGGERED), ALERT_FAIL (ALERT_DELIVERY_FAILED),
+    ALERT_OK (ALERT_DELIVERED, > 2.3.2: provider, reason, delivered/total,
+      send_ms), INC_PAUSE (CHECKIN_CANCELLED_BY_PAUSE, > 2.3.2: check-in
+      countdown dropped by a ride pause; how_long_ms, auto),
     LOGGER_START, LOG_END
 
   FIT writer:
