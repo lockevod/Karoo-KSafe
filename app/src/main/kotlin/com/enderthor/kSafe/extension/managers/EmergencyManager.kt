@@ -682,9 +682,13 @@ class EmergencyManager(
      * countdown running in the background should not fire during a pause.
      * Crash-related countdowns are NOT cancelled here (crash detection stays active while paused).
      */
-    fun cancelCheckinEmergencyOnPause() {
+    fun cancelCheckinEmergencyOnPause(auto: Boolean) {
         if (currentStatus == EmergencyStatus.COUNTDOWN && currentReason == EmergencyReason.CHECKIN_EXPIRED) {
             countdownJob?.cancel()
+            val howLongMs = if (countdownStartedAt > 0L) System.currentTimeMillis() - countdownStartedAt else 0L
+            calibLogger?.log(CalibrationLogger.Event.CHECKIN_CANCELLED_BY_PAUSE) {
+                "how_long_ms=$howLongMs,subkind=${EmergencyReason.CHECKIN_EXPIRED.name},auto=$auto"
+            }
             // The check-in already expired and its countdown is being cancelled by the
             // pause. Clear the timer fields so the next Recording resume re-arms a FRESH
             // full interval (the resumeCheckinTimer → startCheckinTimer fallback) instead
@@ -1131,6 +1135,7 @@ class EmergencyManager(
                     Timber.e(e, "Failed to persist ALERTING state; continuing with in-memory state only")
                 }
                 val message = buildMessage(config, reason)
+                val sendStartedAt = System.currentTimeMillis()
                 val outcome = sender.sendAlert(message, config.activeProvider)
                 if (!outcome.anyOk) {
                     // H7 — ALWAYS log the delivery failure to the calibration trail.
@@ -1187,6 +1192,10 @@ class EmergencyManager(
                         notifyPartialDelivery(config, reason, outcome.delivered, outcome.eligible)
                     } else {
                         Timber.d("Partial delivery for $reason notification suppressed — alertJob superseded by newer emergency")
+                    }
+                } else {
+                    calibLogger?.log(CalibrationLogger.Event.ALERT_DELIVERED) {
+                        "provider=${config.activeProvider},reason=${reason.label},delivered=${outcome.delivered},total=${outcome.eligible},send_ms=${System.currentTimeMillis() - sendStartedAt}"
                     }
                 }
             } catch (e: kotlinx.coroutines.CancellationException) {

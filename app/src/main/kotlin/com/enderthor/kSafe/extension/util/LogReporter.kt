@@ -8,29 +8,23 @@ import kotlinx.coroutines.withTimeoutOrNull
 import timber.log.Timber
 
 /**
- * Sends calibration CSV log files to the developer via a Telegram bot.
+ * Sends calibration CSV log files to the developer's Telegram chat through a write-only relay.
  *
  * Design goals:
  *  - **Zero overhead when logging is disabled**: this object is stateless; if the caller never
  *    invokes [sendLogFile], there is no background work, no allocations, no I/O.
  *  - **Minimal overhead when enabled**: a single multipart HTTP POST is launched in a
  *    fire-and-forget coroutine; it does not block the sensor or UI threads.
- *  - **Credentials never in source code**: BOT_TOKEN and CHAT_ID are injected at compile
- *    time from local.properties (gitignored) via BuildConfig fields — they never appear
- *    in the repository or in any settings screen.
+ *  - **No credentials in the APK**: string constants survive R8 verbatim, so a bot token in
+ *    BuildConfig is readable from the public release APK. The token + chat id live as secrets
+ *    in a Cloudflare Worker that only accepts `sendDocument` to that fixed chat; the APK ships
+ *    only the relay URL (`calib.relay_url` in local.properties), which is not secret.
  */
 object LogReporter {
 
-    // ── Developer Telegram credentials ───────────────────────────────────────
-    // Values come from BuildConfig, which reads local.properties at compile time.
-    // To configure, add these lines to your local.properties (never commit them):
-    //   calib.bot_token=<your bot token from @BotFather>
-    //   calib.chat_id=<your developer chat ID>
-    private val BOT_TOKEN: String get() = BuildConfig.CALIB_BOT_TOKEN
-    private val CHAT_ID:   String get() = BuildConfig.CALIB_CHAT_ID
-    // ─────────────────────────────────────────────────────────────────────────
-
-    private const val API_BASE   = "https://api.telegram.org/bot"
+    // Relay URL from local.properties: calib.relay_url=https://…workers.dev
+    private val RELAY_URL: String get() = BuildConfig.LOG_RELAY_URL
+    private const val APP_ID     = "ksafe"   // must be in the Worker's ALLOWED_APPS
     private const val TIMEOUT_MS = 60_000L   // generous timeout for larger files over LTE
 
     /**
@@ -70,9 +64,8 @@ object LogReporter {
         caption: String = "",
         karooSystem: KarooSystemService,
     ): SendResult {
-        if (BOT_TOKEN.isBlank() || BOT_TOKEN.startsWith("REPLACE") ||
-            CHAT_ID.isBlank()   || CHAT_ID.startsWith("REPLACE")) {
-            Timber.w("LogReporter: credentials not set in local.properties — skipping automatic log send")
+        if (!RELAY_URL.startsWith("https://")) {
+            Timber.w("LogReporter: relay URL not set in local.properties — skipping automatic log send")
             return SendResult.Failure("Logging credentials not configured in this build.")
         }
         if (content.isBlank()) {
@@ -90,7 +83,7 @@ object LogReporter {
             val response: HttpResponseState.Complete? = withTimeoutOrNull(TIMEOUT_MS) {
                 karooSystem.httpRequest(
                     "POST",
-                    "$API_BASE$BOT_TOKEN/sendDocument",
+                    RELAY_URL,
                     mapOf("Content-Type" to "multipart/form-data; boundary=$boundary"),
                     body,
                 )
@@ -113,8 +106,9 @@ object LogReporter {
                 // Try to extract Telegram's error description from the JSON for a useful hint.
                 val tgDesc = Regex("\"description\"\\s*:\\s*\"([^\"]+)\"").find(respBody)?.groupValues?.getOrNull(1)
                 val hint = when (response.statusCode) {
-                    401 -> "Bot token rejected (check CALIB_BOT_TOKEN in local.properties)."
-                    400 -> tgDesc ?: "Bad request (check chat ID)."
+                    401 -> "Relay rejected by Telegram (Worker BOT_TOKEN secret wrong)."
+                    400 -> tgDesc ?: "Bad request (Worker CHAT_ID secret wrong?)."
+                    403 -> tgDesc ?: "App not allowed by the log relay (ALLOWED_APPS)."
                     413 -> "File too big (Telegram limit is 50 MB). Try clearing the log between sends."
                     429 -> "Rate-limited by Telegram. Wait a minute and try again."
                     in 500..599 -> "Telegram server error (try again in a moment)."
@@ -131,8 +125,8 @@ object LogReporter {
     // ── Internal helpers ─────────────────────────────────────────────────────
 
     /**
-     * Builds a `multipart/form-data` body compatible with the Telegram Bot API `sendDocument`
-     * endpoint. No external dependencies required — the bytes are assembled in-memory.
+     * Builds the `multipart/form-data` body the relay forwards to Telegram `sendDocument`
+     * (the relay picks the chat; we only name the app). No external dependencies required — the bytes are assembled in-memory.
      *
      * [caption] is included as an optional `caption` field — shown as the message text
      * alongside the document in the Telegram chat. Empty string = no caption.
@@ -145,11 +139,11 @@ object LogReporter {
     ): ByteArray {
         val CRLF = "\r\n"
         return buildString {
-            // chat_id part
+            // app part — the relay checks it against ALLOWED_APPS and ignores any chat_id
             append("--$boundary$CRLF")
-            append("Content-Disposition: form-data; name=\"chat_id\"$CRLF")
+            append("Content-Disposition: form-data; name=\"app\"$CRLF")
             append(CRLF)
-            append(CHAT_ID)
+            append(APP_ID)
             append(CRLF)
             // optional caption part — shown as the message text alongside the file in Telegram
             if (caption.isNotBlank()) {

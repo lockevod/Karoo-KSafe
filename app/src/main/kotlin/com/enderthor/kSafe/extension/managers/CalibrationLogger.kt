@@ -230,6 +230,15 @@ class CalibrationLogger(
          *  post-incident audit reason as [ALERT_DELIVERY_FAILED]: a contact reporting they
          *  never received an alert must be correlatable even when others did. */
         ALERT_DELIVERY_PARTIAL("ALERT_PARTIAL"),
+        /** Outbound emergency alert reached every eligible contact. Payload: provider, reason,
+         *  delivered/total and `send_ms` (ms, dispatch → success; ≥ 60 000 means at least one retry backoff).
+         *  Without it "no ALERT_FAIL" was the only evidence of delivery, which could not tell a
+         *  delivered alert from one cancelled or silently dropped (2026-11-06 sweep, dea8f7). */
+        ALERT_DELIVERED("ALERT_OK"),
+        /** A CHECKIN_EXPIRED countdown was dropped because the ride paused
+         *  ([EmergencyManager.cancelCheckinEmergencyOnPause]) — no alert is sent and the rider
+         *  did not press Cancel, so this is not an INC_NO. Payload: how_long_ms, subkind, auto. */
+        CHECKIN_CANCELLED_BY_PAUSE("INC_PAUSE"),
         /** Ride started while the SELECTED messaging provider's credentials are incomplete
          *  (local check — missing phone/key/token/topic/chat id), so no alert could ever be
          *  sent. The rider-facing ride-start InRideAlert fires alongside. Payload: provider +

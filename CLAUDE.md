@@ -13,7 +13,7 @@ KSafe is a free, open-source safety extension for Hammerhead Karoo cycling compu
 - `compileSdk = 34`, `targetSdk = 34`, `minSdk = 23`.
 - Sources live under `app/src/main/kotlin/...` (note: `kotlin/`, not `java/`). Resources under `app/src/main/res/`.
 - The Hammerhead Karoo SDK (`io.hammerhead:karoo-ext`) is pulled from a private Maven repo (`maven.pkg.github.com/hammerheadnav/karoo-ext`). `settings.gradle.kts` reads `gpr.user`/`gpr.key` from `local.properties` and **fails the build hard** (`error("File from not found")`) if `local.properties` is missing — even for a clean checkout. A valid `local.properties` with `sdk.dir`, `gpr.user`, `gpr.key` is therefore required to do anything with Gradle.
-- `app/build.gradle.kts` also reads `calib.bot_token` and `calib.chat_id` from `local.properties` and exposes them as `BuildConfig` fields. Empty values are fine — `LogReporter` then no-ops the calibration log upload. `local.properties` is in `.gitignore`; never commit it.
+- `app/build.gradle.kts` also reads `calib.relay_url` from `local.properties` into `BuildConfig.LOG_RELAY_URL` — the write-only Cloudflare log relay (karoo-dev example-patterns §24) that holds the Telegram bot token. **Never put a bot token back in `BuildConfig`**: R8 leaves string constants readable in the public APK. Empty value is fine — `LogReporter` then no-ops the calibration log upload. `local.properties` is in `.gitignore`; never commit it.
 
 ## Common commands
 
@@ -53,7 +53,7 @@ The whole app revolves around the Karoo extension service. Internet, GPS, ride s
 - **`EmergencyManager`** — owns the cancellation countdown, check-in timer, beep patterns, the SOS overlay, and the actual outbound alert. Exposes `EmergencyManager.uiState: StateFlow<EmergencyState>` as the **canonical in-memory state** — `DataType` callbacks must read from this StateFlow, not from DataStore, because DataStore writes are async and racy with the ~1 Hz countdown ticks.
 - **`LocationManager`** — keeps `lastLat`/`lastLng` from the SDK GPS stream. Used to fill `{location}` in alerts and to enforce the per-webhook geo-fence (`KSafeExtension.handleWebhookTap` calls `distanceMeters` against the saved target).
 - **`WebhookManager`** — fires arbitrary HTTP requests through `KarooSystemService.httpRequest` so traffic uses the Karoo's tethered phone connection. Two slots, each with its own URL, method, headers, body, optional geo-fence and optional on-screen alert.
-- **`CalibrationLogger` + `LogReporter`** — opt-in CSV recorder for crash-detection sensor data. `CalibrationLogger` buffers in memory and flushes to disk; `LogReporter` ships the file to a Telegram bot using the `BuildConfig.CALIB_BOT_TOKEN` / `CALIB_CHAT_ID` injected at build time. The log is automatically sent at ride end (or when the user turns logging off), routed through `Dispatchers.IO` to avoid blocking Main.
+- **`CalibrationLogger` + `LogReporter`** — opt-in CSV recorder for crash-detection sensor data. `CalibrationLogger` buffers in memory and flushes to disk; `LogReporter` ships the file to the developer's Telegram chat through the relay at `BuildConfig.LOG_RELAY_URL` (multipart `app=ksafe` + `document` + `caption`; the relay picks the chat). The log is automatically sent at ride end (or when the user turns logging off), routed through `Dispatchers.IO` to avoid blocking Main.
 - **`SosOverlayManager`** — draws the full-screen red Cancel overlay using `SYSTEM_ALERT_WINDOW`. Required permission flow is handled in `MainActivity.requestOverlayPermissionIfNeeded()`.
 
 ### Data field layer (`datatype/`)

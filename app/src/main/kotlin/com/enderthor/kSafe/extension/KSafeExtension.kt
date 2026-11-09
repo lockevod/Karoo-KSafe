@@ -1568,7 +1568,7 @@ class KSafeExtension : KarooExtension("ksafe", BuildConfig.VERSION_NAME), Corout
                 // so the Recording resume above continues from where it left off
                 // instead of re-arming a fresh full interval on every autopause.
                 emergencyManager.pauseCheckinTimer()
-                emergencyManager.cancelCheckinEmergencyOnPause()
+                emergencyManager.cancelCheckinEmergencyOnPause(state.auto)
                 rideWasActive = true
             }
             is RideState.Idle -> {
