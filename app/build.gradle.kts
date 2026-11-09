@@ -24,12 +24,10 @@ android {
         versionCode = 202611061
         versionName = "2.3.3"
 
-        // Calibration log delivery credentials — injected from local.properties at compile time.
-        // Falls back to empty string if the key is not set (LogReporter skips sending in that case).
-        buildConfigField("String", "CALIB_BOT_TOKEN",
-            "\"${localProps.getProperty("calib.bot_token", "")}\"")
-        buildConfigField("String", "CALIB_CHAT_ID",
-            "\"${localProps.getProperty("calib.chat_id", "")}\"")
+        // Calibration log delivery goes through a write-only relay (Cloudflare Worker) that holds
+        // the bot token; the APK only carries the relay URL. Empty = LogReporter skips sending.
+        buildConfigField("String", "LOG_RELAY_URL",
+            "\"${localProps.getProperty("calib.relay_url", "")}\"")
     }
 
     buildTypes {
