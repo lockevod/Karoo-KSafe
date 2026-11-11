@@ -49,6 +49,12 @@ The CSV file is sent automatically to the developer via Telegram (a private bot)
 
 You can also tap **Send now** to transmit the current log immediately. The file is typically 50–400 KB for a 2–4 hour ride session.
 
+**Secure gateway:** the Karoo never talks to Telegram directly. The log is uploaded over HTTPS
+to a small write-only relay (a Cloudflare Worker) that forwards it to the developer's private
+chat. The Telegram bot token lives only on that relay, never inside the KSafe app, so nobody
+can extract it from the APK to read the chat or the logs other riders have sent. The relay
+can only *receive* a log file; it cannot read anything back from your Karoo or from Telegram.
+
 A long ride is uploaded in several **size-capped chunks** (and periodically during the
 ride, so a flat battery or a crash mid-ride can't lose the data already recorded). Each
 file arrives in the developer's Telegram with:
