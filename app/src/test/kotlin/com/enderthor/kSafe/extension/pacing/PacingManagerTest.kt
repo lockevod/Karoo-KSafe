@@ -33,7 +33,7 @@ class PacingManagerTest {
         )
 
     private fun manager(knee: Double = 3.0) =
-        PacingManager(TestScope(), tmp.root, null, clock = { now }, alertSink = { alerts += it }, kneeKjKgOverride = knee)
+        PacingManager(TestScope(), tmp.root, null, clock = { now }, alertSink = { alerts.add(it) }, kneeKjKgOverride = knee)
 
     /** Rows the manager logged, as "TAG,data". */
     private val logRows = mutableListOf<String>()
@@ -43,7 +43,7 @@ class PacingManagerTest {
         Mockito.`when`(log.isEnabled).thenReturn(true)
         Mockito.doAnswer { logRows += "${(it.arguments[0] as CalibrationLogger.Event).tag},${it.arguments[1]}"; null }
             .`when`(log).addEntry(Mockito.any(CalibrationLogger.Event::class.java) ?: CalibrationLogger.Event.PACE_ADV, Mockito.anyString())
-        return PacingManager(TestScope(), tmp.root, log, clock = { now }, alertSink = { alerts += it }, kneeKjKgOverride = knee)
+        return PacingManager(TestScope(), tmp.root, log, clock = { now }, alertSink = { alerts.add(it) }, kneeKjKgOverride = knee)
     }
 
     /** 30 km/h east along the route for [seconds] (default 20 min) starting at second [from];
@@ -158,6 +158,18 @@ class PacingManagerTest {
         val a = alerts.single { it.key == "CONSERVE#${Math.round(m.blocks.single().startM)}" }
         // Fired in the lead window ~2 km out; the climb itself starts at ~9.9 km on the route.
         assertTrue("blockKm=${a.blockKm}", a.blockKm!! in 0.5..4.0)
+    }
+
+    @Test fun `an alert the sink drops is not recorded as fired`() {
+        // CONSERVE#cond is dropped by the sink (e.g. emergency re-check); had it been recorded, the
+        // pacing spacing would suppress the block alert that follows (see the live-sink tests).
+        val m = PacingManager(TestScope(), tmp.root, null, clock = { now },
+            alertSink = { a -> (a.key != "CONSERVE#cond").also { if (it) alerts += a } }, kneeKjKgOverride = 0.5)
+        m.setLiveAlerts(true, null)
+        m.onUserProfile(250, 70.0); m.onNavigation(route())
+        ride(m, power = 300, accuracyM = 5.0)                    // ends ~10 m before the 10 km climb
+        assertTrue("CONSERVE#cond" in m.evaluatedCandidateKeys)
+        assertEquals(listOf("CONSERVE#${Math.round(m.blocks.single().startM)}"), alerts.map { it.key })
     }
 
     @Test fun `live alerts are blocked during an emergency`() {

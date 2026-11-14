@@ -13,19 +13,30 @@ object PacingAlertText {
 
     const val TITLE_MAX = 40
     const val DETAIL_MAX = 90
+    /** What real hardware shows of the detail (see ALERT_DETAIL_MAX_CHARS); every detail is written to fit. */
+    const val DEVICE_DETAIL_CHARS = 34
 
     fun render(a: PacingAlert, es: Boolean): Text {
         // Device shows ~34 chars of detail (ALERT_DETAIL_MAX_CHARS note): the actionable number comes first.
         val km = a.blockKm?.let { f1(it, es) }
-        val climb = km?.let { if (es) "Puerto $it km" else "Climb $it km" }
+        val climb = km?.let { if (es) "Puerto en $it km" else "Climb in $it km" }
         val (title, detail) = when {
             a.source == AlertSource.FUEL_HINT -> {
                 val g = a.grams
-                val d = when {
-                    g == null -> climb?.let { if (es) "$it: come algo" else "$it: eat now" } ?: if (es) "Come algo" else "Eat now"
+                val short = when {
+                    g == null -> if (es) "Come algo" else "Eat now"
                     a.withLogs -> if (es) "Déficit ~$g g: come algo" else "Deficit ~$g g: eat now"
                     else -> if (es) "~$g g sin registrar. Come" else "~$g g unlogged. Eat now"
                 }
+                // With the climb's distance when it still fits what the device shows.
+                val withClimb = climb?.let {
+                    when {
+                        g == null -> if (es) "$it: come algo" else "$it: eat now"
+                        a.withLogs -> if (es) "$it: faltan ~$g g" else "$it: ~$g g short"
+                        else -> if (es) "$it: ~$g g, come" else "$it: ~$g g, eat"
+                    }
+                }
+                val d = withClimb?.takeIf { it.length <= DEVICE_DETAIL_CHARS } ?: short
                 (if (es) "Buen momento para comer" else "Good moment to eat") to d
             }
             a.source == AlertSource.W_PRIME -> {
@@ -34,16 +45,11 @@ object PacingAlertText {
                 (if (es) "Recupera antes de subir" else "Recover before the climb") to d
             }
             a.state == PacingState.CONSERVE -> {
-                val len = a.blockLenKm; val grade = a.blockGradePct; val cap = a.ceilingW
+                val cap = a.ceilingW
                 when {
                     climb == null -> if (es) "Conserva energía" to "Queda ruta dura y vas justo." else "Save energy" to "Hard ride left: ease off"
                     cap != null -> (if (es) "Conserva para el puerto" else "Save it for the climb") to "$climb: ≤$cap W"
-                    len != null && grade != null -> {
-                        val g = grade.roundToInt()
-                        if (es) "Conserva para el puerto" to "$climb: ${f1(len, true)} km al $g %"
-                        else "Save it for the climb" to "$climb: ${f1(len, false)} km at $g%"
-                    }
-                    else -> (if (es) "Conserva para el puerto" else "Save it for the climb") to climb
+                    else -> if (es) "Conserva para el puerto" to "$climb: súbelo suave" else "Save it for the climb" to "$climb: ride it easy"
                 }
             }
             a.state == PacingState.HIGH_MARGIN -> {

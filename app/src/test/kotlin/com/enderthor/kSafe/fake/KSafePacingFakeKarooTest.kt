@@ -95,7 +95,7 @@ class KSafePacingFakeKarooTest {
         val alert = PacingAlert(AlertSource.PACING, PacingState.CONSERVE, "CONSERVE#1", 4.2, 6.0, 7.0, 210, null, null, false)
         fun pacingAlerts() = karoo.system.effectsOf<InRideAlert>().filter { it.id.startsWith("ksafe-pacing-") }
 
-        ext.dispatchPacingAlert(alert)
+        assertTrue(ext.dispatchPacingAlert(alert))
         val shown = pacingAlerts().single()
         assertEquals("Save it for the climb", shown.title)
         assertEquals(R.color.pacing_amber, shown.backgroundColor)
@@ -109,7 +109,7 @@ class KSafePacingFakeKarooTest {
         ksafe.reseed(pacing)
         ksafe.tap(FieldTapReceiver.ACTION_SOS)
         assertEquals(EmergencyStatus.COUNTDOWN, EmergencyManager.uiState.value.status)
-        ext.dispatchPacingAlert(alert)
+        assertFalse(ext.dispatchPacingAlert(alert))            // dropped: the arbiter does not record it
         assertEquals(1, pacingAlerts().size)
     }
 

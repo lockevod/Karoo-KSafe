@@ -33,14 +33,16 @@ data class PacingAlert(
  * Composes the pure pacing units (spec §3.9) and logs PACE_* (§4). Runs entirely on the caller's thread
  * (Main in production): every on*() and tick() must come from that one thread. Phase 1a is shadow:
  * the arbiter decides would_alert but nothing fires and nothing is recorded as fired. Phase 1b
- * ([setLiveAlerts] true, only with pacingEnabled) hands each fired alert to [alertSink].
+ * ([setLiveAlerts] true, only with pacingEnabled) hands each fired alert to [alertSink]; it is recorded
+ * as fired only when the sink returns true (actually shown).
  */
 class PacingManager(
     private val scope: CoroutineScope,
     private val storeDir: File,
     private val calibLogger: CalibrationLogger?,
     private val clock: () -> Long = { android.os.SystemClock.elapsedRealtime() },
-    private val alertSink: ((PacingAlert) -> Unit)? = null,
+    /** Returns true when the alert was actually shown; false = dropped, not recorded as fired. */
+    private val alertSink: ((PacingAlert) -> Boolean)? = null,
     private val kneeKjKgOverride: Double? = null,
     /** Model file load and every save run here; all manager state stays on the caller's thread. */
     private val ioDispatcher: CoroutineDispatcher = Dispatchers.IO,
@@ -457,7 +459,7 @@ class PacingManager(
     private fun arbitrate(c: AlertCandidate, a: PacingAlert, now: Long, adv: () -> String): ArbiterVerdict {
         evaluatedCandidateKeys += c.key
         val v = arbiter.evaluate(c, now, emergencyActive)
-        if (liveAlerts && v.fire) { arbiter.recordFired(c.source, c.key, c.severity, now); alertSink?.invoke(a) }
+        if (liveAlerts && v.fire && alertSink?.invoke(a) == true) arbiter.recordFired(c.source, c.key, c.severity, now)
         calibLogger?.log(Event.PACE_ADV) {
             "${adv()},key=${c.key},sev=${f(c.severity, 2)},would_alert=${v.fire},suppressed_by=${v.suppressedBy ?: "none"},live=$liveAlerts"
         }

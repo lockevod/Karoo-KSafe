@@ -2799,10 +2799,10 @@ class KSafeExtension : KarooExtension("ksafe", BuildConfig.VERSION_NAME), Corout
         if (this::wellnessMonitor.isInitialized) wellnessMonitor else null
 
     /** Live pacing alert (phase 1b). Re-checks the emergency state: pacing never shows over an SOS.
-     *  A failure is logged, never thrown into the pacing tick. */
-    internal fun dispatchPacingAlert(a: com.enderthor.kSafe.extension.pacing.PacingAlert) {
-        if (emergencyActive()) return
-        runCatching {
+     *  A failure is logged, never thrown into the pacing tick. Returns true only when dispatched. */
+    internal fun dispatchPacingAlert(a: com.enderthor.kSafe.extension.pacing.PacingAlert): Boolean {
+        if (emergencyActive()) return false
+        return runCatching {
             val t = com.enderthor.kSafe.extension.pacing.PacingAlertText.render(a, es = getString(R.string.pacing_alert_lang) == "es")
             val bg = when (a.state) {
                 com.enderthor.kSafe.extension.pacing.PacingState.CONSERVE -> R.color.pacing_amber
@@ -2815,7 +2815,7 @@ class KSafeExtension : KarooExtension("ksafe", BuildConfig.VERSION_NAME), Corout
                 icon = R.drawable.ic_ksafe, title = t.title, detail = t.detail,
                 autoDismissMs = 12_000L, backgroundColor = bg, textColor = R.color.pacing_text,
             ))
-        }.onFailure { Timber.e(it, "PACE alert dispatch failed") }
+        }.onFailure { Timber.e(it, "PACE alert dispatch failed") }.isSuccess
     }
 
     /** Medical / wellness incident: the unchanged [EmergencyManager.handleIncident] call, then the

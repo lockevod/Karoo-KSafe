@@ -13,12 +13,12 @@ class PacingAlertTextTest {
     @Test fun `conserve puts the ceiling first`() {
         val t = PacingAlertText.render(conserve, es = true)
         assertEquals("Conserva para el puerto", t.title)
-        assertEquals("Puerto 2,1 km: ≤210 W", t.detail)
-        assertEquals("Climb 2.1 km: ≤210 W", PacingAlertText.render(conserve, es = false).detail)
+        assertEquals("Puerto en 2,1 km: ≤210 W", t.detail)
+        assertEquals("Climb in 2.1 km: ≤210 W", PacingAlertText.render(conserve, es = false).detail)
     }
 
     @Test fun `conserve without a ceiling or block falls back`() {
-        assertEquals("Climb 2.1 km: 6.0 km at 7%", PacingAlertText.render(conserve.copy(ceilingW = null), false).detail)
+        assertEquals("Climb in 2.1 km: ride it easy", PacingAlertText.render(conserve.copy(ceilingW = null), false).detail)
         assertEquals("Save energy", PacingAlertText.render(conserve.copy(blockKm = null, key = "CONSERVE#cond"), false).title)
     }
 
@@ -26,14 +26,16 @@ class PacingAlertTextTest {
         for (es in listOf(true, false)) {
             val t = PacingAlertText.render(conserve.copy(state = PacingState.HIGH_MARGIN, key = "HIGH_MARGIN#2", ceilingW = 260), es)
             assertEquals(if (es) "Margen alto" else "High margin", t.title)
-            assertEquals(if (es) "Puerto 2,1 km: hasta ~260 W" else "Climb 2.1 km: up to ~260 W", t.detail)
+            assertEquals(if (es) "Puerto en 2,1 km: hasta ~260 W" else "Climb in 2.1 km: up to ~260 W", t.detail)
             for (w in listOf("push", "aprieta", "ataca")) assertFalse(t.detail.contains(w, ignoreCase = true))
         }
     }
 
     @Test fun `unlogged fuel wording is cautious`() {
-        assertEquals("~80 g sin registrar. Come", PacingAlertText.render(fuel, true).detail)
-        assertEquals("Deficit ~80 g: eat now", PacingAlertText.render(fuel.copy(withLogs = true), false).detail)
+        assertEquals("Puerto en 6,0 km: ~80 g, come", PacingAlertText.render(fuel, true).detail)
+        assertEquals("Climb in 6.0 km: ~80 g short", PacingAlertText.render(fuel.copy(withLogs = true), false).detail)
+        // Without a climb distance the cautious wording stands alone.
+        assertEquals("~80 g sin registrar. Come", PacingAlertText.render(fuel.copy(blockKm = null), true).detail)
     }
 
     @Test fun `w prime shows the balance percent`() {
@@ -46,11 +48,13 @@ class PacingAlertTextTest {
             conserve, conserve.copy(blockKm = 123.4, ceilingW = 1260), conserve.copy(ceilingW = null, blockKm = 99.9, blockLenKm = 25.3, blockGradePct = 12.4),
             conserve.copy(blockKm = null), conserve.copy(state = PacingState.HIGH_MARGIN, blockKm = 123.4, ceilingW = 1260),
             conserve.copy(state = PacingState.HIGH_MARGIN, ceilingW = null), conserve.copy(state = PacingState.KEEP),
-            fuel, fuel.copy(grams = 1200), fuel.copy(grams = 1200, withLogs = true), fuel.copy(grams = null, blockKm = 123.4),
+            fuel, fuel.copy(grams = 1200), fuel.copy(grams = 1200, withLogs = true), fuel.copy(grams = null, blockKm = 123.4), fuel.copy(grams = 1200, blockKm = 123.4), fuel.copy(grams = 1200, blockKm = 123.4, withLogs = true),
             wPrime, wPrime.copy(wPct = 1.0), wPrime.copy(wPct = null),
         )
         for (a in alerts) for (es in listOf(true, false)) {
             val t = PacingAlertText.render(a, es)
+            if (a.blockKm != null && a.state != PacingState.KEEP && a.source == AlertSource.PACING)
+                assertTrue(t.detail, t.detail.startsWith(if (es) "Puerto en " else "Climb in "))   // never readable as the climb's length
             assertTrue("'${t.detail}' (${t.detail.length})", t.detail.length <= 34)
             assertTrue(t.title.length <= 40)
         }
