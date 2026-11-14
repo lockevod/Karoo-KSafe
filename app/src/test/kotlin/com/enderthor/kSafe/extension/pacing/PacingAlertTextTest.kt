@@ -8,6 +8,7 @@ import org.junit.Test
 class PacingAlertTextTest {
     private val conserve = PacingAlert(AlertSource.PACING, PacingState.CONSERVE, "CONSERVE#1", 2.1, 6.0, 7.0, 210, 0.8, null, false)
     private val fuel = PacingAlert(AlertSource.FUEL_HINT, null, "FUEL#1", 6.0, null, null, null, null, 80, false)
+    private val intensity = PacingAlert(AlertSource.PACING, null, "INTENSITY#1", 2.1, 6.0, 7.0, null, null, null, false)
     private val wPrime = PacingAlert(AlertSource.W_PRIME, null, "W#1", 1.5, 2.0, 6.0, 250, 0.35, null, false)
 
     @Test fun `conserve puts the ceiling first`() {
@@ -43,6 +44,13 @@ class PacingAlertTextTest {
         assertEquals("W′ 35%: ease off first", PacingAlertText.render(wPrime, false).detail)
     }
 
+    @Test fun `intensity cue says ease off before the climb`() {
+        val es = PacingAlertText.render(intensity, true); val en = PacingAlertText.render(intensity, false)
+        assertEquals("Suelta antes del puerto", es.title); assertEquals("Puerto en 2,1 km: suelta el ritmo", es.detail)
+        assertEquals("Ease off before the climb", en.title); assertEquals("Climb in 2.1 km: ease the pace", en.detail)
+        assertEquals("Suelta el ritmo", PacingAlertText.render(intensity.copy(blockKm = null), true).detail)
+    }
+
     @Test fun `every detail fits the 34 chars the device shows`() {
         val alerts = listOf(
             conserve, conserve.copy(blockKm = 123.4, ceilingW = 1260), conserve.copy(ceilingW = null, blockKm = 99.9, blockLenKm = 25.3, blockGradePct = 12.4),
@@ -50,6 +58,7 @@ class PacingAlertTextTest {
             conserve.copy(state = PacingState.HIGH_MARGIN, ceilingW = null), conserve.copy(state = PacingState.KEEP),
             fuel, fuel.copy(grams = 1200), fuel.copy(grams = 1200, withLogs = true), fuel.copy(grams = null, blockKm = 123.4), fuel.copy(grams = 1200, blockKm = 123.4), fuel.copy(grams = 1200, blockKm = 123.4, withLogs = true),
             wPrime, wPrime.copy(wPct = 1.0), wPrime.copy(wPct = null),
+            intensity, intensity.copy(blockKm = 10.0), intensity.copy(blockKm = 123.4), intensity.copy(blockKm = null),
         )
         for (a in alerts) for (es in listOf(true, false)) {
             val t = PacingAlertText.render(a, es)

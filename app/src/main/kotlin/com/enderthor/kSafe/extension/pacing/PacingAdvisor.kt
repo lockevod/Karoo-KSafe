@@ -32,8 +32,20 @@ object PacingAdvisor {
     const val MIN_HR_COVERAGE = 0.9
     /** HR work is an estimate (Keytel ~10–15 % error): CONSERVE from it needs a projection 10 % past the knee. */
     const val HR_ENTER_FACTOR = 1.10
+    const val INTENSITY_MIN_REMAINING_FRAC = 0.4
+    const val INTENSITY_KEY_PREFIX = "INTENSITY#"
     const val RECOVER_W_ENTER = 0.40
     const val RECOVER_W_EXIT = 0.50
+
+    /** "Ease off before the climb" (HR only, with or without power): mean HR over the last 5 moving minutes at or
+     *  over the Karoo Z4 lower bound, going into a climb with over 40 % of the moving time left. Unknown → no cue. */
+    fun intensityCue(moving: Boolean, positionTrusted: Boolean, secondsToBlock: Double?, metresToBlock: Double?,
+                     remainingMovingS: Double?, elapsedMovingS: Double, hrFresh: Boolean, meanHr5Min: Double?, hrZone4MinBpm: Int?): Boolean {
+        if (!moving || !positionTrusted || !hrFresh || meanHr5Min == null || hrZone4MinBpm == null || hrZone4MinBpm <= 0) return false
+        val rem = remainingMovingS ?: return false
+        if (!(rem / (rem + elapsedMovingS) > INTENSITY_MIN_REMAINING_FRAC)) return false   // NaN-safe
+        return meanHr5Min >= hrZone4MinBpm && inLeadWindow(secondsToBlock, metresToBlock, LEAD_PACING_S)
+    }
 
     fun inLeadWindow(secondsToBlock: Double?, metresToBlock: Double?, leadS: Double): Boolean {
         if (secondsToBlock == null || metresToBlock == null || !secondsToBlock.isFinite() || !metresToBlock.isFinite()) return false

@@ -92,6 +92,20 @@ class PacingAdvisorTest {
     @Test fun `no power and no heart-rate work is no_power`() =
         assertEquals("no_power", PacingAdvisor.decide(hrOnly.copy(hrWork = false, projectedKjKgFinish = 40.0), PacingState.KEEP).reason)
 
+    @Test fun `intensity cue needs Z4 heart rate going into a climb with most of the ride left`() {
+        fun cue(moving: Boolean = true, trusted: Boolean = true, toS: Double? = 250.0, toM: Double? = 2000.0, rem: Double? = 3600.0,
+                elapsed: Double = 1800.0, fresh: Boolean = true, hr5: Double? = 160.0, z4: Int? = 153) =
+            PacingAdvisor.intensityCue(moving, trusted, toS, toM, rem, elapsed, fresh, hr5, z4)
+        assertTrue(cue())
+        assertTrue(cue(hr5 = 153.0))                             // at the Z4 lower bound
+        assertFalse(cue(hr5 = 152.9))
+        assertFalse(cue(z4 = null)); assertFalse(cue(hr5 = null)); assertFalse(cue(fresh = false))
+        assertFalse(cue(moving = false)); assertFalse(cue(trusted = false))
+        assertFalse(cue(toS = 400.0))                            // outside the 5-min pacing lead window
+        assertFalse(cue(rem = 1200.0, elapsed = 1800.0))         // 40 % left: not more than 0.4
+        assertFalse(cue(rem = null)); assertFalse(cue(rem = 0.0, elapsed = 0.0))
+    }
+
     @Test fun `lead window rules`() {
         assertTrue(PacingAdvisor.inLeadWindow(290.0, 2000.0, 300.0))
         assertFalse(PacingAdvisor.inLeadWindow(400.0, 2000.0, 300.0))

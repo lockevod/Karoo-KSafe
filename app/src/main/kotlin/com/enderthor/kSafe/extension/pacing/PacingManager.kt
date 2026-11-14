@@ -102,7 +102,7 @@ class PacingManager(
     private var prevState = PacingState.KEEP; private var prevRecoverW = false
     private var conserveSinceMs: Long? = null; private var condCandidateDone = false
     private var conserveByProjection = false   // how the current CONSERVE was entered (power ceiling gate)
-    private var pacingCandBlock: Int? = null; private var keepCandBlock: Int? = null
+    private var pacingCandBlock: Int? = null; private var keepCandBlock: Int? = null; private var intensityCandBlock: Int? = null
     private var wCandBlock: Int? = null; private var fuelLoggedBlock: Int? = null; private var fuelFiredBlock: Int? = null
     private var tickN = 0; private var lastTickOdoM = 0.0; private var lastTickMovingS = 0.0
     private var firstProjFinish: Double? = null; private var lastProjFinish: Double? = null
@@ -141,7 +141,7 @@ class PacingManager(
         arbiter = AlertArbiter()
         prevState = PacingState.KEEP; prevRecoverW = false
         conserveSinceMs = null; condCandidateDone = false; conserveByProjection = false
-        pacingCandBlock = null; keepCandBlock = null; wCandBlock = null; fuelLoggedBlock = null; fuelFiredBlock = null
+        pacingCandBlock = null; keepCandBlock = null; intensityCandBlock = null; wCandBlock = null; fuelLoggedBlock = null; fuelFiredBlock = null
         odometerM = 0.0; movingS = 0.0; lastSpeedAtMs = null; moving = false; lastPowerAtMs = null
         tickN = 0; lastTickOdoM = 0.0; lastTickMovingS = 0.0; firstProjFinish = null; lastProjFinish = null
         predBlock = null; inBlock = null; blockWMin = null
@@ -262,7 +262,7 @@ class PacingManager(
     fun onHr(bpm: Int) {
         val now = clock()
         lastHr = bpm.takeIf { it > 0 }; lastHrAtMs = now
-        lastHr?.let { hrSignals.onSample(hrKcalPerHour(it), now, movingAt(now)) }
+        lastHr?.let { hrSignals.onSample(it, hrKcalPerHour(it), now, movingAt(now), movingS) }
     }
 
     /** Keytel inputs present: profile weight, age and sex. Without them there is no HR work estimate. */
@@ -423,7 +423,10 @@ class PacingManager(
         )
         val d = PacingAdvisor.decide(input, prevState, prevRecoverW)
         val changed = d.state != prevState || d.recoverW != prevRecoverW
-        val adv = { advFields(input, d, hrCov) }
+        val hr5 = hs.meanHrLastWindow(movingS)
+        // Karoo HR zones: Z4 is the fourth; fewer zones or no lower bound = unknown, no cue.
+        val z4 = userProfile?.heartRateZones?.getOrNull(3)?.min?.takeIf { it > 0 }
+        val adv = { advFields(input, d, hrCov, hr5, z4) }
 
         // Candidates
         val cands = ArrayList<Pair<AlertCandidate, PacingAlert>>()
@@ -458,6 +461,13 @@ class PacingManager(
                 val key = "KEEP#${next.key}"
                 cands += AlertCandidate(AlertSource.PACING, key, 0.0) to alert(AlertSource.PACING, d.state, key, next)
             }
+        }
+        // Intensity cue, once per block; never for a block that already has a pacing (CONSERVE / HIGH_MARGIN) candidate.
+        if (next != null && intensityCandBlock != next.key && pacingCandBlock != next.key &&
+            PacingAdvisor.intensityCue(movingNow, trusted, toNextS, toNextM, remainingS, movingS, hrFresh, hr5, z4)) {
+            intensityCandBlock = next.key
+            val key = "${PacingAdvisor.INTENSITY_KEY_PREFIX}${next.key}"
+            cands += AlertCandidate(AlertSource.PACING, key, INTENSITY_SEV) to alert(AlertSource.PACING, null, key, next)
         }
         val since = conserveSinceMs
         if (d.state == PacingState.CONSERVE && !d.alertWindowPacing && !condCandidateDone && since != null && now - since >= COND_SUSTAIN_MS) {
@@ -556,7 +566,7 @@ class PacingManager(
         }
     }
 
-    private fun advFields(i: PacingInput, d: PacingDecision, hrCov: Double?) =
+    private fun advFields(i: PacingInput, d: PacingDecision, hrCov: Double?, hr5: Double?, z4: Int?) =
         "state=${d.state},recover_w=${d.recoverW},reason=${d.reason},moving=${i.moving},has_power=${i.hasPower}," +
             "pos_trusted=${i.positionTrusted},climbs_known=${i.climbsKnown},remaining_s=${f(i.remainingMovingS, 0)}," +
             "elapsed_s=${f(i.elapsedMovingS, 0)},blocks_ahead=${i.blocksAhead},next_block=${i.nextBlockId ?: "na"}," +
@@ -566,7 +576,7 @@ class PacingManager(
             "drift_stable_s=${f(i.driftStableMs?.div(1000.0), 0)},w_trusted=${i.wTrusted},w_pct=${f(i.wPct, 2)}," +
             "proj_w_block=${f(i.projectedWAtNextBlockPct, 2)},power_cov=${f(i.powerCoverage, 2)},ms_since_med=${i.msSinceWellnessOrMedical ?: "na"}," +
             "ftp=$ftp,kind=$kind,gp_conf=${gradePace.isConfident(kind, 0.0)}," +
-            "src=${if (i.hasPower) "power" else if (i.hrWork) "hr" else "none"},hr_cov=${f(hrCov, 2)}"
+            "src=${if (i.hasPower) "power" else if (i.hrWork) "hr" else "none"},hr_cov=${f(hrCov, 2)},hr5=${f(hr5, 0)},z4=${z4 ?: "na"}"
 
     private fun f(v: Double?, decimals: Int = 1): String =
         if (v == null || !v.isFinite()) "na" else String.format(Locale.US, "%.${decimals}f", v)
@@ -577,6 +587,8 @@ class PacingManager(
         internal fun plausibleCeiling(rawW: Int?, byProjection: Boolean, meanW: Double, ftp: Int): Int? =
             rawW?.takeIf { byProjection && it >= 0.5 * meanW && it <= 0.95 * meanW && it >= 0.4 * ftp }
         const val DEFAULT_KNEE_KJKG = 30.0
+        /** Below a CONSERVE (≥ 1 past the knee): a harder later CONSERVE can still bypass the pacing rate. */
+        const val INTENSITY_SEV = 0.5
         const val COND_SUSTAIN_MS = 90_000L
         const val BLOCKS_REFRESH_MS = 5 * 60_000L
         const val POWER_STALE_MS = 10_000L

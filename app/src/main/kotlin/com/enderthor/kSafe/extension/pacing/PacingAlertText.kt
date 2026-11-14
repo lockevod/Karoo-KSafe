@@ -39,6 +39,13 @@ object PacingAlertText {
                 val d = withClimb?.takeIf { it.length <= DEVICE_DETAIL_CHARS } ?: short
                 (if (es) "Buen momento para comer" else "Good moment to eat") to d
             }
+            a.key.startsWith(PacingAdvisor.INTENSITY_KEY_PREFIX) -> {
+                val full = climb?.let { if (es) "$it: suelta el ritmo" else "$it: ease the pace" }
+                val d = full?.takeIf { it.length <= DEVICE_DETAIL_CHARS }
+                    ?: climb?.let { if (es) "$it: suelta" else "$it: ease off" }
+                    ?: if (es) "Suelta el ritmo" else "Ease the pace"
+                (if (es) "Suelta antes del puerto" else "Ease off before the climb") to d
+            }
             a.source == AlertSource.W_PRIME -> {
                 val d = a.wPct?.let { val p = (it * 100).roundToInt(); if (es) "W′ $p %: suelta antes" else "W′ $p%: ease off first" }
                     ?: if (es) "Suelta antes del puerto" else "Ease off before the climb"

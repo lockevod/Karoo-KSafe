@@ -596,4 +596,35 @@ class PacingManagerTest {
         }
         assertEquals(run(keytel = false), run(keytel = true))
     }
+
+    @Test fun `Z4 heart rate before a climb gives one intensity cue`() {
+        val m = manager()
+        m.setLiveAlerts(true, null)
+        m.onUserProfile(hrProfile()); m.onNavigation(route())    // no age / sex: no HR work estimate, cue only
+        ride(m, power = null, accuracyM = 5.0, hr = 160)        // ends ~10 m before the climb
+        val key = "INTENSITY#${Math.round(m.blocks.single().startM)}"
+        assertEquals(listOf(key), alerts.map { it.key })
+        assertEquals(1, m.evaluatedCandidateKeys.count { it == key })
+        assertNull(alerts.single().state)
+    }
+
+    @Test fun `no intensity cue under Z4 or without HR zones`() {
+        for ((hr, zones) in listOf(150 to null, 160 to emptyList<UserProfile.Zone>())) {
+            now = 0; alerts.clear()
+            val m = manager()
+            m.setLiveAlerts(true, null)
+            m.onUserProfile(if (zones == null) hrProfile() else hrProfile(zones = zones)); m.onNavigation(route())
+            ride(m, power = null, accuracyM = 5.0, hr = hr)
+            assertTrue("hr=$hr zones=$zones: ${m.evaluatedCandidateKeys}", m.evaluatedCandidateKeys.none { it.startsWith("INTENSITY#") })
+        }
+    }
+
+    @Test fun `no intensity cue for a block that already has a CONSERVE candidate`() {
+        val m = manager(knee = 0.5)
+        m.onUserProfile(hrProfile()); m.onNavigation(route())
+        ride(m, power = 300, accuracyM = 5.0, hr = 160)
+        val b = Math.round(m.blocks.single().startM)
+        assertTrue("CONSERVE#$b" in m.evaluatedCandidateKeys)
+        assertTrue(m.evaluatedCandidateKeys.none { it.startsWith("INTENSITY#") })
+    }
 }
