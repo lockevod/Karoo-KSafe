@@ -152,6 +152,16 @@ class RecordingStreamNeedsTest {
         }
         assertEquals("half the combinations enable hydration", 16, seenAmbient)
     }
+
+    @Test
+    fun `calibration logging alone turns on pacing shadow streams`() {
+        val n = KSafeExtension.recordingStreamNeeds(bare().copy(calibrationLoggingEnabled = true))
+        assertTrue(n.pacing); assertTrue(n.power); assertTrue(n.heartRate); assertTrue(n.userProfile)
+    }
+
+    @Test
+    fun `pacing off and logging off adds nothing`() =
+        assertFalse(KSafeExtension.recordingStreamNeeds(bare()).pacing)
 }
 
 /**
