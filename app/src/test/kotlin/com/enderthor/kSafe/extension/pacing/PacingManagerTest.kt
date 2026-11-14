@@ -162,6 +162,28 @@ class PacingManagerTest {
         assertEquals(listOf("CONSERVE#cond"), alerts.map { it.key })
     }
 
+    @Test fun `an implausibly low power ceiling is not shown`() {
+        val m = manager(knee = 3.5)                               // at #cond kJ/kg sits just under the knee
+        m.setLiveAlerts(true, null)
+        m.onUserProfile(250, 70.0); m.onNavigation(route())
+        ride(m, power = 300, accuracyM = 5.0, seconds = 800)
+        val cond = alerts.single { it.key == "CONSERVE#cond" }
+        assertNull("a few-W ceiling would read as 'stop pedalling': ${cond.ceilingW}", cond.ceilingW)
+    }
+
+    @Test fun `the ceiling is shown only inside the plausible band`() {
+        // 48 W against a 250 W ride: under half the mean and under 40 % FTP.
+        assertNull(PacingManager.plausibleCeiling(48, byProjection = true, meanW = 250.0, ftp = 250))
+        // 194 W against a 200 W ride: barely an ease-off, over 95 % of the mean.
+        assertNull(PacingManager.plausibleCeiling(194, byProjection = true, meanW = 200.0, ftp = 250))
+        // 194 W against a 250 W ride: a real ease-off.
+        assertEquals(194, PacingManager.plausibleCeiling(194, byProjection = true, meanW = 250.0, ftp = 250))
+        // Under 40 % FTP even if inside the mean band; drift-entered CONSERVE never gets a number.
+        assertNull(PacingManager.plausibleCeiling(110, byProjection = true, meanW = 150.0, ftp = 300))
+        assertNull(PacingManager.plausibleCeiling(194, byProjection = false, meanW = 250.0, ftp = 250))
+        assertNull(PacingManager.plausibleCeiling(null, byProjection = true, meanW = 250.0, ftp = 250))
+    }
+
     @Test fun `a block alert carries the distance ahead, not the route position`() {
         val m = manager(knee = 0.5)
         m.onUserProfile(250, 70.0); m.onNavigation(route())

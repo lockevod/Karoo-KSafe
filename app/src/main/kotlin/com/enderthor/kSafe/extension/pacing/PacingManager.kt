@@ -94,6 +94,7 @@ class PacingManager(
     internal var arbiter = AlertArbiter(); private set   // internal: tests read the recorded gaps
     private var prevState = PacingState.KEEP; private var prevRecoverW = false
     private var conserveSinceMs: Long? = null; private var condCandidateDone = false
+    private var conserveByProjection = false   // how the current CONSERVE was entered (power ceiling gate)
     private var pacingCandBlock: Int? = null; private var keepCandBlock: Int? = null
     private var wCandBlock: Int? = null; private var fuelLoggedBlock: Int? = null; private var fuelFiredBlock: Int? = null
     private var tickN = 0; private var lastTickOdoM = 0.0; private var lastTickMovingS = 0.0
@@ -132,7 +133,7 @@ class PacingManager(
     private fun resetRide() {
         arbiter = AlertArbiter()
         prevState = PacingState.KEEP; prevRecoverW = false
-        conserveSinceMs = null; condCandidateDone = false
+        conserveSinceMs = null; condCandidateDone = false; conserveByProjection = false
         pacingCandBlock = null; keepCandBlock = null; wCandBlock = null; fuelLoggedBlock = null; fuelFiredBlock = null
         odometerM = 0.0; movingS = 0.0; lastSpeedAtMs = null; moving = false; lastPowerAtMs = null
         tickN = 0; lastTickOdoM = 0.0; lastTickMovingS = 0.0; firstProjFinish = null; lastProjFinish = null
@@ -396,8 +397,10 @@ class PacingManager(
             PacingAlert(src, st, key, b?.let { toNextM?.div(1000.0) }, b?.lengthM?.div(1000.0), b?.gradePct, ceiling, wPct, grams, withLogs)
         val worst = listOfNotNull(projFinish, projTop).maxOrNull()
         val conserveSev = maxOf((worst ?: 0.0) / knee, (drift ?: 0.0) / 10.0).takeIf { it > 0 } ?: 1.0
-        val ceilingW = if (remainingS != null && remainingS > 0 && weightKg > 0)
+        if (d.state == PacingState.CONSERVE && prevState != PacingState.CONSERVE) conserveByProjection = d.reason == "proj_over_knee"
+        val rawCeilingW = if (remainingS != null && remainingS > 0 && weightKg > 0)
             ((knee - kj) * weightKg * 1000.0 / remainingS).takeIf { it > 0 }?.toInt() else null
+        val ceilingW = plausibleCeiling(rawCeilingW, conserveByProjection, meanW, ftp)
 
         // The 90 s sustain clock runs only while the rider is moving, on-route and metered: a stop, a lost
         // position or stale power restarts it, so #cond never reaches a stopped / off-route / unmetered rider.
@@ -528,6 +531,10 @@ class PacingManager(
         if (v == null || !v.isFinite()) "na" else String.format(Locale.US, "%.${decimals}f", v)
 
     companion object {
+        /** "≤N W" only when it reads as a real ease-off: CONSERVE entered by the projection (a drift entry has no
+         *  power budget), N within [0.5, 0.95] × the mean moving power and ≥ 0.4 × FTP. Else no number. */
+        internal fun plausibleCeiling(rawW: Int?, byProjection: Boolean, meanW: Double, ftp: Int): Int? =
+            rawW?.takeIf { byProjection && it >= 0.5 * meanW && it <= 0.95 * meanW && it >= 0.4 * ftp }
         const val DEFAULT_KNEE_KJKG = 30.0
         const val COND_SUSTAIN_MS = 90_000L
         const val BLOCKS_REFRESH_MS = 5 * 60_000L
