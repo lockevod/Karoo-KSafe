@@ -581,4 +581,7 @@
     <string name="field_pacing_reserve_desc">Pacing advice (beta)</string>
     <string name="field_pacing_margin">MARGIN</string>
     <string name="field_pacing_hint">reserve</string>
+    <string name="section_pacing">Pacing advice (beta)</string>
+    <string name="pacing_enabled_label">Pacing advice</string>
+    <string name="pacing_enabled_hint">Advice from the loaded route and your power. Beta: guidance only.</string>
 </resources>

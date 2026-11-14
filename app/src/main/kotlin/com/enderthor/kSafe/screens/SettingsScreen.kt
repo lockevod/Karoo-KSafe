@@ -69,6 +69,7 @@ fun SettingsScreen(vm: MainViewModel) {
     var fitExportEnabled  by remember(config.fuelingFitExportEnabled)   { mutableStateOf(config.fuelingFitExportEnabled) }
     var fitStdCalSource   by remember(config.fitStandardCaloriesSource) { mutableStateOf(config.fitStandardCaloriesSource) }
     var calibrationLogging by remember(config.calibrationLoggingEnabled) { mutableStateOf(config.calibrationLoggingEnabled) }
+    var pacingEnabled by remember(config.pacingEnabled) { mutableStateOf(config.pacingEnabled) }
     var updateCheck       by remember(config.updateCheckEnabled)        { mutableStateOf(config.updateCheckEnabled) }
     var buzzerOnEmergency by remember(config.buzzerOnEmergencyEnabled)  { mutableStateOf(config.buzzerOnEmergencyEnabled) }
     var calibLogInfo       by remember { mutableStateOf("") }
@@ -317,6 +318,31 @@ fun SettingsScreen(vm: MainViewModel) {
         Text(
             text = if (config.hrCaloriesEnabled) stringResource(R.string.settings_fit_std_cal_hint)
                    else stringResource(R.string.settings_fit_std_cal_requires),
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant
+        )
+
+        HorizontalDivider()
+
+        // ── Pacing advice (beta) ──────────────────────────────────────────
+        Text(
+            text = stringResource(R.string.section_pacing),
+            style = MaterialTheme.typography.titleSmall,
+            fontWeight = FontWeight.Bold,
+            color = MaterialTheme.colorScheme.onSurfaceVariant
+        )
+        SettingRow(label = stringResource(R.string.pacing_enabled_label)) {
+            Switch(
+                checked = pacingEnabled,
+                onCheckedChange = { newValue ->
+                    pacingEnabled = newValue
+                    // Same merge-onto-latest save as the calibration switch below.
+                    vm.updateConfig { it.copy(pacingEnabled = newValue) }
+                }
+            )
+        }
+        Text(
+            text = stringResource(R.string.pacing_enabled_hint),
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant
         )
