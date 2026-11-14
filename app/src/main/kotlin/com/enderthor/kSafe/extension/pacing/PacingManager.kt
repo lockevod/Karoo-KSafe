@@ -171,17 +171,33 @@ class PacingManager(
 
     fun onHr(bpm: Int) { lastHr = bpm.takeIf { it > 0 }; lastHrAtMs = clock() }
 
+    /** A mid-ride profile edit must not wipe the ride: weight rescales kJ/kg, FTP resets only the drift
+     *  band/baseline and W′ (its CP changed); work and moving time are kept. */
     fun onUserProfile(ftp: Int, weightKg: Double) {
-        if (ftp == this.ftp && weightKg == this.weightKg && wPrime != null) return
-        this.ftp = ftp; this.weightKg = weightKg
-        rebuildProfileUnits()
+        val fs = fatigue
+        if (fs == null || wPrime == null) { this.ftp = ftp; this.weightKg = weightKg; rebuildProfileUnits(); return }
+        if (weightKg != this.weightKg) { this.weightKg = weightKg; fs.weightKg = weightKg; logReset("weight", wReset = false) }
+        if (ftp != this.ftp) {
+            this.ftp = ftp; fs.onFtpChanged(ftp)
+            wPrime = WPrimeBalance(ftp, wOverrideJ ?: WPrimeBalance.defaultWPrimeJ(kind))
+            logReset("ftp", wReset = true)
+        }
     }
 
     fun onRoutingPreference(pref: String) {
         val k = BikeKind.of(pref)
         if (k == kind) return
         kind = k; blocksAtMs = Long.MIN_VALUE
-        if (wOverrideJ == null && wPrime != null) wPrime = WPrimeBalance(ftp, WPrimeBalance.defaultWPrimeJ(kind))
+        val wp = wPrime ?: return
+        // Only an untouched balance takes the new kind's default; a riding one keeps its state and stale flag.
+        val wReset = wOverrideJ == null && !wp.hasSamples
+        if (wReset) wPrime = WPrimeBalance(ftp, WPrimeBalance.defaultWPrimeJ(kind))
+        logReset("kind", wReset)
+    }
+
+    private fun logReset(reason: String, wReset: Boolean) = calibLogger?.log(Event.PACE_RESET) {
+        "reason=$reason,ftp=$ftp,weight=${f(weightKg)},kind=$kind,w_reset=$wReset," +
+            "kj=${f(fatigue?.kj, 0)},moving_s=${f(fatigue?.movingSeconds, 0)}"
     }
 
     fun onCarbStatus(s: CarbStatus?) { carbStatus = s }
@@ -381,7 +397,7 @@ class PacingManager(
             if (wPct != null) blockWMin = minOf(blockWMin ?: wPct, wPct)
             if (pos < cur.startM || pos > cur.endM) {
                 val dMov = (fs?.movingSeconds ?: 0.0) - blockMov0
-                val meanW = if (dMov > 0 && weightKg > 0) ((fs?.kjPerKg ?: 0.0) - blockKj0) * weightKg * 1000.0 / dMov else null
+                val meanW = if (dMov > 0) ((fs?.kj ?: 0.0) - blockKj0) * 1000.0 / dMov else null
                 calibLogger?.log(Event.PACE_CLIMB) {
                     "phase=end,block=${cur.key},w_min=${f(blockWMin, 2)},mean_w=${f(meanW, 0)},drift=${f(drift)}"
                 }
@@ -390,7 +406,7 @@ class PacingManager(
         }
         if (inBlock == null) {
             val b = blocks.firstOrNull { pos >= it.startM && pos <= it.endM } ?: return
-            inBlock = b; blockWMin = wPct; blockKj0 = fs?.kjPerKg ?: 0.0; blockMov0 = fs?.movingSeconds ?: 0.0
+            inBlock = b; blockWMin = wPct; blockKj0 = fs?.kj ?: 0.0; blockMov0 = fs?.movingSeconds ?: 0.0
             val tracked = predBlock == b.key
             calibLogger?.log(Event.PACE_CLIMB) {
                 "phase=start,block=${b.key},len_m=${f(b.lengthM, 0)},gain_m=${f(b.gainM, 0)}," +

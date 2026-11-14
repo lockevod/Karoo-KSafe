@@ -292,6 +292,8 @@ class CalibrationLogger(
         PACE_END("PACE_END"),
         /** Pacing: fuel hint evaluation inside a fuel window. */
         PACE_FUEL("PACE_FUEL"),
+        /** Pacing: partial ride-state reset on a mid-ride FTP / weight / bike-kind change. */
+        PACE_RESET("PACE_RESET"),
         /** Ride-end Last-ride record: final totals + whether the ride can be calibrated
          *  (`blocker=` none / NO_RIDE_TIME / TOO_SHORT / LOW_COVERAGE). The last HYD_PERIODIC
          *  can be up to 2 min stale; this is the value the calibration actually judges. */

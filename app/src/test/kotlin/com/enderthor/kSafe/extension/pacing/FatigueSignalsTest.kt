@@ -53,9 +53,11 @@ class FatigueSignalsTest {
         assertEquals(t, f.driftStableSinceMs)                  // stable for 0 s, not since minute 20
     }
 
-    @Test fun `zero weight accumulates no kJ per kg`() {
-        val f = FatigueSignals(250, 0.0); ride(f, 200, 140, 600, 0)
-        assertEquals(0.0, f.kjPerKg, 0.0); assertEquals(0.0, f.meanMovingPowerW, 0.0)
+    @Test fun `zero weight gives no kJ per kg but keeps the work`() {
+        val f = FatigueSignals(250, 0.0); ride(f, 200, 140, 601, 0)
+        assertEquals(0.0, f.kjPerKg, 0.0); assertEquals(200.0, f.meanMovingPowerW, 1e-9)
+        f.weightKg = 80.0                                      // weight arrives later: the ride is not lost
+        assertEquals(120.0 / 80.0, f.kjPerKg, 1e-9)
     }
 
     @Test fun `kJ per kg accumulates moving work`() {

@@ -1,13 +1,19 @@
 package com.enderthor.kSafe.extension.pacing
 
 /** Pw:HR decoupling on matched-intensity 5-min windows + moving work. Independent of WellnessMonitor
- *  (which is off by default, uses instantaneous HR/W and holds stale values). Unknown → null, never 0. */
-class FatigueSignals(private val ftpW: Int, private val weightKg: Double) {
-    var kjPerKg = 0.0; private set
+ *  (which is off by default, uses instantaneous HR/W and holds stale values). Unknown → null, never 0.
+ *  Work is kept in ABSOLUTE kJ so a mid-ride weight edit rescales kJ/kg instead of losing the ride. */
+class FatigueSignals(private var ftpW: Int, weightKg: Double) {
+    /** Settable mid-ride: kJ/kg is derived at read time. */
+    var weightKg: Double = weightKg
+    var kj = 0.0; private set
     var movingSeconds = 0.0; private set
-    var kjPerKgAtFirstDrift5: Double? = null; private set
     var driftStableSinceMs: Long? = null; private set
-    val meanMovingPowerW: Double get() = if (movingSeconds > 0) kjPerKg * weightKg * 1000.0 / movingSeconds else 0.0
+    private var kjAtFirstDrift5: Double? = null
+    /** 0 when the weight is unknown; loggers print `na` for that case. */
+    val kjPerKg: Double get() = if (weightKg > 0) kj / weightKg else 0.0
+    val kjPerKgAtFirstDrift5: Double? get() = kjAtFirstDrift5?.takeIf { weightKg > 0 }?.div(weightKg)
+    val meanMovingPowerW: Double get() = if (movingSeconds > 0) kj * 1000.0 / movingSeconds else 0.0
 
     private var lastMs = -1L
     private var winSec = 0.0; private var winP = 0.0; private var winHr = 0.0; private var winHrSec = 0.0
@@ -19,10 +25,17 @@ class FatigueSignals(private val ftpW: Int, private val weightKg: Double) {
         lastMs = tMs
         if (!moving || dt <= 0) return
         movingSeconds += dt
-        if (weightKg > 0) kjPerKg += powerW * dt / 1000.0 / weightKg
+        kj += powerW * dt / 1000.0
         winSec += dt; winP += powerW * dt
         if (hrBpm != null && hrBpm > 0) { winHr += hrBpm * dt; winHrSec += dt }
         if (winSec >= WINDOW_S) closeWindow(tMs)
+    }
+
+    /** New FTP = new matched-intensity band: drop the baseline and drift, keep work and moving time. */
+    fun onFtpChanged(ftp: Int) {
+        ftpW = ftp
+        baseline = null; lastDrift = null; driftStableSinceMs = null
+        winSec = 0.0; winP = 0.0; winHr = 0.0; winHrSec = 0.0
     }
 
     private fun closeWindow(tMs: Long) {
@@ -39,7 +52,7 @@ class FatigueSignals(private val ftpW: Int, private val weightKg: Double) {
         val d = (b - pwhr) / b * 100.0
         if (lastDrift == null || tMs - lastDriftAtMs > MAX_AGE_MS) driftStableSinceMs = null
         lastDrift = d; lastDriftAtMs = tMs
-        if (d > 5.0 && kjPerKgAtFirstDrift5 == null) kjPerKgAtFirstDrift5 = kjPerKg
+        if (d > 5.0 && kjAtFirstDrift5 == null) kjAtFirstDrift5 = kj
         driftStableSinceMs = if (d < 5.0) (driftStableSinceMs ?: tMs) else null
     }
 

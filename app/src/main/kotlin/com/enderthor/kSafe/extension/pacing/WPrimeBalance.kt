@@ -16,6 +16,8 @@ class WPrimeBalance(private val cpW: Int, private val w0: Double) {
     val trusted: Boolean get() = cpW > 0 && !ftpStale
 
     private var lastMs = -1L
+    /** False until the first power sample: a fresh balance can still be rebuilt with no loss. */
+    val hasSamples: Boolean get() = lastMs >= 0
     private val ring = IntArray(WINDOW_S); private var ringN = 0; private var ringI = 0; private var ringSum = 0L
 
     fun onPower(powerW: Int, tMs: Long) {

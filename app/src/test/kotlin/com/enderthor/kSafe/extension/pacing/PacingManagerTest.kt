@@ -1,5 +1,6 @@
 package com.enderthor.kSafe.extension.pacing
 
+import com.enderthor.kSafe.extension.managers.CalibrationLogger
 import io.hammerhead.karooext.models.OnNavigationState
 import kotlinx.coroutines.test.TestScope
 import org.junit.Assert.assertEquals
@@ -10,6 +11,7 @@ import org.junit.Assert.assertTrue
 import org.junit.Rule
 import org.junit.Test
 import org.junit.rules.TemporaryFolder
+import org.mockito.Mockito
 
 class PacingManagerTest {
     @get:Rule val tmp = TemporaryFolder()
@@ -27,6 +29,17 @@ class PacingManagerTest {
 
     private fun manager(knee: Double = 3.0) =
         PacingManager(TestScope(), tmp.root, null, clock = { now }, alertSink = { alerts += it }, kneeKjKgOverride = knee)
+
+    /** Rows the manager logged, as "TAG,data". */
+    private val logRows = mutableListOf<String>()
+
+    private fun loggingManager(knee: Double = 3.0): PacingManager {
+        val log = Mockito.mock(CalibrationLogger::class.java)
+        Mockito.`when`(log.isEnabled).thenReturn(true)
+        Mockito.doAnswer { logRows += "${(it.arguments[0] as CalibrationLogger.Event).tag},${it.arguments[1]}"; null }
+            .`when`(log).addEntry(Mockito.any(CalibrationLogger.Event::class.java) ?: CalibrationLogger.Event.PACE_ADV, Mockito.anyString())
+        return PacingManager(TestScope(), tmp.root, log, clock = { now }, alertSink = { alerts += it }, kneeKjKgOverride = knee)
+    }
 
     /** 30 km/h east along the route for [seconds] (default 20 min) starting at second [from];
      *  [power] null = no power meter; [hr] null = no HR strap; [accuracyM] of every fix. */
@@ -189,5 +202,43 @@ class PacingManagerTest {
         ride(m, power = 600, accuracyM = 5.0, seconds = 20)                   // a 20 s sprint off the start
         m.tick()
         assertEquals(PacingState.KEEP, m.view.value!!.state)
+    }
+
+    @Test fun `a weight edit rescales kJ per kg instead of wiping the ride`() {
+        val m = loggingManager()
+        m.onUserProfile(250, 70.0); m.onNavigation(route())
+        ride(m, power = 200, accuracyM = 5.0)
+        val before = m.fatigue!!.kjPerKg; val movingBefore = m.fatigue!!.movingSeconds
+        m.onUserProfile(250, 80.0)
+        assertEquals(before * 70.0 / 80.0, m.fatigue!!.kjPerKg, 1e-9)
+        assertEquals(movingBefore, m.fatigue!!.movingSeconds, 0.0)
+        assertTrue(logRows.any { it.startsWith("PACE_RESET,") && "reason=weight" in it })
+    }
+
+    @Test fun `an FTP edit keeps work and moving time`() {
+        val m = loggingManager()
+        m.onUserProfile(250, 70.0); m.onNavigation(route())
+        ride(m, power = 200, accuracyM = 5.0)
+        val kj = m.fatigue!!.kjPerKg; val moving = m.fatigue!!.movingSeconds
+        m.onUserProfile(260, 70.0)
+        assertEquals(kj, m.fatigue!!.kjPerKg, 0.0); assertEquals(moving, m.fatigue!!.movingSeconds, 0.0)
+        assertTrue(logRows.any { it.startsWith("PACE_RESET,") && "reason=ftp" in it })
+    }
+
+    @Test fun `a bike-kind change keeps the W' balance and its stale FTP flag`() {
+        val m = loggingManager()
+        m.onUserProfile(250, 70.0); m.onRoutingPreference("ROAD"); m.onNavigation(route())
+        ride(m, power = 300, accuracyM = 5.0, seconds = 1500)    // 20-min mean above FTP: stale
+        val wp = m.wPrime!!; assertTrue(wp.ftpStale)
+        m.onRoutingPreference("MTB")
+        assertTrue(m.wPrime === wp); assertTrue(m.wPrime!!.ftpStale)
+        assertTrue(logRows.any { it.startsWith("PACE_RESET,") && "reason=kind" in it })
+    }
+
+    @Test fun `a bike-kind change before any power takes the new default W'`() {
+        val m = manager()
+        m.onUserProfile(250, 70.0); m.onRoutingPreference("ROAD")
+        m.onRoutingPreference("MTB")
+        assertEquals(WPrimeBalance.defaultWPrimeJ(BikeKind.MTB), m.wPrime!!.wJ, 0.0)
     }
 }
