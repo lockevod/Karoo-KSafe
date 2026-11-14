@@ -43,6 +43,16 @@ class FatigueSignalsTest {
         assertNull(f.driftPct(t))
     }
 
+    @Test fun `stable drift restarts after a run of windows without a drift value`() {
+        val f = FatigueSignals(250, 70.0)
+        var t = ride(f, 175, 140, 40 * 60 + 1, 0)              // baseline at 15 min, stable since 20 min
+        assertEquals(20 * 60_000L + 1000, f.driftStableSinceMs)
+        t = ride(f, 280, 170, 90 * 60, t)                      // 90 min out of band: no drift values
+        t = ride(f, 175, 146, 5 * 60, t)                       // one fresh window, d ≈ 4 %
+        assertEquals(4.1, f.driftPct(t)!!, 0.2)
+        assertEquals(t, f.driftStableSinceMs)                  // stable for 0 s, not since minute 20
+    }
+
     @Test fun `zero weight accumulates no kJ per kg`() {
         val f = FatigueSignals(250, 0.0); ride(f, 200, 140, 600, 0)
         assertEquals(0.0, f.kjPerKg, 0.0); assertEquals(0.0, f.meanMovingPowerW, 0.0)

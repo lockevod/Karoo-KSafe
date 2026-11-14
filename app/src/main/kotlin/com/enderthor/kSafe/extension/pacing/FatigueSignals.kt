@@ -31,11 +31,13 @@ class FatigueSignals(private val ftpW: Int, private val weightKg: Double) {
         val hrComplete = winHrSec >= HR_COMPLETE_FRACTION * winSec
         val meanHr = if (hrComplete) winHr / winHrSec else 0.0
         winSec = 0.0; winP = 0.0; winHr = 0.0; winHrSec = 0.0
-        if (ftpW <= 0 || !hrComplete || meanHr <= 0 || meanP < LOW * ftpW || meanP > HIGH * ftpW) return
+        // "Stable" means consecutive fresh windows: any window without a drift value breaks the run.
+        if (ftpW <= 0 || !hrComplete || meanHr <= 0 || meanP < LOW * ftpW || meanP > HIGH * ftpW) { driftStableSinceMs = null; return }
         val pwhr = meanP / meanHr
         val b = baseline
-        if (b == null) { if (movingSeconds >= BASELINE_AFTER_S) baseline = pwhr; return }
+        if (b == null) { if (movingSeconds >= BASELINE_AFTER_S) baseline = pwhr; driftStableSinceMs = null; return }
         val d = (b - pwhr) / b * 100.0
+        if (lastDrift == null || tMs - lastDriftAtMs > MAX_AGE_MS) driftStableSinceMs = null
         lastDrift = d; lastDriftAtMs = tMs
         if (d > 5.0 && kjPerKgAtFirstDrift5 == null) kjPerKgAtFirstDrift5 = kjPerKg
         driftStableSinceMs = if (d < 5.0) (driftStableSinceMs ?: tMs) else null

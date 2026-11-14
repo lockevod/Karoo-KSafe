@@ -61,9 +61,10 @@ class PacingManager(
     // Sensors
     private var fix: LatLng? = null; private var fixAccM: Double? = null; private var fixAtMs = 0L
     private var odometerM = 0.0; private var movingS = 0.0; private var lastSpeedAtMs: Long? = null; private var moving = false
-    private var lastHr: Int? = null; private var lastPowerAtMs: Long? = null
+    private var lastHr: Int? = null; private var lastHrAtMs: Long? = null; private var lastPowerAtMs: Long? = null
     private var ftp = 0; private var weightKg = 0.0; private var wOverrideJ: Double? = null; private var liveAlerts = false
-    private var wPrime: WPrimeBalance? = null; private var fatigue: FatigueSignals? = null
+    internal var wPrime: WPrimeBalance? = null; private set       // internal: tests read ride state
+    internal var fatigue: FatigueSignals? = null; private set
     private var carbStatus: CarbStatus? = null; private var lastCarbAlertMs: Long? = null; private var lastMedicalMs: Long? = null
     private var emergencyActive = false
 
@@ -161,11 +162,13 @@ class PacingManager(
     fun onPower(w: Int) {
         val now = clock()
         wPrime?.onPower(w, now)
-        fatigue?.onSample(w, lastHr, now, moving)
+        // A strap that stopped sending is unknown HR, not the last bpm held forever.
+        val hr = lastHr.takeIf { lastHrAtMs?.let { now - it <= HR_STALE_MS } == true }
+        fatigue?.onSample(w, hr, now, moving)
         lastPowerAtMs = now
     }
 
-    fun onHr(bpm: Int) { lastHr = bpm.takeIf { it > 0 } }
+    fun onHr(bpm: Int) { lastHr = bpm.takeIf { it > 0 }; lastHrAtMs = clock() }
 
     fun onUserProfile(ftp: Int, weightKg: Double) {
         if (ftp == this.ftp && weightKg == this.weightKg && wPrime != null) return
@@ -411,6 +414,7 @@ class PacingManager(
         const val COND_SUSTAIN_MS = 90_000L
         const val BLOCKS_REFRESH_MS = 5 * 60_000L
         const val POWER_STALE_MS = 10_000L
+        const val HR_STALE_MS = 5_000L
         /** Stable across block recomputes (ids renumber when gaps merge): route metres of the block start. */
         private val ClimbBlock.key: Int get() = startM.roundToInt()
     }

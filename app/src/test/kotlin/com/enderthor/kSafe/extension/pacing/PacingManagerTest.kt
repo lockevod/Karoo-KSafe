@@ -29,10 +29,10 @@ class PacingManagerTest {
         PacingManager(TestScope(), tmp.root, null, clock = { now }, alertSink = { alerts += it }, kneeKjKgOverride = knee)
 
     /** 30 km/h east along the route for [seconds] (default 20 min) starting at second [from];
-     *  [power] null = no power meter; [accuracyM] of every fix. */
-    private fun ride(m: PacingManager, power: Int?, accuracyM: Double, seconds: Int = 1200, from: Int = 0) {
+     *  [power] null = no power meter; [hr] null = no HR strap; [accuracyM] of every fix. */
+    private fun ride(m: PacingManager, power: Int?, accuracyM: Double, seconds: Int = 1200, from: Int = 0, hr: Int? = 150) {
         for (s in from until from + seconds) {
-            now += 1000; m.onSpeed(30.0); power?.let { m.onPower(it) }; m.onHr(150)
+            now += 1000; m.onSpeed(30.0); power?.let { m.onPower(it) }; hr?.let { m.onHr(it) }
             m.onLocation(0.0, (s * 8.33) / 111_320.0, accuracyM)
             if (s % 30 == 0) m.tick()
         }
@@ -149,5 +149,13 @@ class PacingManagerTest {
         scope.testScheduler.advanceTimeBy(61_000); scope.testScheduler.runCurrent()
         m.stop()
         assertEquals("the loop ticked again after the first tick threw", 2, calls)
+    }
+
+    @Test fun `heart rate goes unknown when the strap stops sending`() {
+        val m = manager()
+        m.onUserProfile(250, 70.0); m.onNavigation(route())
+        ride(m, power = 175, accuracyM = 5.0, seconds = 15 * 60 + 1)          // baseline window at 15 min
+        ride(m, power = 175, accuracyM = 5.0, seconds = 6 * 60, from = 15 * 60 + 1, hr = null)
+        assertNull("a window without fresh HR must be discarded", m.fatigue!!.driftPct(now))
     }
 }
