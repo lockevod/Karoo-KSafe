@@ -26,13 +26,13 @@ object PacingAdvisor {
     const val MAX_LEAD_M = 10_000.0
 
     fun inLeadWindow(secondsToBlock: Double?, metresToBlock: Double?, leadS: Double): Boolean {
-        if (secondsToBlock == null || metresToBlock == null) return false
+        if (secondsToBlock == null || metresToBlock == null || !secondsToBlock.isFinite() || !metresToBlock.isFinite()) return false
         if (metresToBlock < TOO_LATE_M || metresToBlock > MAX_LEAD_M) return false
         return secondsToBlock <= leadS || metresToBlock <= MIN_LEAD_M
     }
 
     fun decide(i: PacingInput, prev: PacingState): PacingDecision {
-        if (!i.moving) return PacingDecision(prev, false, "stopped", false, false, false)
+        if (!i.moving) return PacingDecision(if (prev == PacingState.HIGH_MARGIN) PacingState.KEEP else prev, false, "stopped", false, false, false)
         val fuelWin = i.positionTrusted && inLeadWindow(i.secondsToNextBlock, i.metresToNextBlock, LEAD_FUEL_S)
         if (!i.hasPower) return PacingDecision(PacingState.KEEP, false, "no_power", false, false, fuelWin)
 

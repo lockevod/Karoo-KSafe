@@ -40,12 +40,17 @@ class PacingAdvisorTest {
     @Test fun `no power means no advice`() {
         val d = PacingAdvisor.decide(base.copy(hasPower = false, projectedKjKgFinish = 40.0), PacingState.KEEP)
         assertEquals(PacingState.KEEP, d.state); assertEquals("no_power", d.reason)
+        assertFalse(d.recoverW); assertFalse(d.alertWindowPacing)
     }
 
     @Test fun `stopped keeps previous state and opens no window`() {
-        val d = PacingAdvisor.decide(base.copy(moving = false, secondsToNextBlock = 200.0), PacingState.CONSERVE)
-        assertEquals(PacingState.CONSERVE, d.state); assertFalse(d.alertWindowPacing)
+        val d = PacingAdvisor.decide(base.copy(moving = false, secondsToNextBlock = 200.0, metresToNextBlock = 1500.0), PacingState.CONSERVE)
+        assertEquals(PacingState.CONSERVE, d.state)
+        assertFalse(d.alertWindowPacing); assertFalse(d.alertWindowW); assertFalse(d.alertWindowFuel)
     }
+
+    @Test fun `stopped drops high margin to keep`() =
+        assertEquals(PacingState.KEEP, PacingAdvisor.decide(base.copy(moving = false), PacingState.HIGH_MARGIN).state)
 
     @Test fun `recover W when projected W at block start is low`() {
         val d = PacingAdvisor.decide(base.copy(secondsToNextBlock = 250.0, metresToNextBlock = 1500.0, projectedWAtNextBlockPct = 0.3), PacingState.KEEP)
@@ -58,5 +63,6 @@ class PacingAdvisorTest {
         assertTrue(PacingAdvisor.inLeadWindow(900.0, 280.0, 300.0))      // closer than 300 m → open
         assertFalse(PacingAdvisor.inLeadWindow(10.0, 80.0, 300.0))        // inside 100 m → too late
         assertFalse(PacingAdvisor.inLeadWindow(200.0, 12_000.0, 300.0))   // beyond 10 km clamp
+        assertFalse(PacingAdvisor.inLeadWindow(100.0, Double.NaN, 300.0))
     }
 }
