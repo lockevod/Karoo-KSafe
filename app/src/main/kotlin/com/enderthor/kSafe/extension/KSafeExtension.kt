@@ -658,8 +658,9 @@ class KSafeExtension : KarooExtension("ksafe", BuildConfig.VERSION_NAME), Corout
         // docs for the rationale.
         carbsTrackerFlow.value = carbsTracker
         hydrationTrackerFlow.value = hydrationTracker
-        // Shadow pacing advisor (alertSink = null): logs PACE_* rows only, never alerts.
-        pacingManager = com.enderthor.kSafe.extension.pacing.PacingManager(this, filesDir, calibLogger)
+        // Pacing advisor: logs PACE_* rows; alerts reach the sink only while pacingEnabled (setLiveAlerts).
+        pacingManager = com.enderthor.kSafe.extension.pacing.PacingManager(
+            this, filesDir, calibLogger, alertSink = { a -> dispatchPacingAlert(a) })
 
         // Emergency priority: a fueling overlay must never obscure a crash / SOS
         // countdown or alert. The moment the emergency state leaves IDLE, tear down
@@ -732,6 +733,8 @@ class KSafeExtension : KarooExtension("ksafe", BuildConfig.VERSION_NAME), Corout
             configManager.loadConfigFlow().collect { config ->
                 val prevActive = activeConfig.isActive
                 activeConfig = config
+                // Calibration-logging-only riders stay shadow: live only with the pacing switch.
+                if (::pacingManager.isInitialized) pacingManager.setLiveAlerts(config.pacingEnabled, null)
                 // Idempotent: unblock the ride-state collector's first handleRideState so it
                 // never runs against KSafeConfig() defaults on a mid-ride (re)connect.
                 configSeeded.complete(Unit)
@@ -2792,6 +2795,26 @@ class KSafeExtension : KarooExtension("ksafe", BuildConfig.VERSION_NAME), Corout
     /** Returns the wellness monitor, or null if not yet initialised (called from FIT writer). */
     fun wellnessMonitorOrNull(): com.enderthor.kSafe.extension.managers.WellnessMonitor? =
         if (this::wellnessMonitor.isInitialized) wellnessMonitor else null
+
+    /** Live pacing alert (phase 1b). Re-checks the emergency state: pacing never shows over an SOS.
+     *  A failure is logged, never thrown into the pacing tick. */
+    internal fun dispatchPacingAlert(a: com.enderthor.kSafe.extension.pacing.PacingAlert) {
+        if (emergencyActive()) return
+        runCatching {
+            val t = com.enderthor.kSafe.extension.pacing.PacingAlertText.render(a, es = getString(R.string.pacing_alert_lang) == "es")
+            val bg = when (a.state) {
+                com.enderthor.kSafe.extension.pacing.PacingState.CONSERVE -> R.color.pacing_amber
+                com.enderthor.kSafe.extension.pacing.PacingState.HIGH_MARGIN -> R.color.pacing_green
+                else -> R.color.pacing_blue
+            }
+            karooSystem.dispatch(InRideAlert(
+                // Unique per fire: re-dispatching a tracked id can crash the ride app.
+                id = "ksafe-pacing-${a.key}-${System.currentTimeMillis()}",
+                icon = R.drawable.ic_ksafe, title = t.title, detail = t.detail,
+                autoDismissMs = 12_000L, backgroundColor = bg, textColor = R.color.pacing_text,
+            ))
+        }.onFailure { Timber.e(it, "PACE alert dispatch failed") }
+    }
 
     /** True while a crash / SOS / check-in is in progress. Delegates to the canonical
      *  [EmergencyManager.isActive] predicate (reads the in-memory uiState, NOT DataStore). */
