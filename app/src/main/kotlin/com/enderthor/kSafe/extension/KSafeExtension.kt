@@ -1341,6 +1341,11 @@ class KSafeExtension : KarooExtension("ksafe", BuildConfig.VERSION_NAME), Corout
 
     /** Idempotent: [PacingManager.start] keeps an already-started ride, and a live job is reused. */
     private fun startPacing(resume: Boolean, restart: Boolean = false) {
+        // Pacing is advisory: a failure here must never block the safety calls that follow.
+        runCatching { startPacingUnsafe(resume, restart) }.onFailure { Timber.e(it, "Pacing start failed") }
+    }
+
+    private fun startPacingUnsafe(resume: Boolean, restart: Boolean) {
         pacingManager.start(resume, restart)
         if (pacingCollectorsJob?.isActive == true) return
         val handler = kotlinx.coroutines.CoroutineExceptionHandler { _, t -> Timber.e(t, "Pacing collector failed") }

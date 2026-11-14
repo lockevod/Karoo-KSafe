@@ -533,5 +533,5 @@
     <string name="field_pacing_hint">reserva</string>
     <string name="section_pacing">Consejos de ritmo (beta)</string>
     <string name="pacing_enabled_label">Consejos de ritmo</string>
-    <string name="pacing_enabled_hint">Avisos según la ruta cargada y tu potencia. Beta: solo orientativo.</string>
+    <string name="pacing_enabled_hint">Avisos según la ruta cargada y tu potencia o pulso. Beta: solo orientativo.</string>
 </resources>

@@ -22,8 +22,12 @@ class ElevationProfile(private val distM: DoubleArray, private val eleM: DoubleA
     }
 
     fun gainBetween(fromM: Double, toM: Double, stepM: Double = 25.0): Double {
-        var gain = 0.0; var d = fromM; var prev = eleAt(fromM)
-        while (d < toM) { d = minOf(d + stepM, toM); val e = eleAt(d); if (e > prev) gain += e - prev; prev = e }
+        if (!fromM.isFinite() || !toM.isFinite() || !(stepM > 0.0)) return 0.0
+        // eleAt is constant outside the profile, so clamping keeps results and bounds the loop.
+        val from = fromM.coerceIn(0.0, totalM); val to = toM.coerceIn(0.0, totalM)
+        if (to <= from) return 0.0
+        var gain = 0.0; var d = from; var prev = eleAt(from)
+        while (d < to) { d = minOf(d + stepM, to); val e = eleAt(d); if (e > prev) gain += e - prev; prev = e }
         return gain
     }
 

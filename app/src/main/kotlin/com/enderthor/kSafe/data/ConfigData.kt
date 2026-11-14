@@ -129,6 +129,7 @@ const val KAROO_LIVE_BASE_URL = "https://dashboard.hammerhead.io/live/"
  *  v27 → v28: hydration sweat/sodium model fields added (sweat multiplier, replacement %,
  *             sodium profile + measured mmol/L, calibration ratios). Pure version stamp;
  *             all fields have defaults, so existing installs are unaffected.
+ *  v28 → v29: pacing advisor beta switch (pacingEnabled, default OFF); pure version stamp.
  */
 const val CONFIG_VERSION = 29
 

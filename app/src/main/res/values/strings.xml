@@ -583,5 +583,5 @@
     <string name="field_pacing_hint">reserve</string>
     <string name="section_pacing">Pacing advice (beta)</string>
     <string name="pacing_enabled_label">Pacing advice</string>
-    <string name="pacing_enabled_hint">Advice from the loaded route and your power. Beta: guidance only.</string>
+    <string name="pacing_enabled_hint">Advice from the loaded route and your power or heart rate. Beta: guidance only.</string>
 </resources>

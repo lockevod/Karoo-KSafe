@@ -29,8 +29,10 @@ class GradePaceModel(private val bins: MutableMap<BikeKind, Array<Bin>> = mutabl
     }
 
     fun secondsBetween(kind: BikeKind, profile: ElevationProfile, fromM: Double, toM: Double): Double {
-        var s = 0.0; var d = fromM
-        while (d < toM) { val step = minOf(STEP_M, toM - d)
+        if (!fromM.isFinite() || !toM.isFinite()) return 0.0
+        val from = fromM.coerceIn(0.0, profile.totalM); val to = toM.coerceIn(0.0, profile.totalM)
+        var s = 0.0; var d = from
+        while (d < to) { val step = minOf(STEP_M, to - d)
             s += step / (speedKmh(kind, profile.gradeAt(d + step / 2)) / 3.6); d += step }
         return s
     }

@@ -215,15 +215,15 @@ class PacingManager(
         }
         rejoinActive = state.rejoinPolyline != null || state.rejoinDistance != null
         if (sameRoute(route, state)) return
-        route = state
         if (!sameRoute(projRoute, state)) { projRoute = state; firstProjFinish = null; lastProjFinish = null }
         val pts = Polyline.decode(state.routePolyline).let { if (state.reversed) it.reversed() else it }
-        if (pts.size < 2) { path = null; projector = null; profile = null; climbs = emptyList(); blocks = emptyList(); return }
+        if (pts.size < 2) { route = state; path = null; projector = null; profile = null; climbs = emptyList(); blocks = emptyList(); return }
         val p = PolylinePath(pts)
         path = p; projector = RouteProjector(p)
         profile = ElevationProfile.fromKaroo(state.routeElevationPolyline)?.let { if (state.reversed) it.reversed() else it }
         val res = RouteClimbs.resolve(state.climbs, profile, state.reversed)
         climbs = res.climbs
+        route = state  // last: a failure above must not leave the old route's data under the new key
         val sigN = recomputeBlocks()
         val ownN = profile?.let { RouteClimbs.detectOwn(it).size } ?: 0
         calibLogger?.log(Event.PACE_ROUTE) {

@@ -33,4 +33,18 @@ class ElevationProfileTest {
         val e = ElevationProfile.fromKaroo(enc)!!
         assertEquals(1000.0, e.totalM, 0.1); assertEquals(150.0, e.eleAt(1000.0), 0.1)
     }
+    @Test(timeout = 2000) fun `gain with non-finite or out-of-range bounds returns promptly`() {
+        assertEquals(0.0, p.gainBetween(0.0, Double.POSITIVE_INFINITY), 0.0)
+        assertEquals(0.0, p.gainBetween(Double.NaN, 100.0), 0.0)
+        assertEquals(0.0, p.gainBetween(2000.0, 1000.0), 0.0)
+        assertEquals(50.0, p.gainBetween(-1e15, 3000.0), 1e-6)
+        assertEquals(50.0, p.gainBetween(0.0, 1e12), 1e-6)
+    }
+    @Test(timeout = 2000) fun `seconds between with non-finite or huge bounds returns promptly`() {
+        val m = GradePaceModel()
+        assertEquals(0.0, m.secondsBetween(BikeKind.ROAD, p, 0.0, Double.POSITIVE_INFINITY), 0.0)
+        assertEquals(0.0, m.secondsBetween(BikeKind.ROAD, p, Double.NaN, 10.0), 0.0)
+        assertEquals(0.0, m.secondsBetween(BikeKind.ROAD, p, 2000.0, 1000.0), 0.0)
+        assertEquals(m.secondsBetween(BikeKind.ROAD, p, 0.0, 3000.0), m.secondsBetween(BikeKind.ROAD, p, -1e15, 1e12), 1e-6)
+    }
 }
