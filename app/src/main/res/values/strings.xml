@@ -577,4 +577,8 @@
     <string name="fueling_calib_reject_ratio_out_of_range">The result is too far from the estimate to trust. Check the values.</string>
     <!-- Language of the pacing alert texts (PacingAlertText): resolved like every other string, so es-* gets es. Not shown. -->
     <string name="pacing_alert_lang">en</string>
+    <string name="field_pacing_reserve">Reserve</string>
+    <string name="field_pacing_reserve_desc">Pacing advice (beta)</string>
+    <string name="field_pacing_margin">MARGIN</string>
+    <string name="field_pacing_hint">reserve</string>
 </resources>
