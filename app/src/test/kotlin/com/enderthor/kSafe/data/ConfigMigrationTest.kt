@@ -303,7 +303,6 @@ class ConfigMigrationTest {
     fun `v27 config migrates to v28 with hydration defaults`() {
         val migrated = KSafeConfig(configVersion = 27, hydrationTargetMlPerHour = 640).migrateToLatest()
         assertEquals(CONFIG_VERSION, migrated.configVersion)
-        assertEquals(28, migrated.configVersion)
         assertEquals(100, migrated.hydrationSweatMultiplierPct)
         assertEquals(80, migrated.hydrationReplacementPct)
         assertEquals(SweatSodiumProfile.TYPICAL, migrated.sweatSodiumProfile)

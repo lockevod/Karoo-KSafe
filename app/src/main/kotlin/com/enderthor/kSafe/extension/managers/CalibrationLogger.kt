@@ -280,6 +280,24 @@ class CalibrationLogger(
         FUELING_HYDRATION_PERIODIC("HYD_PERIODIC"),
         /** SHADOW over-drink verdict: logged excess reached a new 500 ml level. Never alerts. */
         FUELING_HYDRATION_OVER_SHADOW("HYD_OVER_SHADOW"),
+        /** Pacing (shadow/beta): route load or change — length, reversed, climb source, Karoo vs own climbs. */
+        PACE_ROUTE("PACE_ROUTE"),
+        /** Pacing: route position every 60 s — distance, trusted flag + reason. */
+        PACE_POS("PACE_POS"),
+        /** Pacing: advisor state entry/exit with all inputs, would_alert and suppressed_by. */
+        PACE_ADV("PACE_ADV"),
+        /** Pacing: climb block start/end — predicted vs actual arrival, W′ min, mean power, drift. */
+        PACE_CLIMB("PACE_CLIMB"),
+        /** Pacing: ride-end summary — projected vs actual kJ/kg, kJ/kg at first drift > 5 %. */
+        PACE_END("PACE_END"),
+        /** Pacing: fuel hint evaluation inside a fuel window. */
+        PACE_FUEL("PACE_FUEL"),
+        /** Pacing: partial ride-state reset on a mid-ride FTP / weight / bike-kind change. */
+        PACE_RESET("PACE_RESET"),
+        /** Pacing: shadow evaluation (re)started — reason=fresh (new ride), resume (same ride), restart (process restart mid-ride). */
+        PACE_START("PACE_START"),
+        /** Pacing: stopped mid-ride (master / logging off, service destroyed); ride state kept, no PACE_END. */
+        PACE_STOP("PACE_STOP"),
         /** Ride-end Last-ride record: final totals + whether the ride can be calibrated
          *  (`blocker=` none / NO_RIDE_TIME / TOO_SHORT / LOW_COVERAGE). The last HYD_PERIODIC
          *  can be up to 2 min stale; this is the value the calibration actually judges. */

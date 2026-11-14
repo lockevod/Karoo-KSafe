@@ -17,4 +17,9 @@
     <color name="alert_brown">#5D4037</color>
     <color name="alert_slate">#263238</color>
     <color name="alert_text_white">#FFFFFF</color>
+    <!-- Pacing advisor in-ride alerts (@ColorRes for InRideAlert) -->
+    <color name="pacing_amber">#FFE65100</color>
+    <color name="pacing_green">#FF2E7D32</color>
+    <color name="pacing_blue">#FF1565C0</color>
+    <color name="pacing_text">#FFFFFFFF</color>
 </resources>

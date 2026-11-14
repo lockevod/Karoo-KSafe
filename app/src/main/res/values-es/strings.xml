@@ -526,4 +526,12 @@
     <string name="fueling_calib_reject_implausible_weight">Los pesos parecen poco realistas. Revisa ambos valores.</string>
     <string name="fueling_calib_reject_too_little_sweat">La pérdida de sudor medida es demasiado pequeña para calibrar con fiabilidad.</string>
     <string name="fueling_calib_reject_ratio_out_of_range">El resultado se aleja demasiado de la estimación para fiarse. Revisa los valores.</string>
+    <string name="pacing_alert_lang">es</string>
+    <string name="field_pacing_reserve">Reserva</string>
+    <string name="field_pacing_reserve_desc">Consejo de ritmo (beta)</string>
+    <string name="field_pacing_margin">MARGEN</string>
+    <string name="field_pacing_hint">reserva</string>
+    <string name="section_pacing">Consejos de ritmo (beta)</string>
+    <string name="pacing_enabled_label">Consejos de ritmo</string>
+    <string name="pacing_enabled_hint">Avisos según la ruta cargada y tu potencia o pulso. Beta: solo orientativo.</string>
 </resources>

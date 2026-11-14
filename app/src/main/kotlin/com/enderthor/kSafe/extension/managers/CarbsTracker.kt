@@ -51,6 +51,9 @@ class CarbsTracker(
      *  once the emergency clears. Injected so the tracker stays decoupled from EmergencyManager. */
     private val isEmergencyActive: () -> Boolean,
     private val calibLogger: CalibrationLogger? = null,
+    /** Told after each real (non-preview) alert fires — true for the deficit alert, false for the
+     *  time reminder — so the pacing arbiter can space its own alerts. Additive; never throws back. */
+    private val onAlertFired: (deficit: Boolean) -> Unit = {},
 ) {
 
     // ─── Constants ───────────────────────────────────────────────────────────
@@ -67,6 +70,8 @@ class CarbsTracker(
      *  publishStatus transition logic. */
     private val MOVING_GATE_KMH = CarbIntegrator.MOVING_GATE_KMH
     private val SPEED_STALE_MS  = CarbIntegrator.SPEED_STALE_MS
+    /** Lookahead for [CarbStatus.reminderDueSoon]: same 15 min as the pacing fuel hint's "recent carb alert" gap. */
+    private val REMINDER_DUE_SOON_MS = 15 * 60_000L
     /** A HR / power sample older than this is treated as "sensor gone" by the
      *  burn estimator. 15 s tolerates a few missed ~1 Hz samples (brief BLE
      *  hiccup) without flicker, but reacts well within one 15 s tick when a
@@ -638,6 +643,7 @@ class CarbsTracker(
             caloriesEnabled = caloriesOn,
             masterEnabled = config.isActive,
             carbsEnabled = config.carbsTrackerEnabled,
+            reminderDueSoon = reminderDueWithin(System.currentTimeMillis(), REMINDER_DUE_SOON_MS),
             kcalTotal = cumKcal.toInt(),
             kcalPerHour = kcalH.toInt(),
             calorieSource = calorieSource,
@@ -828,6 +834,22 @@ class CarbsTracker(
         publishStatus()
     }
 
+    /** Pure read for the pacing fuel hint: will a time-grid carb reminder fire within [lookaheadMs]?
+     *  The deficit reminder is not looked ahead (with the default 10-min cooldown it is almost always
+     *  "due soon"): a shown fuel hint replaces it instead, see [onFuelHintShown]. */
+    private fun reminderDueWithin(now: Long, lookaheadMs: Long): Boolean =
+        config.carbsTrackerEnabled && monitorJob != null && currentDueTimeTick(now + lookaheadMs) != 0L
+
+    /** The pacing fuel hint ("good moment to eat") was shown: it counts as the deficit reminder, so the
+     *  deficit cooldown restarts from now and a time tick inside the quiet window is quieted — no second
+     *  "eat" minutes later. No beep, no back-off step (the rider was not nagged by the tracker). */
+    fun onFuelHintShown(now: Long = System.currentTimeMillis()) {
+        if (!config.carbsTrackerEnabled || !config.carbDeficitAlertEnabled || monitorJob == null) return
+        if (now <= lastDeficitAlertFireMs) return
+        lastDeficitAlertFireMs = now
+        calibLogger?.log(CalibrationLogger.Event.FUELING_ALERT_QUIETED) { "kind=carb,reason=pacing_fuel_hint" }
+    }
+
     /** Pure read: is the deficit alert due now, or within [lookaheadMs]? Gate delegated to
      *  [FuelingAlertScheduler.shouldFireDeficit] (v18.2 B9) so carbs and hydration share it
      *  and it is unit-tested; the back-off counter is refreshed in [tick] before this runs. */
@@ -960,6 +982,7 @@ class CarbsTracker(
             )
         }
         Timber.d(">>> Carb alert fired ($source): deficit=${deficit}g elapsed=${elapsedMin}min")
+        runCatching { onAlertFired(source == "deficit") }.onFailure { Timber.e(it, "onAlertFired failed") }
     }
 
     /** Assembles the alert request (title/detail token rendering, slot pick, InRideAlert
@@ -1100,6 +1123,9 @@ data class CarbStatus(
      *  cumulative/deficit stay frozen at 0 — the carb fields must render neutral
      *  instead of a live rate that disagrees with its frozen siblings. */
     val carbsEnabled: Boolean = true,
+    /** A time-grid carb reminder is due within 15 min: the pacing fuel hint steps aside so the rider
+     *  never hears "eat" twice in a few minutes (the deficit reminder is replaced by the hint instead). */
+    val reminderDueSoon: Boolean = false,
     /** Cumulative HR-based energy this session (kcal). 0 until any accrues. */
     val kcalTotal: Int,
     /** Instantaneous energy expenditure (kcal/h). 0 when no HR/power (→ field shows `---`). */

@@ -122,6 +122,9 @@ the SOS screen, check-in, fueling reminders — keeps working exactly the same.
 ### ⚙️ Settings — housekeeping (mostly leave alone)
 
 - **Language** follows your Karoo automatically (English or Spanish) — there's no switch.
+- **Pacing advice (beta)** — optional, off by default (section above FIT export). With a
+  route loaded, short alerts before climbs ("Save it for the climb" with a power meter or HR strap,
+  "Ease off before the climb" with HR zones, "High margin" with a power meter…) and a **Reserve** field. Guidance only. See [pacing-advisor.md](pacing-advisor.md).
 - **Help improve crash detection** — an optional toggle that sends anonymous sensor data
   after rides (no GPS, no messages, no names). Turning it on genuinely helps make crash
   detection better. Your call.

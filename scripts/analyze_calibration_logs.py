@@ -45,6 +45,13 @@ Event catalogue understood by this script:
     INC_NO (INCIDENT_CANCELLED — non-crash/medical cancel: wellness /
     SOS / check-in / speed-drop, with `subkind=<reason>` payload)
 
+  Pacing advisor (shadow/live; analysed by pacing_summary):
+    PACE_ROUTE (src, karoo_n, karoo_ok, own_n, sig_n, blocks_n), PACE_POS
+    (pos_m, trusted, reason), PACE_ADV (state, would_alert, suppressed_by, live),
+    PACE_FUEL (reason incl. carb_reminder_due; overlap=carb_after_hint rows), PACE_CLIMB (phase=start|end, pred_s_first, actual_s),
+    PACE_END (kjkg_at_drift5, moving_s, power_cov), PACE_START (reason=fresh|resume|restart),
+    PACE_STOP (reason, mid-ride stop), PACE_RESET (reason=weight|ftp|kind)
+
   Fueling (carbs + hydration):
     CARB_START / CARB_LOG / CARB_UNDO / CARB_FIRE / CARB_PERIODIC
     HYD_START / HYD_LOG / HYD_UNDO / HYD_FIRE / HYD_PERIODIC / HYD_OVER_SHADOW
@@ -833,6 +840,89 @@ def _print_aggregated(summaries: list[FileSummary], header: str):
 # ─────────────────────────────────────────────────────────────────────────────
 # Main
 
+def _med_p90(xs: list[float]) -> str:
+    if not xs:
+        return "n/a"
+    # Linear-interpolated p90 (inclusive): n=10 no longer reports the max.
+    p90 = statistics.quantiles(xs, n=10, method="inclusive")[8] if len(xs) > 1 else xs[0]
+    return f"median {statistics.median(xs):.0f}s  p90 {p90:.0f}s  (n={len(xs)})"
+
+
+def pacing_summary(paths: list[Path]) -> None:
+    """Per-session pacing report; prints nothing when no PACE_* row exists."""
+    out: list[str] = []
+    covs: list[float] = []
+    for path in paths:
+        rows = [r for r in _row_iter(path) if r[2].startswith("PACE_")]
+        if not rows:
+            continue
+        by: dict[str, list] = defaultdict(list)
+        for ts, el, ev, d in rows:
+            by[ev].append((el, d))
+        out.append(f"\n  session {path.name}")
+        reasons = lambda ev: dict(Counter(d.get("reason", "?") for _, d in by[ev]))
+        out.append(f"    lifecycle: PACE_START {reasons('PACE_START')}  PACE_STOP {reasons('PACE_STOP')}  "
+                   f"PACE_RESET {reasons('PACE_RESET')}  PACE_END {len(by['PACE_END'])}")
+        sess_cov = [c for _, d in by["PACE_END"] if (c := _to_float(d.get("power_cov"))) is not None]
+        covs += sess_cov
+        out.append(f"    PACE_END power_cov: {sess_cov or 'none'}")
+        routes = by["PACE_ROUTE"]
+        out.append(f"    routes: {len(routes)}  src: {dict(Counter(d.get('src', '?') for _, d in routes))}")
+        kn = sum(_to_float(d.get("karoo_n")) or 0 for _, d in routes)
+        ko = sum(_to_float(d.get("karoo_ok")) or 0 for _, d in routes)
+        out.append(f"    karoo_n={kn:.0f} karoo_ok={ko:.0f}")
+        pos = by["PACE_POS"]
+        untr = Counter(d.get("reason", "?") for _, d in pos if d.get("trusted") == "false")
+        pct = 100.0 * sum(untr.values()) / len(pos) if pos else 0.0
+        out.append(f"    PACE_POS untrusted: {pct:.0f}% of {len(pos)}  by reason: {dict(untr)}")
+        adv = by["PACE_ADV"]
+        if adv:
+            end = by["PACE_END"]
+            mov_s = _to_float(end[-1][1].get("moving_s")) if end else None
+            basis = "moving" if mov_s else "logged"
+            if not mov_s:
+                mov_s = adv[-1][0] - adv[0][0]
+            hrs = mov_s / 3600.0 if mov_s and mov_s > 0 else None
+            states = [d.get("state") for _, d in adv]
+            changes = sum(1 for a, b in zip(states, states[1:]) if a != b)
+            wa = len({d.get("key") for _, d in adv if d.get("would_alert") == "true"})
+            live = any(d.get("live") == "true" for _, d in adv)
+            wa_tag = " (live)" if live else " (shadow: not a bound on live alerts \u2014 live may re-fire a key when it worsens)"
+            sup_tag = " (live)" if live else " (shadow: arbiter fires not recorded \u2014 pacing_rate/repeat cannot appear)"
+            per_h = (lambda n: f"{n / hrs:.1f}/h ({basis} h)") if hrs else (lambda n: "n/a")
+            out.append(f"    PACE_ADV: state changes {changes} = {per_h(changes)}")
+            out.append(f"    would_alert distinct candidate keys{wa_tag}: {wa} = {per_h(wa)}")
+            out.append(f"    suppressed_by{sup_tag}: {dict(Counter(d.get('suppressed_by', '?') for _, d in adv if d.get('would_alert') == 'false'))}")
+            byp = Counter(d.get("bypass") for _, d in adv if d.get("bypass") not in (None, "none", "na"))
+            out.append(f"    bypass (rule waived, live only): {dict(byp) or 'none'}")
+            # Ease-off cue followed by its own block's CONSERVE / HIGH_MARGIN (would_alert, shadow or live).
+            wa_keys = [d.get("key", "") for _, d in adv if d.get("would_alert") == "true"]
+            cue_blocks = {k.split("#", 1)[1] for k in wa_keys if k.startswith("INTENSITY#")}
+            follow = {k.split("#", 1)[1] for k in wa_keys if k.startswith(("CONSERVE#", "HIGH_MARGIN#"))} & cue_blocks
+            out.append(f"    ease-off cue blocks: {len(cue_blocks)}  then own-block CONSERVE/HIGH_MARGIN: {len(follow)}")
+        fuel = by["PACE_FUEL"]
+        if fuel:
+            out.append(f"    PACE_FUEL reasons: {dict(Counter(d.get('reason', '?') for _, d in fuel if d.get('block') != 'na'))}")
+            ov = [d for _, d in fuel if d.get("overlap")]
+            out.append(f"    double 'eat' (carb reminder < 15 min after a fuel hint): {len(ov)}"
+                       + (f"  since_hint_s: {[d.get('since_hint_s') for d in ov]}" if ov else ""))
+        errs = []
+        for _, d in by["PACE_CLIMB"]:
+            p_, a_ = _to_float(d.get("pred_s_first")), _to_float(d.get("actual_s"))
+            if d.get("phase") == "start" and p_ is not None and a_ is not None:
+                errs.append(abs(p_ - a_))
+        out.append(f"    PACE_CLIMB |pred_s_first - actual_s|: {_med_p90(errs)}")
+        knees = [d.get("kjkg_at_drift5") for _, d in by["PACE_END"] if _to_float(d.get("kjkg_at_drift5")) is not None]
+        out.append(f"    PACE_END kjkg_at_drift5 (knee calibration): {knees or 'none'}")
+    if covs:
+        xs = sorted(covs)
+        out.append(f"\n  power_cov over PACE_END rows (n={len(xs)}): min {xs[0]:.2f}  median {statistics.median(xs):.2f}  "
+                   f"max {xs[-1]:.2f}  <0.90: {sum(1 for c in xs if c < 0.90)}")
+    if out:
+        print("\n" + "=" * 88 + "\n Pacing advisor" + "\n" + "=" * 88)
+        print("\n".join(out))
+
+
 def _discover(root: Path) -> list[Path]:
     if not root.exists():
         return []
@@ -886,6 +976,8 @@ def main(argv: list[str]) -> int:
             legacy,
             "Legacy cohort (no version/device or pre-state-machine schema — diagnostic only)",
         )
+
+    pacing_summary([fs.path for fs in summaries])
 
     print("\n" + "=" * 88)
     tiny = sum(1 for fs in summaries if fs.is_tiny)

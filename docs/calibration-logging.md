@@ -132,6 +132,21 @@ Every CSV row is tagged with a short event identifier. The current catalogue:
 | `HYD_END` | *(2.3.0)* once at ride end: final sweat / sodium / logged totals, coverage and `blocker` (why this ride can't be calibrated, or `none`) |
 | `HYD_CALIB` | *(2.3.0)* each weigh-in calibration from the Hydration tab: accepted (ratio, new multiplier) or rejected (reason). Usually lands in the next ride's log |
 
+### Pacing advisor (beta)
+When calibration logging is on, the pacing advisor also runs in **shadow** (no alerts unless the pacing switch is on) and writes these rows. `would_alert` in `PACE_ADV` is a shadow verdict, not the live alert rate (`live=` says whether alerts were enabled).
+| Tag | Meaning |
+|---|---|
+| `PACE_START` / `PACE_STOP` | Evaluation (re)started (`reason=fresh/resume/restart`) / stopped mid-ride (`reason`) |
+| `PACE_ROUTE` | Route loaded or changed: length, reversed, climb source, Karoo vs own climbs |
+| `PACE_POS` | Route position every 60 s: distance, trusted flag + reason |
+| `PACE_ADV` | Each advisor state change, and each evaluated alert candidate (`key`, `sev`), with all inputs, `would_alert`, `suppressed_by`, `bypass` (a waived rule: `after_cue` = a climb's Conserva / High margin let through the 10-min limit after its ease-off cue; `none` otherwise), `live`. `src=power/hr/none` is the work source (`kjkg` / `proj_*` come from it), `hr_cov` the share of moving time with an HR work estimate (`na` without age/sex/weight), `hr5` the mean HR over the last 5 moving minutes and `z4` the Karoo HR zone 4 lower bound (`na` when unknown) |
+| `PACE_CLIMB` | Climb block start/end: predicted vs actual arrival, W′ minimum, mean power, drift |
+| `PACE_FUEL` | Fuel-hint evaluation inside a fuel window (`reason`: `recent_carb_alert` / `carb_reminder_due` = skipped to avoid a double "eat"; logged on every fire and on each reason change). A shown hint restarts the carb deficit cooldown and logs `FUEL_QUIET kind=carb,reason=pacing_fuel_hint`. A row with `block=na,overlap=carb_after_hint` (`source`, `since_hint_s`) marks a carb reminder within 15 min after a fuel hint the arbiter let through |
+| `PACE_RESET` | Partial reset on a mid-ride FTP / weight / bike-type change |
+| `PACE_END` | Ride-end summary: projected vs actual (power) kJ/kg, kJ/kg at first drift > 5 %, `power_cov`, `src` at the last evaluation, `hr_cov` |
+
+`scripts/analyze_calibration_logs.py` prints a pacing section. See [pacing-advisor.md](pacing-advisor.md).
+
 ### Emergency dispatch
 | Tag | Meaning |
 |---|---|

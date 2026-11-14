@@ -249,6 +249,7 @@ class KSafeExtension : KarooExtension("ksafe", BuildConfig.VERSION_NAME), Corout
     private lateinit var wellnessMonitor: WellnessMonitor
     private lateinit var carbsTracker: com.enderthor.kSafe.extension.managers.CarbsTracker
     private lateinit var hydrationTracker: com.enderthor.kSafe.extension.managers.HydrationTracker
+    internal lateinit var pacingManager: com.enderthor.kSafe.extension.pacing.PacingManager
     /** On-screen fueling-alert overlay (SYSTEM_ALERT_WINDOW). Lazy because it needs the
      *  Application context and is only touched when a fueling alert is presented as an
      *  overlay (mode != OFF + overlay permission + no active emergency). The [Lazy] handle
@@ -449,10 +450,12 @@ class KSafeExtension : KarooExtension("ksafe", BuildConfig.VERSION_NAME), Corout
             // carb tracker integrating, and both halves want power / profile / HR.
             val fuel = c.carbsTrackerEnabled || c.hrCaloriesEnabled
             val hyd = c.hydrationTrackerEnabled
+            // Shadow pacing (logs only) runs while calibration logging is on — see [pacingWanted].
+            val pace = c.calibrationLoggingEnabled || c.pacingEnabled
             return RecordingStreamNeeds(
-                power = fuel || hyd || c.wellnessEnabled || c.medicalEpisodeEnabled,
-                userProfile = fuel || hyd || c.wellnessEnabled,
-                heartRate = fuel || hyd || c.wellnessEnabled || c.medicalEpisodeEnabled,
+                power = fuel || hyd || c.wellnessEnabled || c.medicalEpisodeEnabled || pace,
+                userProfile = fuel || hyd || c.wellnessEnabled || pace,
+                heartRate = fuel || hyd || c.wellnessEnabled || c.medicalEpisodeEnabled || pace,
                 ambient = hyd,
             )
         }
@@ -485,6 +488,11 @@ class KSafeExtension : KarooExtension("ksafe", BuildConfig.VERSION_NAME), Corout
             com.enderthor.kSafe.extension.managers.CarbsTracker?>(null)
         val hydrationTrackerFlow = kotlinx.coroutines.flow.MutableStateFlow<
             com.enderthor.kSafe.extension.managers.HydrationTracker?>(null)
+        /** [PacingManager.view], published like [carbsTrackerFlow] for the Reserve field. */
+        val pacingViewFlow = kotlinx.coroutines.flow.MutableStateFlow<
+            kotlinx.coroutines.flow.StateFlow<com.enderthor.kSafe.extension.pacing.PacingView?>?>(null)
+        /** Mirrors activeConfig.isActive && pacingEnabled for the Reserve field; null until config is seeded. */
+        val pacingEnabledFlow = kotlinx.coroutines.flow.MutableStateFlow<Boolean?>(null)
 
         /** True while a ride is active (Recording or Paused), republished by
          *  [handleRideState]. The fueling `startStream` publishers combine this so
@@ -541,6 +549,7 @@ class KSafeExtension : KarooExtension("ksafe", BuildConfig.VERSION_NAME), Corout
             com.enderthor.kSafe.datatype.CarbLogDataType("carb-log-2", applicationContext, karooSystem, slot = 2),
             com.enderthor.kSafe.datatype.CarbLogDataType("carb-log-3", applicationContext, karooSystem, slot = 3),
             com.enderthor.kSafe.datatype.CarbStatusDataType("carb-status", applicationContext, karooSystem),
+            com.enderthor.kSafe.datatype.ReserveDataType("pacing-reserve", applicationContext, karooSystem),
             com.enderthor.kSafe.datatype.CarbBurnRateDataType("carb-burn-rate"),
             com.enderthor.kSafe.datatype.CarbAvgBurnRateDataType("carb-avg-burn-rate"),
             com.enderthor.kSafe.datatype.CarbsBurnedDataType("carbs-burned"),
@@ -606,6 +615,8 @@ class KSafeExtension : KarooExtension("ksafe", BuildConfig.VERSION_NAME), Corout
             // re-arm running; Paused → re-arm frozen; Idle → no re-arm (a dead-man's-switch
             // armed off-ride would fire an unattended CHECKIN_EXPIRED SOS later).
             isRecording = { currentRideState is RideState.Recording },
+            // Check-in pre-warning / provider warning / delivery notice: keep pacing quiet after it.
+            onRiderAlert = { reportPacingExternal(com.enderthor.kSafe.extension.pacing.AlertSource.EMERGENCY) },
         )
         crashManager = CrashDetectionManager(applicationContext, this, {
             Timber.d("Crash detected by sensor!")
@@ -617,7 +628,7 @@ class KSafeExtension : KarooExtension("ksafe", BuildConfig.VERSION_NAME), Corout
             scope = this,
             onIncident = { reason, tokens ->
                 launch {
-                    emergencyManager.handleIncident(reason, activeConfig.medicalResponseLevel, activeConfig, tokens)
+                    handleSafetyIncident(reason, activeConfig.medicalResponseLevel, tokens)
                 }
             },
             calibLogger = calibLogger,
@@ -626,7 +637,7 @@ class KSafeExtension : KarooExtension("ksafe", BuildConfig.VERSION_NAME), Corout
             scope = this,
             onIncident = { reason, tokens ->
                 launch {
-                    emergencyManager.handleIncident(reason, activeConfig.wellnessResponseLevel, activeConfig, tokens)
+                    handleSafetyIncident(reason, activeConfig.wellnessResponseLevel, tokens)
                 }
             },
             calibLogger = calibLogger,
@@ -638,6 +649,7 @@ class KSafeExtension : KarooExtension("ksafe", BuildConfig.VERSION_NAME), Corout
             onFuelingAlert = { presentFuelingAlert(it) },
             isEmergencyActive = ::emergencyActive,
             calibLogger = calibLogger,
+            onAlertFired = ::reportPacingFuelAlert,
         )
         hydrationTracker = com.enderthor.kSafe.extension.managers.HydrationTracker(
             scope = this,
@@ -649,12 +661,18 @@ class KSafeExtension : KarooExtension("ksafe", BuildConfig.VERSION_NAME), Corout
             isRecording = { currentRideState is RideState.Recording },
             rideTimeMs = { rideTimeMs },
             calibLogger = calibLogger,
+            onAlertFired = ::reportPacingFuelAlert,
         )
         // Publish tracker references so the status DataTypes can suspend on the flow
         // instead of polling getInstance every second. See companion's tracker-flow
         // docs for the rationale.
         carbsTrackerFlow.value = carbsTracker
         hydrationTrackerFlow.value = hydrationTracker
+        // Pacing advisor: logs PACE_* rows; alerts reach the sink only while pacingEnabled (setLiveAlerts).
+        pacingManager = com.enderthor.kSafe.extension.pacing.PacingManager(
+            this, filesDir, calibLogger, alertSink = { a -> dispatchPacingAlert(a) },
+            emergencyProbe = { emergencyManager.alertJobActive() })
+        pacingViewFlow.value = pacingManager.view
 
         // Emergency priority: a fueling overlay must never obscure a crash / SOS
         // countdown or alert. The moment the emergency state leaves IDLE, tear down
@@ -665,9 +683,17 @@ class KSafeExtension : KarooExtension("ksafe", BuildConfig.VERSION_NAME), Corout
         // overlays while non-IDLE; this collector is the belt-and-suspenders teardown
         // for one shown in the instant before the transition.)
         launch {
+            var prevStatus = com.enderthor.kSafe.data.EmergencyStatus.IDLE
             com.enderthor.kSafe.extension.managers.EmergencyManager.uiState.collect { st ->
                 if (st.status != com.enderthor.kSafe.data.EmergencyStatus.IDLE &&
                     fuelingOverlayLazy.isInitialized()) fuelingOverlay.remove()
+                if (this@KSafeExtension::pacingManager.isInitialized)
+                    pacingManager.setEmergencyActive(st.status != com.enderthor.kSafe.data.EmergencyStatus.IDLE)
+                // Any emergency end (cancel, ALERTING rollback, sent): a 3-min pacing quiet gap after it.
+                if (prevStatus != com.enderthor.kSafe.data.EmergencyStatus.IDLE &&
+                    st.status == com.enderthor.kSafe.data.EmergencyStatus.IDLE)
+                    reportPacingExternal(com.enderthor.kSafe.extension.pacing.AlertSource.EMERGENCY)
+                prevStatus = st.status
             }
         }
 
@@ -725,6 +751,13 @@ class KSafeExtension : KarooExtension("ksafe", BuildConfig.VERSION_NAME), Corout
             configManager.loadConfigFlow().collect { config ->
                 val prevActive = activeConfig.isActive
                 activeConfig = config
+                // Calibration-logging-only riders stay shadow: live only with the pacing switch.
+                if (::pacingManager.isInitialized) {
+                    pacingManager.setLiveAlerts(config.pacingEnabled, null)
+                    pacingManager.setRider(config.riderAge, config.riderSex)   // Keytel inputs for the HR work estimate
+                }
+                // Master off = no advice either: the Reserve field shows OFF, not a frozen state.
+                pacingEnabledFlow.value = config.isActive && config.pacingEnabled
                 // Idempotent: unblock the ride-state collector's first handleRideState so it
                 // never runs against KSafeConfig() defaults on a mid-ride (re)connect.
                 configSeeded.complete(Unit)
@@ -793,6 +826,9 @@ class KSafeExtension : KarooExtension("ksafe", BuildConfig.VERSION_NAME), Corout
                         // the rest of the ride. Idempotent when the set is unchanged;
                         // a no-op when the master switch is OFF (needs are all false).
                         startRecordingCollectors()
+                        // Calibration logging / pacingEnabled toggled mid-ride: follow the pacing stream gate.
+                        if (pacingWanted(config)) startPacing(resume = true)
+                        else stopPacing(if (config.isActive) "logging_off" else "master_off")
                     }
                     is RideState.Paused -> applyMasterSwitchTransitionPaused(prevActive)
                     else -> { /* null: not yet observed, leave as-is */ }
@@ -1093,9 +1129,9 @@ class KSafeExtension : KarooExtension("ksafe", BuildConfig.VERSION_NAME), Corout
      * HR + POWER — the other four are pure waste for that rider.
      *
      * Consumers, from the fan-out blocks in [startRecordingCollectors]:
-     *  - POWER       → carbs, wellness, hydration, medical (FLATLINE cross-check)
-     *  - UserProfile → carbs, wellness, hydration
-     *  - HEART_RATE  → medical, wellness, carbs, hydration
+     *  - POWER       → carbs, wellness, hydration, medical (FLATLINE cross-check), pacing
+     *  - UserProfile → carbs, wellness, hydration, pacing
+     *  - HEART_RATE  → medical, wellness, carbs, hydration, pacing
      *  - ambient (onboard TEMPERATURE + Headwind temp/humidity) → hydration only
      *
      * INVARIANT: `ambient` implies all three others, because its only consumer
@@ -1196,6 +1232,7 @@ class KSafeExtension : KarooExtension("ksafe", BuildConfig.VERSION_NAME), Corout
                         // detector treats absence-of-power as "cross-check not plumbed" and
                         // falls through to the original FLATLINE path.
                         medicalDetector.updatePower(w)
+                        feedPacing { onPower(w) }
                     }
             }
 
@@ -1211,6 +1248,7 @@ class KSafeExtension : KarooExtension("ksafe", BuildConfig.VERSION_NAME), Corout
                         carbsTracker.updateUserProfile(profile)
                         wellnessMonitor.updateUserProfile(profile)
                         hydrationTracker.updateUserProfile(profile)
+                        feedPacing { onUserProfile(profile) }
                     }
             }
 
@@ -1223,8 +1261,10 @@ class KSafeExtension : KarooExtension("ksafe", BuildConfig.VERSION_NAME), Corout
                         wellnessMonitor.updateHr(hr)
                         carbsTracker.updateHr(hr)
                         hydrationTracker.updateHr(hr)
+                        feedPacing { onHr(hr) }
                     }
             }
+
 
             // Onboard Karoo temperature sensor. Device-heat biased (typically reads
             // +3–8 °C above ambient when in direct sun / after warm-up), but always
@@ -1286,6 +1326,59 @@ class KSafeExtension : KarooExtension("ksafe", BuildConfig.VERSION_NAME), Corout
             }  // end supervisorScope (J7)
             }  // end withContext(collectorHandler) (K8)
         }
+    }
+
+    /** Pacing runs while the master switch is on and calibration logging or the pacing advisor is on. */
+    private fun pacingWanted(c: KSafeConfig = activeConfig): Boolean = c.isActive && (c.calibrationLoggingEnabled || c.pacingEnabled)
+
+    /** Pacing-only streams (route, GPS fix, carb status), kept OUT of [recordingCollectorsJob]. A
+     *  calibration-logging toggle CAN still rebuild the Recording collectors (POWER / HR / UserProfile)
+     *  through [recordingStreamNeeds] when pacing is their only extra consumer — a rider without fueling /
+     *  wellness / medical, whose needs tuple changes. That is a 1–2 s resubscribe gap for those consumers,
+     *  below [com.enderthor.kSafe.extension.pacing.PacingManager.HR_STALE_MS]; riders whose tuple is
+     *  unchanged keep their collectors untouched. */
+    @Volatile private var pacingCollectorsJob: Job? = null
+
+    /** Idempotent: [PacingManager.start] keeps an already-started ride, and a live job is reused. */
+    private fun startPacing(resume: Boolean, restart: Boolean = false) {
+        // Pacing is advisory: a failure here must never block the safety calls that follow.
+        runCatching { startPacingUnsafe(resume, restart) }.onFailure { Timber.e(it, "Pacing start failed") }
+    }
+
+    private fun startPacingUnsafe(resume: Boolean, restart: Boolean) {
+        pacingManager.start(resume, restart)
+        if (pacingCollectorsJob?.isActive == true) return
+        val handler = kotlinx.coroutines.CoroutineExceptionHandler { _, t -> Timber.e(t, "Pacing collector failed") }
+        pacingCollectorsJob = launch(handler) {
+            kotlinx.coroutines.supervisorScope {
+                launch {
+                    karooSystem.streamNavigationState().collect { pacingManager.onNavigation(it.state) }
+                }
+                launch {
+                    karooSystem.streamDataFlow(io.hammerhead.karooext.models.DataType.Type.LOCATION).collect { st ->
+                        val s = st as? io.hammerhead.karooext.models.StreamState.Streaming ?: return@collect
+                        val v = s.dataPoint.values
+                        val lat = v[io.hammerhead.karooext.models.DataType.Field.LOC_LATITUDE] ?: return@collect
+                        val lng = v[io.hammerhead.karooext.models.DataType.Field.LOC_LONGITUDE] ?: return@collect
+                        pacingManager.onLocation(lat, lng, v[io.hammerhead.karooext.models.DataType.Field.LOC_ACCURACY])
+                    }
+                }
+                launch { carbsTracker.statusFlow.collect { pacingManager.onCarbStatus(it) } }
+            }
+        }
+    }
+
+    /** Pacing fan-out from collectors shared with crash / medical / fueling: only when the rider
+     *  opted in, and a pacing throw is logged instead of killing the shared collector. */
+    private fun feedPacing(block: com.enderthor.kSafe.extension.pacing.PacingManager.() -> Unit) {
+        if (!::pacingManager.isInitialized || !pacingWanted()) return
+        runCatching { pacingManager.block() }.onFailure { Timber.e(it, "PACE input failed") }
+    }
+
+    /** [endOfRide] only at the real ride end (Idle): one PACE_END per ride; any other stop logs PACE_STOP [reason]. */
+    private fun stopPacing(reason: String, endOfRide: Boolean = false) {
+        pacingCollectorsJob?.cancel(); pacingCollectorsJob = null
+        pacingManager.stop(endOfRide, reason)
     }
 
     private fun stopRecordingCollectors() {
@@ -1355,6 +1448,7 @@ class KSafeExtension : KarooExtension("ksafe", BuildConfig.VERSION_NAME), Corout
                         medicalDetector.updateSpeed(speedKmh)
                         if (this@KSafeExtension::carbsTracker.isInitialized) carbsTracker.updateSpeed(speedKmh)
                         if (this@KSafeExtension::hydrationTracker.isInitialized) hydrationTracker.updateSpeed(speedKmh)
+                        feedPacing { onSpeed(speedKmh) }
                     }
             }
 
@@ -1398,6 +1492,7 @@ class KSafeExtension : KarooExtension("ksafe", BuildConfig.VERSION_NAME), Corout
                     .distinctUntilChanged()
                     .collect { profile ->
                         crashManager.updateRideProfile(profile.routingPreference)
+                        feedPacing { onRoutingPreference(profile.routingPreference) }
                         activeProfileId = profile.id
                         activeProfileIdFlow.value = profile.id   // reactive mirror for the Settings UI
                         // Atomic read-modify-write (see ConfigurationManager.updateConfig):
@@ -1468,6 +1563,9 @@ class KSafeExtension : KarooExtension("ksafe", BuildConfig.VERSION_NAME), Corout
                     // wipe an hour of fueling work). Crash + medical have no rider-visible
                     // accumulator, so .start() is safe in either case.
                     val isResumeFromPause = rideStartNotificationSent
+                    // Read before the fueling branch below consumes it: a pending restore marks a
+                    // process restart mid-ride (pacing only labels its fresh start with it).
+                    val pacingRestart = !isResumeFromPause && pendingFuelingRestore != null
                     val eff = effectiveCrashConfig()
                     if (isResumeFromPause) crashManager.resume(eff)
                     else crashManager.start(eff)
@@ -1505,6 +1603,10 @@ class KSafeExtension : KarooExtension("ksafe", BuildConfig.VERSION_NAME), Corout
                             hydrationTracker.resume(activeConfig)
                         }
                     }
+                    // Same resume semantics as carbsTracker.resume(): keeps a live session (Paused→Recording,
+                    // or one a mid-ride master flip created), else a fresh start (restart-labelled after a
+                    // process restart). Idempotent while pacing already runs.
+                    if (pacingWanted()) startPacing(resume = true, restart = pacingRestart)
                     // Same first-start vs resume distinction as the trackers above:
                     // on a Paused→Recording resume the check-in must continue with its
                     // REMAINING interval, not restart from zero. Restarting on every
@@ -1592,6 +1694,7 @@ class KSafeExtension : KarooExtension("ksafe", BuildConfig.VERSION_NAME), Corout
                 // instead of reviving them. Mid-ride master/feature stops keep the default
                 // false — their retained state is still this ride's live session.
                 carbsTracker.stop(endOfSession = true)
+                stopPacing("ride_end", endOfRide = true)
                 // Last-ride record (weigh-in calibration / sodium summary) BEFORE stop() — null
                 // unless this ride had a live hydration session. Ride time is cleared after it.
                 val hydRecord = hydrationTracker.lastRideSnapshot()
@@ -1701,6 +1804,7 @@ class KSafeExtension : KarooExtension("ksafe", BuildConfig.VERSION_NAME), Corout
             // sendAlerts dispatch fired despite the rider's explicit "disable all
             // safety alerts" intent. stopAll() also cancels any in-flight alertJob.
             emergencyManager.stopAll()
+            stopPacing("master_off")   // after the safety teardown, never before it
         } else {
             Timber.d("Master switch ON mid-ride — resuming monitoring (preserving session totals)")
             // Re-arm the Recording-only collectors (idempotent if they were never
@@ -1719,6 +1823,7 @@ class KSafeExtension : KarooExtension("ksafe", BuildConfig.VERSION_NAME), Corout
             wellnessMonitor.resume(activeConfig)
             carbsTracker.resume(activeConfig)
             hydrationTracker.resume(activeConfig)
+            if (pacingWanted()) startPacing(resume = true)
             emergencyManager.startCheckinTimer(activeConfig)
         }
     }
@@ -1753,6 +1858,7 @@ class KSafeExtension : KarooExtension("ksafe", BuildConfig.VERSION_NAME), Corout
             // crash/medical countdown actively ticking inside the autopause is
             // aborted along with everything else.
             emergencyManager.stopAll()
+            stopPacing("master_off")   // after the safety teardown, never before it
         } else {
             // OFF→ON during Paused: leave as-is. The rider has no live monitoring
             // session to re-attach to (`crashManager.resume` etc. would observe
@@ -2717,6 +2823,51 @@ class KSafeExtension : KarooExtension("ksafe", BuildConfig.VERSION_NAME), Corout
     /** Returns the wellness monitor, or null if not yet initialised (called from FIT writer). */
     fun wellnessMonitorOrNull(): com.enderthor.kSafe.extension.managers.WellnessMonitor? =
         if (this::wellnessMonitor.isInitialized) wellnessMonitor else null
+
+    /** Live pacing alert (phase 1b). Re-checks the emergency state: pacing never shows over an SOS.
+     *  A failure is logged, never thrown into the pacing tick. Returns true only when dispatched. */
+    internal fun dispatchPacingAlert(a: com.enderthor.kSafe.extension.pacing.PacingAlert): Boolean {
+        // A rolled-back ALERTING is IDLE while the SOS still retries in the background: still an emergency.
+        if (emergencyActive() || emergencyManager.alertJobActive()) return false
+        return runCatching {
+            val t = com.enderthor.kSafe.extension.pacing.PacingAlertText.render(a, es = getString(R.string.pacing_alert_lang) == "es")
+            val bg = when (a.state) {
+                com.enderthor.kSafe.extension.pacing.PacingState.CONSERVE -> R.color.pacing_amber
+                com.enderthor.kSafe.extension.pacing.PacingState.HIGH_MARGIN -> R.color.pacing_green
+                else -> R.color.pacing_blue
+            }
+            karooSystem.dispatch(InRideAlert(
+                // Unique per fire: re-dispatching a tracked id can crash the ride app.
+                id = "ksafe-pacing-${a.key}-${System.currentTimeMillis()}",
+                icon = R.drawable.ic_ksafe, title = t.title, detail = t.detail,
+                autoDismissMs = 12_000L, backgroundColor = bg, textColor = R.color.pacing_text,
+            ))
+        }.onFailure { Timber.e(it, "PACE alert dispatch failed") }.isSuccess.also { shown ->
+            // A shown fuel hint replaces the carb deficit reminder (no second "eat" minutes later).
+            if (shown && a.source == com.enderthor.kSafe.extension.pacing.AlertSource.FUEL_HINT && ::carbsTracker.isInitialized)
+                runCatching { carbsTracker.onFuelHintShown() }.onFailure { Timber.e(it, "onFuelHintShown failed") }
+        }
+    }
+
+    /** Medical / wellness incident: the unchanged [EmergencyManager.handleIncident] call, then the
+     *  pacing arbiter is told only if the rider saw something — not SILENT (log only) and not an
+     *  incident handleIncident drops because an emergency is already running. */
+    internal fun handleSafetyIncident(reason: EmergencyReason, level: com.enderthor.kSafe.data.IncidentResponseLevel, tokens: Map<String, String>) {
+        val riderVisible = level != com.enderthor.kSafe.data.IncidentResponseLevel.SILENT && !emergencyActive()
+        emergencyManager.handleIncident(reason, level, activeConfig, tokens)
+        if (riderVisible) reportPacingExternal(com.enderthor.kSafe.extension.pacing.AlertSource.MEDICAL)
+    }
+
+    /** Tells the pacing arbiter another KSafe alert just fired. Called after that alert's own
+     *  dispatch; never throws back into the caller. */
+    private fun reportPacingExternal(source: com.enderthor.kSafe.extension.pacing.AlertSource) {
+        if (!::pacingManager.isInitialized) return
+        runCatching { pacingManager.onExternalAlert(source) }.onFailure { Timber.e(it, "PACE external alert failed") }
+    }
+
+    private fun reportPacingFuelAlert(deficit: Boolean) = reportPacingExternal(
+        if (deficit) com.enderthor.kSafe.extension.pacing.AlertSource.FUEL_DEFICIT
+        else com.enderthor.kSafe.extension.pacing.AlertSource.FUEL_TIME)
 
     /** True while a crash / SOS / check-in is in progress. Delegates to the canonical
      *  [EmergencyManager.isActive] predicate (reads the in-memory uiState, NOT DataStore). */
@@ -3732,6 +3883,9 @@ class KSafeExtension : KarooExtension("ksafe", BuildConfig.VERSION_NAME), Corout
         hydrationTracker.stop()
         locationManager.stop()
         emergencyManager.stopAll()
+        // After the safety teardown, but before calibLogger.disable() so PACE_STOP is written. Not the
+        // ride end: a restarted service starts pacing fresh (reason=restart when it can tell).
+        stopPacing("destroy")
         // Only if it was ever shown — avoids instantiating the lazy manager at teardown.
         if (fuelingOverlayLazy.isInitialized()) runCatching { fuelingOverlay.remove() }
         calibLogger.disable()
@@ -3755,6 +3909,8 @@ class KSafeExtension : KarooExtension("ksafe", BuildConfig.VERSION_NAME), Corout
         // the new extension instance to republish them.
         carbsTrackerFlow.value = null
         hydrationTrackerFlow.value = null
+        pacingViewFlow.value = null
+        pacingEnabledFlow.value = null
         rideActiveFlow.value = false
         instance = null
         super.onDestroy()

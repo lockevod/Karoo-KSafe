@@ -96,6 +96,12 @@
         icon="@drawable/ic_ksafe"
         typeId="carb-status" />
     <DataType
+        description="@string/field_pacing_reserve_desc"
+        displayName="@string/field_pacing_reserve"
+        graphical="true"
+        icon="@drawable/ic_ksafe"
+        typeId="pacing-reserve" />
+    <DataType
         description="@string/carb_burn_rate_datatype_desc"
         displayName="@string/carb_burn_rate_datatype_name"
         graphical="false"
