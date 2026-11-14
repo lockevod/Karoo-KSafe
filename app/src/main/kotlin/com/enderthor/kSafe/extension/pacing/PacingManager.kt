@@ -12,6 +12,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
+import timber.log.Timber
 import java.io.File
 import java.util.Locale
 import kotlin.math.roundToInt
@@ -95,13 +96,19 @@ class PacingManager(
         if (wPrime != null) rebuildProfileUnits()
         gradePace = GradePaceStore(storeDir).load() ?: GradePaceModel()
         _view.value = null
-        loop = scope.launch { while (isActive) { delay(30_000); tick() } }
+        // A pacing bug must never escape into the service scope (crash / medical / SOS share it).
+        loop = scope.launch { while (isActive) { delay(30_000); runCatching { tick() }.onFailure { Timber.e(it, "PACE tick failed") } } }
     }
 
     fun stop() {
         if (!started) return           // never save an unloaded (empty) model over the learned file
         started = false
         loop?.cancel(); loop = null
+        // Runs inside the service teardown paths — must never throw into them.
+        runCatching { saveOnStop() }.onFailure { Timber.e(it, "PACE stop failed") }
+    }
+
+    private fun saveOnStop() {
         val fs = fatigue
         calibLogger?.log(Event.PACE_END) {
             "proj_finish_first=${f(firstProjFinish)},proj_finish_last=${f(lastProjFinish)},actual_kjkg=${f(fs?.kjPerKg)}," +
@@ -112,6 +119,10 @@ class PacingManager(
     }
 
     fun onNavigation(state: OnNavigationState.NavigationState) {
+        runCatching { applyNavigation(state) }.onFailure { Timber.e(it, "PACE navigation failed") }
+    }
+
+    private fun applyNavigation(state: OnNavigationState.NavigationState) {
         if (state !is OnNavigationState.NavigationState.NavigatingRoute) {
             routeKey = null; path = null; profile = null; climbs = emptyList(); projector = null; blocks = emptyList()
             rejoinActive = false
@@ -214,7 +225,10 @@ class PacingManager(
         else (to - from).coerceAtLeast(0.0) / (gradePace.speedKmh(kind, 0.0) / 3.6)
     }
 
+    internal var tickHook: (() -> Unit)? = null  // test seam: force a tick failure
+
     internal fun tick() {
+        tickHook?.invoke()
         val now = clock()
         tickN++
         val p = path; val proj = projector; val fx = fix

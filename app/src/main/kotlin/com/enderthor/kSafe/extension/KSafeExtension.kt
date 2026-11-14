@@ -450,14 +450,13 @@ class KSafeExtension : KarooExtension("ksafe", BuildConfig.VERSION_NAME), Corout
             // carb tracker integrating, and both halves want power / profile / HR.
             val fuel = c.carbsTrackerEnabled || c.hrCaloriesEnabled
             val hyd = c.hydrationTrackerEnabled
-            // Pacing runs in shadow (logs only) while calibration logging is on.
+            // Shadow pacing (logs only) runs while calibration logging is on — see [pacingWanted].
             val pace = c.calibrationLoggingEnabled
             return RecordingStreamNeeds(
                 power = fuel || hyd || c.wellnessEnabled || c.medicalEpisodeEnabled || pace,
                 userProfile = fuel || hyd || c.wellnessEnabled || pace,
                 heartRate = fuel || hyd || c.wellnessEnabled || c.medicalEpisodeEnabled || pace,
                 ambient = hyd,
-                pacing = pace,
             )
         }
 
@@ -802,7 +801,7 @@ class KSafeExtension : KarooExtension("ksafe", BuildConfig.VERSION_NAME), Corout
                         // a no-op when the master switch is OFF (needs are all false).
                         startRecordingCollectors()
                         // Calibration logging toggled mid-ride: follow the pacing stream gate.
-                        if (recordingStreamNeeds(config).pacing) pacingManager.start() else pacingManager.stop()
+                        if (pacingWanted(config)) startPacing() else stopPacing()
                     }
                     is RideState.Paused -> applyMasterSwitchTransitionPaused(prevActive)
                     else -> { /* null: not yet observed, leave as-is */ }
@@ -1103,9 +1102,9 @@ class KSafeExtension : KarooExtension("ksafe", BuildConfig.VERSION_NAME), Corout
      * HR + POWER — the other four are pure waste for that rider.
      *
      * Consumers, from the fan-out blocks in [startRecordingCollectors]:
-     *  - POWER       → carbs, wellness, hydration, medical (FLATLINE cross-check)
-     *  - UserProfile → carbs, wellness, hydration
-     *  - HEART_RATE  → medical, wellness, carbs, hydration
+     *  - POWER       → carbs, wellness, hydration, medical (FLATLINE cross-check), pacing
+     *  - UserProfile → carbs, wellness, hydration, pacing
+     *  - HEART_RATE  → medical, wellness, carbs, hydration, pacing
      *  - ambient (onboard TEMPERATURE + Headwind temp/humidity) → hydration only
      *
      * INVARIANT: `ambient` implies all three others, because its only consumer
@@ -1122,10 +1121,8 @@ class KSafeExtension : KarooExtension("ksafe", BuildConfig.VERSION_NAME), Corout
         val userProfile: Boolean,
         val heartRate: Boolean,
         val ambient: Boolean,
-        /** Shadow pacing advisor (PacingManager): power / HR / profile + navigation + location. */
-        val pacing: Boolean = false,
     ) {
-        val any: Boolean get() = power || userProfile || heartRate || ambient || pacing
+        val any: Boolean get() = power || userProfile || heartRate || ambient
     }
 
     /** The needs the live [recordingCollectorsJob] was built for, or null when no job is
@@ -1208,7 +1205,7 @@ class KSafeExtension : KarooExtension("ksafe", BuildConfig.VERSION_NAME), Corout
                         // detector treats absence-of-power as "cross-check not plumbed" and
                         // falls through to the original FLATLINE path.
                         medicalDetector.updatePower(w)
-                        if (needs.pacing) pacingManager.onPower(w)
+                        if (this@KSafeExtension::pacingManager.isInitialized) pacingManager.onPower(w)
                     }
             }
 
@@ -1224,7 +1221,7 @@ class KSafeExtension : KarooExtension("ksafe", BuildConfig.VERSION_NAME), Corout
                         carbsTracker.updateUserProfile(profile)
                         wellnessMonitor.updateUserProfile(profile)
                         hydrationTracker.updateUserProfile(profile)
-                        if (needs.pacing) pacingManager.onUserProfile(profile.ftp, profile.weight.toDouble())
+                        if (this@KSafeExtension::pacingManager.isInitialized) pacingManager.onUserProfile(profile.ftp, profile.weight.toDouble())
                     }
             }
 
@@ -1237,26 +1234,10 @@ class KSafeExtension : KarooExtension("ksafe", BuildConfig.VERSION_NAME), Corout
                         wellnessMonitor.updateHr(hr)
                         carbsTracker.updateHr(hr)
                         hydrationTracker.updateHr(hr)
-                        if (needs.pacing) pacingManager.onHr(hr)
+                        if (this@KSafeExtension::pacingManager.isInitialized) pacingManager.onHr(hr)
                     }
             }
 
-            // Shadow pacing advisor inputs: route (navigation), GPS fix, carb status.
-            if (needs.pacing) launch {
-                karooSystem.streamNavigationState().collect { pacingManager.onNavigation(it.state) }
-            }
-            if (needs.pacing) launch {
-                karooSystem.streamDataFlow(io.hammerhead.karooext.models.DataType.Type.LOCATION).collect { st ->
-                    val s = st as? io.hammerhead.karooext.models.StreamState.Streaming ?: return@collect
-                    val v = s.dataPoint.values
-                    val lat = v[io.hammerhead.karooext.models.DataType.Field.LOC_LATITUDE] ?: return@collect
-                    val lng = v[io.hammerhead.karooext.models.DataType.Field.LOC_LONGITUDE] ?: return@collect
-                    pacingManager.onLocation(lat, lng, v[io.hammerhead.karooext.models.DataType.Field.LOC_ACCURACY])
-                }
-            }
-            if (needs.pacing) launch {
-                carbsTracker.statusFlow.collect { pacingManager.onCarbStatus(it) }
-            }
 
             // Onboard Karoo temperature sensor. Device-heat biased (typically reads
             // +3–8 °C above ambient when in direct sun / after warm-up), but always
@@ -1318,6 +1299,42 @@ class KSafeExtension : KarooExtension("ksafe", BuildConfig.VERSION_NAME), Corout
             }  // end supervisorScope (J7)
             }  // end withContext(collectorHandler) (K8)
         }
+    }
+
+    /** Shadow pacing runs while the master switch and calibration logging are both on. */
+    private fun pacingWanted(c: KSafeConfig = activeConfig): Boolean = c.isActive && c.calibrationLoggingEnabled
+
+    /** Pacing-only streams (route, GPS fix, carb status), kept OUT of [recordingCollectorsJob] so a
+     *  calibration-logging toggle never rebuilds the safety / fueling collectors. */
+    @Volatile private var pacingCollectorsJob: Job? = null
+
+    /** Idempotent: [PacingManager.start] keeps an already-started ride, and a live job is reused. */
+    private fun startPacing() {
+        pacingManager.start()
+        if (pacingCollectorsJob?.isActive == true) return
+        val handler = kotlinx.coroutines.CoroutineExceptionHandler { _, t -> Timber.e(t, "Pacing collector failed") }
+        pacingCollectorsJob = launch(handler) {
+            kotlinx.coroutines.supervisorScope {
+                launch {
+                    karooSystem.streamNavigationState().collect { pacingManager.onNavigation(it.state) }
+                }
+                launch {
+                    karooSystem.streamDataFlow(io.hammerhead.karooext.models.DataType.Type.LOCATION).collect { st ->
+                        val s = st as? io.hammerhead.karooext.models.StreamState.Streaming ?: return@collect
+                        val v = s.dataPoint.values
+                        val lat = v[io.hammerhead.karooext.models.DataType.Field.LOC_LATITUDE] ?: return@collect
+                        val lng = v[io.hammerhead.karooext.models.DataType.Field.LOC_LONGITUDE] ?: return@collect
+                        pacingManager.onLocation(lat, lng, v[io.hammerhead.karooext.models.DataType.Field.LOC_ACCURACY])
+                    }
+                }
+                launch { carbsTracker.statusFlow.collect { pacingManager.onCarbStatus(it) } }
+            }
+        }
+    }
+
+    private fun stopPacing() {
+        pacingCollectorsJob?.cancel(); pacingCollectorsJob = null
+        pacingManager.stop()
     }
 
     private fun stopRecordingCollectors() {
@@ -1540,7 +1557,7 @@ class KSafeExtension : KarooExtension("ksafe", BuildConfig.VERSION_NAME), Corout
                         }
                     }
                     // Idempotent: a Paused→Recording resume keeps this ride's pacing state.
-                    if (recordingStreamNeeds(activeConfig).pacing) pacingManager.start()
+                    if (pacingWanted()) startPacing()
                     // Same first-start vs resume distinction as the trackers above:
                     // on a Paused→Recording resume the check-in must continue with its
                     // REMAINING interval, not restart from zero. Restarting on every
@@ -1628,7 +1645,7 @@ class KSafeExtension : KarooExtension("ksafe", BuildConfig.VERSION_NAME), Corout
                 // instead of reviving them. Mid-ride master/feature stops keep the default
                 // false — their retained state is still this ride's live session.
                 carbsTracker.stop(endOfSession = true)
-                pacingManager.stop()
+                stopPacing()
                 // Last-ride record (weigh-in calibration / sodium summary) BEFORE stop() — null
                 // unless this ride had a live hydration session. Ride time is cleared after it.
                 val hydRecord = hydrationTracker.lastRideSnapshot()
@@ -1724,7 +1741,6 @@ class KSafeExtension : KarooExtension("ksafe", BuildConfig.VERSION_NAME), Corout
             wellnessMonitor.stop()
             carbsTracker.stop()
             hydrationTracker.stop()
-            pacingManager.stop()
             // No consumer for POWER/HR/TEMPERATURE while the master switch is off,
             // so cancel those collectors too. They restart on the ON branch below.
             stopRecordingCollectors()
@@ -1739,6 +1755,7 @@ class KSafeExtension : KarooExtension("ksafe", BuildConfig.VERSION_NAME), Corout
             // sendAlerts dispatch fired despite the rider's explicit "disable all
             // safety alerts" intent. stopAll() also cancels any in-flight alertJob.
             emergencyManager.stopAll()
+            stopPacing()   // after the safety teardown, never before it
         } else {
             Timber.d("Master switch ON mid-ride — resuming monitoring (preserving session totals)")
             // Re-arm the Recording-only collectors (idempotent if they were never
@@ -1757,7 +1774,7 @@ class KSafeExtension : KarooExtension("ksafe", BuildConfig.VERSION_NAME), Corout
             wellnessMonitor.resume(activeConfig)
             carbsTracker.resume(activeConfig)
             hydrationTracker.resume(activeConfig)
-            if (recordingStreamNeeds(activeConfig).pacing) pacingManager.start()
+            if (pacingWanted()) startPacing()
             emergencyManager.startCheckinTimer(activeConfig)
         }
     }
@@ -1786,13 +1803,13 @@ class KSafeExtension : KarooExtension("ksafe", BuildConfig.VERSION_NAME), Corout
             wellnessMonitor.stop()
             carbsTracker.stop()
             hydrationTracker.stop()
-            pacingManager.stop()
             stopRecordingCollectors()
             stopCrashSensorCollectors()
             // Mirrors the Recording path: stopAll() (NOT stopCheckinTimer) so a
             // crash/medical countdown actively ticking inside the autopause is
             // aborted along with everything else.
             emergencyManager.stopAll()
+            stopPacing()   // after the safety teardown, never before it
         } else {
             // OFF→ON during Paused: leave as-is. The rider has no live monitoring
             // session to re-attach to (`crashManager.resume` etc. would observe
@@ -3770,7 +3787,6 @@ class KSafeExtension : KarooExtension("ksafe", BuildConfig.VERSION_NAME), Corout
         wellnessMonitor.stop()
         carbsTracker.stop()
         hydrationTracker.stop()
-        pacingManager.stop()
         locationManager.stop()
         emergencyManager.stopAll()
         // Only if it was ever shown — avoids instantiating the lazy manager at teardown.
@@ -3781,6 +3797,7 @@ class KSafeExtension : KarooExtension("ksafe", BuildConfig.VERSION_NAME), Corout
         // ServiceConnection across extension restarts. Safe to call even if connect()
         // failed — disconnect() is a no-op when not bound.
         if (::buzzerClient.isInitialized) buzzerClient.disconnect()
+        stopPacing()   // after the safety teardown, never before it
         // Cancel our own collectors BEFORE dropping the Karoo connection. A streamRide /
         // config collector suspended inside its callbackFlow would otherwise be able to
         // resume on a final SDK event AFTER disconnect() and run handleRideState / dispatch

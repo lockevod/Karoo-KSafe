@@ -152,4 +152,15 @@ class PacingManagerTest {
             enc(ia - pa); enc(ib - pb); pa = ia; pb = ib }
         return sb.toString()
     }
+
+    @Test fun `a throwing tick does not kill the loop`() {
+        val scope = TestScope()
+        val m = PacingManager(scope, tmp.root, null, clock = { now })
+        var calls = 0
+        m.tickHook = { calls++; if (calls == 1) throw IllegalStateException("boom") }
+        m.start()
+        scope.testScheduler.advanceTimeBy(61_000); scope.testScheduler.runCurrent()
+        m.stop()
+        assertEquals("the loop ticked again after the first tick threw", 2, calls)
+    }
 }
