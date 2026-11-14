@@ -10,7 +10,7 @@ class FatigueSignals(private val ftpW: Int, private val weightKg: Double) {
     val meanMovingPowerW: Double get() = if (movingSeconds > 0) kjPerKg * weightKg * 1000.0 / movingSeconds else 0.0
 
     private var lastMs = -1L
-    private var winSec = 0.0; private var winP = 0.0; private var winHr = 0.0; private var winHrN = 0
+    private var winSec = 0.0; private var winP = 0.0; private var winHr = 0.0; private var winHrSec = 0.0
     private var baseline: Double? = null
     private var lastDrift: Double? = null; private var lastDriftAtMs = 0L
 
@@ -19,17 +19,19 @@ class FatigueSignals(private val ftpW: Int, private val weightKg: Double) {
         lastMs = tMs
         if (!moving || dt <= 0) return
         movingSeconds += dt
-        kjPerKg += powerW * dt / 1000.0 / weightKg
+        if (weightKg > 0) kjPerKg += powerW * dt / 1000.0 / weightKg
         winSec += dt; winP += powerW * dt
-        if (hrBpm != null && hrBpm > 0) { winHr += hrBpm * dt; winHrN++ }
+        if (hrBpm != null && hrBpm > 0) { winHr += hrBpm * dt; winHrSec += dt }
         if (winSec >= WINDOW_S) closeWindow(tMs)
     }
 
     private fun closeWindow(tMs: Long) {
         val meanP = winP / winSec
-        val meanHr = if (winHrN > 0) winHr / winSec else 0.0
-        winSec = 0.0; winP = 0.0; winHr = 0.0; winHrN = 0
-        if (ftpW <= 0 || meanHr <= 0 || meanP < LOW * ftpW || meanP > HIGH * ftpW) return
+        // Mean HR over the seconds that had HR only; a window with too little HR is discarded, not read as 0.
+        val hrComplete = winHrSec >= HR_COMPLETE_FRACTION * winSec
+        val meanHr = if (hrComplete) winHr / winHrSec else 0.0
+        winSec = 0.0; winP = 0.0; winHr = 0.0; winHrSec = 0.0
+        if (ftpW <= 0 || !hrComplete || meanHr <= 0 || meanP < LOW * ftpW || meanP > HIGH * ftpW) return
         val pwhr = meanP / meanHr
         val b = baseline
         if (b == null) { if (movingSeconds >= BASELINE_AFTER_S) baseline = pwhr; return }
@@ -48,5 +50,6 @@ class FatigueSignals(private val ftpW: Int, private val weightKg: Double) {
         const val MAX_AGE_MS = 360_000L
         const val LOW = 0.60
         const val HIGH = 0.80
+        const val HR_COMPLETE_FRACTION = 0.9
     }
 }

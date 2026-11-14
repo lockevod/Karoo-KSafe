@@ -10,6 +10,7 @@ import kotlin.math.exp
  */
 class WPrimeBalance(private val cpW: Int, private val w0: Double) {
     var wJ: Double = w0; private set
+    /** Meaningless unless [trusted]; consumers must gate on it. */
     val pct: Double get() = (wJ / w0).coerceIn(0.0, 1.0)
     var ftpStale = false; private set
     val trusted: Boolean get() = cpW > 0 && !ftpStale
@@ -41,7 +42,8 @@ class WPrimeBalance(private val cpW: Int, private val w0: Double) {
         if (ringN == WINDOW_S && ringSum.toDouble() / WINDOW_S > cpW) ftpStale = true
     }
 
-    /** W′ % after riding [seconds] at constant [powerW] from now (closed form of the same model). */
+    /** W′ % after riding [seconds] at constant [powerW] from now (closed form of the same model).
+     *  Meaningless unless [trusted]; consumers must gate on it. */
     fun projectPct(seconds: Double, powerW: Double): Double {
         val w = if (powerW > cpW) wJ - (powerW - cpW) * seconds
                 else w0 - (w0 - wJ) * exp(-(cpW - powerW) * seconds / w0)

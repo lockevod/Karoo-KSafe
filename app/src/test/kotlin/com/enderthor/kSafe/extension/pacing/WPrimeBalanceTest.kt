@@ -26,8 +26,14 @@ class WPrimeBalanceTest {
     @Test fun `dropout recovers as zero watts, not last value`() {
         val w = WPrimeBalance(250, 15_000.0); w.onPower(400, 0); w.onPower(400, 1000)
         val before = w.wJ
-        w.onPower(0, 61_000)                               // 60 s gap
+        w.onPower(400, 61_000)                             // 60 s gap, then 400 W: a last-value bug would deplete
         assertTrue(w.wJ > before)
+    }
+
+    @Test fun `mean below CP keeps FTP trusted`() {
+        val w = WPrimeBalance(250, 15_000.0); w.onPower(200, 0)
+        feed(w, 200, 1200)
+        assertFalse(w.ftpStale); assertTrue(w.trusted)
     }
 
     @Test fun `ftp stale when 20-minute mean exceeds CP`() {
