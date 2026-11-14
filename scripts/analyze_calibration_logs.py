@@ -49,7 +49,8 @@ Event catalogue understood by this script:
     PACE_ROUTE (src, karoo_n, karoo_ok, own_n, sig_n, blocks_n), PACE_POS
     (pos_m, trusted, reason), PACE_ADV (state, would_alert, suppressed_by, live),
     PACE_FUEL, PACE_CLIMB (phase=start|end, pred_s_first, actual_s),
-    PACE_END (kjkg_at_drift5, moving_s)
+    PACE_END (kjkg_at_drift5, moving_s, power_cov), PACE_START (reason=fresh|resume|restart),
+    PACE_STOP (reason, mid-ride stop), PACE_RESET (reason=weight|ftp|kind)
 
   Fueling (carbs + hydration):
     CARB_START / CARB_LOG / CARB_UNDO / CARB_FIRE / CARB_PERIODIC
@@ -849,6 +850,7 @@ def _med_p90(xs: list[float]) -> str:
 def pacing_summary(paths: list[Path]) -> None:
     """Per-session pacing report; prints nothing when no PACE_* row exists."""
     out: list[str] = []
+    covs: list[float] = []
     for path in paths:
         rows = [r for r in _row_iter(path) if r[2].startswith("PACE_")]
         if not rows:
@@ -857,6 +859,12 @@ def pacing_summary(paths: list[Path]) -> None:
         for ts, el, ev, d in rows:
             by[ev].append((el, d))
         out.append(f"\n  session {path.name}")
+        reasons = lambda ev: dict(Counter(d.get("reason", "?") for _, d in by[ev]))
+        out.append(f"    lifecycle: PACE_START {reasons('PACE_START')}  PACE_STOP {reasons('PACE_STOP')}  "
+                   f"PACE_RESET {reasons('PACE_RESET')}  PACE_END {len(by['PACE_END'])}")
+        sess_cov = [c for _, d in by["PACE_END"] if (c := _to_float(d.get("power_cov"))) is not None]
+        covs += sess_cov
+        out.append(f"    PACE_END power_cov: {sess_cov or 'none'}")
         routes = by["PACE_ROUTE"]
         out.append(f"    routes: {len(routes)}  src: {dict(Counter(d.get('src', '?') for _, d in routes))}")
         kn = sum(_to_float(d.get("karoo_n")) or 0 for _, d in routes)
@@ -892,6 +900,10 @@ def pacing_summary(paths: list[Path]) -> None:
         out.append(f"    PACE_CLIMB |pred_s_first - actual_s|: {_med_p90(errs)}")
         knees = [d.get("kjkg_at_drift5") for _, d in by["PACE_END"] if _to_float(d.get("kjkg_at_drift5")) is not None]
         out.append(f"    PACE_END kjkg_at_drift5 (knee calibration): {knees or 'none'}")
+    if covs:
+        xs = sorted(covs)
+        out.append(f"\n  power_cov over PACE_END rows (n={len(xs)}): min {xs[0]:.2f}  median {statistics.median(xs):.2f}  "
+                   f"max {xs[-1]:.2f}  <0.90: {sum(1 for c in xs if c < 0.90)}")
     if out:
         print("\n" + "=" * 88 + "\n Pacing advisor" + "\n" + "=" * 88)
         print("\n".join(out))
