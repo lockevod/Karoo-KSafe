@@ -9,6 +9,8 @@ data class PacingInput(
     val kjPerKg: Double, val projectedKjKgFinish: Double?, val projectedKjKgNextTop: Double?, val kneeKjKg: Double,
     val driftPct: Double?, val driftStableMs: Long?, val wTrusted: Boolean, val wPct: Double?,
     val projectedWAtNextBlockPct: Double?, val msSinceWellnessOrMedical: Long?,
+    /** Share of moving time with power samples; null = unknown (under a minute moving). */
+    val powerCoverage: Double? = null,
 )
 
 data class PacingDecision(
@@ -24,6 +26,7 @@ object PacingAdvisor {
     const val MIN_LEAD_M = 300.0
     const val TOO_LATE_M = 100.0
     const val MAX_LEAD_M = 10_000.0
+    const val MIN_POWER_COVERAGE = 0.9
 
     fun inLeadWindow(secondsToBlock: Double?, metresToBlock: Double?, leadS: Double): Boolean {
         if (secondsToBlock == null || metresToBlock == null || !secondsToBlock.isFinite() || !metresToBlock.isFinite()) return false
@@ -46,6 +49,7 @@ object PacingAdvisor {
             ((worstProj != null && worstProj >= i.kneeKjKg * 0.9) || (drift != null && drift >= 8.0))
 
         val highMargin = i.positionTrusted && i.climbsKnown && i.wTrusted &&
+            i.powerCoverage != null && i.powerCoverage >= MIN_POWER_COVERAGE &&
             (i.wPct ?: 0.0) >= 0.6 && drift != null && drift < 5.0 &&
             (i.driftStableMs ?: 0L) >= 10 * 60_000L &&
             i.projectedKjKgFinish != null && i.projectedKjKgFinish < 0.7 * i.kneeKjKg &&

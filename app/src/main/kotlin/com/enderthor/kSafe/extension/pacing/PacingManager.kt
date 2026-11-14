@@ -113,7 +113,8 @@ class PacingManager(
         val fs = fatigue
         calibLogger?.log(Event.PACE_END) {
             "proj_finish_first=${f(firstProjFinish)},proj_finish_last=${f(lastProjFinish)},actual_kjkg=${f(fs?.kjPerKg)}," +
-                "kjkg_at_drift5=${f(fs?.kjPerKgAtFirstDrift5)},moving_s=${f(movingS, 0)},odo_m=${f(odometerM, 0)}"
+                "kjkg_at_drift5=${f(fs?.kjPerKgAtFirstDrift5)},moving_s=${f(movingS, 0)},odo_m=${f(odometerM, 0)}," +
+                "power_cov=${f(powerCoverage(), 2)}"
         }
         storeDir.mkdirs()
         GradePaceStore(storeDir).save(gradePace)
@@ -255,6 +256,8 @@ class PacingManager(
         val drift = fs?.driftPct(now)
         val stableSince = fs?.driftStableSinceMs
         val driftStableMs = if (drift != null && drift < 5.0 && stableSince != null) now - stableSince else null
+        // A few seconds of power is not a ride average: no projection until MIN_PROJ_MOVING_S of it.
+        val sampled = (fs?.movingSeconds ?: 0.0) >= MIN_PROJ_MOVING_S
 
         var ahead: List<ClimbBlock> = emptyList(); var next: ClimbBlock? = null
         var remainingS: Double? = null; var toNextS: Double? = null; var toNextM: Double? = null
@@ -264,11 +267,11 @@ class PacingManager(
             next = ahead.firstOrNull { it.startM > pos!! }
             remainingS = secondsBetween(pos!!, p!!.totalM)
             next?.let { toNextM = it.startM - pos; toNextS = secondsBetween(pos, it.startM) }
-            if (weightKg > 0) {
+            if (weightKg > 0 && sampled) {
                 projFinish = kj + meanW * remainingS / 1000.0 / weightKg
                 projTop = next?.let { kj + meanW * secondsBetween(pos, it.endM) / 1000.0 / weightKg }
             }
-            if (wTrusted) projWAtBlock = toNextS?.let { wp!!.projectPct(it, meanW) }
+            if (wTrusted && sampled) projWAtBlock = toNextS?.let { wp!!.projectPct(it, meanW) }
             if (firstProjFinish == null) firstProjFinish = projFinish
             if (projFinish != null) lastProjFinish = projFinish
         }
@@ -281,6 +284,7 @@ class PacingManager(
             kjPerKg = kj, projectedKjKgFinish = projFinish, projectedKjKgNextTop = projTop, kneeKjKg = knee,
             driftPct = drift, driftStableMs = driftStableMs, wTrusted = wTrusted, wPct = wPct,
             projectedWAtNextBlockPct = projWAtBlock, msSinceWellnessOrMedical = lastMedicalMs?.let { now - it },
+            powerCoverage = powerCoverage(),
         )
         val d = PacingAdvisor.decide(input, prevState)
         val changed = d.state != prevState || d.recoverW != prevRecoverW
@@ -353,6 +357,9 @@ class PacingManager(
         _view.value = PacingView(d.state, d.recoverW, wPct, trusted, toNextM?.div(1000.0))
     }
 
+    /** Power-sampled moving seconds over moving seconds; null under a minute moving or before a profile. */
+    private fun powerCoverage(): Double? = fatigue?.takeIf { movingS >= 60.0 }?.let { it.movingSeconds / movingS }
+
     private fun arbitrate(c: AlertCandidate, a: PacingAlert, now: Long, adv: () -> String): ArbiterVerdict {
         evaluatedCandidateKeys += c.key
         val v = arbiter.evaluate(c, now, emergencyActive)
@@ -403,7 +410,7 @@ class PacingManager(
             "proj_finish=${f(i.projectedKjKgFinish, 2)},proj_top=${f(i.projectedKjKgNextTop, 2)},knee=${f(i.kneeKjKg)}," +
             "knee_src=${if (kneeKjKgOverride != null) "override" else "default"},drift=${f(i.driftPct)}," +
             "drift_stable_s=${f(i.driftStableMs?.div(1000.0), 0)},w_trusted=${i.wTrusted},w_pct=${f(i.wPct, 2)}," +
-            "proj_w_block=${f(i.projectedWAtNextBlockPct, 2)},ms_since_med=${i.msSinceWellnessOrMedical ?: "na"}," +
+            "proj_w_block=${f(i.projectedWAtNextBlockPct, 2)},power_cov=${f(i.powerCoverage, 2)},ms_since_med=${i.msSinceWellnessOrMedical ?: "na"}," +
             "ftp=$ftp,kind=$kind,gp_conf=${gradePace.isConfident(kind, 0.0)}"
 
     private fun f(v: Double?, decimals: Int = 1): String =
@@ -415,6 +422,7 @@ class PacingManager(
         const val BLOCKS_REFRESH_MS = 5 * 60_000L
         const val POWER_STALE_MS = 10_000L
         const val HR_STALE_MS = 5_000L
+        const val MIN_PROJ_MOVING_S = 600.0
         /** Stable across block recomputes (ids renumber when gaps merge): route metres of the block start. */
         private val ClimbBlock.key: Int get() = startM.roundToInt()
     }

@@ -12,6 +12,7 @@ class PacingAdvisorTest {
         metresToNextBlock = 12_000.0, nextBlockId = 1, kjPerKg = 15.0, projectedKjKgFinish = 25.0,
         projectedKjKgNextTop = 18.0, kneeKjKg = 30.0, driftPct = 2.0, driftStableMs = 20 * 60_000L,
         wTrusted = true, wPct = 0.9, projectedWAtNextBlockPct = 0.9, msSinceWellnessOrMedical = null,
+        powerCoverage = 1.0,
     )
 
     @Test fun `keep when nothing is wrong`() = assertEquals(PacingState.KEEP, PacingAdvisor.decide(base, PacingState.KEEP).state)
@@ -35,6 +36,8 @@ class PacingAdvisorTest {
         assertEquals(PacingState.KEEP, PacingAdvisor.decide(ok.copy(climbsKnown = false), PacingState.KEEP).state)
         assertEquals(PacingState.KEEP, PacingAdvisor.decide(ok.copy(msSinceWellnessOrMedical = 10 * 60_000L), PacingState.KEEP).state)
         assertEquals(PacingState.KEEP, PacingAdvisor.decide(ok.copy(driftStableMs = 5 * 60_000L), PacingState.KEEP).state)
+        assertEquals(PacingState.KEEP, PacingAdvisor.decide(ok.copy(powerCoverage = null), PacingState.KEEP).state)
+        assertEquals(PacingState.KEEP, PacingAdvisor.decide(ok.copy(powerCoverage = 0.85), PacingState.KEEP).state)
     }
 
     @Test fun `no power means no advice`() {

@@ -116,9 +116,9 @@ class PacingManagerTest {
     @Test fun `stale power drops to KEEP`() {
         val m = manager(knee = 0.5)
         m.onUserProfile(250, 70.0); m.onNavigation(route())
-        ride(m, power = 300, accuracyM = 5.0, seconds = 600)
+        ride(m, power = 300, accuracyM = 5.0, seconds = 660)    // projections start after 600 s of power
         assertEquals(PacingState.CONSERVE, m.view.value!!.state)
-        ride(m, power = null, accuracyM = 5.0, seconds = 20, from = 600)
+        ride(m, power = null, accuracyM = 5.0, seconds = 20, from = 660)
         m.tick()                                                  // 20 s without power: no_power → KEEP
         assertEquals(PacingState.KEEP, m.view.value!!.state)
     }
@@ -127,7 +127,7 @@ class PacingManagerTest {
         val m = manager(knee = 0.5)
         m.setLiveAlerts(true, null)
         m.onUserProfile(250, 70.0); m.onNavigation(route())
-        ride(m, power = 300, accuracyM = 5.0, seconds = 300)     // CONSERVE#cond only; no block window yet
+        ride(m, power = 300, accuracyM = 5.0, seconds = 750)     // CONSERVE from 600 s, #cond 90 s later; no block window yet
         assertEquals(listOf("CONSERVE#cond"), alerts.map { it.key })
     }
 
@@ -135,7 +135,7 @@ class PacingManagerTest {
         val m = manager(knee = 0.5)
         m.setLiveAlerts(true, null); m.setEmergencyActive(true)
         m.onUserProfile(250, 70.0); m.onNavigation(route())
-        ride(m, power = 300, accuracyM = 5.0, seconds = 300)
+        ride(m, power = 300, accuracyM = 5.0, seconds = 750)
         assertTrue(alerts.isEmpty())
         assertTrue(m.evaluatedCandidateKeys.isNotEmpty())        // a candidate existed and was suppressed
     }
@@ -157,5 +157,37 @@ class PacingManagerTest {
         ride(m, power = 175, accuracyM = 5.0, seconds = 15 * 60 + 1)          // baseline window at 15 min
         ride(m, power = 175, accuracyM = 5.0, seconds = 6 * 60, from = 15 * 60 + 1, hr = null)
         assertNull("a window without fresh HR must be discarded", m.fatigue!!.driftPct(now))
+    }
+
+    /** ~44.5 km: flat to 35 km, then one 350 m climb (35–40 km). */
+    private fun longRoute() = OnNavigationState.NavigationState.NavigatingRoute(
+        routePolyline = TestPolyline.latLng(listOf(0.0 to 0.0, 0.0 to 0.4)), routeDistance = 44_528.0,
+        routeElevationPolyline = TestPolyline.elev(listOf(0.0 to 100.0, 35_000.0 to 100.0, 40_000.0 to 450.0, 44_528.0 to 450.0)),
+        rejoinPolyline = null, rejoinDistance = null, name = "long", reversed = false, breadcrumb = false,
+        pois = emptyList(), climbs = emptyList(),
+    )
+
+    @Test fun `steady endurance ride reaches HIGH_MARGIN`() {         // control for the coverage gate below
+        val m = manager(knee = 30.0)
+        m.onUserProfile(250, 70.0); m.onNavigation(longRoute())
+        ride(m, power = 175, accuracyM = 5.0, seconds = 2700)
+        assertEquals(PacingState.HIGH_MARGIN, m.view.value!!.state)
+    }
+
+    @Test fun `a long power gap blocks HIGH_MARGIN`() {
+        val m = manager(knee = 30.0)
+        m.onUserProfile(250, 70.0); m.onNavigation(longRoute())
+        ride(m, power = 175, accuracyM = 5.0, seconds = 600)
+        ride(m, power = null, accuracyM = 5.0, seconds = 600, from = 600)     // 10 min of unmetered riding
+        ride(m, power = 175, accuracyM = 5.0, seconds = 1500, from = 1200)
+        assertEquals(PacingState.KEEP, m.view.value!!.state)                  // power covers ~78 % of moving time
+    }
+
+    @Test fun `no projection before ten minutes of power`() {
+        val m = manager()                                                     // knee 3
+        m.onUserProfile(250, 70.0); m.onNavigation(route())
+        ride(m, power = 600, accuracyM = 5.0, seconds = 20)                   // a 20 s sprint off the start
+        m.tick()
+        assertEquals(PacingState.KEEP, m.view.value!!.state)
     }
 }
