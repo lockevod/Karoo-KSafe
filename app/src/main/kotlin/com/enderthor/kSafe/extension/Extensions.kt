@@ -5,6 +5,7 @@ import io.hammerhead.karooext.models.ActiveRideProfile
 import io.hammerhead.karooext.models.HttpResponseState
 import io.hammerhead.karooext.models.OnHttpResponse
 import io.hammerhead.karooext.models.OnLocationChanged
+import io.hammerhead.karooext.models.OnNavigationState
 import io.hammerhead.karooext.models.OnStreamState
 import io.hammerhead.karooext.models.RideProfile
 import io.hammerhead.karooext.models.RideState
@@ -330,6 +331,16 @@ fun KarooSystemService.streamUserProfile(): Flow<UserProfile> = callbackFlow {
     )
     awaitClose { removeConsumer(listenerId) }
 }.retryKarooStream("USER_PROFILE", StreamPolicy.CRITICAL)
+
+/** Every [OnNavigationState] update. The host re-emits NavigatingRoute often; consumers dedupe. */
+fun KarooSystemService.streamNavigationState(): Flow<OnNavigationState> = callbackFlow {
+    val listenerId = addConsumer<OnNavigationState>(
+        onError = { close(KarooStreamEnded.Error(it)) },
+        onComplete = { close(KarooStreamEnded.Complete()) },
+        onEvent = { trySend(it) },
+    )
+    awaitClose { removeConsumer(listenerId) }
+}.retryKarooStream("NAVIGATION_STATE", StreamPolicy.CRITICAL)
 
 /**
  * Streams the currently active [RideProfile] — the profile the user selected on the launcher.
