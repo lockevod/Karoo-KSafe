@@ -12,11 +12,11 @@ It looks at the climbs ahead — the Karoo route climbs, confirmed against the r
 ## Alerts
 | Alert | Meaning |
 |---|---|
-| **Conserva** | Save energy for the climb ahead, with a power ceiling |
-| **Margen alto** | You have margin. Descriptive; it never tells you to push |
-| **Recupera antes de subir** | W′ is low before a climb |
-| **Buen momento para comer** | Fuel hint before a climb (when carb tracking is on) |
-| **Ritmo correcto** | You are leaving conserve |
+| **Save it for the climb** / **Save energy** (Conserva) | Save energy for the climb ahead, with a power ceiling |
+| **High margin** (Margen alto) | You have margin. Descriptive; it never tells you to push |
+| **Recover before the climb** (Recupera antes de subir) | W′ is low before a climb |
+| **Good moment to eat** (Buen momento para comer) | Fuel hint before a climb (when carb tracking is on) |
+| **Pace OK** (Ritmo correcto) | You are leaving conserve |
 
 Alerts are rare: at least 3 min from other KSafe alerts, at most one pacing alert per 10 min, once per climb. Never during an emergency, never while stopped. Advice is withheld when data is missing or stale.
 
