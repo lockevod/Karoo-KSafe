@@ -391,4 +391,15 @@ class PacingManagerTest {
         m.tick()
         assertEquals(1, m.blocks.size)
     }
+
+    @Test fun `a model file that cannot be moved aside is never overwritten`() {
+        val f = java.io.File(tmp.root, GradePaceStore.FILE_NAME).apply { writeText("{nope") }
+        val scope = TestScope(); val m = ioManager(scope)
+        m.onUserProfile(250, 70.0); m.onNavigation(route())
+        tmp.root.setWritable(false)
+        try { m.start(); scope.testScheduler.runCurrent() } finally { tmp.root.setWritable(true) }
+        ride(m, power = 200, accuracyM = 5.0, seconds = 11 * 60)              // past the periodic save point
+        m.stop(endOfRide = true); scope.testScheduler.runCurrent()
+        assertEquals("{nope", f.readText())
+    }
 }

@@ -3,6 +3,7 @@ package com.enderthor.kSafe.extension.pacing
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
+import org.junit.Assert.assertTrue
 import org.junit.Rule
 import org.junit.Test
 import org.junit.rules.TemporaryFolder
@@ -23,5 +24,12 @@ class GradePaceStoreTest {
         assertNull(GradePaceStore(tmp.root).load())
         assertEquals("{nope", java.io.File(tmp.root, "${GradePaceStore.FILE_NAME}.bad").readText())
         assertFalse(java.io.File(tmp.root, GradePaceStore.FILE_NAME).exists())
+    }
+    @Test fun `an unreadable file that cannot be moved aside fails the load and keeps both files`() {
+        val bad = java.io.File(tmp.root, "${GradePaceStore.FILE_NAME}.bad").apply { writeText("older") }
+        val f = java.io.File(tmp.root, GradePaceStore.FILE_NAME).apply { writeText("{nope") }
+        tmp.root.setWritable(false)
+        try { assertTrue(runCatching { GradePaceStore(tmp.root).load() }.isFailure) } finally { tmp.root.setWritable(true) }
+        assertEquals("{nope", f.readText()); assertEquals("older", bad.readText())
     }
 }
