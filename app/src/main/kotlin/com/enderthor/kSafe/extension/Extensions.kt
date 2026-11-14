@@ -340,7 +340,7 @@ fun KarooSystemService.streamNavigationState(): Flow<OnNavigationState> = callba
         onEvent = { trySend(it) },
     )
     awaitClose { removeConsumer(listenerId) }
-}.retryKarooStream("NAVIGATION_STATE", StreamPolicy.CRITICAL)
+}.retryKarooStream("NAVIGATION_STATE", StreamPolicy.OPTIONAL)
 
 /**
  * Streams the currently active [RideProfile] — the profile the user selected on the launcher.
