@@ -1305,8 +1305,12 @@ class KSafeExtension : KarooExtension("ksafe", BuildConfig.VERSION_NAME), Corout
     /** Shadow pacing runs while the master switch and calibration logging are both on. */
     private fun pacingWanted(c: KSafeConfig = activeConfig): Boolean = c.isActive && c.calibrationLoggingEnabled
 
-    /** Pacing-only streams (route, GPS fix, carb status), kept OUT of [recordingCollectorsJob] so a
-     *  calibration-logging toggle never rebuilds the safety / fueling collectors. */
+    /** Pacing-only streams (route, GPS fix, carb status), kept OUT of [recordingCollectorsJob]. A
+     *  calibration-logging toggle CAN still rebuild the Recording collectors (POWER / HR / UserProfile)
+     *  through [recordingStreamNeeds] when pacing is their only extra consumer — a rider without fueling /
+     *  wellness / medical, whose needs tuple changes. That is a 1–2 s resubscribe gap for those consumers,
+     *  below [com.enderthor.kSafe.extension.pacing.PacingManager.HR_STALE_MS]; riders whose tuple is
+     *  unchanged keep their collectors untouched. */
     @Volatile private var pacingCollectorsJob: Job? = null
 
     /** Idempotent: [PacingManager.start] keeps an already-started ride, and a live job is reused. */
