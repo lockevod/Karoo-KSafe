@@ -29,18 +29,8 @@ class ElevationProfileTest {
     }
     @Test fun `decodes a karoo precision-1 polyline`() {
         // encode (0,100),(1000,150) at precision 1 → values ×10
-        val enc = encode(listOf(0.0 to 100.0, 1000.0 to 150.0))
+        val enc = TestPolyline.elev(listOf(0.0 to 100.0, 1000.0 to 150.0))
         val e = ElevationProfile.fromKaroo(enc)!!
         assertEquals(1000.0, e.totalM, 0.1); assertEquals(150.0, e.eleAt(1000.0), 0.1)
-    }
-
-    private fun encode(pts: List<Pair<Double, Double>>): String {
-        val sb = StringBuilder(); var pa = 0; var pb = 0
-        fun enc(v: Int) { var x = if (v < 0) (v shl 1).inv() else v shl 1
-            while (x >= 0x20) { sb.append(((0x20 or (x and 0x1f)) + 63).toChar()); x = x shr 5 }
-            sb.append((x + 63).toChar()) }
-        for ((a, b) in pts) { val ia = Math.round(a * 10).toInt(); val ib = Math.round(b * 10).toInt()
-            enc(ia - pa); enc(ib - pb); pa = ia; pb = ib }
-        return sb.toString()
     }
 }

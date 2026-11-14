@@ -18,9 +18,9 @@ class PacingManagerTest {
 
     private fun route(): OnNavigationState.NavigationState.NavigatingRoute =
         OnNavigationState.NavigationState.NavigatingRoute(
-            routePolyline = encodeLatLng(listOf(0.0 to 0.0, 0.0 to 0.2)),          // ~22 km east
+            routePolyline = TestPolyline.latLng(listOf(0.0 to 0.0, 0.0 to 0.2)),          // ~22 km east
             routeDistance = 22_264.0,
-            routeElevationPolyline = encodeElev(listOf(0.0 to 100.0, 10_000.0 to 100.0, 15_000.0 to 450.0, 22_264.0 to 450.0)),
+            routeElevationPolyline = TestPolyline.elev(listOf(0.0 to 100.0, 10_000.0 to 100.0, 15_000.0 to 450.0, 22_264.0 to 450.0)),
             rejoinPolyline = null, rejoinDistance = null, name = "t", reversed = false, breadcrumb = false,
             pois = emptyList(), climbs = emptyList(),
         )
@@ -89,8 +89,8 @@ class PacingManagerTest {
 
     /** Three 150 m climbs (A 1–3 km, B 9–11 km, C 20–22 km) on a ~28 km route. */
     private fun threeClimbRoute() = OnNavigationState.NavigationState.NavigatingRoute(
-        routePolyline = encodeLatLng(listOf(0.0 to 0.0, 0.0 to 0.25)), routeDistance = 27_830.0,
-        routeElevationPolyline = encodeElev(listOf(0.0 to 100.0, 1_000.0 to 100.0, 3_000.0 to 250.0, 9_000.0 to 250.0,
+        routePolyline = TestPolyline.latLng(listOf(0.0 to 0.0, 0.0 to 0.25)), routeDistance = 27_830.0,
+        routeElevationPolyline = TestPolyline.elev(listOf(0.0 to 100.0, 1_000.0 to 100.0, 3_000.0 to 250.0, 9_000.0 to 250.0,
             11_000.0 to 400.0, 20_000.0 to 400.0, 22_000.0 to 550.0, 25_000.0 to 550.0)),
         rejoinPolyline = null, rejoinDistance = null, name = "t3", reversed = false, breadcrumb = false,
         pois = emptyList(), climbs = emptyList(),
@@ -138,19 +138,6 @@ class PacingManagerTest {
         ride(m, power = 300, accuracyM = 5.0, seconds = 300)
         assertTrue(alerts.isEmpty())
         assertTrue(m.evaluatedCandidateKeys.isNotEmpty())        // a candidate existed and was suppressed
-    }
-
-    // Helpers: same encoder as ElevationProfileTest (precision 1) and a precision-5 lat/lng encoder.
-    private fun encodeElev(p: List<Pair<Double, Double>>) = encode(p, 10.0)
-    private fun encodeLatLng(p: List<Pair<Double, Double>>) = encode(p, 1e5)
-    private fun encode(pts: List<Pair<Double, Double>>, f: Double): String {
-        val sb = StringBuilder(); var pa = 0; var pb = 0
-        fun enc(v: Int) { var x = if (v < 0) (v shl 1).inv() else v shl 1
-            while (x >= 0x20) { sb.append(((0x20 or (x and 0x1f)) + 63).toChar()); x = x shr 5 }
-            sb.append((x + 63).toChar()) }
-        for ((a, b) in pts) { val ia = Math.round(a * f).toInt(); val ib = Math.round(b * f).toInt()
-            enc(ia - pa); enc(ib - pb); pa = ia; pb = ib }
-        return sb.toString()
     }
 
     @Test fun `a throwing tick does not kill the loop`() {
