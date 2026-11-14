@@ -466,10 +466,6 @@ data class KSafeConfig(
     val calibrationLoggingEnabled: Boolean = false,
     // Pacing advisor (beta) — default OFF; see KSafeExtension.pacingWanted
     val pacingEnabled: Boolean = false,
-    val pacingAlerts: Boolean = true,
-    val pacingFuelHints: Boolean = true,
-    val pacingWPrimeAlerts: Boolean = true,
-    val pacingWPrimeKj: Double? = null,
     // Update-availability notice — show a brief overlay when a newer KSafe build is published
     val updateCheckEnabled: Boolean = true,
     // Field colours — idle/ready background for each ride-screen widget
@@ -1550,7 +1546,7 @@ fun KSafeConfig.migrateToLatest(): KSafeConfig {
     }
 
     if (c.configVersion < 29) {
-        // v28 → v29: pacing advisor beta fields — additive, default OFF.
+        // v28 → v29: pacing advisor beta switch — additive, default OFF.
         c = c.copy(configVersion = 29)
         Timber.i("KSafeConfig migrated v%d→v29 (pacing advisor)", originalVersion)
     }
