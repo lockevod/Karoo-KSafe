@@ -35,7 +35,7 @@ The ease-off cue is separate and works with or without power: when your mean HR 
 Alerts are rare:
 - Pacing and W′ alerts keep at least 3 min from any other KSafe alert.
 - At most one pacing alert at a time, and at most one per 10 min (a harder later climb may come after 3 min; so may that climb's Conserva / High margin after an ease-off cue).
-- No double "eat": the fuel hint is skipped when the carb tracker reminded you in the last 15 min or will remind you within the next 15 min.
+- No double "eat": the fuel hint is skipped when the carb tracker reminded you in the last 15 min or a timed carb reminder is due within 15 min. Once shown, the hint counts as the carb deficit reminder: that reminder's interval restarts from the hint.
 - Once per climb.
 - Never while stopped or off-route, never during an SOS, countdown or SOS retry, nor within 3 min after it.
 

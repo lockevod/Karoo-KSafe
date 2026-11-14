@@ -834,11 +834,21 @@ class CarbsTracker(
         publishStatus()
     }
 
-    /** Pure read for the pacing fuel hint: will a carb reminder (deficit or time grid) fire within
-     *  [lookaheadMs]? Lets the hint step aside instead of saying "eat" minutes before the tracker does. */
+    /** Pure read for the pacing fuel hint: will a time-grid carb reminder fire within [lookaheadMs]?
+     *  The deficit reminder is not looked ahead (with the default 10-min cooldown it is almost always
+     *  "due soon"): a shown fuel hint replaces it instead, see [onFuelHintShown]. */
     private fun reminderDueWithin(now: Long, lookaheadMs: Long): Boolean =
-        config.carbsTrackerEnabled && monitorJob != null &&
-            (deficitDue(now, lookaheadMs) || currentDueTimeTick(now + lookaheadMs) != 0L)
+        config.carbsTrackerEnabled && monitorJob != null && currentDueTimeTick(now + lookaheadMs) != 0L
+
+    /** The pacing fuel hint ("good moment to eat") was shown: it counts as the deficit reminder, so the
+     *  deficit cooldown restarts from now and a time tick inside the quiet window is quieted — no second
+     *  "eat" minutes later. No beep, no back-off step (the rider was not nagged by the tracker). */
+    fun onFuelHintShown(now: Long = System.currentTimeMillis()) {
+        if (!config.carbsTrackerEnabled || !config.carbDeficitAlertEnabled || monitorJob == null) return
+        if (now <= lastDeficitAlertFireMs) return
+        lastDeficitAlertFireMs = now
+        calibLogger?.log(CalibrationLogger.Event.FUELING_ALERT_QUIETED) { "kind=carb,reason=pacing_fuel_hint" }
+    }
 
     /** Pure read: is the deficit alert due now, or within [lookaheadMs]? Gate delegated to
      *  [FuelingAlertScheduler.shouldFireDeficit] (v18.2 B9) so carbs and hydration share it
@@ -1113,8 +1123,8 @@ data class CarbStatus(
      *  cumulative/deficit stay frozen at 0 — the carb fields must render neutral
      *  instead of a live rate that disagrees with its frozen siblings. */
     val carbsEnabled: Boolean = true,
-    /** A carb reminder (deficit or time) is due within 15 min: the pacing
-     *  fuel hint steps aside so the rider never hears "eat" twice in a few minutes. */
+    /** A time-grid carb reminder is due within 15 min: the pacing fuel hint steps aside so the rider
+     *  never hears "eat" twice in a few minutes (the deficit reminder is replaced by the hint instead). */
     val reminderDueSoon: Boolean = false,
     /** Cumulative HR-based energy this session (kcal). 0 until any accrues. */
     val kcalTotal: Int,

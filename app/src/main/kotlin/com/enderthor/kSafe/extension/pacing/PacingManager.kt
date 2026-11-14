@@ -96,6 +96,9 @@ class PacingManager(
     private var carbStatus: CarbStatus? = null; private var lastCarbAlertMs: Long? = null
     /** Last fuel hint the arbiter let through (live or shadow): a carb reminder inside 15 min after it is logged as an overlap. */
     private var lastFuelHintMs: Long? = null
+    /** Whether the last [arbitrate] call reached the rider (live sink accepted it). */
+    private var lastDispatched = false
+    private var fuelLoggedReason: String? = null
     internal var lastMedicalMs: Long? = null; private set   // internal: tests
     private var emergencyActive = false
     private var sosRetrying = false   // the probe at the previous tick
@@ -144,7 +147,7 @@ class PacingManager(
         arbiter = AlertArbiter()
         prevState = PacingState.KEEP; prevRecoverW = false
         conserveSinceMs = null; condCandidateDone = false; conserveByProjection = false
-        pacingCandBlock = null; keepCandBlock = null; intensityCandBlock = null; wCandBlock = null; fuelLoggedBlock = null; fuelFiredBlock = null
+        pacingCandBlock = null; keepCandBlock = null; intensityCandBlock = null; wCandBlock = null; fuelLoggedBlock = null; fuelLoggedReason = null; fuelFiredBlock = null
         odometerM = 0.0; movingS = 0.0; lastSpeedAtMs = null; moving = false; lastPowerAtMs = null
         tickN = 0; lastTickOdoM = 0.0; lastTickMovingS = 0.0; firstProjFinish = null; lastProjFinish = null
         predBlock = null; inBlock = null; blockWMin = null
@@ -510,11 +513,13 @@ class PacingManager(
         var fuelVerdict: ArbiterVerdict? = null
         for ((c, a) in cands.sortedBy { it.first.source.priority }) {
             val v = arbitrate(c, a, now, adv)
-            if (c.source == AlertSource.FUEL_HINT) { fuelVerdict = v; if (v.fire) lastFuelHintMs = now }
+            // A hint the rider saw (live) or would have seen (shadow); a live sink refusal is not one.
+            if (c.source == AlertSource.FUEL_HINT) { fuelVerdict = v; if (v.fire && (!liveAlerts || lastDispatched)) lastFuelHintMs = now }
         }
         fuel?.let { (r, b) ->
-            if (r.fire || fuelLoggedBlock != b.key) {
-                fuelLoggedBlock = b.key
+            // Every fire, and each reason change within a block (e.g. carb_reminder_due → deficit).
+            if (r.fire || fuelLoggedBlock != b.key || fuelLoggedReason != r.reason) {
+                fuelLoggedBlock = b.key; fuelLoggedReason = r.reason
                 calibLogger?.log(Event.PACE_FUEL) {
                     "block=${b.key},fire=${r.fire},reason=${r.reason},grams=${r.grams},with_logs=${r.withLogs}," +
                         "would_alert=${fuelVerdict?.fire ?: false},suppressed_by=${fuelVerdict?.suppressedBy ?: "na"},live=$liveAlerts"
@@ -542,7 +547,8 @@ class PacingManager(
     private fun arbitrate(c: AlertCandidate, a: PacingAlert, now: Long, adv: () -> String): ArbiterVerdict {
         evaluatedCandidateKeys += c.key
         val v = arbiter.evaluate(c, now, emergencyActive || emergencyProbe())
-        if (liveAlerts && v.fire && alertSink?.invoke(a) == true) arbiter.recordFired(c.source, c.key, c.severity, now)
+        lastDispatched = liveAlerts && v.fire && alertSink?.invoke(a) == true
+        if (lastDispatched) arbiter.recordFired(c.source, c.key, c.severity, now)
         calibLogger?.log(Event.PACE_ADV) {
             "${adv()},key=${c.key},sev=${f(c.severity, 2)},would_alert=${v.fire},suppressed_by=${v.suppressedBy ?: "none"}," +
                 "bypass=${v.bypass ?: "none"},live=$liveAlerts"

@@ -43,6 +43,12 @@ class AlertArbiterTest {
         assertTrue(a.evaluate(AlertCandidate(AlertSource.PACING, "HIGH_MARGIN#5", 0.5), 4 * min, false).fire)
         // Another block keeps the rate limit (not harder), as does a plain pacing alert before.
         assertEquals("pacing_rate", a.evaluate(AlertCandidate(AlertSource.PACING, "CONSERVE#6", 0.3), 4 * min, false).suppressedBy)
+        // Only CONSERVE / HIGH_MARGIN of that block: KEEP# and W# keep the limit.
+        assertEquals("pacing_rate", a.evaluate(AlertCandidate(AlertSource.PACING, "KEEP#5", 0.0), 4 * min, false).suppressedBy)
+        assertEquals("pacing_rate", a.evaluate(AlertCandidate(AlertSource.W_PRIME, "W#5", 0.4), 4 * min, false).suppressedBy)
+        // Once the bypassed advice fires, the limit runs from it: no chaining.
+        a.recordFired(AlertSource.PACING, "CONSERVE#5", 0.3, 4 * min)
+        assertEquals("pacing_rate", a.evaluate(AlertCandidate(AlertSource.PACING, "HIGH_MARGIN#5", 0.5), 8 * min, false).suppressedBy)
         val b = AlertArbiter(); b.recordFired(AlertSource.PACING, "CONSERVE#5", 0.5, 0)
         val w = b.evaluate(AlertCandidate(AlertSource.PACING, "HIGH_MARGIN#5", 0.5), 4 * min, false)
         assertEquals("pacing_rate", w.suppressedBy); assertEquals(null, w.bypass)

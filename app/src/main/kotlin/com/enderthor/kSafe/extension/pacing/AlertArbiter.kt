@@ -23,8 +23,8 @@ class AlertArbiter {
                 val harderLaterBlock = block(key) != block(c.key) && c.severity > sev
                 // The ease-off cue is a heads-up, not the block's advice: it never blocks that block's
                 // CONSERVE / HIGH_MARGIN (still 3 min after it, by the gap above).
-                val afterCue = key.startsWith(PacingAdvisor.INTENSITY_KEY_PREFIX) &&
-                    !c.key.startsWith(PacingAdvisor.INTENSITY_KEY_PREFIX) && block(key) == block(c.key)
+                val afterCue = key.startsWith(PacingAdvisor.INTENSITY_KEY_PREFIX) && block(key) == block(c.key) &&
+                    (c.key.startsWith("${PacingState.CONSERVE}#") || c.key.startsWith("${PacingState.HIGH_MARGIN}#"))
                 if (nowMs - at < PACING_RATE_MS) {
                     if (afterCue) bypass = "after_cue"
                     else if (!harderLaterBlock) return ArbiterVerdict(false, "pacing_rate")

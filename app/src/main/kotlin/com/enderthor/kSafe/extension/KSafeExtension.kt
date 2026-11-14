@@ -2842,7 +2842,11 @@ class KSafeExtension : KarooExtension("ksafe", BuildConfig.VERSION_NAME), Corout
                 icon = R.drawable.ic_ksafe, title = t.title, detail = t.detail,
                 autoDismissMs = 12_000L, backgroundColor = bg, textColor = R.color.pacing_text,
             ))
-        }.onFailure { Timber.e(it, "PACE alert dispatch failed") }.isSuccess
+        }.onFailure { Timber.e(it, "PACE alert dispatch failed") }.isSuccess.also { shown ->
+            // A shown fuel hint replaces the carb deficit reminder (no second "eat" minutes later).
+            if (shown && a.source == com.enderthor.kSafe.extension.pacing.AlertSource.FUEL_HINT && ::carbsTracker.isInitialized)
+                runCatching { carbsTracker.onFuelHintShown() }.onFailure { Timber.e(it, "onFuelHintShown failed") }
+        }
     }
 
     /** Medical / wellness incident: the unchanged [EmergencyManager.handleIncident] call, then the

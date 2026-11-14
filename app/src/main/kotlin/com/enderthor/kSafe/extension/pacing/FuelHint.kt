@@ -3,7 +3,8 @@ package com.enderthor.kSafe.extension.pacing
 data class FuelHintResult(val fire: Boolean, val withLogs: Boolean, val grams: Int, val reason: String)
 
 /** Axis B. Never produces CONSERVE. No double "eat": dropped if the carb tracker alerted < 15 min ago
- *  or will remind within 15 min ([carbReminderDueSoon]). */
+ *  or a time-grid reminder is due within 15 min ([carbReminderDueSoon]); once shown, it replaces the
+ *  tracker's deficit reminder (CarbsTracker.onFuelHintShown). */
 object FuelHint {
     fun decide(
         carbsEnabled: Boolean, cumLoggedG: Int, cumBurnedG: Int, deficitG: Int, deficitThresholdG: Int,
