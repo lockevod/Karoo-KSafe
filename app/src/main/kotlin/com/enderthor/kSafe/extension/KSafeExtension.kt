@@ -1205,7 +1205,7 @@ class KSafeExtension : KarooExtension("ksafe", BuildConfig.VERSION_NAME), Corout
                         // detector treats absence-of-power as "cross-check not plumbed" and
                         // falls through to the original FLATLINE path.
                         medicalDetector.updatePower(w)
-                        if (this@KSafeExtension::pacingManager.isInitialized) pacingManager.onPower(w)
+                        feedPacing { onPower(w) }
                     }
             }
 
@@ -1221,7 +1221,7 @@ class KSafeExtension : KarooExtension("ksafe", BuildConfig.VERSION_NAME), Corout
                         carbsTracker.updateUserProfile(profile)
                         wellnessMonitor.updateUserProfile(profile)
                         hydrationTracker.updateUserProfile(profile)
-                        if (this@KSafeExtension::pacingManager.isInitialized) pacingManager.onUserProfile(profile.ftp, profile.weight.toDouble())
+                        feedPacing { onUserProfile(profile.ftp, profile.weight.toDouble()) }
                     }
             }
 
@@ -1234,7 +1234,7 @@ class KSafeExtension : KarooExtension("ksafe", BuildConfig.VERSION_NAME), Corout
                         wellnessMonitor.updateHr(hr)
                         carbsTracker.updateHr(hr)
                         hydrationTracker.updateHr(hr)
-                        if (this@KSafeExtension::pacingManager.isInitialized) pacingManager.onHr(hr)
+                        feedPacing { onHr(hr) }
                     }
             }
 
@@ -1332,6 +1332,13 @@ class KSafeExtension : KarooExtension("ksafe", BuildConfig.VERSION_NAME), Corout
         }
     }
 
+    /** Pacing fan-out from collectors shared with crash / medical / fueling: only when the rider
+     *  opted in, and a pacing throw is logged instead of killing the shared collector. */
+    private fun feedPacing(block: com.enderthor.kSafe.extension.pacing.PacingManager.() -> Unit) {
+        if (!::pacingManager.isInitialized || !pacingWanted()) return
+        runCatching { pacingManager.block() }.onFailure { Timber.e(it, "PACE input failed") }
+    }
+
     private fun stopPacing() {
         pacingCollectorsJob?.cancel(); pacingCollectorsJob = null
         pacingManager.stop()
@@ -1404,7 +1411,7 @@ class KSafeExtension : KarooExtension("ksafe", BuildConfig.VERSION_NAME), Corout
                         medicalDetector.updateSpeed(speedKmh)
                         if (this@KSafeExtension::carbsTracker.isInitialized) carbsTracker.updateSpeed(speedKmh)
                         if (this@KSafeExtension::hydrationTracker.isInitialized) hydrationTracker.updateSpeed(speedKmh)
-                        if (this@KSafeExtension::pacingManager.isInitialized) pacingManager.onSpeed(speedKmh)
+                        feedPacing { onSpeed(speedKmh) }
                     }
             }
 
@@ -1448,7 +1455,7 @@ class KSafeExtension : KarooExtension("ksafe", BuildConfig.VERSION_NAME), Corout
                     .distinctUntilChanged()
                     .collect { profile ->
                         crashManager.updateRideProfile(profile.routingPreference)
-                        if (this@KSafeExtension::pacingManager.isInitialized) pacingManager.onRoutingPreference(profile.routingPreference)
+                        feedPacing { onRoutingPreference(profile.routingPreference) }
                         activeProfileId = profile.id
                         activeProfileIdFlow.value = profile.id   // reactive mirror for the Settings UI
                         // Atomic read-modify-write (see ConfigurationManager.updateConfig):
@@ -3789,6 +3796,8 @@ class KSafeExtension : KarooExtension("ksafe", BuildConfig.VERSION_NAME), Corout
         hydrationTracker.stop()
         locationManager.stop()
         emergencyManager.stopAll()
+        // After the safety teardown, but before calibLogger.disable() so PACE_END is written.
+        stopPacing()
         // Only if it was ever shown — avoids instantiating the lazy manager at teardown.
         if (fuelingOverlayLazy.isInitialized()) runCatching { fuelingOverlay.remove() }
         calibLogger.disable()
@@ -3797,7 +3806,6 @@ class KSafeExtension : KarooExtension("ksafe", BuildConfig.VERSION_NAME), Corout
         // ServiceConnection across extension restarts. Safe to call even if connect()
         // failed — disconnect() is a no-op when not bound.
         if (::buzzerClient.isInitialized) buzzerClient.disconnect()
-        stopPacing()   // after the safety teardown, never before it
         // Cancel our own collectors BEFORE dropping the Karoo connection. A streamRide /
         // config collector suspended inside its callbackFlow would otherwise be able to
         // resume on a final SDK event AFTER disconnect() and run handleRideState / dispatch
