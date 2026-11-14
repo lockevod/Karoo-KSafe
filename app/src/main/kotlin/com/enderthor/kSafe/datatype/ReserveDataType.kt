@@ -45,7 +45,8 @@ internal fun reserveFrame(
     return when {
         preview || enabled == null -> waiting
         !enabled -> ReserveFrame(null, "OFF", waitHint)
-        view == null || !view.trusted -> waiting
+        // No fresh power = the advisor knows nothing (KEEP is only its no_power default): waiting, not OK.
+        view == null || !view.trusted || !view.hasPower -> waiting
         else -> {
             val (color, main) = when (view.state) {
                 PacingState.CONSERVE -> R.color.pacing_amber to "CONS"
@@ -88,22 +89,28 @@ class ReserveDataType(
         ))
 
     override fun startView(context: Context, config: ViewConfig, emitter: ViewEmitter) {
+        val scope = CoroutineScope(Dispatchers.Default + Job())
+        // Installed before anything can fail or launch, so a cancel always reaches the jobs.
+        emitter.setCancellable { scope.cancel() }
+
         // Synchronous seed with the real current state — see CarbStatusDataType for why
         // (white field while waiting; a '---' seed racing the replay drops the real frame).
-        emitter.updateView(render(config, KSafeExtension.pacingEnabledFlow.value,
-            KSafeExtension.pacingViewFlow.value?.value))
+        // A dead ride-app binder throws here: logged, never thrown into the service process.
+        runCatching {
+            emitter.updateView(render(config, KSafeExtension.pacingEnabledFlow.value,
+                KSafeExtension.pacingViewFlow.value?.value))
+        }.onFailure { Timber.e(it, "ReserveDataType seed failed") }
         val seedRenderMs = System.currentTimeMillis()
 
-        val scopeJob = Job()
-        val scope = CoroutineScope(Dispatchers.Default + scopeJob)
-
-        val configJob = scope.launch {
-            emitter.onNext(UpdateGraphicConfig(showHeader = false))
-            emitter.onNext(ShowCustomStreamState(message = "", color = null))
+        scope.launch {
+            runCatching {
+                emitter.onNext(UpdateGraphicConfig(showHeader = false))
+                emitter.onNext(ShowCustomStreamState(message = "", color = null))
+            }.onFailure { Timber.e(it, "ReserveDataType config failed") }
             awaitCancellation()
         }
 
-        val viewJob = scope.launch {
+        scope.launch {
             try {
                 val viewFlow = KSafeExtension.pacingViewFlow.filterNotNull().first()
                 combine(KSafeExtension.pacingEnabledFlow, viewFlow) { e, v -> e to v }
@@ -114,13 +121,6 @@ class ReserveDataType(
             } catch (e: Exception) {
                 Timber.e(e, "ReserveDataType error: ${e.message}")
             }
-        }
-
-        emitter.setCancellable {
-            configJob.cancel()
-            viewJob.cancel()
-            scope.cancel()
-            scopeJob.cancel()
         }
     }
 }

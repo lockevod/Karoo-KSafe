@@ -11,7 +11,8 @@ class ReserveFrameTest {
         reserveFrame(preview, enabled, view, "MARGIN", "reserve")
 
     private fun v(state: PacingState = PacingState.KEEP, recoverW: Boolean = false, wPct: Double? = null,
-                  trusted: Boolean = true, km: Double? = null) = PacingView(state, recoverW, wPct, trusted, km)
+                  trusted: Boolean = true, km: Double? = null, hasPower: Boolean = true) =
+        PacingView(state, recoverW, wPct, trusted, km, hasPower)
 
     private val waiting = ReserveFrame(R.color.pacing_blue, "---", "reserve")
 
@@ -20,6 +21,8 @@ class ReserveFrameTest {
         assertEquals(waiting, f(enabled = null, view = v()))
         assertEquals(waiting, f(view = null))
         assertEquals(waiting, f(view = v(trusted = false)))
+        assertEquals(waiting, f(view = v(hasPower = false)))                       // no power: unknown, not OK
+        assertEquals(waiting, f(view = v(PacingState.CONSERVE, hasPower = false)))
     }
 
     @Test fun switchOffIsGreyOffEvenWithShadowView() {

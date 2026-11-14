@@ -195,4 +195,12 @@ class KSafePacingFakeKarooTest {
         // The ALERTING -> IDLE gap is ~30 min old by now: only the notice itself can hold it.
         assertEquals("gap:EMERGENCY", pacingGap(ext))
     }
+
+    @Test
+    fun `the Reserve field reads the pacing switch as off when the master switch is off`() {
+        KSafeExtension.pacingEnabledFlow.value = null              // a process-wide static: no earlier test's value
+        ksafe.seed(KSafeConfig(updateCheckEnabled = false, pacingEnabled = true, isActive = false))
+        ksafe.startExtension()
+        assertEquals(false, karoo.awaitValue { KSafeExtension.pacingEnabledFlow.value?.let { it to Unit } }.first)
+    }
 }

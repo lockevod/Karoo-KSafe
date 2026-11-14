@@ -22,7 +22,7 @@ import java.io.File
 import java.util.Locale
 import kotlin.math.roundToInt
 
-data class PacingView(val state: PacingState, val recoverW: Boolean, val wPct: Double?, val trusted: Boolean, val nextBlockKm: Double?)
+data class PacingView(val state: PacingState, val recoverW: Boolean, val wPct: Double?, val trusted: Boolean, val nextBlockKm: Double?, val hasPower: Boolean = true)
 
 data class PacingAlert(
     val source: AlertSource, val state: PacingState?, val key: String, val blockKm: Double?, val blockLenKm: Double?,
@@ -174,6 +174,7 @@ class PacingManager(
         val wasStarted = started
         started = false
         loop?.cancel(); loop = null
+        _view.value = null   // the Reserve field must not keep showing a stopped advisor's last state
         // Runs inside the service teardown paths — must never throw into them.
         runCatching {
             if (endOfRide && sessionLive) { logEnd(); sessionLive = false }
@@ -348,7 +349,9 @@ class PacingManager(
         val kj = fs?.kjPerKg ?: 0.0
         val meanW = fs?.meanMovingPowerW ?: 0.0
         val wTrusted = wp?.trusted == true
-        val wPct = if (wTrusted) wp!!.pct else null
+        val hasPower = lastPowerAtMs?.let { now - it <= POWER_STALE_MS } == true
+        // A balance that never saw power, or one frozen by a dropout, is not a reading: no W′ %.
+        val wPct = if (wTrusted && wp!!.hasSamples && hasPower) wp.pct else null
         val drift = fs?.driftPct(now)
         val stableSince = fs?.driftStableSinceMs
         val driftStableMs = if (drift != null && drift < 5.0 && stableSince != null) now - stableSince else null
@@ -374,7 +377,7 @@ class PacingManager(
 
         val knee = kneeKjKgOverride ?: DEFAULT_KNEE_KJKG
         val input = PacingInput(
-            nowMs = now, moving = movingNow, hasPower = lastPowerAtMs?.let { now - it <= POWER_STALE_MS } == true, positionTrusted = trusted, climbsKnown = prof != null,
+            nowMs = now, moving = movingNow, hasPower = hasPower, positionTrusted = trusted, climbsKnown = prof != null,
             remainingMovingS = remainingS, elapsedMovingS = movingS, blocksAhead = ahead.size,
             secondsToNextBlock = toNextS, metresToNextBlock = toNextM, nextBlockId = next?.key,
             kjPerKg = kj, projectedKjKgFinish = projFinish, projectedKjKgNextTop = projTop, kneeKjKg = knee,
@@ -462,7 +465,7 @@ class PacingManager(
         if (trusted) trackClimbs(pos!!, next, toNextS, now, wPct, drift)
 
         prevState = d.state; prevRecoverW = d.recoverW
-        _view.value = PacingView(d.state, d.recoverW, wPct, trusted, toNextM?.div(1000.0))
+        _view.value = PacingView(d.state, d.recoverW, wPct, trusted, toNextM?.div(1000.0), hasPower)
     }
 
     /** Power-sampled moving seconds over moving seconds; null under a minute moving or before a profile. */

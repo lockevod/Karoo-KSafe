@@ -491,7 +491,7 @@ class KSafeExtension : KarooExtension("ksafe", BuildConfig.VERSION_NAME), Corout
         /** [PacingManager.view], published like [carbsTrackerFlow] for the Reserve field. */
         val pacingViewFlow = kotlinx.coroutines.flow.MutableStateFlow<
             kotlinx.coroutines.flow.StateFlow<com.enderthor.kSafe.extension.pacing.PacingView?>?>(null)
-        /** Mirrors activeConfig.pacingEnabled for the Reserve field; null until config is seeded. */
+        /** Mirrors activeConfig.isActive && pacingEnabled for the Reserve field; null until config is seeded. */
         val pacingEnabledFlow = kotlinx.coroutines.flow.MutableStateFlow<Boolean?>(null)
 
         /** True while a ride is active (Recording or Paused), republished by
@@ -753,7 +753,8 @@ class KSafeExtension : KarooExtension("ksafe", BuildConfig.VERSION_NAME), Corout
                 activeConfig = config
                 // Calibration-logging-only riders stay shadow: live only with the pacing switch.
                 if (::pacingManager.isInitialized) pacingManager.setLiveAlerts(config.pacingEnabled, null)
-                pacingEnabledFlow.value = config.pacingEnabled
+                // Master off = no advice either: the Reserve field shows OFF, not a frozen state.
+                pacingEnabledFlow.value = config.isActive && config.pacingEnabled
                 // Idempotent: unblock the ride-state collector's first handleRideState so it
                 // never runs against KSafeConfig() defaults on a mid-ride (re)connect.
                 configSeeded.complete(Unit)

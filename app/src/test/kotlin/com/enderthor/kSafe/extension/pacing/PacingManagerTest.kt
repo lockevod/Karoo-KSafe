@@ -83,7 +83,20 @@ class PacingManagerTest {
         ride(m, power = null, accuracyM = 5.0)
         val v = m.view.value!!
         assertTrue(v.trusted); assertEquals(PacingState.KEEP, v.state)
+        assertFalse(v.hasPower)
+        assertNull("a W' balance that never saw power is not 100 %", v.wPct)
         assertTrue(alerts.isEmpty())
+    }
+
+    @Test fun `stale power publishes no W' and stop clears the view`() {
+        val m = manager()
+        m.onUserProfile(250, 70.0); m.onNavigation(route()); m.start()
+        ride(m, power = 200, accuracyM = 5.0, seconds = 120)
+        assertNotNull(m.view.value!!.wPct); assertTrue(m.view.value!!.hasPower)
+        ride(m, power = null, accuracyM = 5.0, seconds = 30, from = 121)   // tick at 150 s: power 30 s stale
+        assertNull(m.view.value!!.wPct); assertFalse(m.view.value!!.hasPower)
+        m.stop()
+        assertNull("the field goes back to --- once pacing stops", m.view.value)
     }
 
     @Test fun `CONSERVE already active before the window gives one candidate for the block`() {
