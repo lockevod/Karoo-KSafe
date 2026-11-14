@@ -394,8 +394,11 @@ class PacingManager(
         val ceilingW = if (remainingS != null && remainingS > 0 && weightKg > 0)
             ((knee - kj) * weightKg * 1000.0 / remainingS).takeIf { it > 0 }?.toInt() else null
 
-        if (d.state == PacingState.CONSERVE) conserveSinceMs = conserveSinceMs ?: now
-        else { conserveSinceMs = null; condCandidateDone = false }
+        // The 90 s sustain clock runs only while the rider is moving, on-route and metered: a stop, a lost
+        // position or stale power restarts it, so #cond never reaches a stopped / off-route / unmetered rider.
+        if (d.state != PacingState.CONSERVE) { conserveSinceMs = null; condCandidateDone = false }
+        else if (input.moving && input.positionTrusted && input.hasPower) conserveSinceMs = conserveSinceMs ?: now
+        else conserveSinceMs = null
         // One pacing candidate per block: the first window tick in CONSERVE/HIGH_MARGIN, whether or not the state just changed.
         if (d.alertWindowPacing && next != null) {
             if ((d.state == PacingState.CONSERVE || d.state == PacingState.HIGH_MARGIN) && pacingCandBlock != next.key) {

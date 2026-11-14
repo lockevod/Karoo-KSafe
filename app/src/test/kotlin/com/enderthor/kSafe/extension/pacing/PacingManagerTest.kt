@@ -160,6 +160,44 @@ class PacingManagerTest {
         assertTrue("blockKm=${a.blockKm}", a.blockKm!! in 0.5..4.0)
     }
 
+    /** Rides 1 s at a time until the published state is CONSERVE; returns the next second. */
+    private fun rideUntilConserve(m: PacingManager, power: Int, from: Int, hr: Int = 150, limit: Int = 3000): Int {
+        var s = from
+        while (m.view.value?.state != PacingState.CONSERVE) {
+            check(s < limit) { "never reached CONSERVE" }
+            ride(m, power = power, accuracyM = 5.0, seconds = 1, from = s, hr = hr); s++
+        }
+        return s
+    }
+
+    @Test fun `a cafe stop inside the sustain window does not fire CONSERVE cond`() {
+        val m = manager(knee = 0.5)
+        m.setLiveAlerts(true, null)
+        m.onUserProfile(250, 70.0); m.onNavigation(route())
+        var s = rideUntilConserve(m, power = 300, from = 0)       // CONSERVE entered at T
+        ride(m, power = 300, accuracyM = 5.0, seconds = 20, from = s); s += 20   // T+20 s: the rider stops
+        val lng = (s * 8.33) / 111_320.0
+        for (i in 1..100) {                                       // stopped past T+90 s (ticks at T+50/80/110)
+            now += 1000; m.onSpeed(0.0); m.onPower(0); m.onHr(100); m.onLocation(0.0, lng, 5.0)
+            if (i % 30 == 0) m.tick()
+        }
+        assertTrue("no cond alert to a stopped rider: ${alerts.map { it.key }}", alerts.none { it.key == "CONSERVE#cond" })
+        // Back on the bike: the sustain clock restarts, so the cond alert still comes after 90 s of riding.
+        ride(m, power = 300, accuracyM = 5.0, seconds = 150, from = s)
+        assertEquals(listOf("CONSERVE#cond"), alerts.map { it.key })
+    }
+
+    @Test fun `drift-held CONSERVE off route does not fire CONSERVE cond`() {
+        val m = manager(knee = 30.0)                              // the projection never crosses: drift only
+        m.setLiveAlerts(true, null)
+        m.onUserProfile(250, 70.0); m.onNavigation(longRoute())
+        ride(m, power = 175, accuracyM = 5.0, seconds = 905)     // HR 150 baseline at 900 s
+        val s = rideUntilConserve(m, power = 175, from = 905, hr = 180)   // ~17 % decoupling: drift_high
+        ride(m, power = 175, accuracyM = 100.0, seconds = 150, from = s, hr = 180)   // lost position, drift holds CONSERVE
+        assertEquals(PacingState.CONSERVE, m.view.value!!.state)
+        assertTrue("no cond alert off route: ${alerts.map { it.key }}", alerts.none { it.key == "CONSERVE#cond" })
+    }
+
     @Test fun `an alert the sink drops is not recorded as fired`() {
         // CONSERVE#cond is dropped by the sink (e.g. emergency re-check); had it been recorded, the
         // pacing spacing would suppress the block alert that follows (see the live-sink tests).
