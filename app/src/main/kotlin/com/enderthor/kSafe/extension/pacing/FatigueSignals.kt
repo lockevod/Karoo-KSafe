@@ -1,0 +1,52 @@
+package com.enderthor.kSafe.extension.pacing
+
+/** Pw:HR decoupling on matched-intensity 5-min windows + moving work. Independent of WellnessMonitor
+ *  (which is off by default, uses instantaneous HR/W and holds stale values). Unknown → null, never 0. */
+class FatigueSignals(private val ftpW: Int, private val weightKg: Double) {
+    var kjPerKg = 0.0; private set
+    var movingSeconds = 0.0; private set
+    var kjPerKgAtFirstDrift5: Double? = null; private set
+    var driftStableSinceMs: Long? = null; private set
+    val meanMovingPowerW: Double get() = if (movingSeconds > 0) kjPerKg * weightKg * 1000.0 / movingSeconds else 0.0
+
+    private var lastMs = -1L
+    private var winSec = 0.0; private var winP = 0.0; private var winHr = 0.0; private var winHrN = 0
+    private var baseline: Double? = null
+    private var lastDrift: Double? = null; private var lastDriftAtMs = 0L
+
+    fun onSample(powerW: Int, hrBpm: Int?, tMs: Long, moving: Boolean) {
+        val dt = if (lastMs < 0) 0.0 else ((tMs - lastMs).coerceIn(0, 5_000)) / 1000.0
+        lastMs = tMs
+        if (!moving || dt <= 0) return
+        movingSeconds += dt
+        kjPerKg += powerW * dt / 1000.0 / weightKg
+        winSec += dt; winP += powerW * dt
+        if (hrBpm != null && hrBpm > 0) { winHr += hrBpm * dt; winHrN++ }
+        if (winSec >= WINDOW_S) closeWindow(tMs)
+    }
+
+    private fun closeWindow(tMs: Long) {
+        val meanP = winP / winSec
+        val meanHr = if (winHrN > 0) winHr / winSec else 0.0
+        winSec = 0.0; winP = 0.0; winHr = 0.0; winHrN = 0
+        if (ftpW <= 0 || meanHr <= 0 || meanP < LOW * ftpW || meanP > HIGH * ftpW) return
+        val pwhr = meanP / meanHr
+        val b = baseline
+        if (b == null) { if (movingSeconds >= BASELINE_AFTER_S) baseline = pwhr; return }
+        val d = (b - pwhr) / b * 100.0
+        lastDrift = d; lastDriftAtMs = tMs
+        if (d > 5.0 && kjPerKgAtFirstDrift5 == null) kjPerKgAtFirstDrift5 = kjPerKg
+        driftStableSinceMs = if (d < 5.0) (driftStableSinceMs ?: tMs) else null
+    }
+
+    fun driftPct(nowMs: Long): Double? =
+        lastDrift?.takeIf { nowMs - lastDriftAtMs <= MAX_AGE_MS }
+
+    companion object {
+        const val WINDOW_S = 300.0
+        const val BASELINE_AFTER_S = 900.0
+        const val MAX_AGE_MS = 360_000L
+        const val LOW = 0.60
+        const val HIGH = 0.80
+    }
+}
