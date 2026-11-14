@@ -1,6 +1,7 @@
 package com.enderthor.kSafe.extension.pacing
 
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
 import org.junit.Rule
 import org.junit.Test
@@ -15,5 +16,12 @@ class GradePaceStoreTest {
     @Test fun `corrupt file is discarded`() {
         java.io.File(tmp.root, GradePaceStore.FILE_NAME).writeText("{nope")
         assertNull(GradePaceStore(tmp.root).load())
+    }
+    @Test fun `an unreadable file is moved aside to bad instead of being overwritten later`() {
+        java.io.File(tmp.root, "${GradePaceStore.FILE_NAME}.bad").writeText("older")
+        java.io.File(tmp.root, GradePaceStore.FILE_NAME).writeText("{nope")
+        assertNull(GradePaceStore(tmp.root).load())
+        assertEquals("{nope", java.io.File(tmp.root, "${GradePaceStore.FILE_NAME}.bad").readText())
+        assertFalse(java.io.File(tmp.root, GradePaceStore.FILE_NAME).exists())
     }
 }

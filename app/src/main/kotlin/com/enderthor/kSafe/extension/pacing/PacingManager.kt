@@ -4,8 +4,13 @@ import com.enderthor.kSafe.extension.managers.CalibrationLogger
 import com.enderthor.kSafe.extension.managers.CalibrationLogger.Event
 import com.enderthor.kSafe.extension.managers.CarbStatus
 import io.hammerhead.karooext.models.OnNavigationState
+import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.withContext
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -36,6 +41,8 @@ class PacingManager(
     private val clock: () -> Long = { android.os.SystemClock.elapsedRealtime() },
     private val alertSink: ((PacingAlert) -> Unit)? = null,
     private val kneeKjKgOverride: Double? = null,
+    /** Model file load and every save run here; all manager state stays on the caller's thread. */
+    private val ioDispatcher: CoroutineDispatcher = Dispatchers.IO,
 ) {
     /** Every candidate key sent to the arbiter, in order. Tests only. */
     internal val evaluatedCandidateKeys = ArrayList<String>()
@@ -46,6 +53,12 @@ class PacingManager(
     private var loop: Job? = null
     private var started = false
     internal var gradePace = GradePaceModel()  // internal: tests swap the learned pace
+    private val store = GradePaceStore(storeDir)
+    /** Learning is skipped until the file model is applied (simpler than merging a pre-load model into it),
+     *  and nothing is saved before it, so an unloaded model never overwrites the learned file. */
+    private var gradePaceLoaded = false
+    private var loadJob: Job? = null; private var saveJob: Job? = null
+    private var lastSaveMovingS = 0.0
     private var kind = BikeKind.ROAD
 
     // Route
@@ -98,6 +111,7 @@ class PacingManager(
         started = true
         val keep = resume && sessionLive
         if (!keep) { resetRide(); sessionLive = true }
+        if (!gradePaceLoaded && loadJob?.isActive != true) loadGradePace()
         // Restarts the speed integration so the stopped window is not counted as one stale sample.
         lastSpeedAtMs = null; moving = false
         _view.value = null
@@ -119,7 +133,27 @@ class PacingManager(
         lastCarbAlertMs = null; lastMedicalMs = null
         path?.let { projector = RouteProjector(it) }
         if (wPrime != null) rebuildProfileUnits()
-        gradePace = GradePaceStore(storeDir).load() ?: GradePaceModel()
+        gradePace = GradePaceModel(); gradePaceLoaded = false; lastSaveMovingS = 0.0
+    }
+
+    /** Reads the file on [ioDispatcher], applies the model back on the caller's thread. */
+    private fun loadGradePace() {
+        loadJob = scope.launch {
+            val m = try { withContext(ioDispatcher) { store.load() } }
+                    catch (e: CancellationException) { throw e }
+                    catch (e: Exception) { Timber.e(e, "PACE load failed"); return@launch }   // stays unloaded: no saves
+            gradePace = m ?: GradePaceModel(); gradePaceLoaded = true
+            runCatching { if (profile != null) recomputeBlocks() }.onFailure { Timber.e(it, "PACE blocks failed") }
+        }
+    }
+
+    /** Snapshot here, write on [ioDispatcher]. Saves are chained in order and NonCancellable, so the stop-time
+     *  save survives the service scope being cancelled right after it in onDestroy. */
+    private fun saveGradePace() {
+        if (!gradePaceLoaded) return
+        lastSaveMovingS = movingS
+        val dto = gradePace.toDto(); val prev = saveJob
+        saveJob = scope.launch(NonCancellable) { prev?.join(); withContext(ioDispatcher) { store.save(dto) } }
     }
 
     /**
@@ -136,7 +170,7 @@ class PacingManager(
             if (endOfRide && sessionLive) { logEnd(); sessionLive = false }
             else if (wasStarted) calibLogger?.log(Event.PACE_STOP) { "reason=$reason,moving_s=${f(movingS, 0)},odo_m=${f(odometerM, 0)}" }
             // Never save an unloaded (empty) model over the learned file.
-            if (wasStarted) { storeDir.mkdirs(); GradePaceStore(storeDir).save(gradePace) }
+            if (wasStarted) saveGradePace()
         }.onFailure { Timber.e(it, "PACE stop failed") }
     }
 
@@ -295,7 +329,8 @@ class PacingManager(
         val dOdo = odometerM - lastTickOdoM; val dMov = movingS - lastTickMovingS
         lastTickOdoM = odometerM; lastTickMovingS = movingS
         val prof = profile
-        if (started && trusted && prof != null && moving && dOdo > 0 && dMov > 0) gradePace.learn(kind, prof.gradeAt(pos!!), dOdo, dMov)
+        if (started && gradePaceLoaded && trusted && prof != null && moving && dOdo > 0 && dMov > 0) gradePace.learn(kind, prof.gradeAt(pos!!), dOdo, dMov)
+        if (started && movingS - lastSaveMovingS >= SAVE_EVERY_MOVING_S) saveGradePace()
         if (prof != null && now - blocksAtMs >= BLOCKS_REFRESH_MS) recomputeBlocks()
 
         val fs = fatigue; val wp = wPrime
@@ -473,6 +508,7 @@ class PacingManager(
         const val POWER_STALE_MS = 10_000L
         const val HR_STALE_MS = 5_000L
         const val MIN_PROJ_MOVING_S = 600.0
+        const val SAVE_EVERY_MOVING_S = 600.0
         /** Stable across block recomputes (ids renumber when gaps merge): route metres of the block start. */
         private val ClimbBlock.key: Int get() = startM.roundToInt()
     }

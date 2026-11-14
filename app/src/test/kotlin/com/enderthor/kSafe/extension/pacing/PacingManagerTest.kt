@@ -3,7 +3,11 @@ package com.enderthor.kSafe.extension.pacing
 import com.enderthor.kSafe.extension.managers.CalibrationLogger
 import io.hammerhead.karooext.models.OnNavigationState
 import io.hammerhead.karooext.models.OnNavigationState.NavigationState.Climb
+import kotlinx.coroutines.CoroutineDispatcher
+import kotlinx.coroutines.Runnable
+import kotlinx.coroutines.test.StandardTestDispatcher
 import kotlinx.coroutines.test.TestScope
+import kotlin.coroutines.CoroutineContext
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
@@ -308,5 +312,50 @@ class PacingManagerTest {
         m.stop(endOfRide = true)
         assertEquals(1, logRows.count { it.startsWith("PACE_END,") })
         assertEquals(1, logRows.count { it.startsWith("PACE_STOP,") })
+    }
+
+    /** A manager whose scope and IO dispatcher run on one test scheduler; [ioDispatches] counts IO hops. */
+    private var ioDispatches = 0
+    private fun ioManager(scope: TestScope): PacingManager {
+        val inner = StandardTestDispatcher(scope.testScheduler)
+        val io = object : CoroutineDispatcher() {
+            override fun dispatch(context: CoroutineContext, block: Runnable) { ioDispatches++; inner.dispatch(context, block) }
+        }
+        return PacingManager(scope, tmp.root, null, clock = { now }, ioDispatcher = io)
+    }
+
+    private fun learned40() = GradePaceModel().apply { learn(BikeKind.ROAD, 0.0, 1000.0, 90.0) }   // 40 km/h, confident
+
+    @Test fun `the learned model is loaded on IO and applied before learning`() {
+        GradePaceStore(tmp.root).save(learned40())
+        val scope = TestScope(); val m = ioManager(scope)
+        m.start()
+        assertFalse("start must not read the file on the caller thread", m.gradePace.isConfident(BikeKind.ROAD, 0.0))
+        scope.testScheduler.runCurrent()
+        assertTrue(ioDispatches > 0)
+        assertEquals(40.0, m.gradePace.speedKmh(BikeKind.ROAD, 0.0), 0.01)
+        m.stop(endOfRide = true)
+    }
+
+    @Test fun `the model is saved every ten minutes of moving time`() {
+        val scope = TestScope(); val m = ioManager(scope)
+        m.onUserProfile(250, 70.0); m.onNavigation(route()); m.start()
+        scope.testScheduler.runCurrent()
+        ride(m, power = 200, accuracyM = 5.0, seconds = 11 * 60)
+        val before = ioDispatches
+        scope.testScheduler.runCurrent()
+        assertTrue(ioDispatches > before)
+        assertTrue(GradePaceStore(tmp.root).load()!!.isConfident(BikeKind.ROAD, 0.0))
+    }
+
+    @Test fun `an unreadable model file survives the ride as bad`() {
+        java.io.File(tmp.root, GradePaceStore.FILE_NAME).writeText("{nope")
+        val scope = TestScope(); val m = ioManager(scope)
+        m.onUserProfile(250, 70.0); m.onNavigation(route()); m.start()
+        scope.testScheduler.runCurrent()
+        ride(m, power = 200, accuracyM = 5.0, seconds = 120)
+        m.stop(endOfRide = true); scope.testScheduler.runCurrent()
+        assertEquals("{nope", java.io.File(tmp.root, "${GradePaceStore.FILE_NAME}.bad").readText())
+        assertNotNull(GradePaceStore(tmp.root).load())                       // the fresh model was saved beside it
     }
 }
