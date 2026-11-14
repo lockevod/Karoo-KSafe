@@ -877,10 +877,13 @@ def pacing_summary(paths: list[Path]) -> None:
             states = [d.get("state") for _, d in adv]
             changes = sum(1 for a, b in zip(states, states[1:]) if a != b)
             wa = len({d.get("key") for _, d in adv if d.get("would_alert") == "true"})
+            live = any(d.get("live") == "true" for _, d in adv)
+            wa_tag = " (live)" if live else " (shadow: not a bound on live alerts \u2014 live may re-fire a key when it worsens)"
+            sup_tag = " (live)" if live else " (shadow: arbiter fires not recorded \u2014 pacing_rate/repeat cannot appear)"
             per_h = (lambda n: f"{n / hrs:.1f}/h ({basis} h)") if hrs else (lambda n: "n/a")
             out.append(f"    PACE_ADV: state changes {changes} = {per_h(changes)}")
-            out.append(f"    shadow would_alert, distinct keys (shadow: arbiter state never recorded \u2014 upper bound, NOT the live alert rate): {wa} = {per_h(wa)}")
-            out.append(f"    suppressed_by (shadow: arbiter fires not recorded \u2014 pacing_rate/repeat cannot appear): {dict(Counter(d.get('suppressed_by', '?') for _, d in adv if d.get('would_alert') == 'false'))}")
+            out.append(f"    would_alert distinct candidate keys{wa_tag}: {wa} = {per_h(wa)}")
+            out.append(f"    suppressed_by{sup_tag}: {dict(Counter(d.get('suppressed_by', '?') for _, d in adv if d.get('would_alert') == 'false'))}")
         errs = []
         for _, d in by["PACE_CLIMB"]:
             p_, a_ = _to_float(d.get("pred_s_first")), _to_float(d.get("actual_s"))
