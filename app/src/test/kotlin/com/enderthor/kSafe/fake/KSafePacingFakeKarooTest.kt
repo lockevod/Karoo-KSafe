@@ -5,6 +5,7 @@ import com.enderthor.kSafe.extension.pacing.TestPolyline
 import fi.nikosavola.karooext.testing.robolectric.FakeKarooRule
 import io.hammerhead.karooext.models.OnNavigationState
 import io.hammerhead.karooext.models.RideState
+import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Rule
 import org.junit.Test
@@ -47,5 +48,23 @@ class KSafePacingFakeKarooTest {
             ksafe.calibrationLog().lines().filter { it.split(',').getOrNull(2) == "PACE_ROUTE" }.takeIf { it.isNotEmpty() }
         }
         assertTrue(rows.isNotEmpty())
+    }
+
+    @Test
+    fun `a mid-ride master switch flip resumes pacing without ending the ride`() {
+        val on = KSafeConfig(updateCheckEnabled = false, calibrationLoggingEnabled = true)
+        ksafe.seed(on)
+        ksafe.startExtension()
+        karoo.system.setRideState(RideState.Recording)
+        ksafe.settle(2.seconds)
+
+        ksafe.reseed(on.copy(isActive = false))
+        ksafe.reseed(on)
+
+        val tags = ksafe.calibrationLog().lines().mapNotNull { l ->
+            val c = l.split(',')
+            c.getOrNull(2)?.takeIf { it in setOf("PACE_START", "PACE_STOP", "PACE_END") }?.let { "$it ${c.getOrNull(3)?.trim('"')}" }
+        }
+        assertEquals(listOf("PACE_START reason=fresh", "PACE_STOP reason=master_off", "PACE_START reason=resume"), tags)
     }
 }

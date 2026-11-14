@@ -247,7 +247,7 @@ class PacingManagerTest {
         val m = loggingManager()
         m.onUserProfile(250, 0.0); m.onNavigation(route()); m.start()
         ride(m, power = 400, accuracyM = 5.0, seconds = 700)     // W′ drains: recover_w flips, a PACE_ADV row is logged
-        m.stop()
+        m.stop(endOfRide = true)
         val adv = logRows.filter { it.startsWith("PACE_ADV,") }
         assertTrue(adv.isNotEmpty())
         assertTrue(adv.all { ",kjkg=na," in it })
@@ -260,7 +260,7 @@ class PacingManagerTest {
         ride(m, power = 300, accuracyM = 5.0, seconds = 700)     // route A projects a finish
         m.onNavigation(threeClimbRoute())
         ride(m, power = 300, accuracyM = 100.0, seconds = 60, from = 700)   // route B: never trusted
-        m.stop()
+        m.stop(endOfRide = true)
         assertTrue(logRows.single { it.startsWith("PACE_END,") }.contains("proj_finish_first=na,proj_finish_last=na"))
     }
 
@@ -271,5 +271,42 @@ class PacingManagerTest {
         assertEquals(10_000.0, m.blocks.single().startM, 0.0)
         m.onNavigation(route().copy(climbs = listOf(Climb(12_000.0, 3_000.0, 7.0, 210.0))))
         assertEquals(12_000.0, m.blocks.single().startM, 0.0)
+    }
+
+    @Test fun `a same-ride resume keeps the ride and only the real ride end writes PACE_END`() {
+        val m = loggingManager()
+        m.onUserProfile(250, 70.0); m.onNavigation(route()); m.start()
+        ride(m, power = 200, accuracyM = 5.0, seconds = 300)
+        val kj = m.fatigue!!.kj; val odo = m.odometerM
+        m.stop(reason = "logging_off")
+        m.start(resume = true)
+        assertEquals(kj, m.fatigue!!.kj, 0.0); assertEquals(odo, m.odometerM, 0.0)
+        ride(m, power = 200, accuracyM = 5.0, seconds = 60, from = 300)
+        m.stop(endOfRide = true)
+        assertEquals(listOf("reason=fresh", "reason=resume"),
+            logRows.filter { it.startsWith("PACE_START,") }.map { it.substringAfter(',').substringBefore(',') })
+        assertTrue(logRows.single { it.startsWith("PACE_STOP,") }.contains("reason=logging_off"))
+        assertEquals(1, logRows.count { it.startsWith("PACE_END,") })
+    }
+
+    @Test fun `a resume after the ride ended starts fresh`() {
+        val m = loggingManager()
+        m.onUserProfile(250, 70.0); m.onNavigation(route()); m.start()
+        ride(m, power = 200, accuracyM = 5.0, seconds = 300)
+        m.stop(endOfRide = true)
+        m.start(resume = true)
+        assertEquals(0.0, m.fatigue!!.kj, 0.0); assertEquals(0.0, m.odometerM, 0.0)
+        assertEquals("reason=fresh", logRows.filter { it.startsWith("PACE_START,") }.last().substringAfter(',').substringBefore(','))
+    }
+
+    @Test fun `a ride end after a mid-ride stop still writes one PACE_END`() {
+        val m = loggingManager()
+        m.onUserProfile(250, 70.0); m.onNavigation(route()); m.start()
+        ride(m, power = 200, accuracyM = 5.0, seconds = 120)
+        m.stop(reason = "master_off")
+        m.stop(endOfRide = true)
+        m.stop(endOfRide = true)
+        assertEquals(1, logRows.count { it.startsWith("PACE_END,") })
+        assertEquals(1, logRows.count { it.startsWith("PACE_STOP,") })
     }
 }

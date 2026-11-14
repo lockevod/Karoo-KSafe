@@ -61,7 +61,8 @@ class PacingManager(
 
     // Sensors
     private var fix: LatLng? = null; private var fixAccM: Double? = null; private var fixAtMs = 0L
-    private var odometerM = 0.0; private var movingS = 0.0; private var lastSpeedAtMs: Long? = null; private var moving = false
+    internal var odometerM = 0.0; private set
+    private var movingS = 0.0; private var lastSpeedAtMs: Long? = null; private var moving = false
     private var lastHr: Int? = null; private var lastHrAtMs: Long? = null; private var lastPowerAtMs: Long? = null
     private var ftp = 0; private var weightKg = 0.0; private var wOverrideJ: Double? = null; private var liveAlerts = false
     internal var wPrime: WPrimeBalance? = null; private set       // internal: tests read ride state
@@ -83,9 +84,31 @@ class PacingManager(
     private var inBlock: ClimbBlock? = null; private var blockWMin: Double? = null
     private var blockKj0 = 0.0; private var blockMov0 = 0.0
 
-    fun start() {
+    /** A ride session exists that has not ended: [start] with resume keeps it, [stop] at the ride end closes it. */
+    private var sessionLive = false
+
+    /**
+     * [resume] = same ride (mid-ride master / logging OFF→ON): keeps odometer, moving time, fatigue, W′, arbiter,
+     * candidate latches and the finish record, and only restarts the loop. Falls back to a fresh start when no
+     * live session exists (none this process, or the last one ended). [restart] only labels a fresh start that
+     * follows a process restart mid-ride (the in-memory ride is gone either way).
+     */
+    fun start(resume: Boolean = false, restart: Boolean = false) {
         if (started) return            // a second start must not reload and discard this ride's learning
         started = true
+        val keep = resume && sessionLive
+        if (!keep) { resetRide(); sessionLive = true }
+        // Restarts the speed integration so the stopped window is not counted as one stale sample.
+        lastSpeedAtMs = null; moving = false
+        _view.value = null
+        calibLogger?.log(Event.PACE_START) {
+            "reason=${if (keep) "resume" else if (restart) "restart" else "fresh"},moving_s=${f(movingS, 0)},odo_m=${f(odometerM, 0)}"
+        }
+        // A pacing bug must never escape into the service scope (crash / medical / SOS share it).
+        loop = scope.launch { while (isActive) { delay(30_000); runCatching { tick() }.onFailure { Timber.e(it, "PACE tick failed") } } }
+    }
+
+    private fun resetRide() {
         arbiter = AlertArbiter()
         prevState = PacingState.KEEP; prevRecoverW = false
         conserveSinceMs = null; condCandidateDone = false
@@ -97,28 +120,33 @@ class PacingManager(
         path?.let { projector = RouteProjector(it) }
         if (wPrime != null) rebuildProfileUnits()
         gradePace = GradePaceStore(storeDir).load() ?: GradePaceModel()
-        _view.value = null
-        // A pacing bug must never escape into the service scope (crash / medical / SOS share it).
-        loop = scope.launch { while (isActive) { delay(30_000); runCatching { tick() }.onFailure { Timber.e(it, "PACE tick failed") } } }
     }
 
-    fun stop() {
-        if (!started) return           // never save an unloaded (empty) model over the learned file
+    /**
+     * [endOfRide] = the real ride end (Idle): writes the one PACE_END of the ride (also after an earlier mid-ride
+     * stop) and closes the session. Otherwise a started manager logs PACE_STOP [reason] and keeps the ride state
+     * for a [start] with resume.
+     */
+    fun stop(endOfRide: Boolean = false, reason: String = "stop") {
+        val wasStarted = started
         started = false
         loop?.cancel(); loop = null
         // Runs inside the service teardown paths — must never throw into them.
-        runCatching { saveOnStop() }.onFailure { Timber.e(it, "PACE stop failed") }
+        runCatching {
+            if (endOfRide && sessionLive) { logEnd(); sessionLive = false }
+            else if (wasStarted) calibLogger?.log(Event.PACE_STOP) { "reason=$reason,moving_s=${f(movingS, 0)},odo_m=${f(odometerM, 0)}" }
+            // Never save an unloaded (empty) model over the learned file.
+            if (wasStarted) { storeDir.mkdirs(); GradePaceStore(storeDir).save(gradePace) }
+        }.onFailure { Timber.e(it, "PACE stop failed") }
     }
 
-    private fun saveOnStop() {
+    private fun logEnd() {
         val fs = fatigue
         calibLogger?.log(Event.PACE_END) {
             "proj_finish_first=${f(firstProjFinish)},proj_finish_last=${f(lastProjFinish)},actual_kjkg=${f(fs?.kjPerKg?.takeIf { weightKg > 0 })}," +
                 "kjkg_at_drift5=${f(fs?.kjPerKgAtFirstDrift5)},moving_s=${f(movingS, 0)},odo_m=${f(odometerM, 0)}," +
                 "power_cov=${f(powerCoverage(), 2)}"
         }
-        storeDir.mkdirs()
-        GradePaceStore(storeDir).save(gradePace)
     }
 
     fun onNavigation(state: OnNavigationState.NavigationState) {
