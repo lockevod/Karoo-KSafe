@@ -32,7 +32,8 @@ data class PacingAlert(
 /**
  * Composes the pure pacing units (spec §3.9) and logs PACE_* (§4). Runs entirely on the caller's thread
  * (Main in production): every on*() and tick() must come from that one thread. Phase 1a is shadow:
- * the arbiter decides would_alert but nothing fires and nothing is recorded as fired.
+ * the arbiter decides would_alert but nothing fires and nothing is recorded as fired. Phase 1b
+ * ([setLiveAlerts] true, only with pacingEnabled) hands each fired alert to [alertSink].
  */
 class PacingManager(
     private val scope: CoroutineScope,
@@ -77,7 +78,8 @@ class PacingManager(
     internal var odometerM = 0.0; private set
     private var movingS = 0.0; private var lastSpeedAtMs: Long? = null; private var moving = false
     private var lastHr: Int? = null; private var lastHrAtMs: Long? = null; private var lastPowerAtMs: Long? = null
-    private var ftp = 0; private var weightKg = 0.0; private var wOverrideJ: Double? = null; private var liveAlerts = false
+    private var ftp = 0; private var weightKg = 0.0; private var wOverrideJ: Double? = null
+    internal var liveAlerts = false; private set
     internal var wPrime: WPrimeBalance? = null; private set       // internal: tests read ride state
     internal var fatigue: FatigueSignals? = null; private set
     private var carbStatus: CarbStatus? = null; private var lastCarbAlertMs: Long? = null; private var lastMedicalMs: Long? = null
@@ -382,7 +384,8 @@ class PacingManager(
         // Candidates
         val cands = ArrayList<Pair<AlertCandidate, PacingAlert>>()
         fun alert(src: AlertSource, st: PacingState?, key: String, b: ClimbBlock?, ceiling: Int? = null, grams: Int? = null, withLogs: Boolean = false) =
-            PacingAlert(src, st, key, b?.startM?.div(1000.0), b?.lengthM?.div(1000.0), b?.gradePct, ceiling, wPct, grams, withLogs)
+            // Every block candidate is for `next`, so its distance ahead is toNextM (the rider reads "in X km").
+            PacingAlert(src, st, key, b?.let { toNextM?.div(1000.0) }, b?.lengthM?.div(1000.0), b?.gradePct, ceiling, wPct, grams, withLogs)
         val worst = listOfNotNull(projFinish, projTop).maxOrNull()
         val conserveSev = maxOf((worst ?: 0.0) / knee, (drift ?: 0.0) / 10.0).takeIf { it > 0 } ?: 1.0
         val ceilingW = if (remainingS != null && remainingS > 0 && weightKg > 0)
@@ -396,7 +399,8 @@ class PacingManager(
                 pacingCandBlock = next.key
                 val sev = if (d.state == PacingState.CONSERVE) conserveSev else 0.5
                 val key = "${d.state}#${next.key}"
-                cands += AlertCandidate(AlertSource.PACING, key, sev) to alert(AlertSource.PACING, d.state, key, next, ceilingW.takeIf { d.state == PacingState.CONSERVE })
+                cands += AlertCandidate(AlertSource.PACING, key, sev) to alert(AlertSource.PACING, d.state, key, next,
+                    if (d.state == PacingState.CONSERVE) ceilingW else ftp.takeIf { it > 0 })   // HIGH_MARGIN: margin up to FTP
                 if (d.state == PacingState.CONSERVE) condCandidateDone = true
             } else if (prevState == PacingState.CONSERVE && d.state == PacingState.KEEP && keepCandBlock != next.key) {
                 keepCandBlock = next.key

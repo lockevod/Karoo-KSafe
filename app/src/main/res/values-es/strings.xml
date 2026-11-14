@@ -526,4 +526,5 @@
     <string name="fueling_calib_reject_implausible_weight">Los pesos parecen poco realistas. Revisa ambos valores.</string>
     <string name="fueling_calib_reject_too_little_sweat">La pérdida de sudor medida es demasiado pequeña para calibrar con fiabilidad.</string>
     <string name="fueling_calib_reject_ratio_out_of_range">El resultado se aleja demasiado de la estimación para fiarse. Revisa los valores.</string>
+    <string name="pacing_alert_lang">es</string>
 </resources>

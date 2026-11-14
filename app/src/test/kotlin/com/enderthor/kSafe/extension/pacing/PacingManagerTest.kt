@@ -149,6 +149,17 @@ class PacingManagerTest {
         assertEquals(listOf("CONSERVE#cond"), alerts.map { it.key })
     }
 
+    @Test fun `a block alert carries the distance ahead, not the route position`() {
+        val m = manager(knee = 0.5)
+        m.onUserProfile(250, 70.0); m.onNavigation(route())
+        ride(m, power = 300, accuracyM = 5.0, seconds = 750)     // shadow: CONSERVE#cond is spent here
+        m.setLiveAlerts(true, null)
+        ride(m, power = 300, accuracyM = 5.0, seconds = 450, from = 750)   // ends ~10 m before the 10 km climb
+        val a = alerts.single { it.key == "CONSERVE#${Math.round(m.blocks.single().startM)}" }
+        // Fired in the lead window ~2 km out; the climb itself starts at ~9.9 km on the route.
+        assertTrue("blockKm=${a.blockKm}", a.blockKm!! in 0.5..4.0)
+    }
+
     @Test fun `live alerts are blocked during an emergency`() {
         val m = manager(knee = 0.5)
         m.setLiveAlerts(true, null); m.setEmergencyActive(true)
