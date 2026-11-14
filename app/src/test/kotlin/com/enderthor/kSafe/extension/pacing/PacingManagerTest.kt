@@ -627,4 +627,20 @@ class PacingManagerTest {
         assertTrue("CONSERVE#$b" in m.evaluatedCandidateKeys)
         assertTrue(m.evaluatedCandidateKeys.none { it.startsWith("INTENSITY#") })
     }
+
+    @Test fun `the end of an SOS retry starts a 3-minute quiet gap`() {
+        var retrying = true
+        val m = PacingManager(TestScope(), tmp.root, null, clock = { now }, emergencyProbe = { retrying })
+        val c = AlertCandidate(AlertSource.PACING, "CONSERVE#1", 1.0)
+        now = 1_000; m.tick()
+        retrying = false; now = 31_000; m.tick()                  // the retry ended since the last tick
+        assertEquals("gap:EMERGENCY", m.arbiter.evaluate(c, now + 2 * 60_000, false).suppressedBy)
+        assertTrue(m.arbiter.evaluate(c, now + AlertArbiter.GAP_MS + 1, false).fire)
+    }
+
+    @Test fun `no quiet gap without an SOS retry ending`() {
+        val m = PacingManager(TestScope(), tmp.root, null, clock = { now }, emergencyProbe = { false })
+        now = 1_000; m.tick(); now = 31_000; m.tick()
+        assertTrue(m.arbiter.evaluate(AlertCandidate(AlertSource.PACING, "CONSERVE#1", 1.0), now + 1_000, false).fire)
+    }
 }

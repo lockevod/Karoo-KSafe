@@ -96,6 +96,7 @@ class PacingManager(
     private var carbStatus: CarbStatus? = null; private var lastCarbAlertMs: Long? = null
     internal var lastMedicalMs: Long? = null; private set   // internal: tests
     private var emergencyActive = false
+    private var sosRetrying = false   // the probe at the previous tick
 
     // Per-ride evaluation state
     internal var arbiter = AlertArbiter(); private set   // internal: tests read the recorded gaps
@@ -359,6 +360,10 @@ class PacingManager(
     internal fun tick() {
         tickHook?.invoke()
         val now = clock()
+        // The SOS retry ended since the last tick: the 3-min quiet gap follows its end, as after any emergency.
+        val retrying = emergencyProbe()
+        if (sosRetrying && !retrying) arbiter.recordExternal(AlertSource.EMERGENCY, now)
+        sosRetrying = retrying
         val movingNow = movingAt(now)
         tickN++
         val p = path; val proj = projector; val fx = fix
