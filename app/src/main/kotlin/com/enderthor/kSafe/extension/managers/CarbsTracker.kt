@@ -51,6 +51,9 @@ class CarbsTracker(
      *  once the emergency clears. Injected so the tracker stays decoupled from EmergencyManager. */
     private val isEmergencyActive: () -> Boolean,
     private val calibLogger: CalibrationLogger? = null,
+    /** Told after each real (non-preview) alert fires — true for the deficit alert, false for the
+     *  time reminder — so the pacing arbiter can space its own alerts. Additive; never throws back. */
+    private val onAlertFired: (deficit: Boolean) -> Unit = {},
 ) {
 
     // ─── Constants ───────────────────────────────────────────────────────────
@@ -960,6 +963,7 @@ class CarbsTracker(
             )
         }
         Timber.d(">>> Carb alert fired ($source): deficit=${deficit}g elapsed=${elapsedMin}min")
+        runCatching { onAlertFired(source == "deficit") }.onFailure { Timber.e(it, "onAlertFired failed") }
     }
 
     /** Assembles the alert request (title/detail token rendering, slot pick, InRideAlert

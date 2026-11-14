@@ -621,6 +621,7 @@ class KSafeExtension : KarooExtension("ksafe", BuildConfig.VERSION_NAME), Corout
             onIncident = { reason, tokens ->
                 launch {
                     emergencyManager.handleIncident(reason, activeConfig.medicalResponseLevel, activeConfig, tokens)
+                    reportPacingExternal(com.enderthor.kSafe.extension.pacing.AlertSource.MEDICAL)
                 }
             },
             calibLogger = calibLogger,
@@ -630,6 +631,7 @@ class KSafeExtension : KarooExtension("ksafe", BuildConfig.VERSION_NAME), Corout
             onIncident = { reason, tokens ->
                 launch {
                     emergencyManager.handleIncident(reason, activeConfig.wellnessResponseLevel, activeConfig, tokens)
+                    reportPacingExternal(com.enderthor.kSafe.extension.pacing.AlertSource.MEDICAL)
                 }
             },
             calibLogger = calibLogger,
@@ -641,6 +643,7 @@ class KSafeExtension : KarooExtension("ksafe", BuildConfig.VERSION_NAME), Corout
             onFuelingAlert = { presentFuelingAlert(it) },
             isEmergencyActive = ::emergencyActive,
             calibLogger = calibLogger,
+            onAlertFired = ::reportPacingFuelAlert,
         )
         hydrationTracker = com.enderthor.kSafe.extension.managers.HydrationTracker(
             scope = this,
@@ -652,6 +655,7 @@ class KSafeExtension : KarooExtension("ksafe", BuildConfig.VERSION_NAME), Corout
             isRecording = { currentRideState is RideState.Recording },
             rideTimeMs = { rideTimeMs },
             calibLogger = calibLogger,
+            onAlertFired = ::reportPacingFuelAlert,
         )
         // Publish tracker references so the status DataTypes can suspend on the flow
         // instead of polling getInstance every second. See companion's tracker-flow
@@ -2815,6 +2819,17 @@ class KSafeExtension : KarooExtension("ksafe", BuildConfig.VERSION_NAME), Corout
             ))
         }.onFailure { Timber.e(it, "PACE alert dispatch failed") }
     }
+
+    /** Tells the pacing arbiter another KSafe alert just fired. Called after that alert's own
+     *  dispatch; never throws back into the caller. */
+    private fun reportPacingExternal(source: com.enderthor.kSafe.extension.pacing.AlertSource) {
+        if (!::pacingManager.isInitialized) return
+        runCatching { pacingManager.onExternalAlert(source) }.onFailure { Timber.e(it, "PACE external alert failed") }
+    }
+
+    private fun reportPacingFuelAlert(deficit: Boolean) = reportPacingExternal(
+        if (deficit) com.enderthor.kSafe.extension.pacing.AlertSource.FUEL_DEFICIT
+        else com.enderthor.kSafe.extension.pacing.AlertSource.FUEL_TIME)
 
     /** True while a crash / SOS / check-in is in progress. Delegates to the canonical
      *  [EmergencyManager.isActive] predicate (reads the in-memory uiState, NOT DataStore). */

@@ -62,6 +62,9 @@ class HydrationTracker(
     private val rideTimeMs: () -> Long? = { null },
     private val clock: Clock = SystemClock,
     private val calibLogger: CalibrationLogger? = null,
+    /** Told after each real (non-preview) alert fires — true for the deficit alert, false for the
+     *  time reminder — so the pacing arbiter can space its own alerts. Additive; never throws back. */
+    private val onAlertFired: (deficit: Boolean) -> Unit = {},
 ) {
 
     // ─── Constants ───────────────────────────────────────────────────────────
@@ -924,6 +927,7 @@ class HydrationTracker(
             "source=$source,deficit_ml=$deficitMl,since_log_min=$elapsedMin,cum_target=${accum.cumTargetMl.toInt()},cum_logged=$cumLoggedMl,beep=${config.hydBeepPattern}"
         }
         Timber.d(">>> Hydration alert fired ($source): deficit=${deficitMl}ml elapsed=${elapsedMin}min")
+        runCatching { onAlertFired(source == "deficit") }.onFailure { Timber.e(it, "onAlertFired failed") }
     }
 
     private fun maybePeriodicLog(now: Long) {
