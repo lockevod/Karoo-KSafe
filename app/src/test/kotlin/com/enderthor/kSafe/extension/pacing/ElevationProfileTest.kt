@@ -17,6 +17,12 @@ class ElevationProfileTest {
         assertEquals(125.0, r.eleAt(2500.0), 1e-9)
         assertEquals(-5.0, r.gradeAt(2500.0), 1e-6)
     }
+    @Test fun `reversed flips an asymmetric ramp`() {
+        val ramp = ElevationProfile(doubleArrayOf(0.0, 1000.0), doubleArrayOf(100.0, 200.0))
+        assertEquals(200.0, ramp.reversed().eleAt(0.0), 1e-9)
+        assertEquals(100.0, ramp.reversed().eleAt(1000.0), 1e-9)
+        assertEquals(-10.0, ramp.reversed().gradeAt(500.0), 1e-6)
+    }
     @Test fun `null or degenerate input gives null`() {
         assertNull(ElevationProfile.fromKaroo(null))
         assertNull(ElevationProfile.fromKaroo(""))
