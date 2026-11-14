@@ -136,9 +136,11 @@ class PacingManager(
         gradePace = GradePaceModel(); gradePaceLoaded = false; lastSaveMovingS = 0.0
     }
 
-    /** Reads the file on [ioDispatcher], applies the model back on the caller's thread. */
+    /** Reads the file on [ioDispatcher] after any pending save (the last ride's), applies it on the caller's thread. */
     private fun loadGradePace() {
+        val pendingSave = saveJob
         loadJob = scope.launch {
+            pendingSave?.join()
             val m = try { withContext(ioDispatcher) { store.load() } }
                     catch (e: CancellationException) { throw e }
                     catch (e: Exception) { Timber.e(e, "PACE load failed"); return@launch }   // stays unloaded: no saves
