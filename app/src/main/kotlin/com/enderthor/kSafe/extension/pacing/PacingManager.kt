@@ -14,6 +14,7 @@ import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import java.io.File
 import java.util.Locale
+import kotlin.math.roundToInt
 
 data class PacingView(val state: PacingState, val recoverW: Boolean, val wPct: Double?, val trusted: Boolean, val nextBlockKm: Double?)
 
@@ -42,8 +43,8 @@ class PacingManager(
     val view: StateFlow<PacingView?> = _view.asStateFlow()
 
     private var loop: Job? = null
-    private var stopped = false
-    private var gradePace = GradePaceModel()
+    private var started = false
+    internal var gradePace = GradePaceModel()  // internal: tests swap the learned pace
     private var kind = BikeKind.ROAD
 
     // Route
@@ -53,13 +54,13 @@ class PacingManager(
     private var climbs: List<ClimbSeg> = emptyList()
     private var projector: RouteProjector? = null
     private var rejoinActive = false
-    private var blocks: List<ClimbBlock> = emptyList()
+    internal var blocks: List<ClimbBlock> = emptyList(); private set
     private var blocksAtMs = Long.MIN_VALUE
 
     // Sensors
     private var fix: LatLng? = null; private var fixAccM: Double? = null; private var fixAtMs = 0L
     private var odometerM = 0.0; private var movingS = 0.0; private var lastSpeedAtMs: Long? = null; private var moving = false
-    private var lastHr: Int? = null; private var hasPower = false; private var lastPowerAtMs: Long? = null
+    private var lastHr: Int? = null; private var lastPowerAtMs: Long? = null
     private var ftp = 0; private var weightKg = 0.0; private var wOverrideJ: Double? = null; private var liveAlerts = false
     private var wPrime: WPrimeBalance? = null; private var fatigue: FatigueSignals? = null
     private var carbStatus: CarbStatus? = null; private var lastCarbAlertMs: Long? = null; private var lastMedicalMs: Long? = null
@@ -80,13 +81,13 @@ class PacingManager(
     private var blockKj0 = 0.0; private var blockMov0 = 0.0
 
     fun start() {
-        loop?.cancel()
-        stopped = false
+        if (started) return            // a second start must not reload and discard this ride's learning
+        started = true
         arbiter = AlertArbiter()
         prevState = PacingState.KEEP; prevRecoverW = false
         conserveSinceMs = null; condCandidateDone = false
         pacingCandBlock = null; keepCandBlock = null; wCandBlock = null; fuelLoggedBlock = null; fuelFiredBlock = null
-        odometerM = 0.0; movingS = 0.0; lastSpeedAtMs = null; moving = false; hasPower = false; lastPowerAtMs = null
+        odometerM = 0.0; movingS = 0.0; lastSpeedAtMs = null; moving = false; lastPowerAtMs = null
         tickN = 0; lastTickOdoM = 0.0; lastTickMovingS = 0.0; firstProjFinish = null; lastProjFinish = null
         predBlock = null; inBlock = null; blockWMin = null
         lastCarbAlertMs = null; lastMedicalMs = null
@@ -98,9 +99,9 @@ class PacingManager(
     }
 
     fun stop() {
+        if (!started) return           // never save an unloaded (empty) model over the learned file
+        started = false
         loop?.cancel(); loop = null
-        if (stopped) return
-        stopped = true
         val fs = fatigue
         calibLogger?.log(Event.PACE_END) {
             "proj_finish_first=${f(firstProjFinish)},proj_finish_last=${f(lastProjFinish)},actual_kjkg=${f(fs?.kjPerKg)}," +
@@ -150,7 +151,7 @@ class PacingManager(
         val now = clock()
         wPrime?.onPower(w, now)
         fatigue?.onSample(w, lastHr, now, moving)
-        hasPower = true; lastPowerAtMs = now
+        lastPowerAtMs = now
     }
 
     fun onHr(bpm: Int) { lastHr = bpm.takeIf { it > 0 } }
@@ -196,12 +197,14 @@ class PacingManager(
     }
 
     /** Returns the significant-climb count. Block gaps use the learned grade pace. */
-    private fun recomputeBlocks(): Int {
-        val prof = profile
+    internal fun recomputeBlocks(): Int {
+        val prof = profile; val total = path?.totalM
         blocksAtMs = clock()
-        if (prof == null) { blocks = emptyList(); return 0 }
+        if (prof == null || total == null) { blocks = emptyList(); return 0 }
         val sig = climbs.filter { RouteClimbs.isSignificant(it, kind) && it.startM.isFinite() && it.endM.isFinite() }
         blocks = RouteClimbs.blocks(sig, { from, to -> gradePace.secondsBetween(kind, prof, from, to) })
+            .filter { it.startM < total }
+            .map { it.copy(startM = it.startM.coerceIn(0.0, total), endM = it.endM.coerceIn(0.0, total)) }
         return sig.size
     }
 
@@ -224,7 +227,7 @@ class PacingManager(
         val dOdo = odometerM - lastTickOdoM; val dMov = movingS - lastTickMovingS
         lastTickOdoM = odometerM; lastTickMovingS = movingS
         val prof = profile
-        if (!stopped && trusted && prof != null && moving && dOdo > 0 && dMov > 0) gradePace.learn(kind, prof.gradeAt(pos!!), dOdo, dMov)
+        if (started && trusted && prof != null && moving && dOdo > 0 && dMov > 0) gradePace.learn(kind, prof.gradeAt(pos!!), dOdo, dMov)
         if (prof != null && now - blocksAtMs >= BLOCKS_REFRESH_MS) recomputeBlocks()
 
         val fs = fatigue; val wp = wPrime
@@ -255,9 +258,9 @@ class PacingManager(
 
         val knee = kneeKjKgOverride ?: DEFAULT_KNEE_KJKG
         val input = PacingInput(
-            nowMs = now, moving = moving, hasPower = hasPower, positionTrusted = trusted, climbsKnown = prof != null,
+            nowMs = now, moving = moving, hasPower = lastPowerAtMs?.let { now - it <= POWER_STALE_MS } == true, positionTrusted = trusted, climbsKnown = prof != null,
             remainingMovingS = remainingS, elapsedMovingS = movingS, blocksAhead = ahead.size,
-            secondsToNextBlock = toNextS, metresToNextBlock = toNextM, nextBlockId = next?.id,
+            secondsToNextBlock = toNextS, metresToNextBlock = toNextM, nextBlockId = next?.key,
             kjPerKg = kj, projectedKjKgFinish = projFinish, projectedKjKgNextTop = projTop, kneeKjKg = knee,
             driftPct = drift, driftStableMs = driftStableMs, wTrusted = wTrusted, wPct = wPct,
             projectedWAtNextBlockPct = projWAtBlock, msSinceWellnessOrMedical = lastMedicalMs?.let { now - it },
@@ -279,15 +282,15 @@ class PacingManager(
         else { conserveSinceMs = null; condCandidateDone = false }
         // One pacing candidate per block: the first window tick in CONSERVE/HIGH_MARGIN, whether or not the state just changed.
         if (d.alertWindowPacing && next != null) {
-            if ((d.state == PacingState.CONSERVE || d.state == PacingState.HIGH_MARGIN) && pacingCandBlock != next.id) {
-                pacingCandBlock = next.id
+            if ((d.state == PacingState.CONSERVE || d.state == PacingState.HIGH_MARGIN) && pacingCandBlock != next.key) {
+                pacingCandBlock = next.key
                 val sev = if (d.state == PacingState.CONSERVE) conserveSev else 0.5
-                val key = "${d.state}#${next.id}"
+                val key = "${d.state}#${next.key}"
                 cands += AlertCandidate(AlertSource.PACING, key, sev) to alert(AlertSource.PACING, d.state, key, next, ceilingW.takeIf { d.state == PacingState.CONSERVE })
                 if (d.state == PacingState.CONSERVE) condCandidateDone = true
-            } else if (prevState == PacingState.CONSERVE && d.state == PacingState.KEEP && keepCandBlock != next.id) {
-                keepCandBlock = next.id
-                val key = "KEEP#${next.id}"
+            } else if (prevState == PacingState.CONSERVE && d.state == PacingState.KEEP && keepCandBlock != next.key) {
+                keepCandBlock = next.key
+                val key = "KEEP#${next.key}"
                 cands += AlertCandidate(AlertSource.PACING, key, 0.0) to alert(AlertSource.PACING, d.state, key, next)
             }
         }
@@ -296,26 +299,26 @@ class PacingManager(
             condCandidateDone = true
             cands += AlertCandidate(AlertSource.PACING, "CONSERVE#cond", conserveSev) to alert(AlertSource.PACING, d.state, "CONSERVE#cond", null, ceilingW)
         }
-        if (d.alertWindowW && next != null && wCandBlock != next.id) {
-            wCandBlock = next.id
-            val key = "W#${next.id}"
+        if (d.alertWindowW && next != null && wCandBlock != next.key) {
+            wCandBlock = next.key
+            val key = "W#${next.key}"
             cands += AlertCandidate(AlertSource.W_PRIME, key, 1.0 - (projWAtBlock ?: 0.0)) to alert(AlertSource.W_PRIME, null, key, next, ftp.takeIf { it > 0 })
         }
         val cs = carbStatus
-        if (d.alertWindowFuel && cs != null && next != null && fuelFiredBlock != next.id) {
+        if (d.alertWindowFuel && cs != null && next != null && fuelFiredBlock != next.key) {
             val r = FuelHint.decide(cs.carbsEnabled && cs.masterEnabled, cs.cumLoggedG, cs.cumBurnedG, cs.deficitG,
                 cs.deficitThresholdG, movingS / 60.0, true, lastCarbAlertMs?.let { now - it })
-            val key = "FUEL#${next.id}"
+            val key = "FUEL#${next.key}"
             var fuelVerdict: ArbiterVerdict? = null
             if (r.fire) {
-                fuelFiredBlock = next.id
+                fuelFiredBlock = next.key
                 val c = AlertCandidate(AlertSource.FUEL_HINT, key, 0.5)
                 fuelVerdict = arbitrate(c, alert(AlertSource.FUEL_HINT, null, key, next, grams = r.grams, withLogs = r.withLogs), now, adv)
             }
-            if (r.fire || fuelLoggedBlock != next.id) {
-                fuelLoggedBlock = next.id
+            if (r.fire || fuelLoggedBlock != next.key) {
+                fuelLoggedBlock = next.key
                 calibLogger?.log(Event.PACE_FUEL) {
-                    "block=${next.id},fire=${r.fire},reason=${r.reason},grams=${r.grams},with_logs=${r.withLogs}," +
+                    "block=${next.key},fire=${r.fire},reason=${r.reason},grams=${r.grams},with_logs=${r.withLogs}," +
                         "would_alert=${fuelVerdict?.fire ?: false},suppressed_by=${fuelVerdict?.suppressedBy ?: "na"},live=$liveAlerts"
                 }
             }
@@ -345,7 +348,7 @@ class PacingManager(
 
     private fun trackClimbs(pos: Double, next: ClimbBlock?, toNextS: Double?, now: Long, wPct: Double?, drift: Double?) {
         if (next != null && toNextS != null) {
-            if (predBlock != next.id) { predBlock = next.id; predFirstAtMs = now; predFirstS = toNextS }
+            if (predBlock != next.key) { predBlock = next.key; predFirstAtMs = now; predFirstS = toNextS }
             predLastAtMs = now; predLastS = toNextS
         }
         val fs = fatigue
@@ -356,7 +359,7 @@ class PacingManager(
                 val dMov = (fs?.movingSeconds ?: 0.0) - blockMov0
                 val meanW = if (dMov > 0 && weightKg > 0) ((fs?.kjPerKg ?: 0.0) - blockKj0) * weightKg * 1000.0 / dMov else null
                 calibLogger?.log(Event.PACE_CLIMB) {
-                    "phase=end,block=${cur.id},w_min=${f(blockWMin, 2)},mean_w=${f(meanW, 0)},drift=${f(drift)}"
+                    "phase=end,block=${cur.key},w_min=${f(blockWMin, 2)},mean_w=${f(meanW, 0)},drift=${f(drift)}"
                 }
                 inBlock = null
             }
@@ -364,9 +367,9 @@ class PacingManager(
         if (inBlock == null) {
             val b = blocks.firstOrNull { pos >= it.startM && pos <= it.endM } ?: return
             inBlock = b; blockWMin = wPct; blockKj0 = fs?.kjPerKg ?: 0.0; blockMov0 = fs?.movingSeconds ?: 0.0
-            val tracked = predBlock == b.id
+            val tracked = predBlock == b.key
             calibLogger?.log(Event.PACE_CLIMB) {
-                "phase=start,block=${b.id},len_m=${f(b.lengthM, 0)},gain_m=${f(b.gainM, 0)}," +
+                "phase=start,block=${b.key},len_m=${f(b.lengthM, 0)},gain_m=${f(b.gainM, 0)}," +
                     "pred_s_first=${if (tracked) f(predFirstS, 0) else "na"}," +
                     "pred_s_at_last_eval=${if (tracked) f(predLastS, 0) else "na"}," +
                     "actual_s=${if (tracked) f((now - predFirstAtMs) / 1000.0, 0) else "na"}," +
@@ -393,5 +396,8 @@ class PacingManager(
         const val DEFAULT_KNEE_KJKG = 30.0
         const val COND_SUSTAIN_MS = 90_000L
         const val BLOCKS_REFRESH_MS = 5 * 60_000L
+        const val POWER_STALE_MS = 10_000L
+        /** Stable across block recomputes (ids renumber when gaps merge): route metres of the block start. */
+        private val ClimbBlock.key: Int get() = startM.roundToInt()
     }
 }
