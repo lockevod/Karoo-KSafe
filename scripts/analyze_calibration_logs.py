@@ -45,6 +45,12 @@ Event catalogue understood by this script:
     INC_NO (INCIDENT_CANCELLED — non-crash/medical cancel: wellness /
     SOS / check-in / speed-drop, with `subkind=<reason>` payload)
 
+  Pacing advisor (shadow/live; analysed by pacing_summary):
+    PACE_ROUTE (src, karoo_n, karoo_ok, own_n, sig_n, blocks_n), PACE_POS
+    (pos_m, trusted, reason), PACE_ADV (state, would_alert, suppressed_by, live),
+    PACE_FUEL, PACE_CLIMB (phase=start|end, pred_s_first, actual_s),
+    PACE_END (kjkg_at_drift5, moving_s)
+
   Fueling (carbs + hydration):
     CARB_START / CARB_LOG / CARB_UNDO / CARB_FIRE / CARB_PERIODIC
     HYD_START / HYD_LOG / HYD_UNDO / HYD_FIRE / HYD_PERIODIC / HYD_OVER_SHADOW
@@ -833,6 +839,61 @@ def _print_aggregated(summaries: list[FileSummary], header: str):
 # ─────────────────────────────────────────────────────────────────────────────
 # Main
 
+def _med_p90(xs: list[float]) -> str:
+    if not xs:
+        return "n/a"
+    xs = sorted(xs)
+    return f"median {statistics.median(xs):.0f}s  p90 {xs[min(len(xs) - 1, int(0.9 * len(xs)))]:.0f}s  (n={len(xs)})"
+
+
+def pacing_summary(paths: list[Path]) -> None:
+    """Per-session pacing report; prints nothing when no PACE_* row exists."""
+    out: list[str] = []
+    for path in paths:
+        rows = [r for r in _row_iter(path) if r[2].startswith("PACE_")]
+        if not rows:
+            continue
+        by: dict[str, list] = defaultdict(list)
+        for ts, el, ev, d in rows:
+            by[ev].append((el, d))
+        out.append(f"\n  session {path.name}")
+        routes = by["PACE_ROUTE"]
+        out.append(f"    routes: {len(routes)}  src: {dict(Counter(d.get('src', '?') for _, d in routes))}")
+        kn = sum(_to_float(d.get("karoo_n")) or 0 for _, d in routes)
+        ko = sum(_to_float(d.get("karoo_ok")) or 0 for _, d in routes)
+        out.append(f"    karoo_n={kn:.0f} karoo_ok={ko:.0f}")
+        pos = by["PACE_POS"]
+        untr = Counter(d.get("reason", "?") for _, d in pos if d.get("trusted") == "false")
+        pct = 100.0 * sum(untr.values()) / len(pos) if pos else 0.0
+        out.append(f"    PACE_POS untrusted: {pct:.0f}% of {len(pos)}  by reason: {dict(untr)}")
+        adv = by["PACE_ADV"]
+        if adv:
+            end = by["PACE_END"]
+            mov_s = _to_float(end[-1][1].get("moving_s")) if end else None
+            basis = "moving" if mov_s else "logged"
+            if not mov_s:
+                mov_s = adv[-1][0] - adv[0][0]
+            hrs = mov_s / 3600.0 if mov_s and mov_s > 0 else None
+            states = [d.get("state") for _, d in adv]
+            changes = sum(1 for a, b in zip(states, states[1:]) if a != b)
+            wa = sum(1 for _, d in adv if d.get("would_alert") == "true")
+            per_h = (lambda n: f"{n / hrs:.1f}/h ({basis} h)") if hrs else (lambda n: "n/a")
+            out.append(f"    PACE_ADV: state changes {changes} = {per_h(changes)}")
+            out.append(f"    shadow would_alert (no rate limits \u2014 NOT the live alert rate): {wa} = {per_h(wa)}")
+            out.append(f"    suppressed_by: {dict(Counter(d.get('suppressed_by', '?') for _, d in adv if d.get('would_alert') == 'false'))}")
+        errs = []
+        for _, d in by["PACE_CLIMB"]:
+            p_, a_ = _to_float(d.get("pred_s_first")), _to_float(d.get("actual_s"))
+            if d.get("phase") == "start" and p_ is not None and a_ is not None:
+                errs.append(abs(p_ - a_))
+        out.append(f"    PACE_CLIMB |pred_s_first - actual_s|: {_med_p90(errs)}")
+        knees = [d.get("kjkg_at_drift5") for _, d in by["PACE_END"] if _to_float(d.get("kjkg_at_drift5")) is not None]
+        out.append(f"    PACE_END kjkg_at_drift5 (knee calibration): {knees or 'none'}")
+    if out:
+        print("\n" + "=" * 88 + "\n Pacing advisor" + "\n" + "=" * 88)
+        print("\n".join(out))
+
+
 def _discover(root: Path) -> list[Path]:
     if not root.exists():
         return []
@@ -886,6 +947,8 @@ def main(argv: list[str]) -> int:
             legacy,
             "Legacy cohort (no version/device or pre-state-machine schema — diagnostic only)",
         )
+
+    pacing_summary([fs.path for fs in summaries])
 
     print("\n" + "=" * 88)
     tiny = sum(1 for fs in summaries if fs.is_tiny)
