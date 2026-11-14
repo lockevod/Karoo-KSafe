@@ -16,6 +16,7 @@ KSafe is a free, open-source safety extension for Karoo 3 (Karoo OS 1.527+). It 
 
 - **Reactive** — detects crashes (accelerometer + gyroscope), sudden speed drops, missed check-ins and, optionally with an HR sensor, medical-episode patterns (HR flatline, HR collapse) and wellness alerts (sustained / critical HR, HR–power decoupling). A manual SOS button is always one tap away.
 - **Preventive** *(v2.0)* — carb and hydration tracker with sensor-aware targets that warn you before bonking or dehydration impair your judgment on the bike.
+- **Pacing advice** *(v2.4, beta, opt-in)* — with a route loaded and a power meter, occasional short alerts that look at the climbs ahead and your measured state: save energy before a climb, you have margin, recover first, a good moment to eat. Guidance only, off by default — see [docs/pacing-advisor.md](docs/pacing-advisor.md).
 
 It also sends ride-start / ride-end notifications with an optional Karoo Live tracking link, exposes three custom-message buttons for one-tap status updates ("I'm OK", "Heading home"…), and two webhook slots to fire any HTTP endpoint from a hardware button (garage door, Home Assistant, IFTTT…).
 
@@ -77,7 +78,7 @@ If the countdown completes, KSafe obtains a GPS fix and sends the configured eme
 
 ## Data fields
 
-KSafe exposes **21 custom data fields**. Add any combination from the Karoo profile editor; configure them inside the KSafe app.
+KSafe exposes **22 custom data fields**. Add any combination from the Karoo profile editor; configure them inside the KSafe app.
 
 ### Safety (2)
 
@@ -87,6 +88,12 @@ KSafe exposes **21 custom data fields**. Add any combination from the Karoo prof
 | **Safety Timer** | Remaining time, green→yellow→red | Reset check-in ("I'm OK") | Orange `CANCEL` during any emergency · `Timer OFF` |
 
 The Safety Timer **pauses automatically** when the ride is paused.
+
+### Pacing (1, v2.4 beta)
+
+| Field | Shows |
+|-------|-------|
+| **Reserve** | `CONS` (save energy) / `OK` / `MARGIN` / `W′!` (W′ low), with W′ % or km to the next climb as a hint. Grey `OFF` when the pacing switch is off, `---` while waiting for data. Needs a power meter and a loaded route — see [docs/pacing-advisor.md](docs/pacing-advisor.md) |
 
 ### Actions (5)
 
@@ -134,7 +141,7 @@ All seven fueling status fields also publish their value as a **karoo-ext data s
 
 Stream states mirror the on-screen fields: `Idle` whenever no ride is active (the trackers retain their totals after ride end for the post-ride summary, but consumers never receive them as live data), `Searching` while the tracker is booting or no usable sensor is paired, `NotAvailable` when the extension master switch or the feature toggle is off, `Streaming` otherwise. Streams only run while at least one consumer subscribes, so they cost nothing when unused.
 
-**Fourteen of the 21 fields have a rider-pickable idle background** — SOS, Safety Timer, Custom Message 1–3, Webhook 1–2, Carb Log 1–3, Hydration Log 1–2, Combined Fuel Log 1–2 — picked from a palette in the corresponding tab. The first entry is **Karoo default (auto day/night)** — the new default for fresh installs — which makes the field render with no custom background and theme-aware text (black on white during the day, white on black at night) so it matches native Karoo fields. Below it sits a 20-hue painted palette for riders who want a coloured tap target. Reserved state colours (red error, orange countdown, amber warning, green success, grey OFF) can't be selected — they belong to the state machine. The remaining 7 fields have no picker: **Carb burn rate**, **Carb avg burn**, **Carbs burned**, **Calories (HR)** and **Calorie Rate (HR)** are always Karoo-theme (passive readouts that should look native); **Carb status** and **Hydration status** are always coloured by deficit level (blue ahead / green within margin / amber approaching threshold / red over). The five Karoo-theme readout fields also respect the **per-field horizontal alignment** (left / center / right) the rider sets in the Karoo profile editor; every other field is always centered because they're tap targets or coloured state indicators where alignment makes the field look off-balance next to its neighbours.
+**Fourteen of the 21 fields have a rider-pickable idle background** — SOS, Safety Timer, Custom Message 1–3, Webhook 1–2, Carb Log 1–3, Hydration Log 1–2, Combined Fuel Log 1–2 — picked from a palette in the corresponding tab. The first entry is **Karoo default (auto day/night)** — the new default for fresh installs — which makes the field render with no custom background and theme-aware text (black on white during the day, white on black at night) so it matches native Karoo fields. Below it sits a 20-hue painted palette for riders who want a coloured tap target. Reserved state colours (red error, orange countdown, amber warning, green success, grey OFF) can't be selected — they belong to the state machine. The remaining 7 fields (plus **Reserve**, coloured by its state) have no picker: **Carb burn rate**, **Carb avg burn**, **Carbs burned**, **Calories (HR)** and **Calorie Rate (HR)** are always Karoo-theme (passive readouts that should look native); **Carb status** and **Hydration status** are always coloured by deficit level (blue ahead / green within margin / amber approaching threshold / red over). The five Karoo-theme readout fields also respect the **per-field horizontal alignment** (left / center / right) the rider sets in the Karoo profile editor; every other field is always centered because they're tap targets or coloured state indicators where alignment makes the field look off-balance next to its neighbours.
 
 ## Hardware buttons (SRAM AXS)
 
@@ -166,7 +173,7 @@ The KSafe app has **seven tabs**, in this order (Carbs and Hydration were a sing
    > **Hydration target shift (v18.2)** — riders running KSafe with **dynamic hydration enabled** (Hydration tab → "Dynamic sweat rate") will see hourly targets in hot conditions drop by ~25 % vs prior versions. The internal `SweatEstimator` was re-calibrated to track the literature median (Sawka 2007 / Baker 2017) instead of the upper-bound anchors used before. The old curve over-targeted by ~30-60 % on warm rides, which manifested as alert fatigue and a non-trivial hyponatremia exposure for lighter riders on long hot efforts. The new curve is comparable in shape to Garmin's Firstbeat HeatStress targeting. If you tuned your `hydrationTargetMlPerHour` (static mode) around the previous behaviour you are unaffected; if you relied on the dynamic estimator's numbers, expect fewer / less frequent deficit alerts in heat.
 4. **Actions** — three sub-blocks: **Karoo Live** (ride-start / ride-end toggles + messages, Karoo Live key, test buttons), **Custom Messages 1–3** (enable, 7-char button label, message text, idle colour), and **Webhook 1–2** (URL, GET/POST, headers, body, optional geo-fence, optional on-screen alert, idle colour).
 5. **Provider** — pick the active messaging provider and enter credentials. All four configurations are saved independently. Each recipient has a per-recipient scope selector (All / Emergency only / Info only) controlling which alert types it receives. At ride start KSafe warns you if the active provider is missing a credential, or if it has been fully configured but silent for 30 days; riders who use KSafe without alerts at all can switch off the first warning *(v2.2.3)*. 📘 Step-by-step for each provider (Telegram bot token, ntfy topic, CallMeBot WhatsApp activation, Pushover App Token + User Key): [docs/messaging-providers.md](docs/messaging-providers.md).
-6. **Settings** — master kill switch, **test buttons** (Simulate Crash, Test ride start/end), **FIT export** *(v2.0, opt-in — off by default)* of logged + burned carbs / burn rate / hydration / wellness drift — and, when **Calories (HR)** is enabled, HR-based calories as `ksafe_calories_kcal` *(v2.1)* — as developer fields for Strava / Intervals.icu / TrainingPeaks (session-average burn rate is shown live on the Karoo via the new data field but **not** duplicated in the FIT — downstream tools can average the per-record `ksafe_carb_burn_rate_gph` themselves), **anonymous calibration logging** *(opt-in)*, **Backup / Restore**.
+6. **Settings** — master kill switch, **test buttons** (Simulate Crash, Test ride start/end), **FIT export** *(v2.0, opt-in — off by default)* of logged + burned carbs / burn rate / hydration / wellness drift — and, when **Calories (HR)** is enabled, HR-based calories as `ksafe_calories_kcal` *(v2.1)* — as developer fields for Strava / Intervals.icu / TrainingPeaks (session-average burn rate is shown live on the Karoo via the new data field but **not** duplicated in the FIT — downstream tools can average the per-record `ksafe_carb_burn_rate_gph` themselves), **Pacing advice (beta)** *(v2.4, opt-in, off by default — section above FIT export; needs a power meter and a loaded route, see [docs/pacing-advisor.md](docs/pacing-advisor.md))*, **anonymous calibration logging** *(opt-in)*, **Backup / Restore**.
 
 Detailed field references:
 - 📘 [Messaging providers — full setup](docs/messaging-providers.md) (Telegram, ntfy, CallMeBot/WhatsApp, Pushover — where to click, how to get each token/key)
@@ -259,6 +266,7 @@ User guides:
 - [Webhook cookbook](docs/webhooks-cookbook.md)
 - [Backup and restore](docs/backup-restore.md)
 - [Field colours](docs/field-colours.md)
+- [Pacing advisor (beta)](docs/pacing-advisor.md)
 - [Calibration logging](docs/calibration-logging.md)
 
 Algorithm internals (for contributors):

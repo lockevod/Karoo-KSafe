@@ -127,6 +127,10 @@ pantalla de SOS, check-in, recordatorios de nutrición — sigue funcionando igu
 ### ⚙️ Ajustes (Settings) — mantenimiento (déjalo casi todo como está)
 
 - El **idioma** sigue al de tu Karoo automáticamente (inglés o español) — no hay selector.
+- **Consejos de ritmo (beta)** — opcional, desactivado por defecto (sección encima de
+  FIT export). Con una ruta cargada y potenciómetro, avisos cortos antes de las subidas
+  ("Conserva", "Margen alto"…) y un campo **Reserva**. Solo orientativo. Ver
+  [pacing-advisor.md](pacing-advisor.md).
 - **Ayuda a mejorar la detección de caídas** — un interruptor opcional que envía datos
   anónimos de los sensores tras las rutas (sin GPS, sin mensajes, sin nombres). Activarlo
   ayuda de verdad a mejorar la detección. Tú decides.

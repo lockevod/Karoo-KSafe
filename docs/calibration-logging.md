@@ -132,6 +132,21 @@ Every CSV row is tagged with a short event identifier. The current catalogue:
 | `HYD_END` | *(2.3.0)* once at ride end: final sweat / sodium / logged totals, coverage and `blocker` (why this ride can't be calibrated, or `none`) |
 | `HYD_CALIB` | *(2.3.0)* each weigh-in calibration from the Hydration tab: accepted (ratio, new multiplier) or rejected (reason). Usually lands in the next ride's log |
 
+### Pacing advisor (beta)
+When calibration logging is on, the pacing advisor also runs in **shadow** (no alerts unless the pacing switch is on) and writes these rows. `would_alert` in `PACE_ADV` is a shadow verdict, not the live alert rate (`live=` says whether alerts were enabled).
+| Tag | Meaning |
+|---|---|
+| `PACE_START` / `PACE_STOP` | Evaluation (re)started (`reason=fresh/resume/restart`) / stopped mid-ride (`reason`) |
+| `PACE_ROUTE` | Route loaded or changed: length, reversed, climb source, Karoo vs own climbs |
+| `PACE_POS` | Route position every 60 s: distance, trusted flag + reason |
+| `PACE_ADV` | Advisor state change with all inputs, `would_alert`, `suppressed_by`, `live` |
+| `PACE_CLIMB` | Climb block start/end: predicted vs actual arrival, W′ minimum, mean power, drift |
+| `PACE_FUEL` | Fuel-hint evaluation inside a fuel window |
+| `PACE_RESET` | Partial reset on a mid-ride FTP / weight / bike-type change |
+| `PACE_END` | Ride-end summary: projected vs actual kJ/kg, kJ/kg at first drift > 5 % |
+
+`scripts/analyze_calibration_logs.py` prints a pacing section. See [pacing-advisor.md](pacing-advisor.md).
+
 ### Emergency dispatch
 | Tag | Meaning |
 |---|---|
