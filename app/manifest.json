@@ -7,5 +7,5 @@
   "latestVersionCode": 202611141,
   "developer": "github.com/lockevod",
   "description": "Karoo safety extension on two layers: REACTIVE (crash detection, SOS, check-in, HR-based medical episode and wellness detection) and PREVENTIVE (carb and hydration tracking that adapts to your effort using the Karoo's HR and power zones, reminding you to fuel before bonking or dehydration impairs your judgment on the bike). Sends emergency alerts via WhatsApp (CallMeBot), Telegram, Pushover or ntfy.",
-  "releaseNotes": "New beta: pacing advice before climbs (needs power meter + loaded route, off by default) and a Reserve data field. Fixed: Karoo power-off could crash KSafe on start and lose settings. Since 2.2: sweat calibration, hydration 80 % of sweat, fewer false crash alerts."
+  "releaseNotes": "New beta: pacing advice before climbs (power meter or HR strap, loaded route, off by default) and a Reserve data field. Fixed: Karoo power-off could crash KSafe on start and lose settings. Since 2.2: sweat calibration, hydration 80 % of sweat, fewer false crash alerts."
 }
