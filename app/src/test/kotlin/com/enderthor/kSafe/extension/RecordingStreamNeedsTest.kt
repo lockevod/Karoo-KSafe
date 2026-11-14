@@ -131,12 +131,12 @@ class RecordingStreamNeedsTest {
         // profile and HR, the sole tuple with ambient=true is (T,T,T,T). A rebuild only
         // happens when the tuple CHANGES, so the Headwind collectors can never be torn
         // down and immediately recreated — the onboard-temperature fallback cannot race
-        // the Headwind source. Exhaustive over all 64 flag combinations (calibration logging
+        // the Headwind source. Exhaustive over all 128 flag combinations (calibration logging
         // included: it feeds the shadow pacing advisor), so a future
         // second ambient consumer that breaks the invariant fails here rather than
         // shipping as a subtle temperature glitch.
         var seenAmbient = 0
-        for (mask in 0 until 64) {
+        for (mask in 0 until 128) {
             val c = bare().copy(
                 medicalEpisodeEnabled   = mask and 1 != 0,
                 wellnessEnabled         = mask and 2 != 0,
@@ -144,6 +144,7 @@ class RecordingStreamNeedsTest {
                 hrCaloriesEnabled       = mask and 8 != 0,
                 hydrationTrackerEnabled = mask and 16 != 0,
                 calibrationLoggingEnabled = mask and 32 != 0,
+                pacingEnabled = mask and 64 != 0,
             )
             val needs = KSafeExtension.recordingStreamNeeds(c)
             if (!needs.ambient) continue
@@ -152,12 +153,19 @@ class RecordingStreamNeedsTest {
             assertTrue("ambient without userProfile (mask=$mask)", needs.userProfile)
             assertTrue("ambient without heartRate (mask=$mask)", needs.heartRate)
         }
-        assertEquals("half the combinations enable hydration", 32, seenAmbient)
+        assertEquals("half the combinations enable hydration", 64, seenAmbient)
     }
 
     @Test
     fun `calibration logging alone pulls the pacing shadow inputs but not ambient`() {
         val n = KSafeExtension.recordingStreamNeeds(bare().copy(calibrationLoggingEnabled = true))
+        assertTrue(n.power); assertTrue(n.heartRate); assertTrue(n.userProfile)
+        assertFalse(n.ambient)
+    }
+
+    @Test
+    fun `pacingEnabled alone pulls power HR and profile but not ambient`() {
+        val n = KSafeExtension.recordingStreamNeeds(bare().copy(pacingEnabled = true))
         assertTrue(n.power); assertTrue(n.heartRate); assertTrue(n.userProfile)
         assertFalse(n.ambient)
     }

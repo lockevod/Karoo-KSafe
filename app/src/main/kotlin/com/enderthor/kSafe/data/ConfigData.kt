@@ -130,7 +130,7 @@ const val KAROO_LIVE_BASE_URL = "https://dashboard.hammerhead.io/live/"
  *             sodium profile + measured mmol/L, calibration ratios). Pure version stamp;
  *             all fields have defaults, so existing installs are unaffected.
  */
-const val CONFIG_VERSION = 28
+const val CONFIG_VERSION = 29
 
 /**
  * Canonical minSpeedForCrashKmh value per preset.
@@ -464,6 +464,12 @@ data class KSafeConfig(
     val buzzerOnEmergencyEnabled: Boolean = true,
     // Calibration logging — writes detailed sensor events to CSV for threshold tuning
     val calibrationLoggingEnabled: Boolean = false,
+    // Pacing advisor (beta) — default OFF; see KSafeExtension.pacingWanted
+    val pacingEnabled: Boolean = false,
+    val pacingAlerts: Boolean = true,
+    val pacingFuelHints: Boolean = true,
+    val pacingWPrimeAlerts: Boolean = true,
+    val pacingWPrimeKj: Double? = null,
     // Update-availability notice — show a brief overlay when a newer KSafe build is published
     val updateCheckEnabled: Boolean = true,
     // Field colours — idle/ready background for each ride-screen widget
@@ -1541,6 +1547,12 @@ fun KSafeConfig.migrateToLatest(): KSafeConfig {
         // additive with defaults, so existing installs behave identically.
         c = c.copy(configVersion = 28)
         Timber.i("KSafeConfig migrated v%d→v28 (hydration sweat/sodium model)", originalVersion)
+    }
+
+    if (c.configVersion < 29) {
+        // v28 → v29: pacing advisor beta fields — additive, default OFF.
+        c = c.copy(configVersion = 29)
+        Timber.i("KSafeConfig migrated v%d→v29 (pacing advisor)", originalVersion)
     }
 
     return c

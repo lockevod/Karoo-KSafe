@@ -451,7 +451,7 @@ class KSafeExtension : KarooExtension("ksafe", BuildConfig.VERSION_NAME), Corout
             val fuel = c.carbsTrackerEnabled || c.hrCaloriesEnabled
             val hyd = c.hydrationTrackerEnabled
             // Shadow pacing (logs only) runs while calibration logging is on — see [pacingWanted].
-            val pace = c.calibrationLoggingEnabled
+            val pace = c.calibrationLoggingEnabled || c.pacingEnabled
             return RecordingStreamNeeds(
                 power = fuel || hyd || c.wellnessEnabled || c.medicalEpisodeEnabled || pace,
                 userProfile = fuel || hyd || c.wellnessEnabled || pace,
@@ -800,7 +800,7 @@ class KSafeExtension : KarooExtension("ksafe", BuildConfig.VERSION_NAME), Corout
                         // the rest of the ride. Idempotent when the set is unchanged;
                         // a no-op when the master switch is OFF (needs are all false).
                         startRecordingCollectors()
-                        // Calibration logging toggled mid-ride: follow the pacing stream gate.
+                        // Calibration logging / pacingEnabled toggled mid-ride: follow the pacing stream gate.
                         if (pacingWanted(config)) startPacing(resume = true)
                         else stopPacing(if (config.isActive) "logging_off" else "master_off")
                     }
@@ -1302,8 +1302,8 @@ class KSafeExtension : KarooExtension("ksafe", BuildConfig.VERSION_NAME), Corout
         }
     }
 
-    /** Shadow pacing runs while the master switch and calibration logging are both on. */
-    private fun pacingWanted(c: KSafeConfig = activeConfig): Boolean = c.isActive && c.calibrationLoggingEnabled
+    /** Pacing runs while the master switch is on and calibration logging or the pacing advisor is on. */
+    private fun pacingWanted(c: KSafeConfig = activeConfig): Boolean = c.isActive && (c.calibrationLoggingEnabled || c.pacingEnabled)
 
     /** Pacing-only streams (route, GPS fix, carb status), kept OUT of [recordingCollectorsJob]. A
      *  calibration-logging toggle CAN still rebuild the Recording collectors (POWER / HR / UserProfile)
