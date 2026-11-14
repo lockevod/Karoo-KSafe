@@ -285,12 +285,10 @@ class PacingManager(
 
     fun setEmergencyActive(active: Boolean) { emergencyActive = active }
 
+    /** A new W′ override applies from the next fresh start (or W′ rebuild): never a silent mid-ride reset. */
     fun setLiveAlerts(enabled: Boolean, wPrimeOverrideJ: Double?) {
         liveAlerts = enabled
-        if (wPrimeOverrideJ != wOverrideJ) {
-            wOverrideJ = wPrimeOverrideJ
-            if (wPrime != null) wPrime = WPrimeBalance(ftp, wOverrideJ ?: WPrimeBalance.defaultWPrimeJ(kind))
-        }
+        wOverrideJ = wPrimeOverrideJ
     }
 
     private fun rebuildProfileUnits() {

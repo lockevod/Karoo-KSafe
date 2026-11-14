@@ -369,4 +369,15 @@ class PacingManagerTest {
             if (s % 30 == 0) { m.tick(); assertTrue(m.powerCoverage()!! <= 1.0); assertTrue(m.view.value!!.state != PacingState.HIGH_MARGIN) }
         }
     }
+
+    @Test fun `a W' override change waits for the next fresh start`() {
+        val m = manager()
+        m.onUserProfile(250, 70.0); m.onNavigation(route()); m.start()
+        ride(m, power = 300, accuracyM = 5.0, seconds = 120)
+        val wp = m.wPrime!!
+        m.setLiveAlerts(false, 30_000.0)
+        assertTrue("no silent mid-ride W' rebuild", m.wPrime === wp)
+        m.stop(endOfRide = true); m.start()
+        assertEquals(30_000.0, m.wPrime!!.wJ, 0.0)
+    }
 }
