@@ -219,6 +219,16 @@ class PacingManagerTest {
         assertTrue(m.evaluatedCandidateKeys.isNotEmpty())        // a candidate existed and was suppressed
     }
 
+    @Test fun `an SOS still retrying after its ALERTING window blocks live alerts`() {
+        val m = PacingManager(TestScope(), tmp.root, null, clock = { now }, alertSink = { alerts.add(it) },
+            kneeKjKgOverride = 0.5, emergencyProbe = { true })   // status IDLE, alert job alive
+        m.setLiveAlerts(true, null)
+        m.onUserProfile(250, 70.0); m.onNavigation(route())
+        ride(m, power = 300, accuracyM = 5.0, seconds = 750)
+        assertTrue(alerts.isEmpty())
+        assertTrue(m.evaluatedCandidateKeys.isNotEmpty())
+    }
+
     @Test fun `a throwing tick does not kill the loop`() {
         val scope = TestScope()
         val m = PacingManager(scope, tmp.root, null, clock = { now })

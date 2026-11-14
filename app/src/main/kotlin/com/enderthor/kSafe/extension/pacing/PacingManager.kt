@@ -46,6 +46,8 @@ class PacingManager(
     private val kneeKjKgOverride: Double? = null,
     /** Model file load and every save run here; all manager state stays on the caller's thread. */
     private val ioDispatcher: CoroutineDispatcher = Dispatchers.IO,
+    /** Extra emergency-active signal read at each arbitration (the SOS retry that outlives ALERTING). */
+    private val emergencyProbe: () -> Boolean = { false },
 ) {
     /** Every candidate key sent to the arbiter, in order. Tests only. */
     internal val evaluatedCandidateKeys = ArrayList<String>()
@@ -89,7 +91,7 @@ class PacingManager(
     private var emergencyActive = false
 
     // Per-ride evaluation state
-    private var arbiter = AlertArbiter()
+    internal var arbiter = AlertArbiter(); private set   // internal: tests read the recorded gaps
     private var prevState = PacingState.KEEP; private var prevRecoverW = false
     private var conserveSinceMs: Long? = null; private var condCandidateDone = false
     private var pacingCandBlock: Int? = null; private var keepCandBlock: Int? = null
@@ -461,7 +463,7 @@ class PacingManager(
 
     private fun arbitrate(c: AlertCandidate, a: PacingAlert, now: Long, adv: () -> String): ArbiterVerdict {
         evaluatedCandidateKeys += c.key
-        val v = arbiter.evaluate(c, now, emergencyActive)
+        val v = arbiter.evaluate(c, now, emergencyActive || emergencyProbe())
         if (liveAlerts && v.fire && alertSink?.invoke(a) == true) arbiter.recordFired(c.source, c.key, c.severity, now)
         calibLogger?.log(Event.PACE_ADV) {
             "${adv()},key=${c.key},sev=${f(c.severity, 2)},would_alert=${v.fire},suppressed_by=${v.suppressedBy ?: "none"},live=$liveAlerts"

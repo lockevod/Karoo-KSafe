@@ -615,6 +615,8 @@ class KSafeExtension : KarooExtension("ksafe", BuildConfig.VERSION_NAME), Corout
             // re-arm running; Paused → re-arm frozen; Idle → no re-arm (a dead-man's-switch
             // armed off-ride would fire an unattended CHECKIN_EXPIRED SOS later).
             isRecording = { currentRideState is RideState.Recording },
+            // Check-in pre-warning / provider warning / delivery notice: keep pacing quiet after it.
+            onRiderAlert = { reportPacingExternal(com.enderthor.kSafe.extension.pacing.AlertSource.EMERGENCY) },
         )
         crashManager = CrashDetectionManager(applicationContext, this, {
             Timber.d("Crash detected by sensor!")
@@ -668,7 +670,8 @@ class KSafeExtension : KarooExtension("ksafe", BuildConfig.VERSION_NAME), Corout
         hydrationTrackerFlow.value = hydrationTracker
         // Pacing advisor: logs PACE_* rows; alerts reach the sink only while pacingEnabled (setLiveAlerts).
         pacingManager = com.enderthor.kSafe.extension.pacing.PacingManager(
-            this, filesDir, calibLogger, alertSink = { a -> dispatchPacingAlert(a) })
+            this, filesDir, calibLogger, alertSink = { a -> dispatchPacingAlert(a) },
+            emergencyProbe = { emergencyManager.alertJobActive() })
         pacingViewFlow.value = pacingManager.view
 
         // Emergency priority: a fueling overlay must never obscure a crash / SOS
@@ -680,11 +683,17 @@ class KSafeExtension : KarooExtension("ksafe", BuildConfig.VERSION_NAME), Corout
         // overlays while non-IDLE; this collector is the belt-and-suspenders teardown
         // for one shown in the instant before the transition.)
         launch {
+            var prevStatus = com.enderthor.kSafe.data.EmergencyStatus.IDLE
             com.enderthor.kSafe.extension.managers.EmergencyManager.uiState.collect { st ->
                 if (st.status != com.enderthor.kSafe.data.EmergencyStatus.IDLE &&
                     fuelingOverlayLazy.isInitialized()) fuelingOverlay.remove()
                 if (this@KSafeExtension::pacingManager.isInitialized)
                     pacingManager.setEmergencyActive(st.status != com.enderthor.kSafe.data.EmergencyStatus.IDLE)
+                // Any emergency end (cancel, ALERTING rollback, sent): a 3-min pacing quiet gap after it.
+                if (prevStatus != com.enderthor.kSafe.data.EmergencyStatus.IDLE &&
+                    st.status == com.enderthor.kSafe.data.EmergencyStatus.IDLE)
+                    reportPacingExternal(com.enderthor.kSafe.extension.pacing.AlertSource.EMERGENCY)
+                prevStatus = st.status
             }
         }
 
@@ -2809,7 +2818,8 @@ class KSafeExtension : KarooExtension("ksafe", BuildConfig.VERSION_NAME), Corout
     /** Live pacing alert (phase 1b). Re-checks the emergency state: pacing never shows over an SOS.
      *  A failure is logged, never thrown into the pacing tick. Returns true only when dispatched. */
     internal fun dispatchPacingAlert(a: com.enderthor.kSafe.extension.pacing.PacingAlert): Boolean {
-        if (emergencyActive()) return false
+        // A rolled-back ALERTING is IDLE while the SOS still retries in the background: still an emergency.
+        if (emergencyActive() || emergencyManager.alertJobActive()) return false
         return runCatching {
             val t = com.enderthor.kSafe.extension.pacing.PacingAlertText.render(a, es = getString(R.string.pacing_alert_lang) == "es")
             val bg = when (a.state) {

@@ -10,11 +10,14 @@ import com.enderthor.kSafe.data.ProviderType
 import com.enderthor.kSafe.data.SenderConfig
 import com.enderthor.kSafe.extension.KSafeExtension
 import com.enderthor.kSafe.extension.managers.EmergencyManager
+import com.enderthor.kSafe.extension.pacing.AlertCandidate
 import com.enderthor.kSafe.extension.pacing.AlertSource
 import com.enderthor.kSafe.extension.pacing.PacingAlert
 import com.enderthor.kSafe.extension.pacing.PacingState
 import com.enderthor.kSafe.extension.pacing.TestPolyline
+import fi.nikosavola.karooext.testing.HttpResponses
 import fi.nikosavola.karooext.testing.robolectric.FakeKarooRule
+import fi.nikosavola.karooext.testing.robolectric.RobolectricPump
 import io.hammerhead.karooext.models.InRideAlert
 import io.hammerhead.karooext.models.OnNavigationState
 import io.hammerhead.karooext.models.RideState
@@ -29,6 +32,7 @@ import org.junit.rules.RuleChain
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
 import org.robolectric.annotation.Config
+import kotlin.time.Duration.Companion.minutes
 import kotlin.time.Duration.Companion.seconds
 
 @RunWith(RobolectricTestRunner::class)
@@ -124,5 +128,71 @@ class KSafePacingFakeKarooTest {
 
         ext.handleSafetyIncident(EmergencyReason.WELLNESS_DECOUPLING, IncidentResponseLevel.WARNING, emptyMap())
         assertNotNull(ext.pacingManager.lastMedicalMs)
+    }
+
+    private val ntfy = SenderConfig(provider = ProviderType.NTFY, apiKey = "ksafe-topic")
+    private val conserve = PacingAlert(AlertSource.PACING, PacingState.CONSERVE, "CONSERVE#1", 4.2, 6.0, 7.0, 210, null, null, false)
+
+    /** What the pacing arbiter says right now about a pacing candidate (the manager clock is elapsedRealtime). */
+    private fun pacingGap(ext: KSafeExtension) = ext.pacingManager.arbiter.evaluate(
+        AlertCandidate(AlertSource.PACING, "CONSERVE#9", 0.5), android.os.SystemClock.elapsedRealtime(), false).suppressedBy
+
+    @Test
+    fun `pacing stays blocked while the SOS retries after the ALERTING window`() {
+        ksafe.seed(KSafeConfig(updateCheckEnabled = false, pacingEnabled = true,
+            activeProvider = ProviderType.NTFY, countdownSeconds = 5), ntfy)
+        karoo.system.setLocation(60.17, 24.94)
+        karoo.system.responder = HttpResponses.status(503)
+        ksafe.startExtension()
+        val ext = KSafeExtension.getInstance()!!
+        ksafe.tap(FieldTapReceiver.ACTION_SOS)
+        RobolectricPump.advanceBy(6.seconds)
+        karoo.awaitValue { karoo.system.httpRequests.firstOrNull() }        // first attempt failed: backoff running
+        ksafe.settleUntil(30.seconds) { true.takeIf { EmergencyManager.uiState.value.status == EmergencyStatus.IDLE } }
+        assertEquals("the retry is still pending", 1, karoo.system.httpRequests.size)
+
+        assertFalse(ext.dispatchPacingAlert(conserve))
+        assertTrue(karoo.system.effectsOf<InRideAlert>().none { it.id.startsWith("ksafe-pacing-") })
+        // ALERTING -> IDLE recorded the emergency: the 3-min quiet gap holds once the retry ends too.
+        assertEquals("gap:EMERGENCY", pacingGap(ext))
+    }
+
+    @Test
+    fun `the ride-start provider warning opens the pacing gap`() {
+        ksafe.seed(KSafeConfig(updateCheckEnabled = false, pacingEnabled = true, activeProvider = ProviderType.NTFY),
+            SenderConfig(provider = ProviderType.NTFY))                     // no topic: incomplete
+        ksafe.startExtension()
+        val ext = KSafeExtension.getInstance()!!
+        karoo.system.setRideState(RideState.Recording)
+        val title = karoo.app.getString(R.string.provider_warn_ridestart_title)
+        ksafe.settleUntil(30.seconds) { karoo.system.effectsOf<InRideAlert>().firstOrNull { it.title == title } }
+        assertEquals("gap:EMERGENCY", pacingGap(ext))
+    }
+
+    @Test
+    fun `a check-in pre-warning opens the pacing gap`() {
+        ksafe.seed(KSafeConfig(updateCheckEnabled = false, pacingEnabled = true, activeProvider = ProviderType.NTFY,
+            checkinEnabled = true, checkinIntervalMinutes = 10), ntfy)
+        ksafe.startExtension()
+        val ext = KSafeExtension.getInstance()!!
+        karoo.system.setRideState(RideState.Recording)
+        ksafe.settleUntil(6.minutes) { karoo.system.effectsOf<InRideAlert>().firstOrNull { it.id.startsWith("ksafe-checkin-warn-") } }
+        assertEquals("gap:EMERGENCY", pacingGap(ext))
+    }
+
+    @Test
+    fun `a delivery-failed notice on the ride screen opens the pacing gap`() {
+        ksafe.seed(KSafeConfig(updateCheckEnabled = false, pacingEnabled = true,
+            activeProvider = ProviderType.NTFY, countdownSeconds = 5), ntfy)
+        karoo.system.setRideState(RideState.Recording)
+        karoo.system.setLocation(60.17, 24.94)
+        karoo.system.responder = HttpResponses.status(503)
+        ksafe.startExtension()
+        val ext = KSafeExtension.getInstance()!!
+        ksafe.tap(FieldTapReceiver.ACTION_SOS)
+        val title = karoo.app.getString(R.string.alert_delivery_failed_title)
+        ksafe.settleUntil(40.minutes) { karoo.system.effectsOf<InRideAlert>().firstOrNull { it.title == title } }
+        // The ALERTING -> IDLE gap is ~30 min old by now: only the notice itself can hold it.
+        assertEquals("gap:EMERGENCY", pacingGap(ext))
     }
 }

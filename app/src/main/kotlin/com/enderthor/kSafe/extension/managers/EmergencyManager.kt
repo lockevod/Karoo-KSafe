@@ -108,6 +108,13 @@ class EmergencyManager(
      * a false CHECKIN_EXPIRED SOS to contacts. Defaults to false for unit tests.
      */
     private val isRecording: () -> Boolean = { false },
+    /**
+     * Invoked right after each rider-facing non-emergency InRideAlert this manager shows
+     * (check-in pre-warning, provider warning, delivery-failed / partial notice) so the pacing
+     * arbiter keeps its quiet gap after it. Wrapped in [notifyRiderAlert]: a throw never
+     * reaches the alert path. Defaults to a no-op.
+     */
+    private val onRiderAlert: () -> Unit = {},
 ) {
     companion object {
 
@@ -188,6 +195,11 @@ class EmergencyManager(
      * a fresh emergency. See `handleSOSTap`'s IDLE branch.
      */
     fun alertJobActive(): Boolean = alertJob?.isActive == true
+
+    /** Runs [onRiderAlert] after a rider-facing InRideAlert; never throws into the alert path. */
+    private fun notifyRiderAlert() {
+        runCatching { onRiderAlert() }.onFailure { Timber.e(it, "onRiderAlert failed") }
+    }
 
     fun triggerEmergency(reason: EmergencyReason, config: KSafeConfig) {
         if (currentStatus != EmergencyStatus.IDLE) {
@@ -345,6 +357,7 @@ class EmergencyManager(
                         backgroundColor = R.color.alert_orange,
                         textColor = R.color.alert_text_white,
                     ))
+                    notifyRiderAlert()
                 }
                 calibLogger?.log(CalibrationLogger.Event.PROVIDER_NOT_READY) {
                     "provider=$active,missing=${readiness.missing.name},acked=$acked"
@@ -363,6 +376,7 @@ class EmergencyManager(
                         backgroundColor = R.color.alert_orange,
                         textColor = R.color.alert_text_white,
                     ))
+                    notifyRiderAlert()
                     val days = (now - senderConfig.lastSuccessfulSendMs) / 86_400_000L
                     calibLogger?.log(CalibrationLogger.Event.PROVIDER_STALE) {
                         "provider=$active,days_since=$days"
@@ -545,6 +559,7 @@ class EmergencyManager(
                         textColor = com.enderthor.kSafe.R.color.alert_text_white,
                     )
                 )
+                notifyRiderAlert()
             }
         }
 
@@ -1342,6 +1357,7 @@ class EmergencyManager(
                 backgroundColor = com.enderthor.kSafe.R.color.alert_red,
                 textColor = com.enderthor.kSafe.R.color.alert_text_white,
             ))
+            notifyRiderAlert()
         } else if (Settings.canDrawOverlays(context)) {
             sosOverlay.showInfo(
                 title = context.getString(R.string.alert_delivery_failed_title),
@@ -1402,6 +1418,7 @@ class EmergencyManager(
                 backgroundColor = com.enderthor.kSafe.R.color.alert_orange,
                 textColor = com.enderthor.kSafe.R.color.alert_text_white,
             ))
+            notifyRiderAlert()
         } else if (Settings.canDrawOverlays(context)) {
             // Auto-dismiss to match the InRideAlert path (15 s). Partial delivery is an amber
             // heads-up, not the must-not-miss red failure alarm — it should not linger sticky
