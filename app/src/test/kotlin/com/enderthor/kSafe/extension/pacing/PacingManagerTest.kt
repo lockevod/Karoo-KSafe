@@ -2,6 +2,7 @@ package com.enderthor.kSafe.extension.pacing
 
 import com.enderthor.kSafe.extension.managers.CalibrationLogger
 import io.hammerhead.karooext.models.OnNavigationState
+import io.hammerhead.karooext.models.OnNavigationState.NavigationState.Climb
 import kotlinx.coroutines.test.TestScope
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -240,5 +241,35 @@ class PacingManagerTest {
         m.onUserProfile(250, 70.0); m.onRoutingPreference("ROAD")
         m.onRoutingPreference("MTB")
         assertEquals(WPrimeBalance.defaultWPrimeJ(BikeKind.MTB), m.wPrime!!.wJ, 0.0)
+    }
+
+    @Test fun `unknown weight logs kJ per kg as na`() {
+        val m = loggingManager()
+        m.onUserProfile(250, 0.0); m.onNavigation(route()); m.start()
+        ride(m, power = 400, accuracyM = 5.0, seconds = 700)     // W′ drains: recover_w flips, a PACE_ADV row is logged
+        m.stop()
+        val adv = logRows.filter { it.startsWith("PACE_ADV,") }
+        assertTrue(adv.isNotEmpty())
+        assertTrue(adv.all { ",kjkg=na," in it })
+        assertTrue(logRows.single { it.startsWith("PACE_END,") }.contains("actual_kjkg=na"))
+    }
+
+    @Test fun `a new route restarts the projected-finish record`() {
+        val m = loggingManager()
+        m.onUserProfile(250, 70.0); m.onNavigation(route()); m.start()
+        ride(m, power = 300, accuracyM = 5.0, seconds = 700)     // route A projects a finish
+        m.onNavigation(threeClimbRoute())
+        ride(m, power = 300, accuracyM = 100.0, seconds = 60, from = 700)   // route B: never trusted
+        m.stop()
+        assertTrue(logRows.single { it.startsWith("PACE_END,") }.contains("proj_finish_first=na,proj_finish_last=na"))
+    }
+
+    @Test fun `a route with the same polyline but other climbs is reloaded`() {
+        val m = manager()
+        m.onUserProfile(250, 70.0)
+        m.onNavigation(route().copy(climbs = listOf(Climb(10_000.0, 5_000.0, 7.0, 350.0))))
+        assertEquals(10_000.0, m.blocks.single().startM, 0.0)
+        m.onNavigation(route().copy(climbs = listOf(Climb(12_000.0, 3_000.0, 7.0, 210.0))))
+        assertEquals(12_000.0, m.blocks.single().startM, 0.0)
     }
 }

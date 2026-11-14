@@ -49,7 +49,8 @@ class PacingManager(
     private var kind = BikeKind.ROAD
 
     // Route
-    private var routeKey: String? = null
+    private var route: OnNavigationState.NavigationState.NavigatingRoute? = null       // loaded; null when not navigating
+    private var projRoute: OnNavigationState.NavigationState.NavigatingRoute? = null   // owner of proj_finish_*; survives a nav flap
     private var path: PolylinePath? = null
     private var profile: ElevationProfile? = null
     private var climbs: List<ClimbSeg> = emptyList()
@@ -112,7 +113,7 @@ class PacingManager(
     private fun saveOnStop() {
         val fs = fatigue
         calibLogger?.log(Event.PACE_END) {
-            "proj_finish_first=${f(firstProjFinish)},proj_finish_last=${f(lastProjFinish)},actual_kjkg=${f(fs?.kjPerKg)}," +
+            "proj_finish_first=${f(firstProjFinish)},proj_finish_last=${f(lastProjFinish)},actual_kjkg=${f(fs?.kjPerKg?.takeIf { weightKg > 0 })}," +
                 "kjkg_at_drift5=${f(fs?.kjPerKgAtFirstDrift5)},moving_s=${f(movingS, 0)},odo_m=${f(odometerM, 0)}," +
                 "power_cov=${f(powerCoverage(), 2)}"
         }
@@ -126,14 +127,14 @@ class PacingManager(
 
     private fun applyNavigation(state: OnNavigationState.NavigationState) {
         if (state !is OnNavigationState.NavigationState.NavigatingRoute) {
-            routeKey = null; path = null; profile = null; climbs = emptyList(); projector = null; blocks = emptyList()
+            route = null; path = null; profile = null; climbs = emptyList(); projector = null; blocks = emptyList()
             rejoinActive = false
             return
         }
         rejoinActive = state.rejoinPolyline != null || state.rejoinDistance != null
-        val key = state.routePolyline + state.reversed + state.routeElevationPolyline + state.climbs.size
-        if (key == routeKey) return
-        routeKey = key
+        if (sameRoute(route, state)) return
+        route = state
+        if (!sameRoute(projRoute, state)) { projRoute = state; firstProjFinish = null; lastProjFinish = null }
         val pts = Polyline.decode(state.routePolyline).let { if (state.reversed) it.reversed() else it }
         if (pts.size < 2) { path = null; projector = null; profile = null; climbs = emptyList(); blocks = emptyList(); return }
         val p = PolylinePath(pts)
@@ -148,6 +149,11 @@ class PacingManager(
                 "karoo_n=${res.karooCount},karoo_ok=${res.karooConfirmed},own_n=$ownN,sig_n=$sigN,blocks_n=${blocks.size}"
         }
     }
+
+    /** Field compare, no polyline concatenation; String == short-circuits on identity and length. */
+    private fun sameRoute(a: OnNavigationState.NavigationState.NavigatingRoute?, b: OnNavigationState.NavigationState.NavigatingRoute) =
+        a != null && a.reversed == b.reversed && a.routePolyline == b.routePolyline &&
+            a.routeElevationPolyline == b.routeElevationPolyline && a.climbs == b.climbs
 
     fun onLocation(lat: Double, lng: Double, accuracyM: Double?) { fix = LatLng(lat, lng); fixAccM = accuracyM; fixAtMs = clock() }
 
@@ -302,7 +308,7 @@ class PacingManager(
             projectedWAtNextBlockPct = projWAtBlock, msSinceWellnessOrMedical = lastMedicalMs?.let { now - it },
             powerCoverage = powerCoverage(),
         )
-        val d = PacingAdvisor.decide(input, prevState)
+        val d = PacingAdvisor.decide(input, prevState, prevRecoverW)
         val changed = d.state != prevState || d.recoverW != prevRecoverW
         val adv = { advFields(input, d) }
 
@@ -422,7 +428,7 @@ class PacingManager(
         "state=${d.state},recover_w=${d.recoverW},reason=${d.reason},moving=${i.moving},has_power=${i.hasPower}," +
             "pos_trusted=${i.positionTrusted},climbs_known=${i.climbsKnown},remaining_s=${f(i.remainingMovingS, 0)}," +
             "elapsed_s=${f(i.elapsedMovingS, 0)},blocks_ahead=${i.blocksAhead},next_block=${i.nextBlockId ?: "na"}," +
-            "to_next_s=${f(i.secondsToNextBlock, 0)},to_next_m=${f(i.metresToNextBlock, 0)},kjkg=${f(i.kjPerKg, 2)}," +
+            "to_next_s=${f(i.secondsToNextBlock, 0)},to_next_m=${f(i.metresToNextBlock, 0)},kjkg=${f(i.kjPerKg.takeIf { weightKg > 0 }, 2)}," +
             "proj_finish=${f(i.projectedKjKgFinish, 2)},proj_top=${f(i.projectedKjKgNextTop, 2)},knee=${f(i.kneeKjKg)}," +
             "knee_src=${if (kneeKjKgOverride != null) "override" else "default"},drift=${f(i.driftPct)}," +
             "drift_stable_s=${f(i.driftStableMs?.div(1000.0), 0)},w_trusted=${i.wTrusted},w_pct=${f(i.wPct, 2)}," +

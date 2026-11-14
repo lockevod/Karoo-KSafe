@@ -43,14 +43,14 @@ class RouteProjector(val path: PolylinePath) {
     /**
      * Like [PolylinePath.nearestProjectionInWindowOrNull] but the foot point is CLAMPED to
      * [loM, hiM] along the route, so a segment straddling the window edge cannot yield a foot point
-     * on the other pass. Same equirectangular arithmetic as Geo.kt. ponytail: linear segment scan.
+     * on the other pass. Same equirectangular arithmetic as Geo.kt. Binary-searches the first segment
+     * reaching [loM], then scans only the window.
      */
     private fun clippedProjection(p: LatLng, loM: Double, hiM: Double): Projection? {
         val pts = path.points; val cum = path.cumulativeM
         var best: Projection? = null
-        for (i in 0 until pts.size - 1) {
+        for (i in path.firstSegmentFrom(loM) until pts.size - 1) {
             if (cum[i] > hiM) break
-            if (cum[i + 1] < loM) continue
             val len = cum[i + 1] - cum[i]
             val a = pts[i]; val b = pts[i + 1]
             val mLng = 111_320.0 * cos(Math.toRadians(a.lat))

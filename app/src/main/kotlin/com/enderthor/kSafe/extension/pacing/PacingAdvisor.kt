@@ -27,6 +27,8 @@ object PacingAdvisor {
     const val TOO_LATE_M = 100.0
     const val MAX_LEAD_M = 10_000.0
     const val MIN_POWER_COVERAGE = 0.9
+    const val RECOVER_W_ENTER = 0.40
+    const val RECOVER_W_EXIT = 0.50
 
     fun inLeadWindow(secondsToBlock: Double?, metresToBlock: Double?, leadS: Double): Boolean {
         if (secondsToBlock == null || metresToBlock == null || !secondsToBlock.isFinite() || !metresToBlock.isFinite()) return false
@@ -34,7 +36,7 @@ object PacingAdvisor {
         return secondsToBlock <= leadS || metresToBlock <= MIN_LEAD_M
     }
 
-    fun decide(i: PacingInput, prev: PacingState): PacingDecision {
+    fun decide(i: PacingInput, prev: PacingState, prevRecoverW: Boolean = false): PacingDecision {
         if (!i.moving) return PacingDecision(if (prev == PacingState.HIGH_MARGIN) PacingState.KEEP else prev, false, "stopped", false, false, false)
         val fuelWin = i.positionTrusted && inLeadWindow(i.secondsToNextBlock, i.metresToNextBlock, LEAD_FUEL_S)
         if (!i.hasPower) return PacingDecision(PacingState.KEEP, false, "no_power", false, false, fuelWin)
@@ -62,7 +64,9 @@ object PacingAdvisor {
             highMargin -> PacingState.HIGH_MARGIN to "margin"
             else -> PacingState.KEEP to "keep"
         }
-        val recoverW = i.wTrusted && (i.projectedWAtNextBlockPct ?: 1.0) < 0.4
+        // Hysteresis: enter below 0.40, leave only above 0.50, so a projection hovering at 0.40 cannot flap.
+        val projW = i.projectedWAtNextBlockPct
+        val recoverW = i.wTrusted && projW != null && (if (prevRecoverW) projW <= RECOVER_W_EXIT else projW < RECOVER_W_ENTER)
         return PacingDecision(
             state, recoverW, reason,
             alertWindowPacing = i.positionTrusted && inLeadWindow(i.secondsToNextBlock, i.metresToNextBlock, LEAD_PACING_S),

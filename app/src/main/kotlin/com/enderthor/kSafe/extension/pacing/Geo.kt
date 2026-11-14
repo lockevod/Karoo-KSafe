@@ -92,7 +92,7 @@ class PolylinePath(val points: List<LatLng>) {
      * binary search over the non-decreasing `cumulativeM`. Returns `points.size - 1` (empty loop
      * range) when every segment ends before [windowLoM]; 0 for NEGATIVE_INFINITY.
      */
-    private fun firstSegmentFrom(windowLoM: Double): Int {
+    internal fun firstSegmentFrom(windowLoM: Double): Int {
         var lo = 1
         var hi = points.size // exclusive
         while (lo < hi) {

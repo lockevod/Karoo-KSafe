@@ -60,6 +60,16 @@ class PacingAdvisorTest {
         assertTrue(d.recoverW); assertTrue(d.alertWindowW)
     }
 
+    @Test fun `recover W has hysteresis between 0_40 and 0_50`() {
+        fun rw(proj: Double, prev: Boolean) =
+            PacingAdvisor.decide(base.copy(projectedWAtNextBlockPct = proj), PacingState.KEEP, prevRecoverW = prev).recoverW
+        assertFalse(rw(0.45, prev = false))                    // not entered above 0.40
+        assertTrue(rw(0.39, prev = false))                     // enters below 0.40
+        assertTrue(rw(0.45, prev = true))                      // held between 0.40 and 0.50
+        assertTrue(rw(0.50, prev = true))
+        assertFalse(rw(0.51, prev = true))                     // leaves only above 0.50
+    }
+
     @Test fun `lead window rules`() {
         assertTrue(PacingAdvisor.inLeadWindow(290.0, 2000.0, 300.0))
         assertFalse(PacingAdvisor.inLeadWindow(400.0, 2000.0, 300.0))
