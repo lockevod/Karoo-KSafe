@@ -380,4 +380,15 @@ class PacingManagerTest {
         m.stop(endOfRide = true); m.start()
         assertEquals(30_000.0, m.wPrime!!.wJ, 0.0)
     }
+
+    @Test fun `climb blocks recompute on the next tick after a bike-kind change`() {
+        val m = manager()
+        m.onUserProfile(250, 70.0); m.onRoutingPreference("ROAD")
+        m.onNavigation(route().copy(climbs = listOf(Climb(10_000.0, 1_500.0, 6.7, 100.0))))   // MTB-significant only
+        assertEquals(0, m.blocks.size)
+        now += 1000
+        m.onRoutingPreference("MTB")
+        m.tick()
+        assertEquals(1, m.blocks.size)
+    }
 }

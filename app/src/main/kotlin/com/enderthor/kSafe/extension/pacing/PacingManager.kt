@@ -70,7 +70,7 @@ class PacingManager(
     private var projector: RouteProjector? = null
     private var rejoinActive = false
     internal var blocks: List<ClimbBlock> = emptyList(); private set
-    private var blocksAtMs = Long.MIN_VALUE
+    private var blocksAtMs: Long? = null   // null = recompute on the next tick (never a MIN_VALUE sentinel: now - MIN overflows)
 
     // Sensors
     private var fix: LatLng? = null; private var fixAccM: Double? = null; private var fixAtMs = 0L
@@ -260,7 +260,7 @@ class PacingManager(
     fun onRoutingPreference(pref: String) {
         val k = BikeKind.of(pref)
         if (k == kind) return
-        kind = k; blocksAtMs = Long.MIN_VALUE
+        kind = k; blocksAtMs = null
         val wp = wPrime ?: return
         // Only an untouched balance takes the new kind's default; a riding one keeps its state and stale flag.
         val wReset = wOverrideJ == null && !wp.hasSamples
@@ -335,7 +335,7 @@ class PacingManager(
         val prof = profile
         if (started && gradePaceLoaded && trusted && prof != null && movingNow && dOdo > 0 && dMov > 0) gradePace.learn(kind, prof.gradeAt(pos!!), dOdo, dMov)
         if (started && movingS - lastSaveMovingS >= SAVE_EVERY_MOVING_S) saveGradePace()
-        if (prof != null && now - blocksAtMs >= BLOCKS_REFRESH_MS) recomputeBlocks()
+        if (prof != null && blocksAtMs.let { it == null || now - it >= BLOCKS_REFRESH_MS }) recomputeBlocks()
 
         val fs = fatigue; val wp = wPrime
         val kj = fs?.kjPerKg ?: 0.0
