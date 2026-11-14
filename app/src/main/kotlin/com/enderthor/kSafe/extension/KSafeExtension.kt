@@ -620,8 +620,7 @@ class KSafeExtension : KarooExtension("ksafe", BuildConfig.VERSION_NAME), Corout
             scope = this,
             onIncident = { reason, tokens ->
                 launch {
-                    emergencyManager.handleIncident(reason, activeConfig.medicalResponseLevel, activeConfig, tokens)
-                    reportPacingExternal(com.enderthor.kSafe.extension.pacing.AlertSource.MEDICAL)
+                    handleSafetyIncident(reason, activeConfig.medicalResponseLevel, tokens)
                 }
             },
             calibLogger = calibLogger,
@@ -630,8 +629,7 @@ class KSafeExtension : KarooExtension("ksafe", BuildConfig.VERSION_NAME), Corout
             scope = this,
             onIncident = { reason, tokens ->
                 launch {
-                    emergencyManager.handleIncident(reason, activeConfig.wellnessResponseLevel, activeConfig, tokens)
-                    reportPacingExternal(com.enderthor.kSafe.extension.pacing.AlertSource.MEDICAL)
+                    handleSafetyIncident(reason, activeConfig.wellnessResponseLevel, tokens)
                 }
             },
             calibLogger = calibLogger,
@@ -2818,6 +2816,15 @@ class KSafeExtension : KarooExtension("ksafe", BuildConfig.VERSION_NAME), Corout
                 autoDismissMs = 12_000L, backgroundColor = bg, textColor = R.color.pacing_text,
             ))
         }.onFailure { Timber.e(it, "PACE alert dispatch failed") }
+    }
+
+    /** Medical / wellness incident: the unchanged [EmergencyManager.handleIncident] call, then the
+     *  pacing arbiter is told only if the rider saw something — not SILENT (log only) and not an
+     *  incident handleIncident drops because an emergency is already running. */
+    internal fun handleSafetyIncident(reason: EmergencyReason, level: com.enderthor.kSafe.data.IncidentResponseLevel, tokens: Map<String, String>) {
+        val riderVisible = level != com.enderthor.kSafe.data.IncidentResponseLevel.SILENT && !emergencyActive()
+        emergencyManager.handleIncident(reason, level, activeConfig, tokens)
+        if (riderVisible) reportPacingExternal(com.enderthor.kSafe.extension.pacing.AlertSource.MEDICAL)
     }
 
     /** Tells the pacing arbiter another KSafe alert just fired. Called after that alert's own

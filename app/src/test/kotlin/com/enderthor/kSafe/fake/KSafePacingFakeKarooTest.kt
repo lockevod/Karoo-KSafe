@@ -2,7 +2,9 @@ package com.enderthor.kSafe.fake
 
 import com.enderthor.kSafe.R
 import com.enderthor.kSafe.activity.FieldTapReceiver
+import com.enderthor.kSafe.data.EmergencyReason
 import com.enderthor.kSafe.data.EmergencyStatus
+import com.enderthor.kSafe.data.IncidentResponseLevel
 import com.enderthor.kSafe.data.KSafeConfig
 import com.enderthor.kSafe.data.ProviderType
 import com.enderthor.kSafe.data.SenderConfig
@@ -18,6 +20,8 @@ import io.hammerhead.karooext.models.OnNavigationState
 import io.hammerhead.karooext.models.RideState
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNotNull
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Rule
 import org.junit.Test
@@ -107,5 +111,18 @@ class KSafePacingFakeKarooTest {
         assertEquals(EmergencyStatus.COUNTDOWN, EmergencyManager.uiState.value.status)
         ext.dispatchPacingAlert(alert)
         assertEquals(1, pacingAlerts().size)
+    }
+
+    @Test
+    fun `only a rider-visible incident gates pacing`() {
+        ksafe.seed(KSafeConfig(updateCheckEnabled = false, pacingEnabled = true))
+        ksafe.startExtension()
+        val ext = KSafeExtension.getInstance()!!
+
+        ext.handleSafetyIncident(EmergencyReason.WELLNESS_DECOUPLING, IncidentResponseLevel.SILENT, emptyMap())
+        assertNull(ext.pacingManager.lastMedicalMs)              // log-only: msSinceWellnessOrMedical stays unset
+
+        ext.handleSafetyIncident(EmergencyReason.WELLNESS_DECOUPLING, IncidentResponseLevel.WARNING, emptyMap())
+        assertNotNull(ext.pacingManager.lastMedicalMs)
     }
 }

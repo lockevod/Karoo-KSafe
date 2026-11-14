@@ -82,7 +82,8 @@ class PacingManager(
     internal var liveAlerts = false; private set
     internal var wPrime: WPrimeBalance? = null; private set       // internal: tests read ride state
     internal var fatigue: FatigueSignals? = null; private set
-    private var carbStatus: CarbStatus? = null; private var lastCarbAlertMs: Long? = null; private var lastMedicalMs: Long? = null
+    private var carbStatus: CarbStatus? = null; private var lastCarbAlertMs: Long? = null
+    internal var lastMedicalMs: Long? = null; private set   // internal: tests
     private var emergencyActive = false
 
     // Per-ride evaluation state
