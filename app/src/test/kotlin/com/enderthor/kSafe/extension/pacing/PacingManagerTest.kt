@@ -198,6 +198,37 @@ class PacingManagerTest {
         assertTrue("no cond alert off route: ${alerts.map { it.key }}", alerts.none { it.key == "CONSERVE#cond" })
     }
 
+    private fun carbDeficit(): com.enderthor.kSafe.extension.managers.CarbStatus =
+        Mockito.mock(com.enderthor.kSafe.extension.managers.CarbStatus::class.java).also {
+            Mockito.`when`(it.carbsEnabled).thenReturn(true); Mockito.`when`(it.masterEnabled).thenReturn(true)
+            Mockito.`when`(it.cumLoggedG).thenReturn(40); Mockito.`when`(it.cumBurnedG).thenReturn(140)
+            Mockito.`when`(it.deficitG).thenReturn(100); Mockito.`when`(it.deficitThresholdG).thenReturn(30)
+        }
+
+    @Test fun `one tick fires at most one alert, the most important first`() {
+        // Shadow run: find the second whose tick raises the block's CONSERVE candidate.
+        val probe = manager(knee = 0.5)
+        probe.onUserProfile(250, 70.0); probe.onNavigation(route())
+        val key = "CONSERVE#${Math.round(probe.blocks.single().startM)}"
+        var s = 0
+        while (key !in probe.evaluatedCandidateKeys) { check(s < 1200); ride(probe, power = 200, accuracyM = 5.0, seconds = 1, from = s); s++ }
+        val tickSecond = s - 1
+        // Live run, same ride; the fuel hint becomes due on that same tick. #cond is dropped by the sink
+        // (see the test below) so the pacing rate does not hide the block alert.
+        now = 0; alerts.clear()
+        val m = PacingManager(TestScope(), tmp.root, null, clock = { now },
+            alertSink = { a -> (a.key != "CONSERVE#cond").also { if (it) alerts += a } }, kneeKjKgOverride = 0.5)
+        m.setLiveAlerts(true, null)
+        m.onUserProfile(250, 70.0); m.onNavigation(route())
+        ride(m, power = 200, accuracyM = 5.0, seconds = tickSecond)
+        m.onCarbStatus(carbDeficit())
+        ride(m, power = 200, accuracyM = 5.0, seconds = 1, from = tickSecond)
+        val fuelKey = "FUEL#${key.substringAfter('#')}"
+        val tickKeys = m.evaluatedCandidateKeys.takeLast(2)
+        assertEquals(listOf(key, fuelKey), tickKeys)                         // PACING before FUEL_HINT
+        assertEquals(listOf(key), alerts.map { it.key })                     // the fuel hint is gapped
+    }
+
     @Test fun `an alert the sink drops is not recorded as fired`() {
         // CONSERVE#cond is dropped by the sink (e.g. emergency re-check); had it been recorded, the
         // pacing spacing would suppress the block alert that follows (see the live-sink tests).

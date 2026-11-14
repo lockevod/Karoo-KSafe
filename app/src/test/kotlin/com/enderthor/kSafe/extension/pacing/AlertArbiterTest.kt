@@ -15,7 +15,18 @@ class AlertArbiterTest {
         val a = AlertArbiter(); a.recordExternal(AlertSource.MEDICAL, 0)
         assertEquals("gap:MEDICAL", a.evaluate(AlertCandidate(AlertSource.PACING, "CONSERVE#1", 0.5), 2 * min, false).suppressedBy)
         val b = AlertArbiter(); b.recordExternal(AlertSource.FUEL_TIME, 0)
-        assertTrue(b.evaluate(AlertCandidate(AlertSource.PACING, "CONSERVE#1", 0.5), 1 * min, false).fire)
+        assertTrue(b.evaluate(AlertCandidate(AlertSource.FUEL_HINT, "FUEL#1", 0.5), 1 * min, false).fire)
+    }
+
+    @Test fun `pacing and W' keep the gap after any alert, whatever its priority`() {
+        val a = AlertArbiter(); a.recordExternal(AlertSource.FUEL_TIME, 0)
+        assertEquals("gap:FUEL_TIME", a.evaluate(AlertCandidate(AlertSource.PACING, "CONSERVE#1", 0.5), 1 * min, false).suppressedBy)
+        assertEquals("gap:FUEL_TIME", a.evaluate(AlertCandidate(AlertSource.W_PRIME, "W#1", 0.5), 1 * min, false).suppressedBy)
+        assertTrue(a.evaluate(AlertCandidate(AlertSource.PACING, "CONSERVE#1", 0.5), 4 * min, false).fire)
+        val b = AlertArbiter(); b.recordFired(AlertSource.FUEL_HINT, "FUEL#1", 0.5, 0)
+        assertEquals("gap:FUEL_HINT", b.evaluate(AlertCandidate(AlertSource.PACING, "CONSERVE#1", 0.5), 1 * min, false).suppressedBy)
+        val c = AlertArbiter(); c.recordFired(AlertSource.PACING, "CONSERVE#1", 0.5, 0)
+        assertEquals("gap:PACING", c.evaluate(AlertCandidate(AlertSource.W_PRIME, "W#1", 0.9), 1 * min, false).suppressedBy)
     }
 
     @Test fun `pacing rate limit with harder later block exception`() {

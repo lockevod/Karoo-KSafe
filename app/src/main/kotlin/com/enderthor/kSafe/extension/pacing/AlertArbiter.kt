@@ -12,9 +12,11 @@ class AlertArbiter {
 
     fun evaluate(c: AlertCandidate, nowMs: Long, emergencyActive: Boolean): ArbiterVerdict {
         if (emergencyActive && c.source != AlertSource.EMERGENCY) return ArbiterVerdict(false, "emergency")
-        for ((src, at) in lastBySource) if (src != c.source && src.priority <= c.source.priority && nowMs - at < GAP_MS)
+        // Pacing / W′ advice keeps GAP_MS after ANY alert the rider saw; other sources only after a more important one.
+        val pacing = c.source == AlertSource.PACING || c.source == AlertSource.W_PRIME
+        for ((src, at) in lastBySource) if ((pacing || (src != c.source && src.priority <= c.source.priority)) && nowMs - at < GAP_MS)
             return ArbiterVerdict(false, "gap:${src.name}")
-        if (c.source == AlertSource.PACING || c.source == AlertSource.W_PRIME) {
+        if (pacing) {
             lastPacing?.let { (at, key, sev) ->
                 val harderLaterBlock = block(key) != block(c.key) && c.severity > sev
                 if (nowMs - at < PACING_RATE_MS && !harderLaterBlock) return ArbiterVerdict(false, "pacing_rate")

@@ -427,25 +427,32 @@ class PacingManager(
             cands += AlertCandidate(AlertSource.W_PRIME, key, 1.0 - (projWAtBlock ?: 0.0)) to alert(AlertSource.W_PRIME, null, key, next, ftp.takeIf { it > 0 })
         }
         val cs = carbStatus
+        var fuel: Pair<FuelHintResult, ClimbBlock>? = null
         if (d.alertWindowFuel && cs != null && next != null && fuelFiredBlock != next.key) {
             val r = FuelHint.decide(cs.carbsEnabled && cs.masterEnabled, cs.cumLoggedG, cs.cumBurnedG, cs.deficitG,
                 cs.deficitThresholdG, movingS / 60.0, true, lastCarbAlertMs?.let { now - it })
-            val key = "FUEL#${next.key}"
-            var fuelVerdict: ArbiterVerdict? = null
+            fuel = r to next
             if (r.fire) {
                 fuelFiredBlock = next.key
-                val c = AlertCandidate(AlertSource.FUEL_HINT, key, 0.5)
-                fuelVerdict = arbitrate(c, alert(AlertSource.FUEL_HINT, null, key, next, grams = r.grams, withLogs = r.withLogs), now, adv)
+                val key = "FUEL#${next.key}"
+                cands += AlertCandidate(AlertSource.FUEL_HINT, key, 0.5) to alert(AlertSource.FUEL_HINT, null, key, next, grams = r.grams, withLogs = r.withLogs)
             }
-            if (r.fire || fuelLoggedBlock != next.key) {
-                fuelLoggedBlock = next.key
+        }
+        // One list per tick, most important first (W′ → pacing → fuel hint): once one fires, the rest are gapped.
+        var fuelVerdict: ArbiterVerdict? = null
+        for ((c, a) in cands.sortedBy { it.first.source.priority }) {
+            val v = arbitrate(c, a, now, adv)
+            if (c.source == AlertSource.FUEL_HINT) fuelVerdict = v
+        }
+        fuel?.let { (r, b) ->
+            if (r.fire || fuelLoggedBlock != b.key) {
+                fuelLoggedBlock = b.key
                 calibLogger?.log(Event.PACE_FUEL) {
-                    "block=${next.key},fire=${r.fire},reason=${r.reason},grams=${r.grams},with_logs=${r.withLogs}," +
+                    "block=${b.key},fire=${r.fire},reason=${r.reason},grams=${r.grams},with_logs=${r.withLogs}," +
                         "would_alert=${fuelVerdict?.fire ?: false},suppressed_by=${fuelVerdict?.suppressedBy ?: "na"},live=$liveAlerts"
                 }
             }
         }
-        for ((c, a) in cands) arbitrate(c, a, now, adv)
         if (changed && cands.isEmpty()) calibLogger?.log(Event.PACE_ADV) { "${adv()},key=na,would_alert=na,suppressed_by=na,live=$liveAlerts" }
 
         if (tickN % 2 == 0) calibLogger?.log(Event.PACE_POS) {
