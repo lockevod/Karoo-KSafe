@@ -233,9 +233,12 @@ class PacingManager(
         wPrime?.onPower(w, now)
         // A strap that stopped sending is unknown HR, not the last bpm held forever.
         val hr = lastHr.takeIf { lastHrAtMs?.let { now - it <= HR_STALE_MS } == true }
-        fatigue?.onSample(w, hr, now, moving)
+        fatigue?.onSample(w, hr, now, movingAt(now))
         lastPowerAtMs = now
     }
+
+    /** A speed sensor that stopped sending is not moving: moving time and fatigue work stop together. */
+    private fun movingAt(now: Long) = moving && lastSpeedAtMs?.let { now - it <= SPEED_STALE_MS } == true
 
     fun onHr(bpm: Int) { lastHr = bpm.takeIf { it > 0 }; lastHrAtMs = clock() }
 
@@ -318,6 +321,7 @@ class PacingManager(
     internal fun tick() {
         tickHook?.invoke()
         val now = clock()
+        val movingNow = movingAt(now)
         tickN++
         val p = path; val proj = projector; val fx = fix
         val rp = if (p != null && proj != null && fx != null) proj.update(fx, fixAccM, now - fixAtMs, odometerM, rejoinActive)
@@ -329,7 +333,7 @@ class PacingManager(
         val dOdo = odometerM - lastTickOdoM; val dMov = movingS - lastTickMovingS
         lastTickOdoM = odometerM; lastTickMovingS = movingS
         val prof = profile
-        if (started && gradePaceLoaded && trusted && prof != null && moving && dOdo > 0 && dMov > 0) gradePace.learn(kind, prof.gradeAt(pos!!), dOdo, dMov)
+        if (started && gradePaceLoaded && trusted && prof != null && movingNow && dOdo > 0 && dMov > 0) gradePace.learn(kind, prof.gradeAt(pos!!), dOdo, dMov)
         if (started && movingS - lastSaveMovingS >= SAVE_EVERY_MOVING_S) saveGradePace()
         if (prof != null && now - blocksAtMs >= BLOCKS_REFRESH_MS) recomputeBlocks()
 
@@ -363,7 +367,7 @@ class PacingManager(
 
         val knee = kneeKjKgOverride ?: DEFAULT_KNEE_KJKG
         val input = PacingInput(
-            nowMs = now, moving = moving, hasPower = lastPowerAtMs?.let { now - it <= POWER_STALE_MS } == true, positionTrusted = trusted, climbsKnown = prof != null,
+            nowMs = now, moving = movingNow, hasPower = lastPowerAtMs?.let { now - it <= POWER_STALE_MS } == true, positionTrusted = trusted, climbsKnown = prof != null,
             remainingMovingS = remainingS, elapsedMovingS = movingS, blocksAhead = ahead.size,
             secondsToNextBlock = toNextS, metresToNextBlock = toNextM, nextBlockId = next?.key,
             kjPerKg = kj, projectedKjKgFinish = projFinish, projectedKjKgNextTop = projTop, kneeKjKg = knee,
@@ -443,7 +447,7 @@ class PacingManager(
     }
 
     /** Power-sampled moving seconds over moving seconds; null under a minute moving or before a profile. */
-    private fun powerCoverage(): Double? = fatigue?.takeIf { movingS >= 60.0 }?.let { it.movingSeconds / movingS }
+    internal fun powerCoverage(): Double? = fatigue?.takeIf { movingS >= 60.0 }?.let { (it.movingSeconds / movingS).coerceAtMost(1.0) }
 
     private fun arbitrate(c: AlertCandidate, a: PacingAlert, now: Long, adv: () -> String): ArbiterVerdict {
         evaluatedCandidateKeys += c.key
@@ -507,6 +511,7 @@ class PacingManager(
         const val BLOCKS_REFRESH_MS = 5 * 60_000L
         const val POWER_STALE_MS = 10_000L
         const val HR_STALE_MS = 5_000L
+        const val SPEED_STALE_MS = 5_000L
         const val MIN_PROJ_MOVING_S = 600.0
         const val SAVE_EVERY_MOVING_S = 600.0
         /** Stable across block recomputes (ids renumber when gaps merge): route metres of the block start. */

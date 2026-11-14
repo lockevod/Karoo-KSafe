@@ -358,4 +358,15 @@ class PacingManagerTest {
         assertEquals("{nope", java.io.File(tmp.root, "${GradePaceStore.FILE_NAME}.bad").readText())
         assertNotNull(GradePaceStore(tmp.root).load())                       // the fresh model was saved beside it
     }
+
+    @Test fun `power without speed is not moving and never lifts coverage over one`() {
+        val m = manager(knee = 30.0)
+        m.onUserProfile(250, 70.0); m.onNavigation(longRoute())
+        ride(m, power = 175, accuracyM = 5.0, seconds = 600)
+        ride(m, power = null, accuracyM = 5.0, seconds = 600, from = 600)     // coverage ~50 %: KEEP
+        for (s in 1200 until 2700) {                                         // speed sensor drops, power keeps coming
+            now += 1000; m.onPower(175); m.onHr(150); m.onLocation(0.0, (1200 * 8.33) / 111_320.0, 5.0)
+            if (s % 30 == 0) { m.tick(); assertTrue(m.powerCoverage()!! <= 1.0); assertTrue(m.view.value!!.state != PacingState.HIGH_MARGIN) }
+        }
+    }
 }
