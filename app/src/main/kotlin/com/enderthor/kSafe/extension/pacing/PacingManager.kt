@@ -35,6 +35,9 @@ class PacingManager(
     private val alertSink: ((PacingAlert) -> Unit)? = null,
     private val kneeKjKgOverride: Double? = null,
 ) {
+    /** Every candidate key sent to the arbiter, in order. Tests only. */
+    internal val evaluatedCandidateKeys = ArrayList<String>()
+
     private val _view = MutableStateFlow<PacingView?>(null)
     val view: StateFlow<PacingView?> = _view.asStateFlow()
 
@@ -66,6 +69,7 @@ class PacingManager(
     private var arbiter = AlertArbiter()
     private var prevState = PacingState.KEEP; private var prevRecoverW = false
     private var conserveSinceMs: Long? = null; private var condCandidateDone = false
+    private var pacingCandBlock: Int? = null; private var keepCandBlock: Int? = null
     private var wCandBlock: Int? = null; private var fuelLoggedBlock: Int? = null; private var fuelFiredBlock: Int? = null
     private var tickN = 0; private var lastTickOdoM = 0.0; private var lastTickMovingS = 0.0
     private var firstProjFinish: Double? = null; private var lastProjFinish: Double? = null
@@ -81,7 +85,7 @@ class PacingManager(
         arbiter = AlertArbiter()
         prevState = PacingState.KEEP; prevRecoverW = false
         conserveSinceMs = null; condCandidateDone = false
-        wCandBlock = null; fuelLoggedBlock = null; fuelFiredBlock = null
+        pacingCandBlock = null; keepCandBlock = null; wCandBlock = null; fuelLoggedBlock = null; fuelFiredBlock = null
         odometerM = 0.0; movingS = 0.0; lastSpeedAtMs = null; moving = false; hasPower = false; lastPowerAtMs = null
         tickN = 0; lastTickOdoM = 0.0; lastTickMovingS = 0.0; firstProjFinish = null; lastProjFinish = null
         predBlock = null; inBlock = null; blockWMin = null
@@ -273,13 +277,16 @@ class PacingManager(
 
         if (d.state == PacingState.CONSERVE) conserveSinceMs = conserveSinceMs ?: now
         else { conserveSinceMs = null; condCandidateDone = false }
-        if (d.state != prevState && d.alertWindowPacing && next != null) {
-            if (d.state == PacingState.CONSERVE || d.state == PacingState.HIGH_MARGIN) {
+        // One pacing candidate per block: the first window tick in CONSERVE/HIGH_MARGIN, whether or not the state just changed.
+        if (d.alertWindowPacing && next != null) {
+            if ((d.state == PacingState.CONSERVE || d.state == PacingState.HIGH_MARGIN) && pacingCandBlock != next.id) {
+                pacingCandBlock = next.id
                 val sev = if (d.state == PacingState.CONSERVE) conserveSev else 0.5
                 val key = "${d.state}#${next.id}"
                 cands += AlertCandidate(AlertSource.PACING, key, sev) to alert(AlertSource.PACING, d.state, key, next, ceilingW.takeIf { d.state == PacingState.CONSERVE })
                 if (d.state == PacingState.CONSERVE) condCandidateDone = true
-            } else if (prevState == PacingState.CONSERVE && d.state == PacingState.KEEP) {
+            } else if (prevState == PacingState.CONSERVE && d.state == PacingState.KEEP && keepCandBlock != next.id) {
+                keepCandBlock = next.id
                 val key = "KEEP#${next.id}"
                 cands += AlertCandidate(AlertSource.PACING, key, 0.0) to alert(AlertSource.PACING, d.state, key, next)
             }
@@ -327,6 +334,7 @@ class PacingManager(
     }
 
     private fun arbitrate(c: AlertCandidate, a: PacingAlert, now: Long, adv: () -> String): ArbiterVerdict {
+        evaluatedCandidateKeys += c.key
         val v = arbiter.evaluate(c, now, emergencyActive)
         if (liveAlerts && v.fire) { arbiter.recordFired(c.source, c.key, c.severity, now); alertSink?.invoke(a) }
         calibLogger?.log(Event.PACE_ADV) {

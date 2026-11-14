@@ -25,8 +25,8 @@ class PacingManagerTest {
             pois = emptyList(), climbs = emptyList(),
         )
 
-    private fun manager() =
-        PacingManager(TestScope(), tmp.root, null, clock = { now }, alertSink = { alerts += it }, kneeKjKgOverride = 3.0)
+    private fun manager(knee: Double = 3.0) =
+        PacingManager(TestScope(), tmp.root, null, clock = { now }, alertSink = { alerts += it }, kneeKjKgOverride = knee)
 
     /** 20 min at 30 km/h on the flat; [power] null = no power meter; [accuracyM] of every fix. */
     private fun ride(m: PacingManager, power: Int?, accuracyM: Double) {
@@ -65,6 +65,15 @@ class PacingManagerTest {
         val v = m.view.value!!
         assertTrue(v.trusted); assertEquals(PacingState.KEEP, v.state)
         assertTrue(alerts.isEmpty())
+    }
+
+    @Test fun `CONSERVE already active before the window gives one candidate for the block`() {
+        val m = manager(knee = 0.5)                               // CONSERVE from the first projection on
+        m.onUserProfile(250, 70.0); m.onNavigation(route())
+        ride(m, power = 300, accuracyM = 5.0)                    // ends ~10 m before the 10 km climb
+        val pacingForBlock = m.evaluatedCandidateKeys.filter {
+            it.endsWith("#0") && !it.startsWith("W#") && !it.startsWith("FUEL#") }
+        assertEquals(listOf("CONSERVE#0"), pacingForBlock)
     }
 
     // Helpers: same encoder as ElevationProfileTest (precision 1) and a precision-5 lat/lng encoder.
