@@ -94,6 +94,8 @@ class PacingManager(
     internal var wPrime: WPrimeBalance? = null; private set       // internal: tests read ride state
     internal var fatigue: FatigueSignals? = null; private set
     private var carbStatus: CarbStatus? = null; private var lastCarbAlertMs: Long? = null
+    /** Last fuel hint the arbiter let through (live or shadow): a carb reminder inside 15 min after it is logged as an overlap. */
+    private var lastFuelHintMs: Long? = null
     internal var lastMedicalMs: Long? = null; private set   // internal: tests
     private var emergencyActive = false
     private var sosRetrying = false   // the probe at the previous tick
@@ -146,7 +148,7 @@ class PacingManager(
         odometerM = 0.0; movingS = 0.0; lastSpeedAtMs = null; moving = false; lastPowerAtMs = null
         tickN = 0; lastTickOdoM = 0.0; lastTickMovingS = 0.0; firstProjFinish = null; lastProjFinish = null
         predBlock = null; inBlock = null; blockWMin = null
-        lastCarbAlertMs = null; lastMedicalMs = null
+        lastCarbAlertMs = null; lastFuelHintMs = null; lastMedicalMs = null
         hrSignals = HrSignals(); lastSrc = "none"
         path?.let { projector = RouteProjector(it) }
         if (wPrime != null) rebuildProfileUnits()
@@ -319,7 +321,15 @@ class PacingManager(
         arbiter.recordExternal(source, now)
         when (source) {
             AlertSource.MEDICAL -> lastMedicalMs = now
-            AlertSource.FUEL_DEFICIT, AlertSource.FUEL_TIME -> lastCarbAlertMs = now
+            AlertSource.FUEL_DEFICIT, AlertSource.FUEL_TIME -> {
+                lastCarbAlertMs = now
+                // Residual double "eat" (the tracker's lookahead missed): visible in the log, not silent.
+                lastFuelHintMs?.takeIf { now - it < FUEL_OVERLAP_MS }?.let { at ->
+                    calibLogger?.log(Event.PACE_FUEL) {
+                        "block=na,overlap=carb_after_hint,source=${source.name},since_hint_s=${(now - at) / 1000},live=$liveAlerts"
+                    }
+                }
+            }
             else -> Unit
         }
     }
@@ -488,7 +498,7 @@ class PacingManager(
         var fuel: Pair<FuelHintResult, ClimbBlock>? = null
         if (d.alertWindowFuel && cs != null && next != null && fuelFiredBlock != next.key) {
             val r = FuelHint.decide(cs.carbsEnabled && cs.masterEnabled, cs.cumLoggedG, cs.cumBurnedG, cs.deficitG,
-                cs.deficitThresholdG, movingS / 60.0, true, lastCarbAlertMs?.let { now - it })
+                cs.deficitThresholdG, movingS / 60.0, true, lastCarbAlertMs?.let { now - it }, cs.reminderDueSoon)
             fuel = r to next
             if (r.fire) {
                 fuelFiredBlock = next.key
@@ -500,7 +510,7 @@ class PacingManager(
         var fuelVerdict: ArbiterVerdict? = null
         for ((c, a) in cands.sortedBy { it.first.source.priority }) {
             val v = arbitrate(c, a, now, adv)
-            if (c.source == AlertSource.FUEL_HINT) fuelVerdict = v
+            if (c.source == AlertSource.FUEL_HINT) { fuelVerdict = v; if (v.fire) lastFuelHintMs = now }
         }
         fuel?.let { (r, b) ->
             if (r.fire || fuelLoggedBlock != b.key) {
@@ -534,7 +544,8 @@ class PacingManager(
         val v = arbiter.evaluate(c, now, emergencyActive || emergencyProbe())
         if (liveAlerts && v.fire && alertSink?.invoke(a) == true) arbiter.recordFired(c.source, c.key, c.severity, now)
         calibLogger?.log(Event.PACE_ADV) {
-            "${adv()},key=${c.key},sev=${f(c.severity, 2)},would_alert=${v.fire},suppressed_by=${v.suppressedBy ?: "none"},live=$liveAlerts"
+            "${adv()},key=${c.key},sev=${f(c.severity, 2)},would_alert=${v.fire},suppressed_by=${v.suppressedBy ?: "none"}," +
+                "bypass=${v.bypass ?: "none"},live=$liveAlerts"
         }
         return v
     }
@@ -594,6 +605,7 @@ class PacingManager(
         const val DEFAULT_KNEE_KJKG = 30.0
         /** Below a CONSERVE (≥ 1 past the knee): a harder later CONSERVE can still bypass the pacing rate. */
         const val INTENSITY_SEV = 0.5
+        const val FUEL_OVERLAP_MS = 15 * 60_000L
         const val COND_SUSTAIN_MS = 90_000L
         const val BLOCKS_REFRESH_MS = 5 * 60_000L
         const val POWER_STALE_MS = 10_000L

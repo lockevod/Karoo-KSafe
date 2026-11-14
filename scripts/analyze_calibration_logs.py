@@ -48,7 +48,7 @@ Event catalogue understood by this script:
   Pacing advisor (shadow/live; analysed by pacing_summary):
     PACE_ROUTE (src, karoo_n, karoo_ok, own_n, sig_n, blocks_n), PACE_POS
     (pos_m, trusted, reason), PACE_ADV (state, would_alert, suppressed_by, live),
-    PACE_FUEL, PACE_CLIMB (phase=start|end, pred_s_first, actual_s),
+    PACE_FUEL (reason incl. carb_reminder_due; overlap=carb_after_hint rows), PACE_CLIMB (phase=start|end, pred_s_first, actual_s),
     PACE_END (kjkg_at_drift5, moving_s, power_cov), PACE_START (reason=fresh|resume|restart),
     PACE_STOP (reason, mid-ride stop), PACE_RESET (reason=weight|ftp|kind)
 
@@ -843,8 +843,9 @@ def _print_aggregated(summaries: list[FileSummary], header: str):
 def _med_p90(xs: list[float]) -> str:
     if not xs:
         return "n/a"
-    xs = sorted(xs)
-    return f"median {statistics.median(xs):.0f}s  p90 {xs[min(len(xs) - 1, int(0.9 * len(xs)))]:.0f}s  (n={len(xs)})"
+    # Linear-interpolated p90 (inclusive): n=10 no longer reports the max.
+    p90 = statistics.quantiles(xs, n=10, method="inclusive")[8] if len(xs) > 1 else xs[0]
+    return f"median {statistics.median(xs):.0f}s  p90 {p90:.0f}s  (n={len(xs)})"
 
 
 def pacing_summary(paths: list[Path]) -> None:
@@ -892,6 +893,19 @@ def pacing_summary(paths: list[Path]) -> None:
             out.append(f"    PACE_ADV: state changes {changes} = {per_h(changes)}")
             out.append(f"    would_alert distinct candidate keys{wa_tag}: {wa} = {per_h(wa)}")
             out.append(f"    suppressed_by{sup_tag}: {dict(Counter(d.get('suppressed_by', '?') for _, d in adv if d.get('would_alert') == 'false'))}")
+            byp = Counter(d.get("bypass") for _, d in adv if d.get("bypass") not in (None, "none", "na"))
+            out.append(f"    bypass (rule waived, live only): {dict(byp) or 'none'}")
+            # Ease-off cue followed by its own block's CONSERVE / HIGH_MARGIN (would_alert, shadow or live).
+            wa_keys = [d.get("key", "") for _, d in adv if d.get("would_alert") == "true"]
+            cue_blocks = {k.split("#", 1)[1] for k in wa_keys if k.startswith("INTENSITY#")}
+            follow = {k.split("#", 1)[1] for k in wa_keys if k.startswith(("CONSERVE#", "HIGH_MARGIN#"))} & cue_blocks
+            out.append(f"    ease-off cue blocks: {len(cue_blocks)}  then own-block CONSERVE/HIGH_MARGIN: {len(follow)}")
+        fuel = by["PACE_FUEL"]
+        if fuel:
+            out.append(f"    PACE_FUEL reasons: {dict(Counter(d.get('reason', '?') for _, d in fuel if d.get('block') != 'na'))}")
+            ov = [d for _, d in fuel if d.get("overlap")]
+            out.append(f"    double 'eat' (carb reminder < 15 min after a fuel hint): {len(ov)}"
+                       + (f"  since_hint_s: {[d.get('since_hint_s') for d in ov]}" if ov else ""))
         errs = []
         for _, d in by["PACE_CLIMB"]:
             p_, a_ = _to_float(d.get("pred_s_first")), _to_float(d.get("actual_s"))

@@ -35,6 +35,19 @@ class AlertArbiterTest {
         assertTrue(a.evaluate(AlertCandidate(AlertSource.PACING, "CONSERVE#2", 0.6), 5 * min, false).fire)
     }
 
+    @Test fun `ease-off cue never blocks its own block's pacing advice`() {
+        val a = AlertArbiter(); a.recordFired(AlertSource.PACING, "INTENSITY#5", 0.5, 0)
+        assertEquals("gap:PACING", a.evaluate(AlertCandidate(AlertSource.PACING, "CONSERVE#5", 0.3), 2 * min, false).suppressedBy)
+        val v = a.evaluate(AlertCandidate(AlertSource.PACING, "CONSERVE#5", 0.3), 4 * min, false)
+        assertTrue(v.fire); assertEquals("after_cue", v.bypass)
+        assertTrue(a.evaluate(AlertCandidate(AlertSource.PACING, "HIGH_MARGIN#5", 0.5), 4 * min, false).fire)
+        // Another block keeps the rate limit (not harder), as does a plain pacing alert before.
+        assertEquals("pacing_rate", a.evaluate(AlertCandidate(AlertSource.PACING, "CONSERVE#6", 0.3), 4 * min, false).suppressedBy)
+        val b = AlertArbiter(); b.recordFired(AlertSource.PACING, "CONSERVE#5", 0.5, 0)
+        val w = b.evaluate(AlertCandidate(AlertSource.PACING, "HIGH_MARGIN#5", 0.5), 4 * min, false)
+        assertEquals("pacing_rate", w.suppressedBy); assertEquals(null, w.bypass)
+    }
+
     @Test fun `same key repeats only when worse`() {
         val a = AlertArbiter(); a.recordFired(AlertSource.PACING, "CONSERVE#1", 0.3, 0)
         assertEquals("repeat", a.evaluate(AlertCandidate(AlertSource.PACING, "CONSERVE#1", 0.35), 20 * min, false).suppressedBy)
