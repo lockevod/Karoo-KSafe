@@ -752,7 +752,10 @@ class KSafeExtension : KarooExtension("ksafe", BuildConfig.VERSION_NAME), Corout
                 val prevActive = activeConfig.isActive
                 activeConfig = config
                 // Calibration-logging-only riders stay shadow: live only with the pacing switch.
-                if (::pacingManager.isInitialized) pacingManager.setLiveAlerts(config.pacingEnabled, null)
+                if (::pacingManager.isInitialized) {
+                    pacingManager.setLiveAlerts(config.pacingEnabled, null)
+                    pacingManager.setRider(config.riderAge, config.riderSex)   // Keytel inputs for the HR work estimate
+                }
                 // Master off = no advice either: the Reserve field shows OFF, not a frozen state.
                 pacingEnabledFlow.value = config.isActive && config.pacingEnabled
                 // Idempotent: unblock the ride-state collector's first handleRideState so it
@@ -1245,7 +1248,7 @@ class KSafeExtension : KarooExtension("ksafe", BuildConfig.VERSION_NAME), Corout
                         carbsTracker.updateUserProfile(profile)
                         wellnessMonitor.updateUserProfile(profile)
                         hydrationTracker.updateUserProfile(profile)
-                        feedPacing { onUserProfile(profile.ftp, profile.weight.toDouble()) }
+                        feedPacing { onUserProfile(profile) }
                     }
             }
 

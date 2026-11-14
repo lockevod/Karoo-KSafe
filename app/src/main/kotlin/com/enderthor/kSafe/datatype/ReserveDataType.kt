@@ -45,8 +45,9 @@ internal fun reserveFrame(
     return when {
         preview || enabled == null -> waiting
         !enabled -> ReserveFrame(null, "OFF", waitHint)
-        // No fresh power = the advisor knows nothing (KEEP is only its no_power default): waiting, not OK.
-        view == null || !view.trusted || !view.hasPower -> waiting
+        // No fresh power and no HR work estimate = the advisor knows nothing (KEEP is only its no_power
+        // default): waiting, not OK. The HR source already requires HR coverage ≥ 0.9.
+        view == null || !view.trusted || (!view.hasPower && !view.hrSource) -> waiting
         else -> {
             val (color, main) = when (view.state) {
                 PacingState.CONSERVE -> R.color.pacing_amber to "CONS"

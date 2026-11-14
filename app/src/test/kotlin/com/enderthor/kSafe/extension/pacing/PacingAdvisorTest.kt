@@ -70,6 +70,28 @@ class PacingAdvisorTest {
         assertFalse(rw(0.51, prev = true))                     // leaves only above 0.50
     }
 
+    private val hrOnly = base.copy(hasPower = false, hrWork = true, powerCoverage = null)
+
+    @Test fun `heart-rate work enters CONSERVE only past knee x 1_10 and leaves below knee x 0_9`() {
+        assertEquals(PacingState.KEEP, PacingAdvisor.decide(hrOnly.copy(projectedKjKgFinish = 32.0), PacingState.KEEP).state)
+        val d = PacingAdvisor.decide(hrOnly.copy(projectedKjKgFinish = 34.0), PacingState.KEEP)
+        assertEquals(PacingState.CONSERVE, d.state); assertEquals("hr_proj_over_knee", d.reason)
+        assertEquals(PacingState.CONSERVE, PacingAdvisor.decide(hrOnly.copy(projectedKjKgFinish = 28.0), PacingState.CONSERVE).state)
+        assertEquals(PacingState.KEEP, PacingAdvisor.decide(hrOnly.copy(projectedKjKgFinish = 26.0), PacingState.CONSERVE).state)
+    }
+
+    @Test fun `heart-rate work never gives HIGH_MARGIN, W' or drift advice`() {
+        val margin = hrOnly.copy(remainingMovingS = 1800.0, blocksAhead = 1, projectedKjKgFinish = 18.0,
+            secondsToNextBlock = 250.0, metresToNextBlock = 1500.0, projectedWAtNextBlockPct = 0.3)
+        val d = PacingAdvisor.decide(margin, PacingState.KEEP)
+        assertEquals(PacingState.KEEP, d.state); assertFalse(d.recoverW); assertFalse(d.alertWindowW)
+        assertTrue("the pacing window still opens for an HR-sourced CONSERVE", d.alertWindowPacing)
+        assertEquals(PacingState.KEEP, PacingAdvisor.decide(hrOnly.copy(driftPct = 15.0, driftStableMs = null), PacingState.KEEP).state)
+    }
+
+    @Test fun `no power and no heart-rate work is no_power`() =
+        assertEquals("no_power", PacingAdvisor.decide(hrOnly.copy(hrWork = false, projectedKjKgFinish = 40.0), PacingState.KEEP).reason)
+
     @Test fun `lead window rules`() {
         assertTrue(PacingAdvisor.inLeadWindow(290.0, 2000.0, 300.0))
         assertFalse(PacingAdvisor.inLeadWindow(400.0, 2000.0, 300.0))

@@ -1,7 +1,9 @@
 package com.enderthor.kSafe.extension.pacing
 
 import com.enderthor.kSafe.extension.managers.CalibrationLogger
+import com.enderthor.kSafe.data.RiderSex
 import io.hammerhead.karooext.models.OnNavigationState
+import io.hammerhead.karooext.models.UserProfile
 import io.hammerhead.karooext.models.OnNavigationState.NavigationState.Climb
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.Runnable
@@ -538,5 +540,60 @@ class PacingManagerTest {
         ride(m, power = 200, accuracyM = 5.0, seconds = 11 * 60)              // past the periodic save point
         m.stop(endOfRide = true); scope.testScheduler.runCurrent()
         assertEquals("{nope", f.readText())
+    }
+
+    /** maxHr 190: Z4 = 153–171 bpm. */
+    private fun hrProfile(weight: Float = 70f, zones: List<UserProfile.Zone> =
+        listOf(UserProfile.Zone(95, 114), UserProfile.Zone(115, 133), UserProfile.Zone(134, 152), UserProfile.Zone(153, 171), UserProfile.Zone(172, 190))) =
+        UserProfile(weight = weight, preferredUnit = UserProfile.PreferredUnit(UserProfile.PreferredUnit.UnitType.METRIC,
+            UserProfile.PreferredUnit.UnitType.METRIC, UserProfile.PreferredUnit.UnitType.METRIC, UserProfile.PreferredUnit.UnitType.METRIC),
+            maxHr = 190, restingHr = 50, heartRateZones = zones, ftp = 250, powerZones = emptyList())
+
+    @Test fun `heart rate with Keytel inputs enters CONSERVE without a watts ceiling`() {
+        val m = loggingManager(knee = 0.5)
+        m.setLiveAlerts(true, null)
+        m.onUserProfile(hrProfile()); m.setRider(40, RiderSex.MALE); m.onNavigation(route()); m.start()
+        ride(m, power = null, accuracyM = 5.0)                   // HR 150 only; ends ~10 m before the climb
+        val v = m.view.value!!
+        assertEquals(PacingState.CONSERVE, v.state); assertTrue(v.hrSource); assertFalse(v.hasPower)
+        assertTrue("CONSERVE#${Math.round(m.blocks.single().startM)}" in m.evaluatedCandidateKeys)
+        val cons = alerts.filter { it.state == PacingState.CONSERVE }
+        assertTrue(cons.isNotEmpty()); assertTrue("no watts ceiling from heart rate", cons.all { it.ceilingW == null })
+        val adv = logRows.filter { it.startsWith("PACE_ADV,") && ",state=CONSERVE," in it }
+        assertTrue(adv.isNotEmpty()); assertTrue(adv.all { ",src=hr," in it && ",hr_cov=1.00" in it })
+        m.stop(endOfRide = true)
+        assertTrue(logRows.single { it.startsWith("PACE_END,") }.contains(",src=hr,hr_cov=1.00"))
+    }
+
+    @Test fun `heart rate without age and sex gives no HR work estimate`() {
+        val m = loggingManager(knee = 0.5)
+        m.onUserProfile(hrProfile()); m.setRider(40, RiderSex.NOT_SET); m.onNavigation(route()); m.start()
+        ride(m, power = null, accuracyM = 5.0)
+        val v = m.view.value!!
+        assertEquals(PacingState.KEEP, v.state); assertFalse(v.hrSource)
+        m.stop(endOfRide = true)
+        assertTrue(logRows.single { it.startsWith("PACE_END,") }.contains(",src=none,hr_cov=na"))
+    }
+
+    @Test fun `heart rate over under 90 percent of the moving time gives no HR work estimate`() {
+        val m = manager(knee = 0.5)
+        m.onUserProfile(hrProfile()); m.setRider(40, RiderSex.MALE); m.onNavigation(route())
+        ride(m, power = null, accuracyM = 5.0, seconds = 300, hr = null)       // strap off the first 5 min
+        ride(m, power = null, accuracyM = 5.0, seconds = 900, from = 300)      // coverage 0.75
+        assertEquals(PacingState.KEEP, m.view.value!!.state); assertFalse(m.view.value!!.hrSource)
+    }
+
+    @Test fun `with power the heart-rate estimate changes nothing`() {
+        fun run(keytel: Boolean): Pair<List<String>, List<PacingAlert>> {
+            now = 0; alerts.clear()
+            val m = manager(knee = 0.5)
+            m.setLiveAlerts(true, null)
+            if (keytel) { m.onUserProfile(hrProfile()); m.setRider(40, RiderSex.MALE) } else m.onUserProfile(250, 70.0)
+            m.onNavigation(route())
+            ride(m, power = 200, accuracyM = 5.0, hr = 140)                 // HR under Z4: no intensity cue either
+            assertFalse(m.view.value!!.hrSource)
+            return m.evaluatedCandidateKeys.toList() to alerts.toList()
+        }
+        assertEquals(run(keytel = false), run(keytel = true))
     }
 }

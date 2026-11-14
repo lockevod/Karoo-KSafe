@@ -3,7 +3,10 @@ package com.enderthor.kSafe.extension.pacing
 import com.enderthor.kSafe.extension.managers.CalibrationLogger
 import com.enderthor.kSafe.extension.managers.CalibrationLogger.Event
 import com.enderthor.kSafe.extension.managers.CarbStatus
+import com.enderthor.kSafe.extension.util.CarbBurnEstimator
+import com.enderthor.kSafe.data.RiderSex
 import io.hammerhead.karooext.models.OnNavigationState
+import io.hammerhead.karooext.models.UserProfile
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -22,7 +25,8 @@ import java.io.File
 import java.util.Locale
 import kotlin.math.roundToInt
 
-data class PacingView(val state: PacingState, val recoverW: Boolean, val wPct: Double?, val trusted: Boolean, val nextBlockKm: Double?, val hasPower: Boolean = true)
+data class PacingView(val state: PacingState, val recoverW: Boolean, val wPct: Double?, val trusted: Boolean, val nextBlockKm: Double?, val hasPower: Boolean = true,
+                      /** No power, state read from the heart-rate work estimate. */ val hrSource: Boolean = false)
 
 data class PacingAlert(
     val source: AlertSource, val state: PacingState?, val key: String, val blockKm: Double?, val blockLenKm: Double?,
@@ -83,6 +87,9 @@ class PacingManager(
     private var movingS = 0.0; private var lastSpeedAtMs: Long? = null; private var moving = false
     private var lastHr: Int? = null; private var lastHrAtMs: Long? = null; private var lastPowerAtMs: Long? = null
     private var ftp = 0; private var weightKg = 0.0; private var wOverrideJ: Double? = null
+    private var userProfile: UserProfile? = null; private var riderAge = 0; private var riderSex = RiderSex.NOT_SET
+    internal var hrSignals = HrSignals(); private set
+    private var lastSrc = "none"
     internal var liveAlerts = false; private set
     internal var wPrime: WPrimeBalance? = null; private set       // internal: tests read ride state
     internal var fatigue: FatigueSignals? = null; private set
@@ -139,6 +146,7 @@ class PacingManager(
         tickN = 0; lastTickOdoM = 0.0; lastTickMovingS = 0.0; firstProjFinish = null; lastProjFinish = null
         predBlock = null; inBlock = null; blockWMin = null
         lastCarbAlertMs = null; lastMedicalMs = null
+        hrSignals = HrSignals(); lastSrc = "none"
         path?.let { projector = RouteProjector(it) }
         if (wPrime != null) rebuildProfileUnits()
         gradePace = GradePaceModel(); gradePaceLoaded = false; lastSaveMovingS = 0.0
@@ -190,7 +198,7 @@ class PacingManager(
         calibLogger?.log(Event.PACE_END) {
             "proj_finish_first=${f(firstProjFinish)},proj_finish_last=${f(lastProjFinish)},actual_kjkg=${f(fs?.kjPerKg?.takeIf { weightKg > 0 })}," +
                 "kjkg_at_drift5=${f(fs?.kjPerKgAtFirstDrift5)},moving_s=${f(movingS, 0)},odo_m=${f(odometerM, 0)}," +
-                "power_cov=${f(powerCoverage(), 2)}"
+                "power_cov=${f(powerCoverage(), 2)},src=$lastSrc,hr_cov=${f(hrCoverage(), 2)}"
         }
     }
 
@@ -251,7 +259,22 @@ class PacingManager(
     /** A speed sensor that stopped sending is not moving: moving time and fatigue work stop together. */
     private fun movingAt(now: Long) = moving && lastSpeedAtMs?.let { now - it <= SPEED_STALE_MS } == true
 
-    fun onHr(bpm: Int) { lastHr = bpm.takeIf { it > 0 }; lastHrAtMs = clock() }
+    fun onHr(bpm: Int) {
+        val now = clock()
+        lastHr = bpm.takeIf { it > 0 }; lastHrAtMs = now
+        lastHr?.let { hrSignals.onSample(hrKcalPerHour(it), now, movingAt(now)) }
+    }
+
+    /** Keytel inputs present: profile weight, age and sex. Without them there is no HR work estimate. */
+    private fun keytelReady() = userProfile?.weight?.let { it.isFinite() && it > 0f } == true && riderAge > 0 && riderSex != RiderSex.NOT_SET
+
+    /** Keytel kcal/h through [CarbBurnEstimator] (power withheld so it never takes the power tier); null without
+     *  its inputs. A Keytel result ≤ 0 (very low HR) falls to another tier there: counted as 0 here, not unknown. */
+    private fun hrKcalPerHour(bpm: Int): Double? {
+        if (!keytelReady()) return null
+        val e = CarbBurnEstimator.estimate(bpm, null, userProfile, riderAge, riderSex)
+        return if (e.confidence == CarbBurnEstimator.Confidence.KEYTEL) e.kcalPerHour else 0.0
+    }
 
     /** A mid-ride profile edit must not wipe the ride: weight rescales kJ/kg, FTP resets only the drift
      *  band/baseline and W′ (its CP changed); work and moving time are kept. */
@@ -265,6 +288,12 @@ class PacingManager(
             logReset("ftp", wReset = true)
         }
     }
+
+    /** The full profile: also feeds the HR work estimate (Keytel needs its weight). */
+    fun onUserProfile(p: UserProfile) { userProfile = p; onUserProfile(p.ftp, p.weight.toDouble()) }
+
+    /** Age / sex from KSafe settings: with the profile weight, the Keytel tier of [CarbBurnEstimator]. */
+    fun setRider(age: Int, sex: RiderSex) { riderAge = age; riderSex = sex }
 
     fun onRoutingPreference(pref: String) {
         val k = BikeKind.of(pref)
@@ -346,18 +375,24 @@ class PacingManager(
         if (started && movingS - lastSaveMovingS >= SAVE_EVERY_MOVING_S) saveGradePace()
         if (prof != null && blocksAtMs.let { it == null || now - it >= BLOCKS_REFRESH_MS }) recomputeBlocks()
 
-        val fs = fatigue; val wp = wPrime
-        val kj = fs?.kjPerKg ?: 0.0
-        val meanW = fs?.meanMovingPowerW ?: 0.0
+        val fs = fatigue; val wp = wPrime; val hs = hrSignals
         val wTrusted = wp?.trusted == true
         val hasPower = lastPowerAtMs?.let { now - it <= POWER_STALE_MS } == true
+        // Power wins. Without it, the HR work estimate only with fresh HR over ≥ 90 % of the moving time.
+        val hrFresh = lastHr != null && lastHrAtMs?.let { now - it <= HR_STALE_MS } == true
+        val hrCov = hrCoverage()
+        val hrSrc = !hasPower && hrFresh && hrCov != null && hrCov >= PacingAdvisor.MIN_HR_COVERAGE
+        val src = if (hasPower) "power" else if (hrSrc) "hr" else "none"
+        lastSrc = src
+        val kj = if (hrSrc) (if (weightKg > 0) hs.kj / weightKg else 0.0) else fs?.kjPerKg ?: 0.0
+        val meanW = if (hrSrc) hs.meanW else fs?.meanMovingPowerW ?: 0.0
         // A balance that never saw power, or one frozen by a dropout, is not a reading: no W′ %.
         val wPct = if (wTrusted && wp!!.hasSamples && hasPower) wp.pct else null
         val drift = fs?.driftPct(now)
         val stableSince = fs?.driftStableSinceMs
         val driftStableMs = if (drift != null && drift < 5.0 && stableSince != null) now - stableSince else null
         // A few seconds of power is not a ride average: no projection until MIN_PROJ_MOVING_S of it.
-        val sampled = (fs?.movingSeconds ?: 0.0) >= MIN_PROJ_MOVING_S
+        val sampled = (if (hrSrc) hs.seconds else fs?.movingSeconds ?: 0.0) >= MIN_PROJ_MOVING_S
 
         var ahead: List<ClimbBlock> = emptyList(); var next: ClimbBlock? = null
         var remainingS: Double? = null; var toNextS: Double? = null; var toNextM: Double? = null
@@ -371,7 +406,7 @@ class PacingManager(
                 projFinish = kj + meanW * remainingS / 1000.0 / weightKg
                 projTop = next?.let { kj + meanW * secondsBetween(pos, it.endM) / 1000.0 / weightKg }
             }
-            if (wTrusted && sampled) projWAtBlock = toNextS?.let { wp!!.projectPct(it, meanW) }
+            if (wTrusted && sampled && !hrSrc) projWAtBlock = toNextS?.let { wp!!.projectPct(it, meanW) }
             if (firstProjFinish == null) firstProjFinish = projFinish
             if (projFinish != null) lastProjFinish = projFinish
         }
@@ -384,11 +419,11 @@ class PacingManager(
             kjPerKg = kj, projectedKjKgFinish = projFinish, projectedKjKgNextTop = projTop, kneeKjKg = knee,
             driftPct = drift, driftStableMs = driftStableMs, wTrusted = wTrusted, wPct = wPct,
             projectedWAtNextBlockPct = projWAtBlock, msSinceWellnessOrMedical = lastMedicalMs?.let { now - it },
-            powerCoverage = powerCoverage(),
+            powerCoverage = powerCoverage(), hrWork = hrSrc,
         )
         val d = PacingAdvisor.decide(input, prevState, prevRecoverW)
         val changed = d.state != prevState || d.recoverW != prevRecoverW
-        val adv = { advFields(input, d) }
+        val adv = { advFields(input, d, hrCov) }
 
         // Candidates
         val cands = ArrayList<Pair<AlertCandidate, PacingAlert>>()
@@ -400,12 +435,14 @@ class PacingManager(
         if (d.state == PacingState.CONSERVE && prevState != PacingState.CONSERVE) conserveByProjection = d.reason == "proj_over_knee"
         val rawCeilingW = if (remainingS != null && remainingS > 0 && weightKg > 0)
             ((knee - kj) * weightKg * 1000.0 / remainingS).takeIf { it > 0 }?.toInt() else null
-        val ceilingW = plausibleCeiling(rawCeilingW, conserveByProjection, meanW, ftp)
+        // A watts ceiling only from measured power: HR work has none.
+        val ceilingW = if (hrSrc) null else plausibleCeiling(rawCeilingW, conserveByProjection, meanW, ftp)
 
-        // The 90 s sustain clock runs only while the rider is moving, on-route and metered: a stop, a lost
-        // position or stale power restarts it, so #cond never reaches a stopped / off-route / unmetered rider.
+        // The 90 s sustain clock runs only while the rider is moving, on-route and metered (power, or the HR
+        // work estimate): a stop, a lost position or no work source restarts it, so #cond never reaches a
+        // stopped / off-route / unmetered rider.
         if (d.state != PacingState.CONSERVE) { conserveSinceMs = null; condCandidateDone = false }
-        else if (input.moving && input.positionTrusted && input.hasPower) conserveSinceMs = conserveSinceMs ?: now
+        else if (input.moving && input.positionTrusted && (input.hasPower || input.hrWork)) conserveSinceMs = conserveSinceMs ?: now
         else conserveSinceMs = null
         // One pacing candidate per block: the first window tick in CONSERVE/HIGH_MARGIN, whether or not the state just changed.
         if (d.alertWindowPacing && next != null) {
@@ -468,11 +505,14 @@ class PacingManager(
         if (trusted) trackClimbs(pos!!, next, toNextS, now, wPct, drift)
 
         prevState = d.state; prevRecoverW = d.recoverW
-        _view.value = PacingView(d.state, d.recoverW, wPct, trusted, toNextM?.div(1000.0), hasPower)
+        _view.value = PacingView(d.state, d.recoverW, wPct, trusted, toNextM?.div(1000.0), hasPower, hrSrc)
     }
 
     /** Power-sampled moving seconds over moving seconds; null under a minute moving or before a profile. */
     internal fun powerCoverage(): Double? = fatigue?.takeIf { movingS >= 60.0 }?.let { (it.movingSeconds / movingS).coerceAtMost(1.0) }
+
+    /** HR-estimated moving seconds over moving seconds; null under a minute moving or without Keytel inputs. */
+    private fun hrCoverage(): Double? = if (movingS >= 60.0 && keytelReady()) (hrSignals.seconds / movingS).coerceAtMost(1.0) else null
 
     private fun arbitrate(c: AlertCandidate, a: PacingAlert, now: Long, adv: () -> String): ArbiterVerdict {
         evaluatedCandidateKeys += c.key
@@ -516,7 +556,7 @@ class PacingManager(
         }
     }
 
-    private fun advFields(i: PacingInput, d: PacingDecision) =
+    private fun advFields(i: PacingInput, d: PacingDecision, hrCov: Double?) =
         "state=${d.state},recover_w=${d.recoverW},reason=${d.reason},moving=${i.moving},has_power=${i.hasPower}," +
             "pos_trusted=${i.positionTrusted},climbs_known=${i.climbsKnown},remaining_s=${f(i.remainingMovingS, 0)}," +
             "elapsed_s=${f(i.elapsedMovingS, 0)},blocks_ahead=${i.blocksAhead},next_block=${i.nextBlockId ?: "na"}," +
@@ -525,7 +565,8 @@ class PacingManager(
             "knee_src=${if (kneeKjKgOverride != null) "override" else "default"},drift=${f(i.driftPct)}," +
             "drift_stable_s=${f(i.driftStableMs?.div(1000.0), 0)},w_trusted=${i.wTrusted},w_pct=${f(i.wPct, 2)}," +
             "proj_w_block=${f(i.projectedWAtNextBlockPct, 2)},power_cov=${f(i.powerCoverage, 2)},ms_since_med=${i.msSinceWellnessOrMedical ?: "na"}," +
-            "ftp=$ftp,kind=$kind,gp_conf=${gradePace.isConfident(kind, 0.0)}"
+            "ftp=$ftp,kind=$kind,gp_conf=${gradePace.isConfident(kind, 0.0)}," +
+            "src=${if (i.hasPower) "power" else if (i.hrWork) "hr" else "none"},hr_cov=${f(hrCov, 2)}"
 
     private fun f(v: Double?, decimals: Int = 1): String =
         if (v == null || !v.isFinite()) "na" else String.format(Locale.US, "%.${decimals}f", v)

@@ -11,6 +11,8 @@ data class PacingInput(
     val projectedWAtNextBlockPct: Double?, val msSinceWellnessOrMedical: Long?,
     /** Share of moving time with power samples; null = unknown (under a minute moving). */
     val powerCoverage: Double? = null,
+    /** No fresh power, but an HR work estimate is usable (fresh HR, Keytel inputs, HR coverage ≥ 0.9). */
+    val hrWork: Boolean = false,
 )
 
 data class PacingDecision(
@@ -27,6 +29,9 @@ object PacingAdvisor {
     const val TOO_LATE_M = 100.0
     const val MAX_LEAD_M = 10_000.0
     const val MIN_POWER_COVERAGE = 0.9
+    const val MIN_HR_COVERAGE = 0.9
+    /** HR work is an estimate (Keytel ~10–15 % error): CONSERVE from it needs a projection 10 % past the knee. */
+    const val HR_ENTER_FACTOR = 1.10
     const val RECOVER_W_ENTER = 0.40
     const val RECOVER_W_EXIT = 0.50
 
@@ -39,7 +44,18 @@ object PacingAdvisor {
     fun decide(i: PacingInput, prev: PacingState, prevRecoverW: Boolean = false): PacingDecision {
         if (!i.moving) return PacingDecision(if (prev == PacingState.HIGH_MARGIN) PacingState.KEEP else prev, false, "stopped", false, false, false)
         val fuelWin = i.positionTrusted && inLeadWindow(i.secondsToNextBlock, i.metresToNextBlock, LEAD_FUEL_S)
-        if (!i.hasPower) return PacingDecision(PacingState.KEEP, false, "no_power", false, false, fuelWin)
+        if (!i.hasPower && !i.hrWork) return PacingDecision(PacingState.KEEP, false, "no_power", false, false, fuelWin)
+        val pacingWin = i.positionTrusted && inLeadWindow(i.secondsToNextBlock, i.metresToNextBlock, LEAD_PACING_S)
+        if (!i.hasPower) {
+            // HR work estimate: projection only. Drift, HIGH_MARGIN and W′ are power measurements.
+            val proj = listOfNotNull(i.projectedKjKgFinish, i.projectedKjKgNextTop).maxOrNull()
+            val (state, reason) = when {
+                proj != null && proj > i.kneeKjKg * HR_ENTER_FACTOR -> PacingState.CONSERVE to "hr_proj_over_knee"
+                prev == PacingState.CONSERVE && proj != null && proj >= i.kneeKjKg * 0.9 -> PacingState.CONSERVE to "hysteresis"
+                else -> PacingState.KEEP to "keep"
+            }
+            return PacingDecision(state, false, reason, pacingWin, false, fuelWin)
+        }
 
         val remainingFrac = i.remainingMovingS?.let { it / (it + i.elapsedMovingS) }
         val worstProj = listOfNotNull(i.projectedKjKgFinish, i.projectedKjKgNextTop).maxOrNull()
@@ -69,7 +85,7 @@ object PacingAdvisor {
         val recoverW = i.wTrusted && projW != null && (if (prevRecoverW) projW <= RECOVER_W_EXIT else projW < RECOVER_W_ENTER)
         return PacingDecision(
             state, recoverW, reason,
-            alertWindowPacing = i.positionTrusted && inLeadWindow(i.secondsToNextBlock, i.metresToNextBlock, LEAD_PACING_S),
+            alertWindowPacing = pacingWin,
             alertWindowW = recoverW && i.positionTrusted && inLeadWindow(i.secondsToNextBlock, i.metresToNextBlock, LEAD_W_S),
             alertWindowFuel = fuelWin,
         )
