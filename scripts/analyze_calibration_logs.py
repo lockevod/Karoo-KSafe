@@ -876,11 +876,11 @@ def pacing_summary(paths: list[Path]) -> None:
             hrs = mov_s / 3600.0 if mov_s and mov_s > 0 else None
             states = [d.get("state") for _, d in adv]
             changes = sum(1 for a, b in zip(states, states[1:]) if a != b)
-            wa = sum(1 for _, d in adv if d.get("would_alert") == "true")
+            wa = len({d.get("key") for _, d in adv if d.get("would_alert") == "true"})
             per_h = (lambda n: f"{n / hrs:.1f}/h ({basis} h)") if hrs else (lambda n: "n/a")
             out.append(f"    PACE_ADV: state changes {changes} = {per_h(changes)}")
-            out.append(f"    shadow would_alert (no rate limits \u2014 NOT the live alert rate): {wa} = {per_h(wa)}")
-            out.append(f"    suppressed_by: {dict(Counter(d.get('suppressed_by', '?') for _, d in adv if d.get('would_alert') == 'false'))}")
+            out.append(f"    shadow would_alert, distinct keys (shadow: arbiter state never recorded \u2014 upper bound, NOT the live alert rate): {wa} = {per_h(wa)}")
+            out.append(f"    suppressed_by (shadow: arbiter fires not recorded \u2014 pacing_rate/repeat cannot appear): {dict(Counter(d.get('suppressed_by', '?') for _, d in adv if d.get('would_alert') == 'false'))}")
         errs = []
         for _, d in by["PACE_CLIMB"]:
             p_, a_ = _to_float(d.get("pred_s_first")), _to_float(d.get("actual_s"))
