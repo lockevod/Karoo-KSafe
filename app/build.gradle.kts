@@ -21,8 +21,8 @@ android {
         applicationId = "com.enderthor.kSafe"
         minSdk = 23
         targetSdk = 34
-        versionCode = 202611061
-        versionName = "2.3.3"
+        versionCode = 202611141
+        versionName = "2.4.0"
 
         // Calibration log delivery goes through a write-only relay (Cloudflare Worker) that holds
         // the bot token; the APK only carries the relay URL. Empty = LogReporter skips sending.
